@@ -1,0 +1,38 @@
+name: rasd
+channels:
+  - pytorch
+  - huggingface
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+
+  # Core ML — Mac CPU/MPS version (no CUDA)
+  - pytorch::pytorch=2.1.0
+  - torchvision
+  - torchaudio
+
+  # Data & modelling
+  - numpy
+  - pandas
+  - scipy
+
+  # Visualisation
+  - matplotlib
+  - seaborn
+
+  # Utilities
+  - tqdm
+  - pyyaml
+  - jsonlines
+
+  - pip:
+    - transformers>=4.36.0
+    - datasets>=2.16.0
+    - tokenizers>=0.15.0
+    - accelerate>=0.25.0
+    - wandb>=0.16.0
+    - packaging
+    - ninja
