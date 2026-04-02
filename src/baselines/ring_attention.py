@@ -169,14 +169,17 @@ class RingAttention(nn.Module):
             scores = torch.einsum("bhid,bhjd->bhij", q, k_cur) / math.sqrt(self.head_dim)
             out, lse = self._online_softmax_update(out, lse, scores, v_cur)
 
-            # Overlap: while GPU finishes the einsum, send/recv next KV shard
+            # Rotate KV ring: use batch_isend_irecv to post sends and recvs
+            # atomically, avoiding the NCCL eager-mode serialization deadlock
+            # that occurs when all ranks post isend before irecv.
             if step < world_size - 1:
-                reqs = [
-                    dist.isend(k_cur, dst=send_to),
-                    dist.isend(v_cur, dst=send_to),
-                    dist.irecv(k_buf, src=recv_from),
-                    dist.irecv(v_buf, src=recv_from),
+                ops = [
+                    dist.P2POp(dist.isend, k_cur, send_to),
+                    dist.P2POp(dist.isend, v_cur, send_to),
+                    dist.P2POp(dist.irecv, k_buf, recv_from),
+                    dist.P2POp(dist.irecv, v_buf, recv_from),
                 ]
+                reqs = dist.batch_isend_irecv(ops)
                 for r in reqs:
                     r.wait()
                 # Swap buffers to avoid allocation

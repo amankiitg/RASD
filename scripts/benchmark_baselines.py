@@ -112,8 +112,8 @@ def main():
     p.add_argument("--heads", type=int, default=8, help="Number of attention heads")
     p.add_argument("--block-size", type=int, default=4096,
                    help="Ring attention block size (local path)")
-    p.add_argument("--window-size", type=int, default=2048,
-                   help="Sliding window size")
+    p.add_argument("--window-size", type=int, default=128,
+                   help="Sliding window size (keep small: unfold materialises O(S*window*head_dim) tensor)")
     p.add_argument("--runs", type=int, default=3, help="Timed forward passes per config")
     p.add_argument("--out", default="results/baselines.csv", help="Output CSV path")
     p.add_argument(
@@ -129,12 +129,16 @@ def main():
     world_size = 1
     if args.distributed:
         import torch.distributed as dist
-        dist.init_process_group(backend="nccl" if args.device == "cuda" else "gloo")
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        if args.device == "cuda":
+            torch.cuda.set_device(local_rank)
+        dist.init_process_group(
+            backend="nccl" if args.device == "cuda" else "gloo",
+            device_id=torch.device(f"cuda:{local_rank}") if args.device == "cuda" else None,
+        )
         world_size = dist.get_world_size()
         rank = dist.get_rank()
-        # Pin each process to its own GPU
         if args.device == "cuda":
-            torch.cuda.set_device(rank)
             args.device = f"cuda:{rank}"
     else:
         rank = 0
@@ -175,6 +179,10 @@ def main():
                 if rank == 0:
                     print(f"    FAILED: {exc}", flush=True)
                 stats = {"time_s": -1.0, "throughput_tps": -1.0, "latency_ms": -1.0}
+            finally:
+                del mod
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
 
             if rank == 0:
                 row = {

@@ -1,0 +1,10 @@
+runpod_creds.md
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+.DS_Store
+*.log
