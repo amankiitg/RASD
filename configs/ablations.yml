@@ -1,0 +1,129 @@
+# RASD Ablation Grid Configuration
+#
+# One factor is varied at a time (OFA design).
+# The "baseline" row in each group is the shared default config.
+# Seeds: {42, 123, 456} for every run.
+#
+# Ablation IDs:
+#   A1  draft_model_name    (model size)
+#   A2  spec_steps          (k, speculative steps)
+#   A3  kv_block_size       (ring comm block size)
+#   A4  prefetch_depth      (overlap strategy)
+#   A5  target_model_name   (target model family)
+
+# ---------------------------------------------------------------------------
+# Shared defaults (used unless overridden in a group)
+# ---------------------------------------------------------------------------
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "distilgpt2"
+  spec_steps:        4
+  kv_block_size:     512
+  prefetch_depth:    1
+  max_new_tokens:    256
+  context_length:    65536        # 64k — start here, scale up once stable
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   false
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# A1 — Draft Model Size
+# Factor: draft_model_name
+# All other params: defaults
+# ---------------------------------------------------------------------------
+A1:
+  name: "draft_model_size"
+  factor: "draft_model_name"
+  levels:
+    - id: "A1_distilgpt2"
+      draft_model_name: "distilgpt2"               # 124M params
+      notes: "DistilGPT-2 baseline — smallest draft"
+
+    - id: "A1_sheared_llama"
+      draft_model_name: "princeton-nlp/Sheared-LLaMA-1.3B"  # 1.3B params
+      notes: "Sheared-LLaMA 1.3B — larger draft, higher acceptance expected"
+
+# ---------------------------------------------------------------------------
+# A2 — Number of Speculative Steps (k)
+# Factor: spec_steps
+# ---------------------------------------------------------------------------
+A2:
+  name: "spec_steps"
+  factor: "spec_steps"
+  levels:
+    - id: "A2_k2"
+      spec_steps: 2
+    - id: "A2_k4"
+      spec_steps: 4       # matches default
+    - id: "A2_k6"
+      spec_steps: 6
+    - id: "A2_k8"
+      spec_steps: 8
+    - id: "A2_k12"
+      spec_steps: 12
+
+# ---------------------------------------------------------------------------
+# A3 — KV Cache Block Size (ring communication granularity)
+# Factor: kv_block_size (tokens)
+# ---------------------------------------------------------------------------
+A3:
+  name: "kv_block_size"
+  factor: "kv_block_size"
+  levels:
+    - id: "A3_block256"
+      kv_block_size: 256
+    - id: "A3_block512"
+      kv_block_size: 512    # matches default
+    - id: "A3_block1024"
+      kv_block_size: 1024
+    - id: "A3_block2048"
+      kv_block_size: 2048
+
+# ---------------------------------------------------------------------------
+# A4 — Communication / Computation Overlap Strategy
+# Factor: prefetch_depth
+#   0 = synchronous (no overlap)
+#   1 = async prefetch 1 block
+#   2 = async prefetch 2 blocks
+# ---------------------------------------------------------------------------
+A4:
+  name: "overlap_strategy"
+  factor: "prefetch_depth"
+  levels:
+    - id: "A4_sync"
+      prefetch_depth: 0
+      notes: "Synchronous — target blocks waiting for KV fetch"
+    - id: "A4_async1"
+      prefetch_depth: 1     # matches default
+      notes: "Async prefetch 1 block — fetched during draft phase"
+    - id: "A4_async2"
+      prefetch_depth: 2
+      notes: "Async prefetch 2 blocks — deeper pipeline, hides higher latency"
+
+# ---------------------------------------------------------------------------
+# A5 — Target Model
+# Factor: target_model_name
+# ---------------------------------------------------------------------------
+A5:
+  name: "target_model"
+  factor: "target_model_name"
+  levels:
+    - id: "A5_llama2_7b"
+      target_model_name: "meta-llama/Llama-2-7b-hf"    # matches default
+    - id: "A5_mistral_7b"
+      target_model_name: "mistralai/Mistral-7B-v0.1"
+
+# ---------------------------------------------------------------------------
+# Metrics to log (all logged to wandb + local CSV)
+# ---------------------------------------------------------------------------
+metrics:
+  - tokens_generated
+  - time_sec
+  - throughput_tps
+  - acceptance_rate
+  - mean_latency_ms
+  - gpu_peak_mem_mb
+  - n_rounds

@@ -1,0 +1,5 @@
+context_total,shard_per_gpu,baseline_mb,flash_mb,savings_pct,dtype,batch,dim,num_heads,date
+65536,8192,1640,168,89.8,bfloat16,1,1024,8,2026-04-10
+131072,16384,3257,312,90.4,bfloat16,1,1024,8,2026-04-10
+262144,32768,6489,600,90.8,bfloat16,1,1024,8,2026-04-10
+524288,65536,12954,1176,90.9,bfloat16,1,1024,8,2026-04-10
