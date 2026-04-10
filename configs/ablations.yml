@@ -15,16 +15,16 @@
 # Shared defaults (used unless overridden in a group)
 # ---------------------------------------------------------------------------
 defaults:
-  target_model_name: "meta-llama/Llama-2-7b-hf"
-  draft_model_name:  "distilgpt2"
+  target_model_name: "meta-llama/Meta-Llama-3.1-8B"
+  draft_model_name:  "meta-llama/Llama-3.2-1B"
   spec_steps:        4
   kv_block_size:     512
   prefetch_depth:    1
   max_new_tokens:    256
-  context_length:    65536        # 64k — start here, scale up once stable
+  context_length:    8192         # 8k — conservative start; scale to 64k once stable
   dtype:             "bfloat16"
   quantize_draft:    true
-  quantize_target:   false
+  quantize_target:   true     # 4-bit NF4 — required to fit both models on 80GB A100s
   temperature:       1.0
   top_p:             1.0
   seeds:             [42, 123, 456]
@@ -37,14 +37,16 @@ defaults:
 A1:
   name: "draft_model_size"
   factor: "draft_model_name"
+  # Both drafts are LLaMA-family — same tokenizer as the LLaMA-3.1-8B target.
+  # This is required for speculative decoding correctness.
   levels:
-    - id: "A1_distilgpt2"
-      draft_model_name: "distilgpt2"               # 124M params
-      notes: "DistilGPT-2 baseline — smallest draft"
+    - id: "A1_llama3_1b"
+      draft_model_name: "meta-llama/Llama-3.2-1B"   # 1B params, LLaMA-3 tokenizer
+      notes: "LLaMA-3.2 1B — small draft, same family as target"
 
-    - id: "A1_sheared_llama"
-      draft_model_name: "princeton-nlp/Sheared-LLaMA-1.3B"  # 1.3B params
-      notes: "Sheared-LLaMA 1.3B — larger draft, higher acceptance expected"
+    - id: "A1_llama3_3b"
+      draft_model_name: "meta-llama/Llama-3.2-3B"   # 3B params, LLaMA-3 tokenizer
+      notes: "LLaMA-3.2 3B — larger draft, higher acceptance expected"
 
 # ---------------------------------------------------------------------------
 # A2 — Number of Speculative Steps (k)
@@ -110,11 +112,19 @@ A4:
 A5:
   name: "target_model"
   factor: "target_model_name"
+  # Draft model must match the target's family/tokenizer.
+  # LLaMA target → LLaMA-3.2-1B draft (default)
+  # Mistral target → Mistral family draft (Ministral-3B, smallest available)
   levels:
-    - id: "A5_llama2_7b"
-      target_model_name: "meta-llama/Llama-2-7b-hf"    # matches default
+    - id: "A5_llama3_8b"
+      target_model_name: "meta-llama/Meta-Llama-3.1-8B"   # matches default
+      draft_model_name:  "meta-llama/Llama-3.2-1B"
+      notes: "LLaMA-3.1 8B target with LLaMA-3.2 1B draft"
+
     - id: "A5_mistral_7b"
       target_model_name: "mistralai/Mistral-7B-v0.1"
+      draft_model_name:  "mistralai/Ministral-3B-instruct-2410"
+      notes: "Mistral 7B target with Ministral 3B draft — same family"
 
 # ---------------------------------------------------------------------------
 # Metrics to log (all logged to wandb + local CSV)

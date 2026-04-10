@@ -169,18 +169,16 @@ def build_prompt(context_length: int, tokenizer) -> str:
 # Single run executor
 # ---------------------------------------------------------------------------
 
-def execute_run(run: dict, wandb_project: str) -> dict:
-    """Instantiate RASDInference, run generate(), return result row."""
+def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
+    """Worker executed in a subprocess — full isolation, fresh CUDA context."""
+    import json, sys
     from src.models.rasd_inference import RASDConfig, RASDInference
-
-    log.info("▶  %s  (seed=%d)", run["run_id"], run["seed"])
 
     row = {f: run.get(f, "") for f in CSV_FIELDS}
     row["status"] = "error"
     row["error"]  = ""
 
     wb_run = init_wandb(run, wandb_project)
-
     try:
         cfg = RASDConfig(
             target_model_name = run["target_model_name"],
@@ -197,9 +195,7 @@ def execute_run(run: dict, wandb_project: str) -> dict:
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
         )
-
         engine = RASDInference(cfg)
-
         prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
         _, metrics = engine.generate_text(prompt)
 
@@ -213,26 +209,55 @@ def execute_run(run: dict, wandb_project: str) -> dict:
             "n_rounds":         metrics["n_rounds"],
             "status":           "ok",
         })
-
-        log.info(
-            "✓  %s  tps=%.1f  accept=%.3f  mem=%.0f MB",
-            run["run_id"],
-            metrics["throughput_tps"],
-            metrics["acceptance_rate"],
-            metrics["gpu_peak_mem_mb"],
-        )
         log_wandb(wb_run, metrics)
-
-        # Cleanup to free GPU memory before next run
-        del engine
-        torch.cuda.empty_cache()
-
     except Exception as exc:
-        log.error("✗  %s  FAILED: %s", run["run_id"], exc)
         row["error"] = str(exc)
         if wb_run:
-            import wandb
-            wb_run.finish(exit_code=1)
+            import wandb; wb_run.finish(exit_code=1)
+
+    # Write result to a temp file the parent reads
+    with open(output_csv + f".{run['run_id']}.tmp", "w") as f:
+        json.dump(row, f)
+
+
+def execute_run(run: dict, wandb_project: str, output_csv: str) -> dict:
+    """Run a single ablation in an isolated subprocess to keep CUDA context clean.
+
+    GPU state is contaminated after a CUDA error — running each job in its own
+    process guarantees a fresh device context regardless of previous failures.
+    """
+    import json, subprocess, sys, tempfile
+
+    log.info("▶  %s  (seed=%d)", run["run_id"], run["seed"])
+
+    tmp_result = output_csv + f".{run['run_id']}.tmp"
+    # Spawn: python run_experiment.py --_worker <json-encoded run>
+    cmd = [sys.executable, __file__, "--_worker", json.dumps(run),
+           "--wandb-project", wandb_project, "--output", output_csv]
+    try:
+        subprocess.run(cmd, timeout=1800, check=False,
+                       env={**os.environ,
+                            "WANDB_API_KEY": os.environ.get("WANDB_API_KEY", ""),
+                            "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+                            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "1")})
+    except subprocess.TimeoutExpired:
+        log.error("✗  %s  TIMEOUT after 30min", run["run_id"])
+
+    if os.path.exists(tmp_result):
+        with open(tmp_result) as f:
+            row = json.load(f)
+        os.unlink(tmp_result)
+    else:
+        row = {f: run.get(f, "") for f in CSV_FIELDS}
+        row["status"] = "error"
+        row["error"]  = "subprocess produced no output"
+
+    if row.get("status") == "ok":
+        log.info("✓  %s  tps=%.1f  accept=%.3f  mem=%.0f MB",
+                 run["run_id"], float(row["throughput_tps"]),
+                 float(row["acceptance_rate"]), float(row["gpu_peak_mem_mb"]))
+    else:
+        log.error("✗  %s  FAILED: %s", run["run_id"], row.get("error", "")[:120])
 
     return row
 
@@ -250,7 +275,17 @@ def main():
     parser.add_argument("--resume",   action="store_true", help="Skip runs already in results CSV")
     parser.add_argument("--wandb-project", default="rasd-ablations", help="wandb project name")
     parser.add_argument("--output",   default=str(RESULTS_CSV), help="Output CSV path")
+    # Internal: subprocess worker mode
+    parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    # ---- Subprocess worker path ----
+    if args._worker:
+        import json
+        run = json.loads(args._worker)
+        output_csv = args.output
+        _run_single_worker(run, args.wandb_project, output_csv)
+        return
 
     cfg        = load_config(args.config)
     all_runs   = build_run_configs(cfg, args.groups, args.debug)
@@ -288,7 +323,7 @@ def main():
 
     for i, run in enumerate(pending, 1):
         log.info("[%d/%d]", i, len(pending))
-        row = execute_run(run, args.wandb_project)
+        row = execute_run(run, args.wandb_project, str(output_csv))
         append_csv(output_csv, row)
 
     # Summary

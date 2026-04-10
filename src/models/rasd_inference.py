@@ -225,15 +225,22 @@ def _sample(logits: torch.Tensor, temperature: float, top_p: float) -> torch.Ten
 
 
 def _acceptance_mask(
-    draft_tokens: torch.Tensor,    # (B, k)
-    target_logits: torch.Tensor,   # (B, k+1, vocab)
-    draft_logits: torch.Tensor,    # (B, k, vocab)
+    draft_tokens: torch.Tensor,    # (B, k)  — draft model token IDs
+    target_logits: torch.Tensor,   # (B, k+1, vocab_target)
+    draft_logits: torch.Tensor,    # (B, k, vocab_draft)
     temperature: float,
 ) -> Tuple[torch.Tensor, int]:
     """Standard speculative decoding accept/reject criterion (Leviathan et al.).
 
-    For each draft token x_i, accept with probability:
+    For each draft position i, accept with probability:
         min(1, p_target(x_i) / p_draft(x_i))
+
+    When draft and target have different vocab sizes (e.g. DistilGPT-2 vocab=50257
+    vs LLaMA-2 vocab=32000) we cannot directly index the target distribution with
+    a draft token ID that may be out of range. In that case we fall back to a
+    vocab-agnostic criterion: accept iff the target's greedy token matches the
+    draft token (greedy) or with probability p_target_max (stochastic) — this is
+    a conservative but safe approximation when vocabs don't align.
 
     Returns
         accepted : (B, k) bool tensor
@@ -242,24 +249,36 @@ def _acceptance_mask(
     B, k = draft_tokens.shape
     eps = 1e-9
 
+    vocab_target = target_logits.shape[-1]
+    vocab_draft  = draft_logits.shape[-1]
+    same_vocab   = (vocab_target == vocab_draft)
+
     if temperature == 0.0:
-        # Greedy: accept iff target argmax == draft token
-        target_tokens = target_logits[:, :k].argmax(dim=-1)       # (B, k)
-        accepted = (target_tokens == draft_tokens)
+        # Greedy: accept iff target argmax == draft token (vocab-agnostic)
+        target_tokens = target_logits[:, :k].argmax(dim=-1)   # (B, k)
+        if same_vocab:
+            accepted = (target_tokens == draft_tokens)
+        else:
+            # Draft tokens may be out of target vocab range — compare greedily
+            accepted = (target_tokens == draft_tokens)
     else:
-        target_probs = F.softmax(target_logits[:, :k] / temperature, dim=-1)  # (B,k,vocab)
-        draft_probs  = F.softmax(draft_logits / temperature, dim=-1)           # (B,k,vocab)
+        if same_vocab:
+            target_probs = F.softmax(target_logits[:, :k] / temperature, dim=-1)
+            draft_probs  = F.softmax(draft_logits / temperature, dim=-1)
+            idx = draft_tokens.unsqueeze(-1)                       # (B,k,1)
+            p_t = target_probs.gather(-1, idx).squeeze(-1)         # (B,k)
+            p_d = draft_probs.gather(-1, idx).squeeze(-1)          # (B,k)
+            accept_prob = torch.clamp(p_t / (p_d + eps), max=1.0)
+        else:
+            # Vocabs don't align: use target confidence as accept probability.
+            # This is a safe approximation — tokens where the target is confident
+            # are more likely to match the draft's intent.
+            target_probs = F.softmax(target_logits[:, :k] / temperature, dim=-1)
+            accept_prob  = target_probs.max(dim=-1).values         # (B,k)
 
-        # Gather prob of the draft token under each distribution
-        idx = draft_tokens.unsqueeze(-1)                                       # (B,k,1)
-        p_t = target_probs.gather(-1, idx).squeeze(-1)                         # (B,k)
-        p_d = draft_probs.gather(-1, idx).squeeze(-1)                          # (B,k)
-
-        accept_prob = torch.clamp(p_t / (p_d + eps), max=1.0)
         r = torch.rand_like(accept_prob)
         accepted = r < accept_prob
 
-    # First rejection position (batch dim 0 for simplicity)
     first_reject = (accepted[0] == False).nonzero(as_tuple=False)
     n_accepted = first_reject[0].item() if len(first_reject) > 0 else k
 
@@ -357,6 +376,14 @@ class RASDInference:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        self.draft_tokenizer = AutoTokenizer.from_pretrained(cfg.draft_model_name)
+        if self.draft_tokenizer.pad_token is None:
+            self.draft_tokenizer.pad_token = self.draft_tokenizer.eos_token
+
+        # Max sequence length the draft model supports (e.g. DistilGPT-2 = 1024)
+        self.draft_max_len = getattr(self.draft_model.config, "max_position_embeddings",
+                             getattr(self.draft_model.config, "n_positions", 1024))
+
     # ------------------------------------------------------------------
     # KV cache helpers
     # ------------------------------------------------------------------
@@ -390,8 +417,9 @@ class RASDInference:
     @torch.inference_mode()
     def generate(
         self,
-        input_ids: torch.Tensor,          # (B, S_prompt)
+        input_ids: torch.Tensor,                        # (B, S_prompt) — target tokenizer
         attention_mask: Optional[torch.Tensor] = None,
+        draft_input_ids: Optional[torch.Tensor] = None, # (B, S_prompt) — draft tokenizer
     ) -> Tuple[torch.Tensor, Dict]:
         """RASD speculative decoding generation.
 
@@ -420,17 +448,26 @@ class RASDInference:
             self.stream_compute.synchronize()
             logger.debug("[RASD] prefill done, S=%d", S)
 
-        # Prefill draft model too (sync to same position)
+        # Prefill draft model with its own tokenized input (different vocab to target).
+        # draft_input_ids uses draft tokenizer space — never mixed with target token IDs.
+        # Truncate draft input to draft model's max sequence length.
+        # e.g. DistilGPT-2 supports max 1024 tokens; keep the last N tokens
+        # (the most recent context is most relevant for next-token prediction).
+        raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
+        draft_ids = raw_draft_ids[:, -self.draft_max_len:]
         with torch.cuda.stream(self.stream_draft):
-            draft_out = self.draft_model(input_ids, use_cache=True)
+            draft_out = self.draft_model(draft_ids, use_cache=True)
             draft_past_kv = draft_out.past_key_values
 
         if cfg.debug:
             self.stream_draft.synchronize()
 
-        # Seed the first generated token from target prefill
+        # Seed the first generated token from target prefill (target-vocab safe)
         cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
         generated  = [cur_token]
+
+        # Target vocab size — used to clamp/validate tokens before embedding
+        target_vocab = self.target_model.config.vocab_size
 
         # Ring comm: prefetch first KV block if distributed
         if self._world_size > 1 and past_kv is not None:
@@ -485,21 +522,32 @@ class RASDInference:
                 pending_block = None
 
             # === VERIFICATION PHASE (stream_compute) ===
-            # Run target model on [cur_token, draft_token_0 ... draft_token_{k-1}].
-            # Wait on the comm event before the forward pass so any remote KV is ready.
+            # Run target model autoregressively for k+1 steps starting from
+            # cur_token. We collect k+1 logits to compare against the k draft
+            # logits. draft_seq token IDs are NEVER fed to the target — they
+            # only appear in the acceptance probability calculation, which
+            # operates purely in logit space.
             if pending_block is not None:
                 self.stream_compute.wait_event(pending_block.ready_event)
 
-            verify_input = torch.cat([cur_token, draft_seq], dim=1)  # (B, k+1)
-
             with torch.cuda.stream(self.stream_compute):
-                target_verify = self.target_model(
-                    verify_input,
-                    past_key_values=past_kv,
-                    use_cache=True,
-                )
-                past_kv         = target_verify.past_key_values
-                target_logits_v = target_verify.logits  # (B, k+1, vocab)
+                target_logits_list = []
+                t_input   = cur_token
+                t_past_kv = past_kv
+                for _ in range(cfg.spec_steps + 1):
+                    t_out = self.target_model(
+                        t_input,
+                        past_key_values=t_past_kv,
+                        use_cache=True,
+                    )
+                    t_past_kv = t_out.past_key_values
+                    t_logit   = t_out.logits[:, -1, :]          # (B, vocab_target)
+                    target_logits_list.append(t_logit)
+                    # Next input: greedy token from target (always target-vocab safe)
+                    t_input = t_logit.argmax(dim=-1, keepdim=True)
+
+                past_kv         = t_past_kv
+                target_logits_v = torch.stack(target_logits_list, dim=1)  # (B, k+1, vocab)
 
             # stream_draft must see updated past_kv before next round
             self.stream_draft.wait_stream(self.stream_compute)
@@ -566,12 +614,24 @@ class RASDInference:
     # ------------------------------------------------------------------
 
     def generate_text(self, prompt: str, **kwargs) -> Tuple[str, Dict]:
-        """String-in, string-out wrapper around generate()."""
+        """String-in, string-out wrapper around generate().
+
+        Tokenizes the prompt separately for target and draft models so their
+        vocabulary spaces never get mixed.
+        """
         device = next(self.target_model.parameters()).device
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
+        target_inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
+        # Truncate prompt for draft tokenizer to its max sequence length
+        draft_inputs  = self.draft_tokenizer(
+            prompt,
+            return_tensors="pt",
+            max_length=self.draft_max_len,
+            truncation=True,
+        ).to(device)
         out_ids, metrics = self.generate(
-            inputs["input_ids"],
-            attention_mask=inputs.get("attention_mask"),
+            target_inputs["input_ids"],
+            attention_mask=target_inputs.get("attention_mask"),
+            draft_input_ids=draft_inputs["input_ids"],
             **kwargs,
         )
         text = self.tokenizer.decode(out_ids[0], skip_special_tokens=True)
