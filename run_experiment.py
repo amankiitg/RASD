@@ -169,7 +169,7 @@ def build_prompt(context_length: int, tokenizer) -> str:
 # Single run executor
 # ---------------------------------------------------------------------------
 
-def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int):
+def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int, signal_group=None):
     """Non-rank-0 peer process for the ring KV communication.
 
     Ordering contract (mirrors generate() in rasd_inference.py):
@@ -198,17 +198,25 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int):
     v_recv = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
 
     prev_reqs = []
+    _round = 0
     while True:
         # Wait on prev P2P, relay received data into send buffer, then broadcast
+        print(f"[TRACE peer rank={local_rank}] round={_round} draining {len(prev_reqs)} prev reqs", flush=True)
         for r in prev_reqs:
             r.wait()
         prev_reqs = []
         k_send.copy_(k_recv)
         v_send.copy_(v_recv)
 
-        dist.broadcast(signal, src=0)
+        print(f"[TRACE peer rank={local_rank}] round={_round} waiting on broadcast", flush=True)
+        # Use dedicated signal_group so broadcast has its own NCCL sequence
+        # counter, isolated from P2P ops on the default group. This is what
+        # resolves the off-by-one deadlock at kv_block_size=1024/2048.
+        dist.broadcast(signal, src=0, group=signal_group)
+        print(f"[TRACE peer rank={local_rank}] round={_round} broadcast recv, signal={signal.item()}", flush=True)
         if signal.item() == 0:
             break
+        _round += 1
 
         ops = [
             dist.P2POp(dist.isend, k_send, send_to),
@@ -241,10 +249,30 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     if world_size > 1:
         torch.cuda.set_device(local_rank)
-        dist.init_process_group(backend="nccl")
+        # device_id is required for PyTorch 2.x+ to eagerly bind the NCCL
+        # communicator to a specific device. Without it, NCCL initialises
+        # lazily on the first collective, which has caused subtle ordering
+        # bugs (SeqNum mismatch deadlock) in the kv_block_size=1024/2048 runs.
+        dist.init_process_group(
+            backend="nccl",
+            device_id=torch.device(f"cuda:{local_rank}"),
+        )
+        # Create a dedicated NCCL sub-group for the broadcast signal. This
+        # isolates the broadcast sequence counter from the P2P ops on the
+        # default group, which fixes the off-by-one deadlock observed at
+        # kv_block_size=1024/2048 (rank 0 racing ahead by 1 iteration).
+        # MUST be called collectively by ALL ranks in the same order, before
+        # rank 0 diverges into model loading.
+        signal_group = dist.new_group(
+            ranks=list(range(world_size)), backend="nccl"
+        )
         if local_rank != 0:
             # Non-rank-0: participate in ring comms only, then exit
-            _ring_peer_loop(local_rank, world_size, int(run.get("kv_block_size", 512)))
+            _ring_peer_loop(
+                local_rank, world_size,
+                int(run.get("kv_block_size", 512)),
+                signal_group=signal_group,
+            )
             dist.destroy_process_group()
             return
     else:
@@ -272,6 +300,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             debug             = bool(run.get("debug", False)),
         )
         engine = RASDInference(cfg)
+        if world_size > 1:
+            engine._signal_group = signal_group
         prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
         _, metrics = engine.generate_text(prompt)
 

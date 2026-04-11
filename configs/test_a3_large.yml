@@ -1,0 +1,33 @@
+# Targeted smoke test for A3_block1024 / A3_block2048
+#
+# Purpose: validate that the NCCL SeqNum ordering fix + ready_event.record()
+# fix together resolve the block1024 deadlock observed in the nproc=8 re-run.
+#
+# Minimal config — single seed, short generation — to get a pass/fail signal
+# in ~15 minutes before committing to the full A3/A4 grid.
+#
+# No canary block: runner skips the canary phase if `canary:` is absent.
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  spec_steps:        4
+  kv_block_size:     512
+  prefetch_depth:    1
+  max_new_tokens:    64          # short — just enough to exercise the ring loop
+  context_length:    8192
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42]        # single seed — smoke test only
+
+A3:
+  name: "kv_block_size"
+  factor: "kv_block_size"
+  levels:
+    - id: "A3_block1024"
+      kv_block_size: 1024
+    - id: "A3_block2048"
+      kv_block_size: 2048

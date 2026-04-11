@@ -175,14 +175,25 @@ class AsyncKVRingPrefetcher:
             rank_src=self.recv_from,
         )
 
-        with torch.cuda.stream(self.stream):
-            ops = [
-                dist.P2POp(dist.isend, k_send, self.send_to),
-                dist.P2POp(dist.isend, v_send, self.send_to),
-                dist.P2POp(dist.irecv, k_recv_buf, self.recv_from),
-                dist.P2POp(dist.irecv, v_recv_buf, self.recv_from),
-            ]
-            reqs = dist.batch_isend_irecv(ops)
+        # NCCL sequence ordering fix: submit P2P from the default stream (not
+        # self.stream) so that on rank 0, broadcast and batch_isend_irecv share
+        # the same stream — matching the peer ranks in _ring_peer_loop. Mixing
+        # streams caused an off-by-one in NCCL's sequence counter between rank 0
+        # and peers at kv_block_size=1024/2048 (rank 0 submitted round N+1 before
+        # round N's P2P transmitted, peers still waiting on broadcast N).
+        # Compute/comm overlap is preserved because NCCL internally uses its own
+        # stream regardless of the submission stream.
+        ops = [
+            dist.P2POp(dist.isend, k_send, self.send_to),
+            dist.P2POp(dist.isend, v_send, self.send_to),
+            dist.P2POp(dist.irecv, k_recv_buf, self.recv_from),
+            dist.P2POp(dist.irecv, v_recv_buf, self.recv_from),
+        ]
+        reqs = dist.batch_isend_irecv(ops)
+        # Record the event on default stream AFTER P2P submission so that
+        # stream_compute.wait_event(block.ready_event) stalls compute stream
+        # until the irecv is complete — preventing data races at block 1024+.
+        block.ready_event.record()
 
         # Store reqs for the caller to wait on before the next broadcast.
         # Do NOT auto-wait here — the caller controls timing for overlap.
@@ -294,6 +305,10 @@ class RASDInference:
         # Ring state (set when distributed is active)
         self._rank       = dist.get_rank()       if dist.is_initialized() else 0
         self._world_size = dist.get_world_size() if dist.is_initialized() else 1
+        # Optional dedicated NCCL sub-group for broadcast signal. Set externally
+        # by run_experiment.py before generate() so that broadcast operations
+        # don't share a NCCL sequence counter with P2P ops on the default group.
+        self._signal_group = None
 
         self._prefetcher = AsyncKVRingPrefetcher(
             stream=self.stream_comm,
@@ -434,7 +449,10 @@ class RASDInference:
         torch.cuda.reset_peak_memory_stats(device)
         t_start = time.perf_counter()
 
+        print(f"[TRACE rank={self._rank}] generate() start, S={S}, block_size={cfg.kv_block_size}", flush=True)
+
         # ---- Prefill: run target model on the prompt to get KV cache ----
+        print(f"[TRACE rank={self._rank}] calling target prefill...", flush=True)
         with torch.cuda.stream(self.stream_compute):
             target_out = self.target_model(
                 input_ids,
@@ -443,9 +461,10 @@ class RASDInference:
             )
             past_kv        = target_out.past_key_values
             next_token_logit = target_out.logits[:, -1, :]
+        self.stream_compute.synchronize()
+        print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
 
         if cfg.debug:
-            self.stream_compute.synchronize()
             logger.debug("[RASD] prefill done, S=%d", S)
 
         # Prefill draft model — same tokenizer/vocab as target (LLaMA-2 SentencePiece, vocab=32000).
@@ -453,12 +472,15 @@ class RASDInference:
         # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens for recency.
         raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
         draft_ids = raw_draft_ids[:, -self.draft_max_len:]
+        print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
         with torch.cuda.stream(self.stream_draft):
             draft_out = self.draft_model(draft_ids, use_cache=True)
             draft_past_kv = draft_out.past_key_values
+        self.stream_draft.synchronize()
+        print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
 
         if cfg.debug:
-            self.stream_draft.synchronize()
+            pass
 
         # Seed the first generated token from target prefill (target-vocab safe)
         cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
@@ -516,13 +538,19 @@ class RASDInference:
             # stream_compute while this round's P2P runs on stream_comm concurrently.
             if self._world_size > 1 and past_kv is not None:
                 # 1. Drain previous round's P2P before signalling (maintains NCCL order)
+                print(f"[TRACE rank={self._rank}] round={n_rounds} draining {len(pending_reqs)} pending P2P reqs", flush=True)
                 for r in pending_reqs:
                     r.wait()
                 pending_reqs = []
 
-                # 2. Broadcast "continue" to all peer ranks
+                # 2. Broadcast "continue" to all peer ranks on the dedicated
+                # signal group so its NCCL sequence counter is isolated from
+                # the default group's P2P sequence. Fixes off-by-one deadlock
+                # at kv_block_size=1024/2048.
+                print(f"[TRACE rank={self._rank}] round={n_rounds} broadcasting signal", flush=True)
                 steps_buf = torch.tensor([1], dtype=torch.long, device=self._device)
-                dist.broadcast(steps_buf, src=0)
+                dist.broadcast(steps_buf, src=0, group=self._signal_group)
+                print(f"[TRACE rank={self._rank}] round={n_rounds} broadcast done", flush=True)
 
                 # 3. Submit this round's P2P — runs on stream_comm (async with compute)
                 block_idx = (n_rounds + 1) % self._world_size
@@ -591,11 +619,12 @@ class RASDInference:
 
         # ---- Finalize ----
         # Drain any final pending P2P reqs, then signal peers to exit.
+        # Use the dedicated signal_group so NCCL sequence counters stay isolated.
         if self._world_size > 1:
             for r in pending_reqs:
                 r.wait()
             done_buf = torch.tensor([0], dtype=torch.long, device=self._device)
-            dist.broadcast(done_buf, src=0)
+            dist.broadcast(done_buf, src=0, group=self._signal_group)
 
         torch.cuda.synchronize()
         t_end = time.perf_counter()
