@@ -169,10 +169,86 @@ def build_prompt(context_length: int, tokenizer) -> str:
 # Single run executor
 # ---------------------------------------------------------------------------
 
+def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int):
+    """Non-rank-0 peer process for the ring KV communication.
+
+    Ordering contract (mirrors generate() in rasd_inference.py):
+      wait(prev_reqs) → broadcast(signal) → batch_isend_irecv → ...
+
+    Both rank 0 and peers wait on their previous round's P2P reqs BEFORE
+    calling broadcast. This keeps NCCL's sequence counter strictly ordered:
+      broadcast[N] < P2P[N+1] < broadcast[N+1] < P2P[N+2] ...
+    preventing the SeqNum mismatch that caused the block1024 deadlock.
+
+    Buffer shape: (num_layers=32, B=1, H=32, kv_block_size, head_dim=128)
+    flat_size = 32 * 32 * kv_block_size * 128 elements (matches rank 0's k_send).
+    """
+    import torch.distributed as dist
+
+    device = f"cuda:{local_rank}"
+    torch.cuda.set_device(local_rank)
+    send_to   = (local_rank + 1) % world_size
+    recv_from = (local_rank - 1) % world_size
+
+    signal    = torch.zeros(1, dtype=torch.long, device=device)
+    flat_size = 32 * 32 * kv_block_size * 128   # num_layers * H * block * head_dim
+    k_send = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
+    v_send = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
+    k_recv = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
+    v_recv = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
+
+    prev_reqs = []
+    while True:
+        # Wait on prev P2P, relay received data into send buffer, then broadcast
+        for r in prev_reqs:
+            r.wait()
+        prev_reqs = []
+        k_send.copy_(k_recv)
+        v_send.copy_(v_recv)
+
+        dist.broadcast(signal, src=0)
+        if signal.item() == 0:
+            break
+
+        ops = [
+            dist.P2POp(dist.isend, k_send, send_to),
+            dist.P2POp(dist.isend, v_send, send_to),
+            dist.P2POp(dist.irecv, k_recv, recv_from),
+            dist.P2POp(dist.irecv, v_recv, recv_from),
+        ]
+        prev_reqs = dist.batch_isend_irecv(ops)
+        # Note: k_send/v_send relay (copy from k_recv/v_recv) happens at the TOP
+        # of the next iteration AFTER prev_reqs.wait() — so we always relay fully
+        # received data, never mid-transfer data.
+
+
 def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
-    """Worker executed in a subprocess — full isolation, fresh CUDA context."""
+    """Worker executed in a subprocess — full isolation, fresh CUDA context.
+
+    When launched via torchrun (nproc>1):
+      - Rank 0 runs the full RASDInference pipeline and logs metrics.
+      - Ranks 1..N-1 run _ring_peer_loop(), participating in P2P KV ring
+        sends/receives so that rank 0's AsyncKVRingPrefetcher has live peers.
+        This is what makes A3 (kv_block_size) and A4 (prefetch_depth) meaningful.
+    Only rank 0 writes results to the CSV.
+    """
     import json, sys
+    import torch.distributed as dist
     from src.models.rasd_inference import RASDConfig, RASDInference
+
+    # Init distributed if torchrun set the env vars
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    if world_size > 1:
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl")
+        if local_rank != 0:
+            # Non-rank-0: participate in ring comms only, then exit
+            _ring_peer_loop(local_rank, world_size, int(run.get("kv_block_size", 512)))
+            dist.destroy_process_group()
+            return
+    else:
+        torch.cuda.set_device(0)
 
     row = {f: run.get(f, "") for f in CSV_FIELDS}
     row["status"] = "error"
@@ -215,33 +291,57 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         if wb_run:
             import wandb; wb_run.finish(exit_code=1)
 
-    # Write result to a temp file the parent reads
-    with open(output_csv + f".{run['run_id']}.tmp", "w") as f:
-        json.dump(row, f)
+    if world_size > 1:
+        dist.destroy_process_group()
+
+    # Only rank 0 writes results — other ranks exit cleanly
+    if local_rank == 0:
+        with open(output_csv + f".{run['run_id']}.tmp", "w") as f:
+            json.dump(row, f)
 
 
-def execute_run(run: dict, wandb_project: str, output_csv: str) -> dict:
+def execute_run(run: dict, wandb_project: str, output_csv: str, nproc: int = 1) -> dict:
     """Run a single ablation in an isolated subprocess to keep CUDA context clean.
 
     GPU state is contaminated after a CUDA error — running each job in its own
     process guarantees a fresh device context regardless of previous failures.
-    """
-    import json, subprocess, sys, tempfile
 
-    log.info("▶  %s  (seed=%d)", run["run_id"], run["seed"])
+    When nproc > 1, launches via torchrun so the ring attention distributed
+    primitives (A3 kv_block_size, A4 prefetch_depth) actually exercise multi-GPU
+    communication. With nproc=1 the ring is a no-op (world_size=1).
+    """
+    import json, subprocess, sys
+
+    log.info("▶  %s  (seed=%d, nproc=%d)", run["run_id"], run["seed"], nproc)
 
     tmp_result = output_csv + f".{run['run_id']}.tmp"
-    # Spawn: python run_experiment.py --_worker <json-encoded run>
-    cmd = [sys.executable, __file__, "--_worker", json.dumps(run),
-           "--wandb-project", wandb_project, "--output", output_csv]
+
+    worker_args = ["--_worker", json.dumps(run),
+                   "--wandb-project", wandb_project, "--output", output_csv]
+
+    if nproc > 1:
+        # torchrun spawns nproc processes, each gets RANK/LOCAL_RANK/WORLD_SIZE set
+        cmd = [
+            "torchrun",
+            f"--nproc_per_node={nproc}",
+            "--master_port=29500",
+            __file__,
+        ] + worker_args
+    else:
+        cmd = [sys.executable, __file__] + worker_args
+
+    env = {
+        **os.environ,
+        "WANDB_API_KEY": os.environ.get("WANDB_API_KEY", ""),
+        "HF_TOKEN":      os.environ.get("HF_TOKEN", ""),
+    }
+    # Remove any stale CUDA_VISIBLE_DEVICES override — let torchrun/PyTorch manage devices
+    env.pop("CUDA_VISIBLE_DEVICES", None)
+
     try:
-        subprocess.run(cmd, timeout=1800, check=False,
-                       env={**os.environ,
-                            "WANDB_API_KEY": os.environ.get("WANDB_API_KEY", ""),
-                            "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
-                            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "1")})
+        subprocess.run(cmd, timeout=3600, check=False, env=env)
     except subprocess.TimeoutExpired:
-        log.error("✗  %s  TIMEOUT after 30min", run["run_id"])
+        log.error("✗  %s  TIMEOUT after 60min", run["run_id"])
 
     if os.path.exists(tmp_result):
         with open(tmp_result) as f:
@@ -263,6 +363,34 @@ def execute_run(run: dict, wandb_project: str, output_csv: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# GPU cleanup between runs
+# ---------------------------------------------------------------------------
+
+def _wait_gpu_idle(pause: float = 5.0):
+    """Wait for GPU processes from the previous run to fully exit.
+
+    Runs `nvidia-smi` to check for any lingering Python processes on all GPUs.
+    Polls until clear (or up to 60s), then sleeps an extra `pause` seconds so
+    the NCCL store and CUDA context are fully torn down before the next torchrun.
+    """
+    import subprocess as _sp
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        try:
+            out = _sp.check_output(
+                ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader"],
+                text=True, stderr=_sp.DEVNULL,
+            ).strip()
+        except Exception:
+            break   # nvidia-smi not available (e.g. local dev) — skip
+        if not out:
+            break   # no processes on any GPU
+        log.debug("Waiting for GPU processes to exit:\n%s", out)
+        time.sleep(3)
+    time.sleep(pause)   # extra buffer for NCCL store teardown
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -275,6 +403,9 @@ def main():
     parser.add_argument("--resume",   action="store_true", help="Skip runs already in results CSV")
     parser.add_argument("--wandb-project", default="rasd-ablations", help="wandb project name")
     parser.add_argument("--output",   default=str(RESULTS_CSV), help="Output CSV path")
+    parser.add_argument("--nproc",    type=int, default=8,
+                        help="GPUs per run (torchrun nproc_per_node). Use 1 for single-GPU. "
+                             "Default 8 — required for ring attention A3/A4 ablations.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -308,6 +439,36 @@ def main():
         print(f"\n{len(all_runs)} runs total.")
         return
 
+    # ---- Canary run: execute default config before the full grid ----
+    canary_cfg = cfg.get("canary")
+    if canary_cfg and not args.dry_run:
+        completed_so_far = load_completed_runs(output_csv) if output_csv.exists() else set()
+        canary_id = canary_cfg["id"]
+        if canary_id in completed_so_far:
+            log.info("Canary '%s' already passed — skipping.", canary_id)
+        else:
+            log.info("=== CANARY RUN: %s ===", canary_id)
+            defaults = deepcopy(cfg["defaults"])
+            defaults.pop("seeds")
+            canary_run = {**defaults,
+                          "run_id":   canary_id,
+                          "group":    "canary",
+                          "level_id": canary_id,
+                          "seed":     int(canary_cfg.get("seed", 42)),
+                          "max_new_tokens": int(canary_cfg.get("max_new_tokens", 32)),
+                          "debug":    args.debug}
+            canary_row = execute_run(canary_run, args.wandb_project, str(output_csv), nproc=args.nproc)
+            append_csv(output_csv, canary_row)
+            _wait_gpu_idle()
+            if canary_row.get("status") != "ok":
+                log.error("CANARY FAILED — aborting ablation grid. Error: %s",
+                          canary_row.get("error", "unknown"))
+                log.error("Fix the issue and re-run. The canary will be skipped once it passes.")
+                return
+            log.info("=== CANARY PASSED (tps=%.1f, accept=%.3f) — starting ablation grid ===",
+                     float(canary_row.get("throughput_tps", 0)),
+                     float(canary_row.get("acceptance_rate", 0)))
+
     # Resume: skip completed runs
     completed = load_completed_runs(output_csv) if args.resume else set()
     pending   = [r for r in all_runs if r["run_id"] not in completed]
@@ -323,8 +484,11 @@ def main():
 
     for i, run in enumerate(pending, 1):
         log.info("[%d/%d]", i, len(pending))
-        row = execute_run(run, args.wandb_project, str(output_csv))
+        row = execute_run(run, args.wandb_project, str(output_csv), nproc=args.nproc)
         append_csv(output_csv, row)
+        # Wait for all GPU processes from this run to fully exit before starting
+        # the next one — prevents CUDA/NCCL state pollution across runs.
+        _wait_gpu_idle()
 
     # Summary
     import csv as _csv

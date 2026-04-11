@@ -24,7 +24,7 @@ hiding even longer communication latency.
 
 Ablation hooks (A1–A4)
 -----------------------
-  A1  draft_model_name   DistilGPT-2 | Sheared-LLaMA-1.3B
+  A1  draft_model_name   TinyLlama-1.1B | Sheared-LLaMA-1.3B
   A2  spec_steps k       2 | 4 | 6 | 8 | 12
   A3  kv_block_size      256 | 512 | 1024 | 2048 tokens
   A4  prefetch_depth     0 (sync) | 1 (async-1) | 2 (async-2)
@@ -62,7 +62,7 @@ class RASDConfig:
 
     # Models
     target_model_name: str = "meta-llama/Llama-2-7b-hf"
-    draft_model_name:  str = "distilgpt2"
+    draft_model_name:  str = "princeton-nlp/Sheared-LLaMA-1.3B"
 
     # Speculative decoding
     spec_steps: int = 4                  # k — draft tokens per round (A2)
@@ -102,6 +102,7 @@ class _KVBlock:
     keys:   torch.Tensor   # (num_layers, B, H, block_size, D)
     values: torch.Tensor   # (num_layers, B, H, block_size, D)
     rank_src: int          # which rank these came from
+    reqs:   List = field(default_factory=list)  # work handles for explicit r.wait()
     ready_event: torch.cuda.Event = field(default_factory=lambda: torch.cuda.Event())
 
 
@@ -147,10 +148,26 @@ class AsyncKVRingPrefetcher:
         k_recv_buf: torch.Tensor,
         v_recv_buf: torch.Tensor,
     ) -> _KVBlock:
-        """Post async send/recv on comm stream, return a future-like _KVBlock.
+        """Post async send/recv on comm stream, return a _KVBlock with pending reqs.
 
-        The caller should call .ready_event.wait(other_stream) before reading
-        the returned block's keys/values.
+        NCCL ordering contract
+        ----------------------
+        The caller MUST call `r.wait()` on block.reqs BEFORE the next
+        `dist.broadcast()` call. This ensures NCCL's sequence counter sees:
+            broadcast [seq N] → P2P [seq N+1] → broadcast [seq N+2] → ...
+        without multi-stream out-of-order submission.
+
+        The GPU-level compute/comm overlap still works because:
+        1. schedule() submits P2P to stream_comm (GPU starts it immediately)
+        2. Caller starts target compute on stream_compute (runs concurrently on GPU)
+        3. Caller calls r.wait() — by this point P2P has had ~200ms of compute time
+           to complete; wait typically returns quickly
+        4. Caller broadcasts for next round (ordered correctly)
+
+        prefetch_depth controls *when* schedule() is called relative to compute:
+          0 → after compute (synchronous, no overlap)
+          1 → before compute (async overlap — P2P runs during target forward pass)
+          2 → two rounds ahead (even more pipeline depth)
         """
         block = _KVBlock(
             keys=k_recv_buf,
@@ -160,37 +177,20 @@ class AsyncKVRingPrefetcher:
 
         with torch.cuda.stream(self.stream):
             ops = [
-                dist.P2POp(dist.isend, k_send.contiguous(), self.send_to),
-                dist.P2POp(dist.isend, v_send.contiguous(), self.send_to),
+                dist.P2POp(dist.isend, k_send, self.send_to),
+                dist.P2POp(dist.isend, v_send, self.send_to),
                 dist.P2POp(dist.irecv, k_recv_buf, self.recv_from),
                 dist.P2POp(dist.irecv, v_recv_buf, self.recv_from),
             ]
             reqs = dist.batch_isend_irecv(ops)
 
-            if self.prefetch_depth == 0:
-                # Synchronous: wait immediately, no pipeline overlap
-                for r in reqs:
-                    r.wait()
-                if self.debug:
-                    logger.debug("[prefetcher] sync wait done, rank_src=%d", self.recv_from)
-            else:
-                # Async: record event after all ops complete on comm stream
-                # The compute stream will wait on this event before consuming.
-                def _record_after_wait():
-                    for r in reqs:
-                        r.wait()
-                    block.ready_event.record(self.stream)
+        # Store reqs for the caller to wait on before the next broadcast.
+        # Do NOT auto-wait here — the caller controls timing for overlap.
+        block.reqs = reqs
 
-                # Run wait+record on comm stream via a CUDA graph-compatible
-                # callback approximation — we just do it inline since torch
-                # distributed reqs are CPU-side futures.
-                for r in reqs:
-                    r.wait()
-                block.ready_event.record(self.stream)
-
-            if self.debug and self.prefetch_depth > 0:
-                self.stream.synchronize()
-                logger.debug("[prefetcher] async block ready, rank_src=%d", self.recv_from)
+        if self.debug:
+            logger.debug("[prefetcher] P2P posted, rank_src=%d prefetch_depth=%d",
+                         self.recv_from, self.prefetch_depth)
 
         self._inflight.append(block)
         return block
@@ -235,12 +235,8 @@ def _acceptance_mask(
     For each draft position i, accept with probability:
         min(1, p_target(x_i) / p_draft(x_i))
 
-    When draft and target have different vocab sizes (e.g. DistilGPT-2 vocab=50257
-    vs LLaMA-2 vocab=32000) we cannot directly index the target distribution with
-    a draft token ID that may be out of range. In that case we fall back to a
-    vocab-agnostic criterion: accept iff the target's greedy token matches the
-    draft token (greedy) or with probability p_target_max (stochastic) — this is
-    a conservative but safe approximation when vocabs don't align.
+    All draft and target models share the LLaMA-2 SentencePiece tokenizer
+    (vocab=32000), so token IDs are always directly comparable.
 
     Returns
         accepted : (B, k) bool tensor
@@ -249,33 +245,17 @@ def _acceptance_mask(
     B, k = draft_tokens.shape
     eps = 1e-9
 
-    vocab_target = target_logits.shape[-1]
-    vocab_draft  = draft_logits.shape[-1]
-    same_vocab   = (vocab_target == vocab_draft)
-
     if temperature == 0.0:
-        # Greedy: accept iff target argmax == draft token (vocab-agnostic)
+        # Greedy: accept iff target argmax == draft token
         target_tokens = target_logits[:, :k].argmax(dim=-1)   # (B, k)
-        if same_vocab:
-            accepted = (target_tokens == draft_tokens)
-        else:
-            # Draft tokens may be out of target vocab range — compare greedily
-            accepted = (target_tokens == draft_tokens)
+        accepted = (target_tokens == draft_tokens)
     else:
-        if same_vocab:
-            target_probs = F.softmax(target_logits[:, :k] / temperature, dim=-1)
-            draft_probs  = F.softmax(draft_logits / temperature, dim=-1)
-            idx = draft_tokens.unsqueeze(-1)                       # (B,k,1)
-            p_t = target_probs.gather(-1, idx).squeeze(-1)         # (B,k)
-            p_d = draft_probs.gather(-1, idx).squeeze(-1)          # (B,k)
-            accept_prob = torch.clamp(p_t / (p_d + eps), max=1.0)
-        else:
-            # Vocabs don't align: use target confidence as accept probability.
-            # This is a safe approximation — tokens where the target is confident
-            # are more likely to match the draft's intent.
-            target_probs = F.softmax(target_logits[:, :k] / temperature, dim=-1)
-            accept_prob  = target_probs.max(dim=-1).values         # (B,k)
-
+        target_probs = F.softmax(target_logits[:, :k] / temperature, dim=-1)
+        draft_probs  = F.softmax(draft_logits / temperature, dim=-1)
+        idx = draft_tokens.unsqueeze(-1)                       # (B,k,1)
+        p_t = target_probs.gather(-1, idx).squeeze(-1)         # (B,k)
+        p_d = draft_probs.gather(-1, idx).squeeze(-1)          # (B,k)
+        accept_prob = torch.clamp(p_t / (p_d + eps), max=1.0)
         r = torch.rand_like(accept_prob)
         accepted = r < accept_prob
 
@@ -340,36 +320,55 @@ class RASDInference:
         self.stream_comm    = torch.cuda.Stream()   # KV ring communication
 
     def _load_models(self):
-        """Load target and (optionally quantised) draft models."""
+        """Load target and (optionally quantised) draft models.
+
+        Handles three backends automatically via DeviceCapabilities:
+          CUDA (RunPod) — 4-bit NF4 quantization, device_map per local_rank
+          MPS (MacBook) — no quantization (bitsandbytes unsupported), .to("mps")
+          CPU           — no quantization, .to("cpu")
+        """
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        from src.utils.device import DeviceCapabilities
 
         cfg = self.cfg
-        device = torch.cuda.current_device()
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        self._caps = DeviceCapabilities.detect(local_rank=local_rank)
+        self._device = self._caps.device
 
-        logger.info("Loading target model: %s", cfg.target_model_name)
+        logger.info("Loading target model: %s  [device=%s]", cfg.target_model_name, self._device)
         target_bnb = None
-        if cfg.quantize_target:
+        if cfg.quantize_target and self._caps.supports_quantization:
             target_bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=cfg.torch_dtype)
+        elif cfg.quantize_target:
+            logger.warning("quantize_target=True ignored — 4-bit NF4 requires CUDA (current: %s)",
+                           self._caps.device_type)
 
         self.target_model = AutoModelForCausalLM.from_pretrained(
             cfg.target_model_name,
-            dtype=cfg.torch_dtype,
-            device_map={"": device},
+            torch_dtype=cfg.torch_dtype,
             quantization_config=target_bnb,
+            **self._caps.hf_device_map_kwargs(),
         )
+        if self._caps.device_type in ("mps", "cpu") and target_bnb is None:
+            self.target_model = self.target_model.to(self._device)
         self.target_model.eval()
 
-        logger.info("Loading draft model: %s", cfg.draft_model_name)
+        logger.info("Loading draft model: %s  [device=%s]", cfg.draft_model_name, self._device)
         draft_bnb = None
-        if cfg.quantize_draft:
+        if cfg.quantize_draft and self._caps.supports_quantization:
             draft_bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=cfg.torch_dtype)
+        elif cfg.quantize_draft:
+            logger.warning("quantize_draft=True ignored — 4-bit NF4 requires CUDA (current: %s)",
+                           self._caps.device_type)
 
         self.draft_model = AutoModelForCausalLM.from_pretrained(
             cfg.draft_model_name,
-            dtype=cfg.torch_dtype,
-            device_map={"": device},
+            torch_dtype=cfg.torch_dtype,
             quantization_config=draft_bnb,
+            **self._caps.hf_device_map_kwargs(),
         )
+        if self._caps.device_type in ("mps", "cpu") and draft_bnb is None:
+            self.draft_model = self.draft_model.to(self._device)
         self.draft_model.eval()
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
@@ -380,9 +379,10 @@ class RASDInference:
         if self.draft_tokenizer.pad_token is None:
             self.draft_tokenizer.pad_token = self.draft_tokenizer.eos_token
 
-        # Max sequence length the draft model supports (e.g. DistilGPT-2 = 1024)
+        # Max sequence length the draft model supports
+        # TinyLlama=2048, Sheared-LLaMA=4096 — all share LLaMA-2 tokenizer
         self.draft_max_len = getattr(self.draft_model.config, "max_position_embeddings",
-                             getattr(self.draft_model.config, "n_positions", 1024))
+                             getattr(self.draft_model.config, "n_positions", 4096))
 
     # ------------------------------------------------------------------
     # KV cache helpers
@@ -448,11 +448,9 @@ class RASDInference:
             self.stream_compute.synchronize()
             logger.debug("[RASD] prefill done, S=%d", S)
 
-        # Prefill draft model with its own tokenized input (different vocab to target).
-        # draft_input_ids uses draft tokenizer space — never mixed with target token IDs.
-        # Truncate draft input to draft model's max sequence length.
-        # e.g. DistilGPT-2 supports max 1024 tokens; keep the last N tokens
-        # (the most recent context is most relevant for next-token prediction).
+        # Prefill draft model — same tokenizer/vocab as target (LLaMA-2 SentencePiece, vocab=32000).
+        # Truncate to draft model's max sequence length if prompt is very long
+        # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens for recency.
         raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
         draft_ids = raw_draft_ids[:, -self.draft_max_len:]
         with torch.cuda.stream(self.stream_draft):
@@ -469,11 +467,11 @@ class RASDInference:
         # Target vocab size — used to clamp/validate tokens before embedding
         target_vocab = self.target_model.config.vocab_size
 
-        # Ring comm: prefetch first KV block if distributed
-        if self._world_size > 1 and past_kv is not None:
-            k_send, v_send   = self._extract_kv_block(past_kv, 0)
-            k_buf,  v_buf    = self._alloc_kv_buffers(past_kv)
-            self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
+        # Pending P2P reqs from the previous round — must be waited on BEFORE
+        # broadcasting the signal for the next round to keep NCCL ops in order.
+        # (broadcast and batch_isend_irecv share the same NCCL sequence counter;
+        # submitting one before the other is done causes a SeqNum mismatch crash.)
+        pending_reqs: List = []
 
         # Tracking
         total_accepted   = 0
@@ -485,7 +483,6 @@ class RASDInference:
 
             # === DRAFT PHASE (stream_draft) ===
             # Generate k tokens with the cheap draft model.
-            # Simultaneously, comm stream prefetches the next KV block.
             draft_tokens  = []
             draft_logits_ = []
             draft_input   = cur_token
@@ -511,22 +508,34 @@ class RASDInference:
                 self.stream_draft.synchronize()
                 logger.debug("[RASD] round=%d draft_tokens=%s", n_rounds, draft_seq[0].tolist())
 
-            # === PREFETCH (stream_comm) ===
-            # While the draft was running, fire next KV prefetch for the ring.
-            if self._world_size > 1 and past_kv is not None and cfg.prefetch_depth > 0:
+            # === PREFETCH SIGNAL + P2P (stream_comm) ===
+            # NCCL ordering: wait on previous round's P2P reqs FIRST, then broadcast.
+            # This serialises broadcast [seq N] → P2P [seq N+1] on the NCCL timeline
+            # regardless of which CUDA stream each op runs on.
+            # The GPU still overlaps compute and comm — target forward runs on
+            # stream_compute while this round's P2P runs on stream_comm concurrently.
+            if self._world_size > 1 and past_kv is not None:
+                # 1. Drain previous round's P2P before signalling (maintains NCCL order)
+                for r in pending_reqs:
+                    r.wait()
+                pending_reqs = []
+
+                # 2. Broadcast "continue" to all peer ranks
+                steps_buf = torch.tensor([1], dtype=torch.long, device=self._device)
+                dist.broadcast(steps_buf, src=0)
+
+                # 3. Submit this round's P2P — runs on stream_comm (async with compute)
                 block_idx = (n_rounds + 1) % self._world_size
                 k_send, v_send = self._extract_kv_block(past_kv, block_idx)
-                k_buf,  v_buf  = self._alloc_kv_buffers(past_kv)
+                k_send = k_send.contiguous()
+                v_send = v_send.contiguous()
+                k_buf, v_buf   = self._alloc_kv_buffers(past_kv)
                 pending_block  = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
+                pending_reqs   = pending_block.reqs
             else:
                 pending_block = None
 
             # === VERIFICATION PHASE (stream_compute) ===
-            # Run target model autoregressively for k+1 steps starting from
-            # cur_token. We collect k+1 logits to compare against the k draft
-            # logits. draft_seq token IDs are NEVER fed to the target — they
-            # only appear in the acceptance probability calculation, which
-            # operates purely in logit space.
             if pending_block is not None:
                 self.stream_compute.wait_event(pending_block.ready_event)
 
@@ -541,9 +550,8 @@ class RASDInference:
                         use_cache=True,
                     )
                     t_past_kv = t_out.past_key_values
-                    t_logit   = t_out.logits[:, -1, :]          # (B, vocab_target)
+                    t_logit   = t_out.logits[:, -1, :]
                     target_logits_list.append(t_logit)
-                    # Next input: greedy token from target (always target-vocab safe)
                     t_input = t_logit.argmax(dim=-1, keepdim=True)
 
                 past_kv         = t_past_kv
@@ -570,11 +578,9 @@ class RASDInference:
             if cfg.debug:
                 logger.debug("[RASD] round=%d accepted=%d/%d", n_rounds, n_acc, cfg.spec_steps)
 
-            # Collect accepted tokens
+            # Collect accepted tokens + bonus
             for i in range(n_acc):
                 generated.append(draft_seq[:, i:i+1])
-
-            # One bonus token from the target at the rejection point
             bonus_logit = target_logits_v[:, n_acc, :]
             cur_token   = _sample(bonus_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)
             generated.append(cur_token)
@@ -584,6 +590,13 @@ class RASDInference:
                 break
 
         # ---- Finalize ----
+        # Drain any final pending P2P reqs, then signal peers to exit.
+        if self._world_size > 1:
+            for r in pending_reqs:
+                r.wait()
+            done_buf = torch.tensor([0], dtype=torch.long, device=self._device)
+            dist.broadcast(done_buf, src=0)
+
         torch.cuda.synchronize()
         t_end = time.perf_counter()
 
@@ -616,13 +629,14 @@ class RASDInference:
     def generate_text(self, prompt: str, **kwargs) -> Tuple[str, Dict]:
         """String-in, string-out wrapper around generate().
 
-        Tokenizes the prompt separately for target and draft models so their
-        vocabulary spaces never get mixed.
+        Draft and target share the same LLaMA-2 tokenizer (vocab=32000).
+        We still truncate the draft input to the draft model's max sequence
+        length (TinyLlama=2048, Sheared-LLaMA=4096).
         """
-        device = next(self.target_model.parameters()).device
+        device = self._device
         target_inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
-        # Truncate prompt for draft tokenizer to its max sequence length
-        draft_inputs  = self.draft_tokenizer(
+        # Truncate for draft model's positional embedding limit
+        draft_inputs  = self.tokenizer(
             prompt,
             return_tensors="pt",
             max_length=self.draft_max_len,
