@@ -537,29 +537,25 @@ class RASDInference:
             # The GPU still overlaps compute and comm — target forward runs on
             # stream_compute while this round's P2P runs on stream_comm concurrently.
             if self._world_size > 1 and past_kv is not None:
-                # 1. Drain previous round's P2P before signalling (maintains NCCL order)
+                # 1. Drain previous round's P2P (ensures NCCL ordering)
                 print(f"[TRACE rank={self._rank}] round={n_rounds} draining {len(pending_reqs)} pending P2P reqs", flush=True)
                 for r in pending_reqs:
                     r.wait()
                 pending_reqs = []
 
-                # 2. Broadcast "continue" to all peer ranks on the dedicated
-                # signal group so its NCCL sequence counter is isolated from
-                # the default group's P2P sequence. Fixes off-by-one deadlock
-                # at kv_block_size=1024/2048.
-                print(f"[TRACE rank={self._rank}] round={n_rounds} broadcasting signal", flush=True)
-                steps_buf = torch.tensor([1], dtype=torch.long, device=self._device)
-                dist.broadcast(steps_buf, src=0, group=self._signal_group)
-                print(f"[TRACE rank={self._rank}] round={n_rounds} broadcast done", flush=True)
-
-                # 3. Submit this round's P2P — runs on stream_comm (async with compute)
+                # 2. Submit this round's P2P (no signal — peers run for a
+                # fixed max_new_tokens rounds, eliminating the need for any
+                # collective in the loop and avoiding the NCCL deadlock that
+                # broadcast/all_reduce on sub-groups caused at block≥1024).
                 block_idx = (n_rounds + 1) % self._world_size
                 k_send, v_send = self._extract_kv_block(past_kv, block_idx)
                 k_send = k_send.contiguous()
                 v_send = v_send.contiguous()
                 k_buf, v_buf   = self._alloc_kv_buffers(past_kv)
                 pending_block  = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
+                self._prefetcher._inflight.clear()  # we track reqs via pending_reqs; don't accumulate blocks
                 pending_reqs   = pending_block.reqs
+                print(f"[TRACE rank={self._rank}] round={n_rounds} P2P submitted", flush=True)
             else:
                 pending_block = None
 
@@ -618,13 +614,27 @@ class RASDInference:
                 break
 
         # ---- Finalize ----
-        # Drain any final pending P2P reqs, then signal peers to exit.
-        # Use the dedicated signal_group so NCCL sequence counters stay isolated.
+        # Drain last P2P, then continue doing dummy P2P rounds so peers
+        # (which run for exactly max_new_tokens rounds) don't hang.
         if self._world_size > 1:
             for r in pending_reqs:
                 r.wait()
-            done_buf = torch.tensor([0], dtype=torch.long, device=self._device)
-            dist.broadcast(done_buf, src=0, group=self._signal_group)
+            pending_reqs = []
+
+            # Peers expect max_new_tokens total P2P rounds. Rank 0 did
+            # n_rounds so far. Continue with dummy P2P for the remainder.
+            remaining = cfg.max_new_tokens - n_rounds
+            if remaining > 0 and past_kv is not None:
+                k_send, v_send = self._extract_kv_block(past_kv, 0)
+                k_send = k_send.contiguous()
+                v_send = v_send.contiguous()
+                k_buf, v_buf = self._alloc_kv_buffers(past_kv)
+                print(f"[TRACE rank={self._rank}] draining {remaining} remaining P2P rounds for peers", flush=True)
+                for i in range(remaining):
+                    block = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
+                    self._prefetcher._inflight.clear()
+                    for r in block.reqs:
+                        r.wait()
 
         torch.cuda.synchronize()
         t_end = time.perf_counter()

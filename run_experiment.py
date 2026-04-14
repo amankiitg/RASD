@@ -169,16 +169,16 @@ def build_prompt(context_length: int, tokenizer) -> str:
 # Single run executor
 # ---------------------------------------------------------------------------
 
-def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int, signal_group=None):
+def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int,
+                    max_rounds: int, signal_group=None):
     """Non-rank-0 peer process for the ring KV communication.
 
-    Ordering contract (mirrors generate() in rasd_inference.py):
-      wait(prev_reqs) → broadcast(signal) → batch_isend_irecv → ...
+    Runs for exactly `max_rounds` P2P rounds (= max_new_tokens from config).
+    No collective signalling — eliminates the NCCL broadcast/all_reduce
+    deadlock that occurred at kv_block_size≥1024.
 
-    Both rank 0 and peers wait on their previous round's P2P reqs BEFORE
-    calling broadcast. This keeps NCCL's sequence counter strictly ordered:
-      broadcast[N] < P2P[N+1] < broadcast[N+1] < P2P[N+2] ...
-    preventing the SeqNum mismatch that caused the block1024 deadlock.
+    Ordering contract (mirrors generate() in rasd_inference.py):
+      wait(prev_reqs) → batch_isend_irecv → ...
 
     Buffer shape: (num_layers=32, B=1, H=32, kv_block_size, head_dim=128)
     flat_size = 32 * 32 * kv_block_size * 128 elements (matches rank 0's k_send).
@@ -190,7 +190,6 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int, signal
     send_to   = (local_rank + 1) % world_size
     recv_from = (local_rank - 1) % world_size
 
-    signal    = torch.zeros(1, dtype=torch.long, device=device)
     flat_size = 32 * 32 * kv_block_size * 128   # num_layers * H * block * head_dim
     k_send = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
     v_send = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
@@ -198,25 +197,14 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int, signal
     v_recv = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
 
     prev_reqs = []
-    _round = 0
-    while True:
-        # Wait on prev P2P, relay received data into send buffer, then broadcast
+    for _round in range(max_rounds):
+        # Wait on prev P2P, relay received data into send buffer
         print(f"[TRACE peer rank={local_rank}] round={_round} draining {len(prev_reqs)} prev reqs", flush=True)
         for r in prev_reqs:
             r.wait()
         prev_reqs = []
         k_send.copy_(k_recv)
         v_send.copy_(v_recv)
-
-        print(f"[TRACE peer rank={local_rank}] round={_round} waiting on broadcast", flush=True)
-        # Use dedicated signal_group so broadcast has its own NCCL sequence
-        # counter, isolated from P2P ops on the default group. This is what
-        # resolves the off-by-one deadlock at kv_block_size=1024/2048.
-        dist.broadcast(signal, src=0, group=signal_group)
-        print(f"[TRACE peer rank={local_rank}] round={_round} broadcast recv, signal={signal.item()}", flush=True)
-        if signal.item() == 0:
-            break
-        _round += 1
 
         ops = [
             dist.P2POp(dist.isend, k_send, send_to),
@@ -225,9 +213,12 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int, signal
             dist.P2POp(dist.irecv, v_recv, recv_from),
         ]
         prev_reqs = dist.batch_isend_irecv(ops)
-        # Note: k_send/v_send relay (copy from k_recv/v_recv) happens at the TOP
-        # of the next iteration AFTER prev_reqs.wait() — so we always relay fully
-        # received data, never mid-transfer data.
+        print(f"[TRACE peer rank={local_rank}] round={_round} P2P submitted", flush=True)
+
+    # Drain final round
+    for r in prev_reqs:
+        r.wait()
+    print(f"[TRACE peer rank={local_rank}] all {max_rounds} rounds done", flush=True)
 
 
 def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
@@ -271,6 +262,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             _ring_peer_loop(
                 local_rank, world_size,
                 int(run.get("kv_block_size", 512)),
+                max_rounds=int(run.get("max_new_tokens", 256)),
                 signal_group=signal_group,
             )
             dist.destroy_process_group()
@@ -321,13 +313,14 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         if wb_run:
             import wandb; wb_run.finish(exit_code=1)
 
-    if world_size > 1:
-        dist.destroy_process_group()
-
-    # Only rank 0 writes results — other ranks exit cleanly
+    # Write results BEFORE destroy_process_group — destroy can hang if peers
+    # are slow to reach the same barrier, and we don't want to lose metrics.
     if local_rank == 0:
         with open(output_csv + f".{run['run_id']}.tmp", "w") as f:
             json.dump(row, f)
+
+    if world_size > 1:
+        dist.destroy_process_group()
 
 
 def execute_run(run: dict, wandb_project: str, output_csv: str, nproc: int = 1) -> dict:
