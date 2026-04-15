@@ -560,7 +560,13 @@ class RASDInference:
                 pending_block  = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
                 self._prefetcher._inflight.clear()  # we track reqs via pending_reqs; don't accumulate blocks
                 pending_reqs   = pending_block.reqs
-                print(f"[TRACE rank={self._rank}] round={n_rounds} P2P submitted", flush=True)
+                # Tick gate: signal each peer that this round's P2P is
+                # submitted so they can proceed. Prevents peers from racing
+                # ahead of rank 0's slower generate loop (deadlock at block2048).
+                tick = torch.zeros(1, dtype=torch.int32, device=device)
+                for peer in range(1, self._world_size):
+                    dist.send(tick, peer)
+                print(f"[TRACE rank={self._rank}] round={n_rounds} P2P submitted + ticks sent", flush=True)
             else:
                 pending_block = None
 
@@ -635,7 +641,11 @@ class RASDInference:
                 v_send = v_send.contiguous()
                 k_buf, v_buf = self._alloc_kv_buffers(past_kv)
                 print(f"[TRACE rank={self._rank}] draining {remaining} remaining P2P rounds for peers", flush=True)
+                tick = torch.zeros(1, dtype=torch.int32, device=device)
                 for i in range(remaining):
+                    # Tick gate: peers wait for this before their P2P
+                    for peer in range(1, self._world_size):
+                        dist.send(tick, peer)
                     block = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
                     self._prefetcher._inflight.clear()
                     for r in block.reqs:

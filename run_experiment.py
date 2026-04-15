@@ -199,7 +199,14 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int,
     v_recv = torch.zeros(flat_size, dtype=torch.bfloat16, device=device)
 
     prev_reqs = []
+    # Tick gate: wait for rank 0 to signal each round before submitting
+    # P2P. Without this, peers race ahead of rank 0's slower generate()
+    # loop (which does real LLM inference), causing NCCL sequence number
+    # divergence and deadlock at block_size=2048.
+    tick = torch.zeros(1, dtype=torch.int32, device=device)
     for _round in range(max_rounds):
+        # Wait for rank 0's tick — keeps peer paced to rank 0's generate loop
+        dist.recv(tick, src=0)
         # Wait on prev P2P, relay received data into send buffer
         print(f"[TRACE peer rank={local_rank}] round={_round} draining {len(prev_reqs)} prev reqs", flush=True)
         for r in prev_reqs:
