@@ -31,6 +31,8 @@ import csv
 import itertools
 import logging
 import os
+import signal
+import subprocess
 import sys
 import time
 from copy import deepcopy
@@ -170,7 +172,7 @@ def build_prompt(context_length: int, tokenizer) -> str:
 # ---------------------------------------------------------------------------
 
 def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int,
-                    max_rounds: int, signal_group=None):
+                    max_rounds: int):
     """Non-rank-0 peer process for the ring KV communication.
 
     Runs for exactly `max_rounds` P2P rounds (= max_new_tokens from config).
@@ -248,22 +250,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             backend="nccl",
             device_id=torch.device(f"cuda:{local_rank}"),
         )
-        # Create a dedicated NCCL sub-group for the broadcast signal. This
-        # isolates the broadcast sequence counter from the P2P ops on the
-        # default group, which fixes the off-by-one deadlock observed at
-        # kv_block_size=1024/2048 (rank 0 racing ahead by 1 iteration).
-        # MUST be called collectively by ALL ranks in the same order, before
-        # rank 0 diverges into model loading.
-        signal_group = dist.new_group(
-            ranks=list(range(world_size)), backend="nccl"
-        )
         if local_rank != 0:
             # Non-rank-0: participate in ring comms only, then exit
             _ring_peer_loop(
                 local_rank, world_size,
                 int(run.get("kv_block_size", 512)),
                 max_rounds=int(run.get("max_new_tokens", 256)),
-                signal_group=signal_group,
             )
             dist.destroy_process_group()
             return
@@ -292,8 +284,6 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             debug             = bool(run.get("debug", False)),
         )
         engine = RASDInference(cfg)
-        if world_size > 1:
-            engine._signal_group = signal_group
         prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
         _, metrics = engine.generate_text(prompt)
 
@@ -362,9 +352,23 @@ def execute_run(run: dict, wandb_project: str, output_csv: str, nproc: int = 1) 
     env.pop("CUDA_VISIBLE_DEVICES", None)
 
     try:
-        subprocess.run(cmd, timeout=3600, check=False, env=env)
+        proc = subprocess.Popen(cmd, env=env, start_new_session=True)
+        proc.wait(timeout=3600)
     except subprocess.TimeoutExpired:
-        log.error("✗  %s  TIMEOUT after 60min", run["run_id"])
+        log.error("✗  %s  TIMEOUT after %ds", run["run_id"], 3600)
+        # Kill entire process group (torchrun + all spawned workers)
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait()
 
     if os.path.exists(tmp_result):
         with open(tmp_result) as f:

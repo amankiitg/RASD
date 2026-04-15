@@ -547,7 +547,12 @@ class RASDInference:
                 # fixed max_new_tokens rounds, eliminating the need for any
                 # collective in the loop and avoiding the NCCL deadlock that
                 # broadcast/all_reduce on sub-groups caused at block≥1024).
-                block_idx = (n_rounds + 1) % self._world_size
+                # Wrap block_idx by the number of *available* KV blocks, not
+                # world_size. With large kv_block_size (e.g. 2048) and short
+                # context (8192), there may be fewer blocks than ranks. Cycling
+                # past the end produces empty tensors → NCCL size mismatch → deadlock.
+                n_kv_blocks = max(1, past_kv[0][0].shape[2] // cfg.kv_block_size)
+                block_idx = (n_rounds + 1) % n_kv_blocks
                 k_send, v_send = self._extract_kv_block(past_kv, block_idx)
                 k_send = k_send.contiguous()
                 v_send = v_send.contiguous()
