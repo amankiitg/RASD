@@ -545,9 +545,8 @@ class RASDInference:
                     draft_tokens.append(d_tok)
                     draft_logits_.append(d_logit)
                     draft_input    = d_tok
-
-            draft_seq    = torch.cat(draft_tokens,  dim=1)   # (B, k)
-            draft_logits = torch.stack(draft_logits_, dim=1) # (B, k, vocab)
+                draft_seq    = torch.cat(draft_tokens,  dim=1)   # (B, k)
+                draft_logits = torch.stack(draft_logits_, dim=1) # (B, k, vocab)
 
             if cfg.debug:
                 self.stream_draft.synchronize()
@@ -599,6 +598,13 @@ class RASDInference:
             if pending_block is not None:
                 self.stream_compute.wait_event(pending_block.ready_event)
 
+            # Target verify reads draft_seq/draft_logits written on stream_draft.
+            # Without this wait, fast kernels (bf16) launch the target forward
+            # before the draft tokens are committed, causing async out-of-bounds
+            # indexing inside the embedding layer. NF4's slower kernels masked
+            # this by running draft to completion first.
+            self.stream_compute.wait_stream(self.stream_draft)
+
             prior_target_len = past_kv[0][0].shape[2] if past_kv is not None else 0
 
             with torch.cuda.stream(self.stream_compute):
@@ -620,6 +626,12 @@ class RASDInference:
 
             # stream_draft must see updated past_kv before next round
             self.stream_draft.wait_stream(self.stream_compute)
+
+            # Subsequent accept/reject, bonus sampling, and _truncate_kv run on
+            # the default stream and read target_logits_v + post_verify_kv
+            # (produced on stream_compute). Without this wait, default-stream
+            # kernels would race the still-executing verify forward.
+            torch.cuda.current_stream().wait_stream(self.stream_compute)
 
             if cfg.debug:
                 self.stream_compute.synchronize()
