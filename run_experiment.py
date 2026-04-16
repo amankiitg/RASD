@@ -73,10 +73,13 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool) -> List[dict]:
+def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
+                      seed_filter: Optional[List[int]] = None) -> List[dict]:
     """Expand the YAML into a flat list of run dicts (one per level × seed)."""
     defaults = deepcopy(cfg["defaults"])
     seeds    = defaults.pop("seeds")
+    if seed_filter:
+        seeds = [s for s in seeds if s in seed_filter]
 
     ablation_keys = [k for k in cfg if k.startswith("A")]
     if groups:
@@ -278,6 +281,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         cfg = RASDConfig(
             target_model_name = run["target_model_name"],
             draft_model_name  = run["draft_model_name"],
+            target_revision   = run.get("target_revision") or None,
+            draft_revision    = run.get("draft_revision") or None,
             spec_steps        = int(run["spec_steps"]),
             kv_block_size     = int(run["kv_block_size"]),
             prefetch_depth    = int(run["prefetch_depth"]),
@@ -432,6 +437,8 @@ def main():
     parser = argparse.ArgumentParser(description="RASD ablation runner")
     parser.add_argument("--config",   default="configs/ablations.yml", help="Path to YAML config")
     parser.add_argument("--groups",   nargs="+", help="Ablation groups to run (e.g. A1 A2). Default: all")
+    parser.add_argument("--seeds",    nargs="+", type=int,
+                        help="Subset of seeds to run (e.g. 42). Default: all seeds in config.")
     parser.add_argument("--dry-run",  action="store_true", help="Print jobs without executing")
     parser.add_argument("--debug",    action="store_true", help="Enable RASD debug mode")
     parser.add_argument("--resume",   action="store_true", help="Skip runs already in results CSV")
@@ -453,7 +460,7 @@ def main():
         return
 
     cfg        = load_config(args.config)
-    all_runs   = build_run_configs(cfg, args.groups, args.debug)
+    all_runs   = build_run_configs(cfg, args.groups, args.debug, seed_filter=args.seeds)
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))

@@ -84,6 +84,11 @@ canary:
 defaults:
   target_model_name: "meta-llama/Llama-2-7b-hf"
   draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  # HF revisions captured 2026-04-16. Pin so weight updates don't silently
+  # change M3 numbers. Gated models (Llama-2) need HF_TOKEN to resolve;
+  # run `scripts/pin_hf_revisions.py` on a pod with the token set to refresh.
+  target_revision: null                                                    # Llama-2-7b-hf: fill after next pod (gated)
+  draft_revision:  "a4b76938edbf571ea7d7d9904861cbdca08809b4"               # Sheared-LLaMA-1.3B
   spec_steps:        4
   kv_block_size:     512
   prefetch_depth:    1
@@ -108,10 +113,12 @@ A1:
   levels:
     - id: "A1_tinyllama_1b"
       draft_model_name: "TinyLlama/TinyLlama_v1.1"           # 1.1B params, LLaMA-2 tokenizer
+      draft_revision:   "ff3c701f2424c7625fdefb9dd470f45ef18b02d6"
       notes: "TinyLlama 1.1B — small draft, same LLaMA-2 tokenizer (vocab=32000)"
 
     - id: "A1_sheared_1b"
       draft_model_name: "princeton-nlp/Sheared-LLaMA-1.3B"   # 1.3B params, LLaMA-2 tokenizer
+      draft_revision:   "a4b76938edbf571ea7d7d9904861cbdca08809b4"
       notes: "Sheared-LLaMA 1.3B — matches default draft"
 
 # ---------------------------------------------------------------------------

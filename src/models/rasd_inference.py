@@ -63,6 +63,10 @@ class RASDConfig:
     # Models
     target_model_name: str = "meta-llama/Llama-2-7b-hf"
     draft_model_name:  str = "princeton-nlp/Sheared-LLaMA-1.3B"
+    # Optional HF revisions (commit hash or tag). None = HEAD at load time.
+    # Pinning these makes runs reproducible against weight updates.
+    target_revision: Optional[str] = None
+    draft_revision:  Optional[str] = None
 
     # Speculative decoding
     spec_steps: int = 4                  # k — draft tokens per round (A2)
@@ -360,6 +364,7 @@ class RASDInference:
 
         self.target_model = AutoModelForCausalLM.from_pretrained(
             cfg.target_model_name,
+            revision=cfg.target_revision,
             torch_dtype=cfg.torch_dtype,
             quantization_config=target_bnb,
             **self._caps.hf_device_map_kwargs(),
@@ -378,6 +383,7 @@ class RASDInference:
 
         self.draft_model = AutoModelForCausalLM.from_pretrained(
             cfg.draft_model_name,
+            revision=cfg.draft_revision,
             torch_dtype=cfg.torch_dtype,
             quantization_config=draft_bnb,
             **self._caps.hf_device_map_kwargs(),
@@ -386,11 +392,11 @@ class RASDInference:
             self.draft_model = self.draft_model.to(self._device)
         self.draft_model.eval()
 
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name, revision=cfg.target_revision)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self.draft_tokenizer = AutoTokenizer.from_pretrained(cfg.draft_model_name)
+        self.draft_tokenizer = AutoTokenizer.from_pretrained(cfg.draft_model_name, revision=cfg.draft_revision)
         if self.draft_tokenizer.pad_token is None:
             self.draft_tokenizer.pad_token = self.draft_tokenizer.eos_token
 
