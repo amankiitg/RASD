@@ -10,6 +10,61 @@
 #   A3  kv_block_size       (ring comm block size)
 #   A4  prefetch_depth      (overlap strategy)
 #   A5  target_model_name   (target model family)
+#
+# ===========================================================================
+# RunPod Operational Guide (required — must be followed on every fresh pod)
+# ===========================================================================
+#
+# 1. GPU leak check (REQUIRED before any run):
+#    ssh ... 'nvidia-smi --query-gpu=index,memory.used --format=csv,noheader'
+#    Any GPU showing >0 MiB = orphaned driver memory from prior tenant.
+#    Terminate the pod and create a new one (different node). Do NOT proceed.
+#
+# 2. Dependencies (install AFTER rsync, BEFORE any run):
+#    pip install 'transformers==4.44.2' 'accelerate==0.33.0' \
+#                'bitsandbytes>=0.49.0' wandb numpy -q
+#    Why these pins (see memory/feedback_dep_versions.md):
+#      - transformers==4.44.2: needs dynamic RoPE (4.38 fails at 8192 ctx on Llama-2);
+#                              tuple past_key_values (5.x uses DynamicCache)
+#      - accelerate==0.33.0: >=1.0 breaks bitsandbytes .to() on quantized models
+#      - bitsandbytes>=0.49.0: older lacks CUDA 12.9 precompiled .so
+#
+# 3. Timeout patch on pod (subprocess default is 3600s, way too long):
+#    sed -i 's/timeout=3600/timeout=120/' run_experiment.py
+#
+# 4. Launch with env vars INLINE (nohup drops shell env):
+#    ssh ... 'cd /workspace/RASD && \
+#      export WANDB_API_KEY=... && \
+#      export HF_TOKEN=... && \
+#      export HF_HOME=/workspace/hf_cache && \
+#      nohup python run_experiment.py --config configs/ablations.yml \
+#        --output results/ablations.csv --resume --nproc 8 > run.log 2>&1 &'
+#    Keys live in runpod_creds.md (gitignored) at project root.
+#
+# 5. Never pkill CUDA procs (SIGKILL leaks driver memory permanently on the
+#    node — reboot required). Use kill -TERM on the orchestrator PID;
+#    let the 120s subprocess timeout handle stuck workers.
+#
+# 6. Clean-kill procedure for a running batch (always use this, never pkill -9):
+#    # step A — find orchestrator + torchrun PIDs
+#    ORCH_PID=$(pgrep -f 'run_experiment.py --config' | head -1)
+#    TORCHRUN_PID=$(pgrep -f 'torchrun.*run_experiment' | head -1)
+#    # step B — SIGTERM orchestrator FIRST (stops it launching new runs)
+#    kill -TERM $ORCH_PID
+#    # step C — SIGTERM the active torchrun (propagates to all 8 workers)
+#    kill -TERM $TORCHRUN_PID
+#    # step D — wait 90s, then verify clean exit
+#    sleep 90
+#    ps aux | grep -E 'run_experiment|torchrun' | grep -v grep | wc -l   # 0
+#    nvidia-smi --query-gpu=index,memory.used --format=csv,noheader      # 0 MiB × 8
+#
+#    Why both kills: killing only the orchestrator leaves torchrun running
+#    to end-of-current-run (orchestrator's subprocess.wait is dead so the
+#    120s timeout never fires). Why SIGTERM not SIGKILL: workers need time
+#    to flush NCCL and release CUDA memory, otherwise driver-level leak.
+#    Also: `pgrep -f 'run_experiment.py --config'` occasionally returns a
+#    bash wrapper PID first — verify the match is the python orchestrator.
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Canary / default run

@@ -557,16 +557,18 @@ class RASDInference:
                 k_send = k_send.contiguous()
                 v_send = v_send.contiguous()
                 k_buf, v_buf   = self._alloc_kv_buffers(past_kv)
-                pending_block  = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
-                self._prefetcher._inflight.clear()  # we track reqs via pending_reqs; don't accumulate blocks
-                pending_reqs   = pending_block.reqs
-                # Tick gate: signal each peer that this round's P2P is
-                # submitted so they can proceed. Prevents peers from racing
-                # ahead of rank 0's slower generate loop (deadlock at block2048).
+                # Tick gate: signal peers BEFORE submitting P2P. Sending
+                # ticks after batch_isend_irecv deadlocks because dist.send
+                # (unbatched) serializes behind the batch — it can't start
+                # until the batch completes, but the batch's irecv needs
+                # the peer's isend, and the peer is blocked on the tick.
                 tick = torch.zeros(1, dtype=torch.int32, device=device)
                 for peer in range(1, self._world_size):
                     dist.send(tick, peer)
-                print(f"[TRACE rank={self._rank}] round={n_rounds} P2P submitted + ticks sent", flush=True)
+                pending_block  = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
+                self._prefetcher._inflight.clear()  # we track reqs via pending_reqs; don't accumulate blocks
+                pending_reqs   = pending_block.reqs
+                print(f"[TRACE rank={self._rank}] round={n_rounds} ticks sent + P2P submitted", flush=True)
             else:
                 pending_block = None
 
