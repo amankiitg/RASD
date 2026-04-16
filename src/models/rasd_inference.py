@@ -280,6 +280,23 @@ def _acceptance_mask(
     return accepted, int(n_accepted)
 
 
+def _truncate_kv(past_kv, new_len: int):
+    """Truncate past_key_values to `new_len` positions along the seq dim.
+
+    Accepts both legacy tuple-of-tuples and HF DynamicCache (iterable as
+    layer (k, v) tuples). Returns a legacy tuple; the next model forward
+    auto-converts via DynamicCache.from_legacy_cache.
+    """
+    if past_kv is None:
+        return None
+    out = []
+    for layer in past_kv:
+        k, v = layer[0], layer[1]
+        out.append((k[:, :, :new_len, :].contiguous(),
+                    v[:, :, :new_len, :].contiguous()))
+    return tuple(out)
+
+
 # ---------------------------------------------------------------------------
 # Main RASD class
 # ---------------------------------------------------------------------------
@@ -582,23 +599,24 @@ class RASDInference:
             if pending_block is not None:
                 self.stream_compute.wait_event(pending_block.ready_event)
 
-            with torch.cuda.stream(self.stream_compute):
-                target_logits_list = []
-                t_input   = cur_token
-                t_past_kv = past_kv
-                for _ in range(cfg.spec_steps + 1):
-                    t_out = self.target_model(
-                        t_input,
-                        past_key_values=t_past_kv,
-                        use_cache=True,
-                    )
-                    t_past_kv = t_out.past_key_values
-                    t_logit   = t_out.logits[:, -1, :]
-                    target_logits_list.append(t_logit)
-                    t_input = t_logit.argmax(dim=-1, keepdim=True)
+            prior_target_len = past_kv[0][0].shape[2] if past_kv is not None else 0
 
-                past_kv         = t_past_kv
-                target_logits_v = torch.stack(target_logits_list, dim=1)  # (B, k+1, vocab)
+            with torch.cuda.stream(self.stream_compute):
+                # Packed verify: target sees [cur_token, draft_seq] in ONE forward
+                # and returns k+1 logits. Spec-decoding requires conditioning on
+                # the DRAFT's tokens, not the target's own argmax, so the
+                # previous autoregressive loop (which fed t_logit.argmax back in)
+                # was computing the wrong distribution at positions > 0. See
+                # analysis/m3_post_analysis_plan.md Check 2 and
+                # tests/test_verification_math.py for the spec.
+                t_input = torch.cat([cur_token, draft_seq], dim=1)     # (B, k+1)
+                t_out   = self.target_model(
+                    t_input,
+                    past_key_values=past_kv,
+                    use_cache=True,
+                )
+                target_logits_v = t_out.logits                          # (B, k+1, vocab)
+                post_verify_kv  = t_out.past_key_values
 
             # stream_draft must see updated past_kv before next round
             self.stream_draft.wait_stream(self.stream_compute)
@@ -621,12 +639,53 @@ class RASDInference:
             if cfg.debug:
                 logger.debug("[RASD] round=%d accepted=%d/%d", n_rounds, n_acc, cfg.spec_steps)
 
-            # Collect accepted tokens + bonus
+            # --- Truncate target KV to committed length: prior + n_acc + 1 ---
+            # post_verify_kv holds all k+1 verify positions. Only the first
+            # n_acc draft tokens and the bonus are committed; the rest must
+            # be dropped so the next round's cur_token arrives at the correct
+            # positional offset.
+            past_kv = _truncate_kv(post_verify_kv, prior_target_len + n_acc + 1)
+
+            # Collect accepted tokens
             for i in range(n_acc):
                 generated.append(draft_seq[:, i:i+1])
-            bonus_logit = target_logits_v[:, n_acc, :]
-            cur_token   = _sample(bonus_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)
+
+            # --- Bonus token ---
+            # Full acceptance OR greedy: plain sample / argmax from target.
+            # Partial rejection at temperature > 0: draw from the residual
+            # distribution max(0, p_target - p_draft) normalized (Leviathan
+            # et al. 2023). Sampling plain p_target here biases the next
+            # draft context toward tokens the draft already preferred,
+            # silently lowering acceptance on subsequent rounds.
+            if n_acc == cfg.spec_steps or cfg.temperature == 0.0:
+                bonus_logit = target_logits_v[:, n_acc, :]
+                cur_token   = _sample(bonus_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)
+            else:
+                t_probs_row = F.softmax(target_logits_v[:, n_acc, :] / cfg.temperature, dim=-1)
+                d_probs_row = F.softmax(draft_logits[:, n_acc, :]    / cfg.temperature, dim=-1)
+                resid = torch.clamp(t_probs_row - d_probs_row, min=0.0)
+                resid = resid / (resid.sum(-1, keepdim=True) + 1e-12)
+                cur_token = torch.multinomial(resid, num_samples=1)
             generated.append(cur_token)
+
+            # --- Draft KV fix-up ---
+            # Draft loop absorbed prior_d + k positions [cur_token_prev,
+            # d_0..d_{k-2}]. Committed draft-visible tokens this round are
+            # cur_token_prev + d_0..d_{n_acc-1} (the bonus becomes NEXT
+            # round's cur_token, absorbed there).
+            #   n_acc < k  : truncate off (k - 1 - n_acc) stale positions
+            #   n_acc == k : we need d_{k-1} absorbed; run one extra forward
+            if n_acc < cfg.spec_steps:
+                draft_commit_len = draft_past_kv[0][0].shape[2] - (cfg.spec_steps - 1 - n_acc)
+                draft_past_kv = _truncate_kv(draft_past_kv, draft_commit_len)
+            else:
+                with torch.cuda.stream(self.stream_draft):
+                    catchup = self.draft_model(
+                        draft_seq[:, -1:],
+                        past_key_values=draft_past_kv,
+                        use_cache=True,
+                    )
+                    draft_past_kv = catchup.past_key_values
 
             # Early stop on EOS
             if (cur_token == self.tokenizer.eos_token_id).all():
