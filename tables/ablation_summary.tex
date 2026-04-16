@@ -1,0 +1,27 @@
+\begin{table}[h]
+\centering
+\caption{M3 ablation results (8k context, 8$\times$A100 SXM). Mean and 95\% bootstrap CI per level over 3 seeds (deterministic early-EOS rows with tokens\_generated $<$ 20 excluded; see \S Error Analysis).}
+\label{tab:m3-ablation}
+\begin{tabular}{llrrr}
+\toprule
+Axis & Level & Throughput (tok/s) [95\% CI] & Acceptance [95\% CI] & n \\
+\midrule
+A1: Draft model & TinyLlama-1.1B & 5.67 [5.66, 5.67] & 0.066 [0.065, 0.068] & 2 \\
+ & Sheared-1.3B & 5.04 [4.24, 5.58] & 0.059 [0.040, 0.072] & 3 \\
+A2: Spec steps (k) & k=2 & 7.22 [6.03, 8.41] & 0.025 [0.000, 0.050] & 2 \\
+ & k=4 & 5.44 [4.72, 5.83] & 0.086 [0.079, 0.096] & 3 \\
+ & k=6 & 4.11 [4.01, 4.20] & 0.062 [0.061, 0.063] & 2 \\
+ & k=8 & 2.79 [2.42, 3.15] & 0.031 [0.018, 0.043] & 2 \\
+ & k=12 & 1.78 [1.20, 2.16] & 0.025 [0.013, 0.038] & 3 \\
+A3: KV block size & 256 & 4.99 [4.18, 5.66] & 0.060 [0.040, 0.083] & 3 \\
+ & 512 & 5.17 [4.24, 5.76] & 0.068 [0.040, 0.086] & 3 \\
+ & 1024 & 3.83 [2.91, 4.51] & 0.112 [0.103, 0.129] & 3 \\
+ & 2048 & 3.72 [2.74, 4.44] & 0.112 [0.103, 0.129] & 3 \\
+A4: Prefetch depth & sync & 3.88 [2.99, 4.55] & 0.112 [0.103, 0.129] & 3 \\
+ & async-1 & 3.84 [2.97, 4.53] & 0.112 [0.103, 0.129] & 3 \\
+ & async-2 & 3.84 [2.88, 4.56] & 0.112 [0.103, 0.129] & 3 \\
+A5: Target model & Llama-2-7B & 4.90 [4.22, 5.33] & 0.056 [0.040, 0.075] & 3 \\
+ & Llama-2-13B & 3.84 [3.68, 3.93] & 0.040 [0.028, 0.047] & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}

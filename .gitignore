@@ -1,5 +1,6 @@
 runpod_creds.md
 checkpoint.md
+.venv_analysis/
 __pycache__/
 *.pyc
 *.pyo
