@@ -38,7 +38,7 @@
 #      export HF_TOKEN=... && \
 #      export HF_HOME=/workspace/hf_cache && \
 #      nohup python run_experiment.py --config configs/ablations.yml \
-#        --output results/ablations.csv --resume --nproc 8 > run.log 2>&1 &'
+#        --output results/ablations/ablations.csv --resume --nproc 8 > run.log 2>&1 &'
 #    Keys live in runpod_creds.md (gitignored) at project root.
 #
 # 5. Never pkill CUDA procs (SIGKILL leaks driver memory permanently on the

@@ -3,7 +3,7 @@ RASD Experiment Runner
 ======================
 Reads configs/ablations.yml (or any YAML passed via --config), expands the
 ablation grid, and runs each (level × seed) combination. Logs every run to
-wandb and appends a row to results/ablations.csv.
+wandb and appends a row to results/ablations/ablations.csv.
 
 Usage
 -----
@@ -22,7 +22,7 @@ Usage
     # Debug mode (forced sync, verbose logs)
     python run_experiment.py --config configs/ablations.yml --groups A2 --debug
 
-    # Resume: skip runs already present in results/ablations.csv
+    # Resume: skip runs already present in results/ablations/ablations.csv
     python run_experiment.py --config configs/ablations.yml --resume
 """
 
@@ -49,7 +49,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("rasd.runner")
 
-RESULTS_DIR = Path("results")
+RESULTS_DIR = Path("results/ablations")
 RESULTS_CSV  = RESULTS_DIR / "ablations.csv"
 
 CSV_FIELDS = [

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark RingAttention and SlidingWindowAttention at different context lengths.
 
-Produces a CSV at `results/baselines.csv` with per-run timing, throughput,
+Produces a CSV at `results/baselines/baselines.csv` with per-run timing, throughput,
 and latency metrics required by Milestone 2.
 
 Usage (single GPU / CPU):
@@ -115,7 +115,7 @@ def main():
     p.add_argument("--window-size", type=int, default=128,
                    help="Sliding window size (keep small: unfold materialises O(S*window*head_dim) tensor)")
     p.add_argument("--runs", type=int, default=3, help="Timed forward passes per config")
-    p.add_argument("--out", default="results/baselines.csv", help="Output CSV path")
+    p.add_argument("--out", default="results/baselines/baselines.csv", help="Output CSV path")
     p.add_argument(
         "--lengths", nargs="+", type=int,
         default=[131_072, 262_144, 524_288],
