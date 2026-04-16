@@ -16,11 +16,19 @@ Tracking file for M4 work. Strategy, phased order, and deliverables.
 
 ## Strategy
 
-**Local-first.** Do everything that doesn't need an A100 on the laptop first:
-analysis scaffolding, bootstrap CIs, figure templates, LaTeX tables, profiler
-code, checkpoint/resume logic, RoPE scaling wiring, tick-gate regression tests
-(gloo backend), PG-19 preprocessing verification. This means when we rent
-the pod, we run compute that can't be done locally and nothing else.
+**Local-first, priority-ordered.** Two parallel tracks:
+
+- **Analysis track** (local, $0): extract everything possible from existing
+  M3 data — bootstrap CIs, Figure 2, ablation tables, error analysis.
+  Unblocks paper writing immediately.
+- **Compute track** (local code → pod runs): priority-ordered by paper
+  evidence value:
+  1. **RoPE scaling** — blocker for 1M context; no eval possible without it
+  2. **Perplexity + throughput** — the two numbers the paper needs
+  3. **Checkpoint/resume** — cost protection at 20+ min/run on pod
+  4. **Minimal profiler** — only if we need a "why fast" story
+  5. **Tick-gate gloo test** — cheap, guards commit dc14915
+  (deprioritized: TTFT split timing, per-position acceptance sidecar)
 
 **Pod time is for the 36-run final matrix + 1M-context smoke tests only.**
 Figures are drawn from the resulting CSV after pod teardown.
@@ -40,50 +48,78 @@ Make sure we can always replay M2/M3 exactly, even after M4 refactors.
 
 Run on first M4 pod: `bash scripts/capture_pod_env.sh > requirements-lock.txt && python scripts/pin_hf_revisions.py` then `bash scripts/replay_m3_smoke.sh` to confirm replay works.
 
-### Phase 1 — Local, reuses existing M3 data
+### Two parallel tracks
+
+**Analysis track** and **Compute track** run in parallel. Analysis is all
+local, runs on existing M3 data, and unblocks paper writing independently.
+Compute track is ordered by priority + hard dependencies so we spend the
+minimum pod-$ for the strongest story.
+
+### Analysis track — local, reuses existing M3 data
 No new compute. Use [results/ablations/ablations.csv](results/ablations/ablations.csv).
 
-1. Error analysis on 5 short-run rows — confirm each is deterministic/legitimate (done in conversation; codify in notebook)
-2. Build `src/analysis/` scaffolding (`metrics.py`, `bootstrap.py`, `figures.py`, `tables.py`)
-3. Bootstrap CIs for per-axis winners (A1/A2/A3/A4/A5 on tps + acceptance)
-4. Figure 2: ablation bar charts with CIs (from M3 data)
-5. LaTeX `tables/ablation_summary.tex` from ablations.csv
+A1. Error analysis on 5 short-run rows — confirm each is deterministic/legitimate (done in conversation; codify in notebook)
+A2. Build `src/analysis/` scaffolding (`metrics.py`, `bootstrap.py`, `figures.py`, `tables.py`)
+A3. Bootstrap CIs for per-axis winners (A1/A2/A3/A4/A5 on tps + acceptance)
+A4. Figure 2: ablation bar charts with CIs (from M3 data)
+A5. LaTeX `tables/ablation_summary.tex` from ablations.csv
 
-### Phase 2 — Local, code-ready for pod
-Code/tests/scaffolds. Verified locally on CPU or single GPU where possible.
+### Compute track — priority-ordered (reprioritized 2026-04-16)
 
-6. TTFT instrumentation in `RASDInference.generate`
-7. Per-position acceptance logging (list-of-bool per round)
-8. `torch.profiler` context-manager wrapper (NVTX ranges at round boundaries)
-9. Perplexity evaluator for PG-19 (single-GPU path first)
-10. Checkpoint/resume for multi-hour runs (writes intermediate CSV rows)
-11. RoPE scaling for 1M context (YaRN or NTK-aware — pick during this phase)
-12. Gloo-backend regression test for tick-gate ordering (catches block=2048 regression without CUDA)
-13. PG-19 preprocessing verification (tokenization, seq-length distribution)
-14. Figure scaffolds (Figure 1 throughput-vs-context, Figure 3 acceptance-vs-position, Figure 4 memory, Figure 5 latency breakdown) — load from CSV, plot, no real data yet
+Ordering reflects paper-evidence value: **RoPE is the 1M blocker, PPL+throughput
+is the core claim, checkpoint/resume is pod-$ protection, everything else is
+secondary.** TTFT and per-position acceptance are deprioritized — TTFT is a
+product-serving metric (not our research angle), per-position Fig 4 can be
+approximated from existing round-level logs.
+
+#### P1 — RoPE scaling (BLOCKER for 1M)
+C1. RoPE scaling code path (YaRN or dynamic-NTK — pick when starting this item) behind `--rope-scaling` flag, default off → M3 unchanged
+C2. Smoke-test RoPE numerically on single GPU at 64k locally (if laptop can fit; else first pod action)
+
+#### P2 — Perplexity + throughput (core evidence)
+C3. PG-19 preprocessing verification (tokenization, seq-length distribution, produces 1M-token chunks)
+C4. Perplexity evaluator `src/analysis/perplexity.py` — tested on `sshleifer/tiny-random-llama` locally before pod
+C5. Wire PPL logging into `run_experiment.py` alongside existing throughput metrics (sidecar, additive column)
+
+#### P3 — Checkpoint/resume (pod-$ protection)
+C6. Generation checkpoint/resume — write state every N tokens, resume on failure. At 1M context a single run is 20+ min; one crash = one pod-hour lost without this.
+
+#### P4 — Minimal profiler (conditional)
+C7. `torch.profiler` context-manager wrapper with NVTX ranges at round boundaries — **only build if P1-P3 land and we still need a "why fast" story for the paper**. Skip entirely if results speak for themselves.
+
+#### P5 — Tick-gate regression test (cheap, high-value)
+C8. Gloo-backend regression test for tick-gate ordering (catches a block=2048 regression without CUDA). Tiny, guards commit dc14915.
+
+#### Deprioritized / likely dropped
+~~TTFT split timing~~ — product-serving metric, not research-paper evidence
+~~Per-position acceptance sidecar .jsonl~~ — approximate from round-level logs for Figure 4
 
 ### Phase 3 — Pod required
-Only runs that need A100s.
+Only runs that need A100s. Order reflects dependencies on Compute-track items above.
 
-15. RoPE scaling validation at 64k/256k/1M on 1 GPU (sanity-check numerical stability before distributing)
-16. Smoke tests at 64k, 256k, 1M context (RASD + baselines)
-17. Baseline validation at 1M (ring-attention alone, sliding-window)
-18. **36-run final matrix** (3 seeds × 12 configs — contexts × configs TBD during Phase 2)
-19. Profiler pass on best config (1 run, full traces saved)
+P3.1. Run Phase 0 completion on first pod (capture_pod_env.sh → `requirements-lock.txt`, pin_hf_revisions.py → Llama-2 hashes, replay_m3_smoke.sh → confirm drift ≤15%)
+P3.2. RoPE scaling validation: PPL at 32k/128k/512k/1M on 1 GPU (needs C1+C4)
+P3.3. Smoke tests: single RASD run at 32k, 128k, 512k, 1M context
+P3.4. Baseline validation: Ring + Sliding end-to-end at 128k, 1M
+P3.5. **Final 36-run matrix** — RASD+Ring+Sliding × {128k, 256k, 512k, 1M} × 3 seeds
+P3.6. Profiler pass (only if C7 built)
 
 ### Phase 4 — Post-pod, local
 Assemble paper deliverables from real data.
 
-20. Figures 1/3/4/5 with real CSV + bootstrap CIs
-21. `results/final/final_results.json` (aggregate metrics, per-seed)
-22. LaTeX tables with real numbers
-23. Manuscript sections (methods, results, discussion)
+F1. Figure 1 throughput vs context (real CSV + 95% CI bands)
+F2. Figure 3 stacked time breakdown (only if profiler ran; else drop)
+F3. Figure 4 acceptance vs token position (approximated from round-level logs)
+F4. Figure 5 memory footprint RASD vs baselines
+F5. `results/final/final_results.json` (aggregate metrics, per-seed)
+F6. LaTeX tables with real numbers
+F7. Manuscript sections (methods, results, discussion)
 
 ### Conditional
-24. LongBench / L-Eval task-accuracy eval — **pending mentor approval**. Scope: pick 2-3 LongBench tasks, run target-only vs RASD at 64k, compare EM/F1. Adds ~1 pod-day; only if mentor says PG-19 perplexity is insufficient.
+X1. LongBench / L-Eval task-accuracy eval — **pending mentor approval**. Scope: pick 2-3 LongBench tasks, run target-only vs RASD at 64k, compare EM/F1. Adds ~1 pod-day; only if mentor says PG-19 perplexity is insufficient.
 
 ### Admin
-25. Send mentor follow-up email: FA+Ring implementation details + LongBench scope question + cost note ($200 burned on 8k M3; asking about cheaper alternatives for M4)
+Z1. Send mentor follow-up email: FA+Ring implementation details + LongBench scope question + cost note ($200 burned on 8k M3; asking about cheaper alternatives for M4)
 
 ## Deliverables
 
