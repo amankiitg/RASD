@@ -29,12 +29,15 @@ Ablation hooks
 ---------------
   A1  draft_model_name   TinyLlama-1.1B | Sheared-LLaMA-1.3B
   A2  spec_steps k       2 | 4 | 6 | 8 | 12
+  A3  kv_block_size      256 | 512 | 1024 | 2048 (ring transmission chunk size)
+  A4  prefetch_depth     0 (sync) | 1 (async-1) | 2 (async-2 — saturates as 1)
   A5  target_model_name  Llama-2-7b-hf
 
-Note: A3 (kv_block_size) and A4 (prefetch_depth) are obsolete after R3 —
-their ring-prefetcher mechanism was removed when ring moved into the
-attention forward. The fields stay on RASDConfig for backward
-compatibility but no longer steer behavior.
+A3/A4 redefined in R3.5 (post-prefetcher-removal): A3 is now the per-step
+batch_isend_irecv chunk size inside the ring (smaller = more launch
+overhead, larger = better bandwidth amortization). A4 is the ring-step
+prefetch depth (whether rotation s+1 is issued before computing step s).
+See M3_RING_INTEGRATION_PLAN.md open-question 1a for rationale.
 
 Debug mode
 ----------
@@ -305,10 +308,18 @@ class RASDInference:
 
         # Install ring-attention forward on every LlamaAttention layer.
         # No-op when world_size <= 1 (preserves single-rank exactness).
+        # A3 (cfg.kv_block_size) → per-step transmission chunk size.
+        # A4 (cfg.prefetch_depth) → ring-step prefetch depth.
         from src.models.ring_llama_attention import install_ring_attention
         ws = dist.get_world_size() if dist.is_initialized() else 1
         rk = dist.get_rank()       if dist.is_initialized() else 0
-        install_ring_attention(self.target_model, world_size=ws, rank=rk)
+        install_ring_attention(
+            self.target_model,
+            world_size=ws,
+            rank=rk,
+            chunk_size=cfg.kv_block_size,
+            prefetch_depth=cfg.prefetch_depth,
+        )
 
         draft_hf_config = self._build_hf_config(
             cfg.draft_model_name, cfg.draft_revision, cfg.context_length, label="draft",

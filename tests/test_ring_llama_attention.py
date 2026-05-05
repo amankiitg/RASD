@@ -66,10 +66,24 @@ class TestInstaller:
             assert attn._ring_world_size == 4
             # Initial prefill_len = 0; set by driver after prefill
             assert attn._ring_prefill_len == 0
+            # A3/A4 default to no chunking, sync rotation
+            assert attn._ring_chunk_size is None
+            assert attn._ring_prefetch_depth == 0
             # Original forward stashed
             assert callable(attn._ring_original_forward)
             # Forward replaced with our patched version (bound method)
             assert attn.forward.__func__.__name__ == "_ring_llama_attention_forward"
+
+    def test_knobs_propagate_through_install(self):
+        """A3/A4 values supplied at install time land on every attention module."""
+        from src.models.ring_llama_attention import install_ring_attention
+        model = _make_mock_target_model(4)
+        n = install_ring_attention(model, world_size=4, rank=0,
+                                   chunk_size=512, prefetch_depth=1)
+        assert n == 4
+        for layer in model.model.layers:
+            assert layer.self_attn._ring_chunk_size == 512
+            assert layer.self_attn._ring_prefetch_depth == 1
 
     def test_set_prefill_len_propagates(self):
         from src.models.ring_llama_attention import install_ring_attention, set_prefill_len

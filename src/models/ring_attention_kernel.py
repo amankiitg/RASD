@@ -150,6 +150,8 @@ def ring_attention_prefill(
     scale: Optional[float] = None,
     dropout_p: float = 0.0,
     process_group: Optional["dist.ProcessGroup"] = None,
+    chunk_size: Optional[int] = None,
+    prefetch_depth: int = 0,
 ) -> torch.Tensor:
     """Causal ring attention for prefill (Q sharded contiguously like K/V).
 
@@ -193,10 +195,30 @@ def ring_attention_prefill(
 
     out_acc: Optional[torch.Tensor] = None
     lse_acc: Optional[torch.Tensor] = None
+    pending_reqs: Optional[List] = None
+    pending_assemble = None
+    use_async = prefetch_depth >= 1
 
     for step in range(world_size):
-        sr = (rank - step) % world_size
+        # Drain prior in-flight rotation (sync or async).
+        if pending_reqs is not None:
+            for r in pending_reqs:
+                r.wait()
+            if pending_assemble is not None:
+                pending_assemble()
+            pending_reqs = None
+            pending_assemble = None
+            k_cur, k_buf = k_buf, k_cur
+            v_cur, v_buf = v_buf, v_cur
 
+        # Async: schedule next rotation BEFORE compute.
+        if use_async and step < world_size - 1:
+            pending_reqs, pending_assemble = _issue_rotation(
+                k_cur, v_cur, k_buf, v_buf,
+                send_to, recv_from, chunk_size, process_group,
+            )
+
+        sr = (rank - step) % world_size
         if sr <= rank:
             # sr < rank → past rank (full attend, causal=False)
             # sr == rank → self (causal=True within slice)
@@ -211,19 +233,12 @@ def ring_attention_prefill(
                 out_acc, lse_acc = _combine(out_acc, lse_acc, out_step, lse_step)
         # else: sr > rank → future, skip (causality)
 
-        # Rotate K/V to next rank for the next ring step
-        if step < world_size - 1:
-            ops = [
-                dist.P2POp(dist.isend, k_cur, send_to, group=process_group),
-                dist.P2POp(dist.isend, v_cur, send_to, group=process_group),
-                dist.P2POp(dist.irecv, k_buf, recv_from, group=process_group),
-                dist.P2POp(dist.irecv, v_buf, recv_from, group=process_group),
-            ]
-            reqs = dist.batch_isend_irecv(ops)
-            for r in reqs:
-                r.wait()
-            k_cur, k_buf = k_buf, k_cur
-            v_cur, v_buf = v_buf, v_cur
+        # Sync: schedule rotation AFTER compute (wait at top of next iter).
+        if not use_async and step < world_size - 1:
+            pending_reqs, pending_assemble = _issue_rotation(
+                k_cur, v_cur, k_buf, v_buf,
+                send_to, recv_from, chunk_size, process_group,
+            )
 
     if out_acc is None:
         # Only happens if world_size == 1 (handled above) or rank 0 with all
@@ -237,6 +252,68 @@ def ring_attention_prefill(
 # Ring attention — decode path (Q is replicated across ranks at the "tail")
 # ---------------------------------------------------------------------------
 
+def _issue_rotation(
+    send_k: torch.Tensor, send_v: torch.Tensor,
+    recv_k: torch.Tensor, recv_v: torch.Tensor,
+    send_to: int, recv_from: int,
+    chunk_size: Optional[int],
+    process_group,
+):
+    """Issue a single ring rotation as one or more chunked batch_isend_irecv ops.
+
+    `chunk_size` controls A3 — transmission granularity. None or >= S_local
+    means a single 4-op batch (legacy behavior). Smaller values split the
+    K/V slice into N = ceil(S_local / chunk_size) chunks of contiguous
+    positions; all 4*N ops are submitted in a single batch_isend_irecv so
+    NCCL still sees them atomically (no eager-mode deadlock risk).
+
+    Slicing (B, H, S, D) along dim 2 produces non-contiguous views, which
+    backends like gloo's recv reject. So under chunking we recv into
+    fresh per-chunk contiguous buffers and assemble them into recv_k/recv_v
+    after the caller waits on the returned reqs. The caller invokes the
+    returned `assemble_fn()` after wait; pass-through (no-op) when not
+    chunked.
+
+    Returns
+        (reqs, assemble_fn)
+            reqs: List[Work] from dist.batch_isend_irecv
+            assemble_fn: callable; safe to call multiple times; no-op
+                         in the unchunked case.
+    """
+    S = send_k.shape[2]
+    if chunk_size is None or chunk_size <= 0 or chunk_size >= S:
+        ops = [
+            dist.P2POp(dist.isend, send_k, send_to, group=process_group),
+            dist.P2POp(dist.isend, send_v, send_to, group=process_group),
+            dist.P2POp(dist.irecv, recv_k, recv_from, group=process_group),
+            dist.P2POp(dist.irecv, recv_v, recv_from, group=process_group),
+        ]
+        reqs = dist.batch_isend_irecv(ops)
+        return reqs, lambda: None
+
+    ops = []
+    chunks: List[Tuple[int, int, torch.Tensor, torch.Tensor]] = []
+    for start in range(0, S, chunk_size):
+        end = min(start + chunk_size, S)
+        sk = send_k[:, :, start:end, :].contiguous()
+        sv = send_v[:, :, start:end, :].contiguous()
+        rk = torch.empty_like(sk)
+        rv = torch.empty_like(sv)
+        ops.append(dist.P2POp(dist.isend, sk, send_to,   group=process_group))
+        ops.append(dist.P2POp(dist.isend, sv, send_to,   group=process_group))
+        ops.append(dist.P2POp(dist.irecv, rk, recv_from, group=process_group))
+        ops.append(dist.P2POp(dist.irecv, rv, recv_from, group=process_group))
+        chunks.append((start, end, rk, rv))
+    reqs = dist.batch_isend_irecv(ops)
+
+    def assemble():
+        for start, end, rk, rv in chunks:
+            recv_k[:, :, start:end, :].copy_(rk)
+            recv_v[:, :, start:end, :].copy_(rv)
+
+    return reqs, assemble
+
+
 def _ring_against_sharded(
     q_global: torch.Tensor,       # (B, H, S_q, D) — replicated Q
     k_sharded_local: torch.Tensor,  # (B, H, S_local_prefill, D)
@@ -246,6 +323,8 @@ def _ring_against_sharded(
     scale: float,
     dropout_p: float,
     process_group,
+    chunk_size: Optional[int] = None,
+    prefetch_depth: int = 0,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Ring W steps over the sharded prefill K/V.
 
@@ -253,6 +332,17 @@ def _ring_against_sharded(
     same-sized (S_local_prefill); causal masking is unconditional (no
     self-step diagonal) because Q's absolute positions are strictly past
     all prefill positions during decode.
+
+    Ablation knobs (A3/A4 — see M3_RING_INTEGRATION_PLAN.md, R3.5):
+        chunk_size      A3. Per-step batch_isend_irecv transmission chunk
+                        size in tokens. None / 0 / >= S_local = single chunk
+                        (no chunking).
+        prefetch_depth  A4. 0 = synchronous rotation (wait between steps).
+                        >= 1 = async overlap: rotation s+1 is issued before
+                        compute s, waited on at top of next iteration.
+                        Saturates at 1 under the standard ring P2P pattern;
+                        higher values are accepted but produce identical
+                        behaviour to 1.
     """
     if world_size == 1:
         return _attn_step(q_global, k_sharded_local, v_sharded_local,
@@ -271,8 +361,30 @@ def _ring_against_sharded(
 
     out_acc: Optional[torch.Tensor] = None
     lse_acc: Optional[torch.Tensor] = None
+    pending_reqs: Optional[List] = None
+    pending_assemble = None  # callable invoked after wait if chunked recv
+    use_async = prefetch_depth >= 1
 
     for step in range(world_size):
+        # Drain any in-flight rotation from the previous iteration and swap
+        # so k_cur/v_cur point to the just-received slice.
+        if pending_reqs is not None:
+            for r in pending_reqs:
+                r.wait()
+            if pending_assemble is not None:
+                pending_assemble()
+            pending_reqs = None
+            pending_assemble = None
+            k_cur, k_buf = k_buf, k_cur
+            v_cur, v_buf = v_buf, v_cur
+
+        # Async path: schedule next rotation BEFORE compute so it overlaps.
+        if use_async and step < world_size - 1:
+            pending_reqs, pending_assemble = _issue_rotation(
+                k_cur, v_cur, k_buf, v_buf,
+                send_to, recv_from, chunk_size, process_group,
+            )
+
         out_step, lse_step = _attn_step(
             q_global, k_cur, v_cur,
             scale=scale, dropout_p=dropout_p, causal=False,
@@ -282,18 +394,13 @@ def _ring_against_sharded(
         else:
             out_acc, lse_acc = _combine(out_acc, lse_acc, out_step, lse_step)
 
-        if step < world_size - 1:
-            ops = [
-                dist.P2POp(dist.isend, k_cur, send_to, group=process_group),
-                dist.P2POp(dist.isend, v_cur, send_to, group=process_group),
-                dist.P2POp(dist.irecv, k_buf, recv_from, group=process_group),
-                dist.P2POp(dist.irecv, v_buf, recv_from, group=process_group),
-            ]
-            reqs = dist.batch_isend_irecv(ops)
-            for r in reqs:
-                r.wait()
-            k_cur, k_buf = k_buf, k_cur
-            v_cur, v_buf = v_buf, v_cur
+        # Sync path: schedule rotation AFTER compute and stash reqs for the
+        # top of the next iteration to wait on (uniform with async path).
+        if not use_async and step < world_size - 1:
+            pending_reqs, pending_assemble = _issue_rotation(
+                k_cur, v_cur, k_buf, v_buf,
+                send_to, recv_from, chunk_size, process_group,
+            )
 
     return out_acc, lse_acc
 
@@ -308,6 +415,8 @@ def ring_attention_decode(
     scale: Optional[float] = None,
     dropout_p: float = 0.0,
     process_group: Optional["dist.ProcessGroup"] = None,
+    chunk_size: Optional[int] = None,
+    prefetch_depth: int = 0,
 ) -> torch.Tensor:
     """Ring attention for decode/verify under the dual-cache layout.
 
@@ -370,6 +479,8 @@ def ring_attention_decode(
         rank=rank, world_size=world_size,
         scale=scale, dropout_p=dropout_p,
         process_group=process_group,
+        chunk_size=chunk_size,
+        prefetch_depth=prefetch_depth,
     )
 
     if not has_tail:

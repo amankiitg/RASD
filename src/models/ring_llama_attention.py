@@ -89,6 +89,8 @@ def _ring_llama_attention_forward(
 
     rank = self._ring_rank
     world_size = self._ring_world_size
+    chunk_size     = getattr(self, "_ring_chunk_size", None)
+    prefetch_depth = getattr(self, "_ring_prefetch_depth", 0)
 
     bsz, q_len, _ = hidden_states.size()
     head_dim = self.head_dim
@@ -129,6 +131,7 @@ def _ring_llama_attention_forward(
         attn_out = ring_attention_prefill(
             q, k_full, v_full,
             rank=rank, world_size=world_size, scale=scale,
+            chunk_size=chunk_size, prefetch_depth=prefetch_depth,
         )
     else:
         # Q is replicated; K/V is [sharded_prefill | replicated_tail].
@@ -139,6 +142,7 @@ def _ring_llama_attention_forward(
             q, k_full, v_full,
             rank=rank, world_size=world_size,
             tail_count=tail_count, scale=scale,
+            chunk_size=chunk_size, prefetch_depth=prefetch_depth,
         )
 
     # 6. Output projection
@@ -208,14 +212,27 @@ def _cache_read(past_key_value, layer_idx: int) -> Tuple[Optional[torch.Tensor],
 # Public installer
 # ---------------------------------------------------------------------------
 
-def install_ring_attention(target_model, world_size: int, rank: int) -> int:
+def install_ring_attention(
+    target_model,
+    world_size: int,
+    rank: int,
+    chunk_size: Optional[int] = None,
+    prefetch_depth: int = 0,
+) -> int:
     """Replace each LlamaAttention.forward with the ring-aware version.
 
     No-op when world_size <= 1. Returns the number of attention layers patched.
 
+    Args:
+        chunk_size      A3. Per-step batch_isend_irecv chunk size in tokens.
+                        None / 0 / >= S_local = single chunk (no chunking).
+        prefetch_depth  A4. 0 = synchronous; >= 1 = async overlap (one
+                        rotation in flight while compute proceeds).
+
     The original forward is stored as `_ring_original_forward` on each
-    instance so multi-rank=1 falls through unchanged. Two new attributes are
-    added to each attention module: `_ring_rank`, `_ring_world_size`.
+    instance so multi-rank=1 falls through unchanged. Five attributes are
+    added to each attention module: `_ring_rank`, `_ring_world_size`,
+    `_ring_prefill_len`, `_ring_chunk_size`, `_ring_prefetch_depth`.
     """
     if world_size is None or world_size <= 1:
         return 0
@@ -237,12 +254,18 @@ def install_ring_attention(target_model, world_size: int, rank: int) -> int:
         # Initial prefill_len = 0; the driver sets the real value after prefill
         # completes (RASDInference._prefill is responsible).
         attn._ring_prefill_len = 0
+        # A3 / A4 ablation knobs (see kernel docstring).
+        attn._ring_chunk_size = chunk_size
+        attn._ring_prefetch_depth = prefetch_depth
         attn._ring_original_forward = attn.forward
         attn.forward = MethodType(_ring_llama_attention_forward, attn)
         n_patched += 1
 
-    logger.info("[ring] patched %d LlamaAttention layers (rank=%d, world_size=%d)",
-                n_patched, rank, world_size)
+    logger.info(
+        "[ring] patched %d LlamaAttention layers (rank=%d, world_size=%d, "
+        "chunk_size=%s, prefetch_depth=%d)",
+        n_patched, rank, world_size, chunk_size, prefetch_depth,
+    )
     return n_patched
 
 

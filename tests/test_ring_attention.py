@@ -143,7 +143,8 @@ class TestSingleProcessMath:
 
 def _worker_prefill(rank: int, world_size: int, init_file: str,
                     ref_q: torch.Tensor, ref_k: torch.Tensor, ref_v: torch.Tensor,
-                    expected_out: torch.Tensor, atol: float, rtol: float):
+                    expected_out: torch.Tensor, atol: float, rtol: float,
+                    chunk_size: object = None, prefetch_depth: int = 0):
     """Multi-process worker: each rank runs ring prefill on its slice."""
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     dist.init_process_group(
@@ -165,6 +166,7 @@ def _worker_prefill(rank: int, world_size: int, init_file: str,
         out_local = ring_attention_prefill(
             q_local, k_local, v_local,
             rank=rank, world_size=world_size,
+            chunk_size=chunk_size, prefetch_depth=prefetch_depth,
         )
         # Compare this rank's slice to expected
         expected_local = expected_out[:, :, start:end, :]
@@ -172,7 +174,8 @@ def _worker_prefill(rank: int, world_size: int, init_file: str,
             diff = (out_local - expected_local).abs().max().item()
             raise AssertionError(
                 f"rank {rank}: ring prefill output diverges from reference "
-                f"(max abs diff = {diff:.2e}, atol={atol})"
+                f"(max abs diff = {diff:.2e}, atol={atol}) "
+                f"chunk_size={chunk_size} prefetch_depth={prefetch_depth}"
             )
     finally:
         dist.destroy_process_group()
@@ -183,7 +186,8 @@ def _worker_decode(rank: int, world_size: int, init_file: str,
                    full_prefill_k: torch.Tensor, full_prefill_v: torch.Tensor,
                    tail_k: torch.Tensor, tail_v: torch.Tensor,
                    tail_count: int,
-                   expected_out: torch.Tensor, atol: float, rtol: float):
+                   expected_out: torch.Tensor, atol: float, rtol: float,
+                   chunk_size: object = None, prefetch_depth: int = 0):
     """Each rank holds (its prefill slice) + (the same replicated tail)."""
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     dist.init_process_group(
@@ -208,12 +212,14 @@ def _worker_decode(rank: int, world_size: int, init_file: str,
         out = ring_attention_decode(
             q_global, k_local, v_local,
             rank=rank, world_size=world_size, tail_count=tail_count,
+            chunk_size=chunk_size, prefetch_depth=prefetch_depth,
         )
         if not torch.allclose(out, expected_out, atol=atol, rtol=rtol):
             diff = (out - expected_out).abs().max().item()
             raise AssertionError(
                 f"rank {rank}: ring decode output diverges from reference "
-                f"(max abs diff = {diff:.2e}, atol={atol})"
+                f"(max abs diff = {diff:.2e}, atol={atol}) "
+                f"chunk_size={chunk_size} prefetch_depth={prefetch_depth}"
             )
     finally:
         dist.destroy_process_group()
@@ -300,4 +306,56 @@ class TestMultiProcessRing:
             world_size, _worker_decode,
             (q_global, full_prefill_k, full_prefill_v, empty_tail, empty_tail,
              0, ref_out, 1e-5, 1e-5),
+        )
+
+
+# ---------------------------------------------------------------------------
+# R3.5 — A3/A4 redefinition correctness invariance
+#
+# The kernel output MUST be bit-equivalent (within accumulator precision)
+# regardless of (chunk_size, prefetch_depth). Only timing differs. We
+# parameterize over the cross product to catch any silent breakage.
+# ---------------------------------------------------------------------------
+
+# Cross product: chunk_size ∈ {None, 2, 4, 8} × prefetch_depth ∈ {0, 1}
+# Single world_size=2 to keep CI cost bounded; the math is layout-agnostic.
+@pytest.mark.parametrize("prefetch_depth", [0, 1])
+@pytest.mark.parametrize("chunk_size", [None, 2, 4, 8])
+class TestKnobInvariance:
+    """A3 (chunk_size) and A4 (prefetch_depth) must NOT change kernel output."""
+
+    def test_prefill_invariant_under_knobs(self, chunk_size, prefetch_depth):
+        from src.models.ring_attention_kernel import reference_attention
+        torch.manual_seed(101)
+        world_size = 2
+        B, H, D = 1, 4, 16
+        S_total = 8 * world_size
+        q = torch.randn(B, H, S_total, D, dtype=torch.float32)
+        k = torch.randn(B, H, S_total, D, dtype=torch.float32)
+        v = torch.randn(B, H, S_total, D, dtype=torch.float32)
+        ref_out = reference_attention(q, k, v, causal=True)
+        _spawn(
+            world_size, _worker_prefill,
+            (q, k, v, ref_out, 1e-5, 1e-5, chunk_size, prefetch_depth),
+        )
+
+    def test_decode_invariant_under_knobs(self, chunk_size, prefetch_depth):
+        from src.models.ring_attention_kernel import reference_attention
+        torch.manual_seed(103)
+        world_size = 2
+        B, H, D = 1, 4, 16
+        S_prefill = 8 * world_size
+        S_q = S_tail = 3
+        q_global = torch.randn(B, H, S_q, D, dtype=torch.float32)
+        full_prefill_k = torch.randn(B, H, S_prefill, D, dtype=torch.float32)
+        full_prefill_v = torch.randn(B, H, S_prefill, D, dtype=torch.float32)
+        tail_k = torch.randn(B, H, S_tail, D, dtype=torch.float32)
+        tail_v = torch.randn(B, H, S_tail, D, dtype=torch.float32)
+        full_k = torch.cat([full_prefill_k, tail_k], dim=2)
+        full_v = torch.cat([full_prefill_v, tail_v], dim=2)
+        ref_out = reference_attention(q_global, full_k, full_v, causal=True)
+        _spawn(
+            world_size, _worker_decode,
+            (q_global, full_prefill_k, full_prefill_v, tail_k, tail_v,
+             S_tail, ref_out, 1e-5, 1e-5, chunk_size, prefetch_depth),
         )

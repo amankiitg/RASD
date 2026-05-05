@@ -270,13 +270,40 @@ and the layout refactor belong in the same commit.
    past-rank, FA-2 `causal=True` at self-step). See R0.1 above for full
    rationale.
 
-1a. **A3/A4 ablation axes after R3.4 deletes the prefetcher.** With ring
-   rotation now inside `LlamaAttention.forward`, `kv_block_size` (A3) and
-   `prefetch_depth` (A4) lose their original meaning. Two options for
-   the re-ablation: (a) drop A3/A4 entirely from the 49-row grid (down to
-   ~30 rows of A1/A2/A5), (b) redefine A3 as ring step micro-batching and
-   A4 as compute/comm overlap depth and re-design the experiments. Decide
-   before R6.5 launches; not a blocker for R3.
+1a. ~~**A3/A4 ablation axes after R3.4 deletes the prefetcher.**~~ Resolved
+   2026-05-05: keep both axes with redefined semantics that map onto the
+   new ring-in-attention architecture. The 49-row grid stays intact.
+
+   - **A4 — `prefetch_depth`** → ring-step prefetch depth (compute/comm
+     overlap). Inside `_ring_against_sharded` and `ring_attention_prefill`,
+     the loop body becomes:
+       - prefetch_depth=0 (sync): wait after each rotation, then compute
+         the next step.
+       - prefetch_depth≥1 (async): issue rotation s+1's `batch_isend_irecv`
+         BEFORE computing step s, wait at top of next iteration. One
+         rotation in flight while compute proceeds.
+       - prefetch_depth=2 saturates the same as 1 under the ring P2P
+         pattern (each rotation sends what was just received from the
+         previous rotation, so two cannot be in flight simultaneously
+         without changing the comm pattern). We keep the value plumbed
+         through and document the saturation in the paper.
+   - **A3 — `kv_block_size`** → ring transmission chunk size. Each ring
+     step's `batch_isend_irecv` of the per-rank K/V slice is split into
+     contiguous chunks of `kv_block_size` positions. Smaller chunks =
+     more NCCL launch overhead; larger chunks = better bandwidth
+     amortization. The chunking is purely a transmission concern; the
+     receiving rank still computes one FA-2 over the full reassembled
+     slice (correctness is invariant under chunk size).
+
+   **Correctness invariant:** the kernel output must be bit-equivalent
+   (within accumulator precision) regardless of (chunk_size,
+   prefetch_depth). Tests parameterize over the cross product to enforce.
+
+   **Why this redefinition is meaningful:** the OLD A3/A4 numbers came from
+   a prefetcher whose output was never consumed by attention (see audit
+   in this doc's "Why this exists" section), so they reflected pure
+   comm overhead. The NEW numbers reflect actual ring throughput with
+   correctness coupling — strictly more publishable.
 
 2. **Draft KV growth.** If draft is replicated, its KV grows linearly per
    rank (no sharding). At 64k that's 4 GB/rank — fine. At 1M (M4 target),
