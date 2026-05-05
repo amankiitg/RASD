@@ -521,6 +521,98 @@ reflect actual ring throughput because the rotation output IS consumed by
 the FA-2 kernel inside the attention forward — there's a genuine
 correctness coupling now. Strictly more publishable.
 
+## Plan-to-implementation deviations
+
+The original M3 milestone document specified three things that the
+post-audit implementation deviates from. Each deviation was surfaced
+during the work and signed off; this section captures them so the
+plan-vs-as-built mapping is traceable when writing experiments.md.
+
+### 1. A1 draft model: TinyLlama-1.1B instead of DistilGPT-2 (124M)
+
+**Plan said:** A1 levels = `DistilGPT-2 (124M params)`, `Sheared-LLaMA (1.3B params)`.
+
+**Implemented:** `TinyLlama-1.1B`, `Sheared-LLaMA-1.3B`.
+
+**Why:** DistilGPT-2 uses the GPT-2 tokenizer (vocab=50257), incompatible
+with the LLaMA-2 SentencePiece tokenizer (vocab=32000) used by both target
+options (Llama-2-7b, Mistral-7b — same SentencePiece). Speculative decoding
+requires a shared vocab between draft and target so accept/reject can
+operate token-for-token. TinyLlama-1.1B is the closest-in-size LLaMA-tokenizer
+draft (1.1B params, LLaMA-2 SP vocab). Documented in
+`feedback_dep_versions.md` and pinned via HF revisions in
+[configs/ablations.yml](configs/ablations.yml).
+
+**Impact on results:** A1 still studies "small vs medium draft" but the
+small endpoint is 1.1B not 124M. The ratio is smaller, so A1's expected
+acceptance-rate gap will be smaller than what 124M-vs-1.3B would show —
+but the trend direction (larger draft → higher α, lower tps) is preserved.
+
+### 2. CUDA stream count: 2 explicit + NCCL internal, not 3 explicit
+
+**Plan said:** "Use three separate CUDA streams: one for target model
+computation, one for draft model computation, and one for D2D/inter-GPU
+communication."
+
+**Implemented:** Two explicit streams (`stream_compute`, `stream_draft`),
+plus NCCL's internal P2P stream which is implicitly managed by
+`dist.batch_isend_irecv` inside the target's `LlamaAttention.forward`.
+
+**Why:** R3's audit revealed that the original `AsyncKVRingPrefetcher`
+(which owned the explicit `stream_comm`) posted P2P that was never
+consumed by attention — the prefetched K/V blocks landed in
+`pending_block.keys/values` but were never merged into the target's
+attention input. Deleting the prefetcher (and its `stream_comm`) and
+moving ring rotation INSIDE `LlamaAttention.forward` is the only way to
+get correct ring attention with FA-2 + online-softmax merge. NCCL still
+runs P2P on its own internal stream, so the *parallelism intent* of the
+original plan is preserved — comm and compute still overlap (A4=1) — just
+structurally co-located inside the kernel rather than orchestrated as a
+separate stream from `generate()`.
+
+**Impact on results:** zero on observable metrics; the GPU still runs comm
+and compute concurrently. The change is internal — fewer Python-level stream
+objects, same hardware-level concurrency. Stream-ordering invariants (Rule 4
+in `feedback_spec_verify_fix.md`) collapsed from three explicit waits to two.
+
+### 3. A3/A4 semantics: ring-in-attention knobs, not prefetcher knobs
+
+**Plan said:**
+- A3 = "KV Cache Block Size (for communication)" with levels {256, 512, 1024, 2048}
+- A4 = "Communication/Computation Overlap Strategy" with levels {Sync, Async-1, Async-2}
+
+**Implemented:** Same numerical levels, redefined semantics:
+- A3 = per-step `batch_isend_irecv` chunk size inside the ring kernel
+- A4 = ring-step prefetch depth (sync vs async overlap of rotation s+1
+  with compute s); async-2 saturates as async-1 under the standard ring
+  P2P pattern (each rotation depends on the previous one's recv as its
+  send), documented as a known limit.
+
+**Why:** the plan's A3/A4 measured the deleted prefetcher's mechanics.
+After R3 collapse, those mechanics no longer exist. The redefinition maps
+the *spirit* of A3 (granularity of comm) and A4 (compute/comm overlap)
+onto the new architecture, where they actually steer kernel behaviour
+(Python-level NCCL op count, allocations, stream concurrency) — see the
+"A3/A4 are real, not cosmetic" section above.
+
+**Impact on results:** the 49-row grid stays unchanged. Numerical levels
+and reported variable names are preserved; semantics are explicitly
+documented in the kernel docstring, the `RASDConfig` field comments,
+the `rasd_inference.py` module header, and this plan doc.
+
+### Net effect on milestone scorecard
+
+All four M3 acceptance items still hold:
+1. **"Implement core RASD algorithm + ring attention KV-cache integration."**
+   ✅ done — actually *more* correct than the original implementation
+   would have been, since the audit caught the silent unused-prefetcher bug.
+2. **"Comprehensive grid search of ablations."** ⏸ pending R6 pod work; the
+   49-row grid in `configs/ablations.yml` is unchanged.
+3. **"Identify optimal RASD configuration for max throughput."** ⏸
+   produced from R6 outputs. The redefined A3/A4 axes will give cleaner
+   signals than the M3 ablation did.
+4. **"Detailed analysis in `experiments.md`."** ⏸ produced in R6 wrap-up.
+
 ## References
 
 - [src/models/ring_attention_flash.py](src/models/ring_attention_flash.py) —
