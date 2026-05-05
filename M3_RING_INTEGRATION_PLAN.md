@@ -274,16 +274,26 @@ and the layout refactor belong in the same commit.
   ring-integrated path. The math invariants (packed verify, residual resample,
   KV truncation) must still hold; only the attention computation changes.
 
-### Phase R5 — Multi-rank stream audit (1 day)
+### Phase R5 — Multi-rank stream audit ✅ done 2026-05-05
 
-- [ ] **R5.1** With ring inside attention, audit the remaining stream
-  interactions: `stream_compute` (verify forward including its internal P2P),
-  `stream_draft` (draft forward, no ring), `default` (accept/reject). Ensure
-  the verify forward's output is committed before accept/reject reads it
-  (the existing `current_stream().wait_stream(stream_compute)` should still
-  cover this).
+- [x] **R5.1** Audit found three iteration-boundary cross-stream races
+  (default → stream_draft for `cur_token`, default → stream_compute for
+  `past_kv`, default → stream_draft for `draft_past_kv` after partial
+  rejection's `_truncate_kv`). Same class as Check 4's α=0.018 bug —
+  small writes on default stream, fast bf16 readers on draft/compute
+  streams. Fix: two cheap `wait_stream` calls at the top of each loop
+  iteration:
+  ```python
+  self.stream_draft.wait_stream(torch.cuda.current_stream())
+  self.stream_compute.wait_stream(torch.cuda.current_stream())
+  ```
+  No-op on the first iteration (default stream is idle post-prefill-sync).
+  Top-of-file architecture docstring updated with the full 4-rule
+  stream-ordering contract (down from 5+ pre-R3). Memory
+  `feedback_spec_verify_fix.md` updated with the new invariants.
 - [ ] **R5.2** Run a 2-rank smoke at 8k context, confirm α matches
-  single-rank baseline within bootstrap CIs.
+  single-rank baseline within bootstrap CIs. **This is pod work; folded
+  into R6.1/R6.2.**
 
 ### Phase R6 — Validation matrix (2-3 days, mostly pod time)
 
@@ -415,7 +425,7 @@ behavior. Otherwise it's strictly optional.
 | R2.5 dual-cache patch + set_prefill_len helper | (in-line) | ✅ done 2026-05-05 (2 new tests) |
 | R3+R4 KV layout + prefetcher removal | 2-3 | ✅ done 2026-05-05 (rasd_inference.py surgery; 5 new tests; commit 09f7d98) |
 | R3.5 A3/A4 redefinition + chunked/prefetched ring | 0.5 | ✅ done 2026-05-05 (commit d45ccbc; 16+2 new tests) |
-| R5 stream audit | 1 | pending — smaller now ring is in-layer |
+| R5 stream audit | 1 | ✅ done 2026-05-05 (R5.1 code audit + iteration-boundary wait fix; R5.2 smoke folded into R6) |
 | R6 validation matrix | 2-3 | pending — mostly pod cost |
 | **Total** | **~10 days actual / 10-15 estimated** | plus ~$100 pod budget for R6 |
 

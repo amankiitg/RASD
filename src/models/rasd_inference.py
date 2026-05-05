@@ -12,12 +12,28 @@ Two CUDA streams run concurrently at each decoding step:
 
 Pipeline per step
 -----------------
+  [sync]    stream_draft and stream_compute wait for default stream's
+            commits from previous round (cur_token, past_kv, draft_past_kv
+            after _truncate_kv). Cheap event-based waits.
   [draft]   generate k draft tokens         (stream_draft)
   [verify]  target packed forward over [cur_token, draft_seq]
             with ring attention rotating sharded prefill K/V across ranks
             internally per layer; replicated tail handled locally.
                                             (stream_compute)
   [accept]  accept/reject + bonus sample    (default stream)
+
+Stream-ordering invariants (post-R3 + R5 audit, 2026-05-05)
+----------------------------------------------------------
+1. Top of each loop iter: stream_draft and stream_compute wait for
+   default stream so they observe last round's bonus_sample + truncation.
+2. stream_compute.wait_stream(stream_draft) before verify forward — verify
+   reads draft_seq written on stream_draft.
+3. The torch.cat / torch.stack that build draft_seq and draft_logits must
+   live INSIDE the `with stream_draft:` block so the resulting tensors
+   stay on stream_draft (not the default stream).
+4. torch.cuda.current_stream().wait_stream(stream_compute) after verify —
+   accept/reject, bonus sample, _truncate_kv on default stream read
+   target_logits_v + post_verify_kv produced on stream_compute.
 
 KV cache layout under multi-rank (R0.1, contiguous):
   Rank r holds prefill positions [r*S/W, (r+1)*S/W) sharded contiguously.
@@ -472,6 +488,18 @@ class RASDInference:
 
         # ---- Main speculative decoding loop ----
         while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
+
+            # === ITERATION-BOUNDARY STREAM SYNC (R5) ===
+            # End of previous round committed cur_token, past_kv, and (under
+            # partial rejection) draft_past_kv on the default stream via
+            # bonus_sample + _truncate_kv. stream_draft and stream_compute
+            # are about to read those tensors, so they must explicitly wait
+            # for default-stream commits. Cheap event-based waits; saves us
+            # from the same async-race class that produced α=0.018 on bf16
+            # in Check 4. No-op on the first iteration (default stream has
+            # no pending work post-prefill-sync).
+            self.stream_draft.wait_stream(torch.cuda.current_stream())
+            self.stream_compute.wait_stream(torch.cuda.current_stream())
 
             # === DRAFT PHASE (stream_draft) ===
             # Generate k tokens with the cheap draft model.
