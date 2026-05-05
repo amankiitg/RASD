@@ -45,15 +45,51 @@ class TestSingleProcessMath:
         out_ref  = reference_attention(q, k, v, causal=True)
         assert torch.allclose(out_ring, out_ref, atol=1e-5)
 
-    def test_decode_w1_matches_reference(self):
+    def test_decode_w1_no_tail_matches_reference(self):
+        """Decode against pure-sharded cache (immediately after prefill)."""
         from src.models.ring_attention_kernel import ring_attention_decode, reference_attention
         S_q, S_k = 5, 32
         q = torch.randn(self.B, self.H, S_q, self.D)
         k = torch.randn(self.B, self.H, S_k, self.D)
         v = torch.randn(self.B, self.H, S_k, self.D)
         out_ring = ring_attention_decode(
-            q, k, v, rank=0, world_size=1,
-            new_kv_owner_rank=0, new_kv_count=S_q,
+            q, k, v, rank=0, world_size=1, tail_count=0,
+        )
+        # No tail means K positions are all "past" wrt Q — unconditional attend.
+        out_ref = reference_attention(q, k, v, causal=False)
+        assert torch.allclose(out_ring, out_ref, atol=1e-5)
+
+    def test_decode_w1_with_tail_matches_reference(self):
+        """Decode against (prefill + replicated tail). Tail positions align causally with Q."""
+        from src.models.ring_attention_kernel import ring_attention_decode, reference_attention
+        S_q = 5
+        S_prefill, S_tail = 32, S_q
+        q = torch.randn(self.B, self.H, S_q, self.D)
+        k_prefill = torch.randn(self.B, self.H, S_prefill, self.D)
+        v_prefill = torch.randn(self.B, self.H, S_prefill, self.D)
+        k_tail = torch.randn(self.B, self.H, S_tail, self.D)
+        v_tail = torch.randn(self.B, self.H, S_tail, self.D)
+        # Concatenate as the kernel sees it (prefill | tail)
+        k_local = torch.cat([k_prefill, k_tail], dim=2)
+        v_local = torch.cat([v_prefill, v_tail], dim=2)
+        out_ring = ring_attention_decode(
+            q, k_local, v_local, rank=0, world_size=1, tail_count=S_tail,
+        )
+        # Reference: full sequence with causal mask. Q sees all prefill (no
+        # mask) + causal-aligned tail. The same `causal=True` semantics on
+        # the full (S_prefill + S_tail) sequence does this when S_q == S_tail.
+        out_ref = reference_attention(q, k_local, v_local, causal=True)
+        assert torch.allclose(out_ring, out_ref, atol=1e-5)
+
+    def test_decode_w1_only_tail(self):
+        """Degenerate case: no prefill, only tail."""
+        from src.models.ring_attention_kernel import ring_attention_decode, reference_attention
+        S_q = S_tail = 4
+        q = torch.randn(self.B, self.H, S_q, self.D)
+        k = torch.randn(self.B, self.H, S_tail, self.D)
+        v = torch.randn(self.B, self.H, S_tail, self.D)
+        out_ring = ring_attention_decode(
+            q, k, v, rank=0, world_size=1, tail_count=S_tail,
         )
         out_ref = reference_attention(q, k, v, causal=True)
         assert torch.allclose(out_ring, out_ref, atol=1e-5)
@@ -143,9 +179,12 @@ def _worker_prefill(rank: int, world_size: int, init_file: str,
 
 
 def _worker_decode(rank: int, world_size: int, init_file: str,
-                   q_global: torch.Tensor, full_k: torch.Tensor, full_v: torch.Tensor,
-                   new_kv_owner_rank: int, new_kv_count: int,
+                   q_global: torch.Tensor,
+                   full_prefill_k: torch.Tensor, full_prefill_v: torch.Tensor,
+                   tail_k: torch.Tensor, tail_v: torch.Tensor,
+                   tail_count: int,
                    expected_out: torch.Tensor, atol: float, rtol: float):
+    """Each rank holds (its prefill slice) + (the same replicated tail)."""
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     dist.init_process_group(
         backend="gloo",
@@ -155,19 +194,21 @@ def _worker_decode(rank: int, world_size: int, init_file: str,
     )
     try:
         from src.models.ring_attention_kernel import ring_attention_decode
-        S_k = full_k.shape[2]
-        S_local = S_k // world_size
+        S_prefill = full_prefill_k.shape[2]
+        S_local = S_prefill // world_size
         start, end = rank * S_local, (rank + 1) * S_local
-        k_local = full_k[:, :, start:end, :].contiguous()
-        v_local = full_v[:, :, start:end, :].contiguous()
+        # Each rank's local cache: own prefill slice + replicated tail
+        k_local = torch.cat([
+            full_prefill_k[:, :, start:end, :], tail_k,
+        ], dim=2).contiguous()
+        v_local = torch.cat([
+            full_prefill_v[:, :, start:end, :], tail_v,
+        ], dim=2).contiguous()
 
         out = ring_attention_decode(
             q_global, k_local, v_local,
-            rank=rank, world_size=world_size,
-            new_kv_owner_rank=new_kv_owner_rank,
-            new_kv_count=new_kv_count,
+            rank=rank, world_size=world_size, tail_count=tail_count,
         )
-        # Output should be the same on every rank (replicated)
         if not torch.allclose(out, expected_out, atol=atol, rtol=rtol):
             diff = (out - expected_out).abs().max().item()
             raise AssertionError(
@@ -214,22 +255,49 @@ class TestMultiProcessRing:
         _spawn(world_size, _worker_prefill, (q, k, v, ref_out, 1e-5, 1e-5))
 
     def test_decode_matches_reference(self, world_size):
+        """Decode under dual-cache: sharded prefill + replicated tail.
+
+        Reference: a single-process full attention over (full_prefill + tail)
+        with causal=True (Q's last positions align with tail).
+        """
         from src.models.ring_attention_kernel import reference_attention
         torch.manual_seed(world_size * 13)
         B, H, D = 1, 4, 16
-        S_k = 8 * world_size
-        S_q = 3
+        S_prefill = 8 * world_size
+        S_tail = 3
+        S_q = S_tail
         q_global = torch.randn(B, H, S_q, D, dtype=torch.float32)
-        # Build K such that the LAST S_q positions are the "new" tail aligned
-        # with q_global, and they live on rank world_size-1
-        full_k = torch.randn(B, H, S_k, D, dtype=torch.float32)
-        full_v = torch.randn(B, H, S_k, D, dtype=torch.float32)
+        full_prefill_k = torch.randn(B, H, S_prefill, D, dtype=torch.float32)
+        full_prefill_v = torch.randn(B, H, S_prefill, D, dtype=torch.float32)
+        tail_k = torch.randn(B, H, S_tail, D, dtype=torch.float32)
+        tail_v = torch.randn(B, H, S_tail, D, dtype=torch.float32)
+        # Single-process reference: concat as the model would see it.
+        full_k = torch.cat([full_prefill_k, tail_k], dim=2)
+        full_v = torch.cat([full_prefill_v, tail_v], dim=2)
         ref_out = reference_attention(q_global, full_k, full_v, causal=True)
 
-        new_kv_owner_rank = world_size - 1
-        new_kv_count = S_q  # last S_q K/V positions are the new tail
         _spawn(
             world_size, _worker_decode,
-            (q_global, full_k, full_v, new_kv_owner_rank, new_kv_count, ref_out,
-             1e-5, 1e-5),
+            (q_global, full_prefill_k, full_prefill_v, tail_k, tail_v,
+             S_tail, ref_out, 1e-5, 1e-5),
+        )
+
+    def test_decode_no_tail_matches_reference(self, world_size):
+        """Decode against pure-sharded cache (no tail yet — first verify call)."""
+        from src.models.ring_attention_kernel import reference_attention
+        torch.manual_seed(world_size * 17)
+        B, H, D = 1, 4, 16
+        S_prefill = 8 * world_size
+        S_q = 3
+        q_global = torch.randn(B, H, S_q, D, dtype=torch.float32)
+        full_prefill_k = torch.randn(B, H, S_prefill, D, dtype=torch.float32)
+        full_prefill_v = torch.randn(B, H, S_prefill, D, dtype=torch.float32)
+        # No tail — reference is unconditional attention (Q is past all prefill)
+        ref_out = reference_attention(q_global, full_prefill_k, full_prefill_v, causal=False)
+        empty_tail = torch.zeros(B, H, 0, D, dtype=torch.float32)
+
+        _spawn(
+            world_size, _worker_decode,
+            (q_global, full_prefill_k, full_prefill_v, empty_tail, empty_tail,
+             0, ref_out, 1e-5, 1e-5),
         )

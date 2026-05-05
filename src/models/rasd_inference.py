@@ -1,33 +1,40 @@
 """
 RASD Inference — Ring Attention Speculative Decoding
 
-Architecture
-------------
-Three CUDA streams run concurrently at each decoding step:
+Architecture (post-R3 dual-cache integration, 2026-05-05)
+---------------------------------------------------------
+Two CUDA streams run concurrently at each decoding step:
 
   stream_compute  — target model verification forward pass
+                    (ring attention happens INSIDE this forward, layer by layer,
+                    not as a separate prefetch loop in generate())
   stream_draft    — draft model token generation (k steps)
-  stream_comm     — async KV-block ring prefetch (D2D transfers)
 
 Pipeline per step
 -----------------
-  t=0  [draft]   generate k draft tokens         (stream_draft)
-       [comm]    async prefetch next KV block     (stream_comm)
-  t=1  [compute] target verifies k+1 positions   (stream_compute)
-                 waits on stream_comm event before consuming KV
-       [draft]   next draft batch already running (stream_draft)
+  [draft]   generate k draft tokens         (stream_draft)
+  [verify]  target packed forward over [cur_token, draft_seq]
+            with ring attention rotating sharded prefill K/V across ranks
+            internally per layer; replicated tail handled locally.
+                                            (stream_compute)
+  [accept]  accept/reject + bonus sample    (default stream)
 
-The key invariant: by the time the target model needs KV block N,
-stream_comm has already fetched it during the previous draft phase.
-With prefetch_depth=2, two blocks are in flight simultaneously,
-hiding even longer communication latency.
+KV cache layout under multi-rank (R0.1, contiguous):
+  Rank r holds prefill positions [r*S/W, (r+1)*S/W) sharded contiguously.
+  During decode, every rank also appends new K/V positions to a "replicated
+  tail" (identical on all ranks, since hidden_states is replicated).
+  Ring rotates only the sharded prefill; tail is local to each rank.
 
-Ablation hooks (A1–A4)
------------------------
+Ablation hooks
+---------------
   A1  draft_model_name   TinyLlama-1.1B | Sheared-LLaMA-1.3B
   A2  spec_steps k       2 | 4 | 6 | 8 | 12
-  A3  kv_block_size      256 | 512 | 1024 | 2048 tokens
-  A4  prefetch_depth     0 (sync) | 1 (async-1) | 2 (async-2)
+  A5  target_model_name  Llama-2-7b-hf
+
+Note: A3 (kv_block_size) and A4 (prefetch_depth) are obsolete after R3 —
+their ring-prefetcher mechanism was removed when ring moved into the
+attention forward. The fields stay on RASDConfig for backward
+compatibility but no longer steer behavior.
 
 Debug mode
 ----------
@@ -41,8 +48,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -100,130 +106,6 @@ class RASDConfig:
     @property
     def torch_dtype(self) -> torch.dtype:
         return torch.bfloat16 if self.dtype == "bfloat16" else torch.float16
-
-
-# ---------------------------------------------------------------------------
-# KV block prefetcher
-# ---------------------------------------------------------------------------
-
-@dataclass
-class _KVBlock:
-    """One ring-communication unit: KV tensors for kv_block_size tokens."""
-    keys:   torch.Tensor   # (num_layers, B, H, block_size, D)
-    values: torch.Tensor   # (num_layers, B, H, block_size, D)
-    rank_src: int          # which rank these came from
-    reqs:   List = field(default_factory=list)  # work handles for explicit r.wait()
-    ready_event: torch.cuda.Event = field(default_factory=lambda: torch.cuda.Event())
-
-
-class AsyncKVRingPrefetcher:
-    """Manages async KV-block ring communication on a dedicated CUDA stream.
-
-    At each step, `schedule_next()` posts a non-blocking isend/irecv pair
-    for the next KV block. `wait_and_get()` waits on the event and returns
-    the block once it is safe to consume.
-
-    prefetch_depth controls how many blocks are in-flight simultaneously:
-      0 → synchronous: wait() before returning, no overlap
-      1 → one block prefetched during current draft phase
-      2 → two blocks prefetched, hides higher comm latency
-
-    Uses batch_isend_irecv to prevent NCCL eager-mode serialisation deadlock.
-    """
-
-    def __init__(
-        self,
-        stream: torch.cuda.Stream,
-        rank: int,
-        world_size: int,
-        prefetch_depth: int,
-        debug: bool = False,
-    ):
-        self.stream        = stream
-        self.rank          = rank
-        self.world_size    = world_size
-        self.prefetch_depth = prefetch_depth
-        self.debug         = debug
-
-        self.send_to   = (rank + 1) % world_size
-        self.recv_from = (rank - 1) % world_size
-
-        # In-flight queue of (send_reqs, recv_reqs, block)
-        self._inflight: deque[Tuple[List, _KVBlock]] = deque()
-
-    def schedule(
-        self,
-        k_send: torch.Tensor,
-        v_send: torch.Tensor,
-        k_recv_buf: torch.Tensor,
-        v_recv_buf: torch.Tensor,
-    ) -> _KVBlock:
-        """Post async send/recv on comm stream, return a _KVBlock with pending reqs.
-
-        NCCL ordering contract
-        ----------------------
-        The caller MUST call `r.wait()` on block.reqs BEFORE the next
-        `dist.broadcast()` call. This ensures NCCL's sequence counter sees:
-            broadcast [seq N] → P2P [seq N+1] → broadcast [seq N+2] → ...
-        without multi-stream out-of-order submission.
-
-        The GPU-level compute/comm overlap still works because:
-        1. schedule() submits P2P to stream_comm (GPU starts it immediately)
-        2. Caller starts target compute on stream_compute (runs concurrently on GPU)
-        3. Caller calls r.wait() — by this point P2P has had ~200ms of compute time
-           to complete; wait typically returns quickly
-        4. Caller broadcasts for next round (ordered correctly)
-
-        prefetch_depth controls *when* schedule() is called relative to compute:
-          0 → after compute (synchronous, no overlap)
-          1 → before compute (async overlap — P2P runs during target forward pass)
-          2 → two rounds ahead (even more pipeline depth)
-        """
-        block = _KVBlock(
-            keys=k_recv_buf,
-            values=v_recv_buf,
-            rank_src=self.recv_from,
-        )
-
-        # NCCL sequence ordering fix: submit P2P from the default stream (not
-        # self.stream) so that on rank 0, broadcast and batch_isend_irecv share
-        # the same stream — matching the peer ranks in _ring_peer_loop. Mixing
-        # streams caused an off-by-one in NCCL's sequence counter between rank 0
-        # and peers at kv_block_size=1024/2048 (rank 0 submitted round N+1 before
-        # round N's P2P transmitted, peers still waiting on broadcast N).
-        # Compute/comm overlap is preserved because NCCL internally uses its own
-        # stream regardless of the submission stream.
-        ops = [
-            dist.P2POp(dist.isend, k_send, self.send_to),
-            dist.P2POp(dist.isend, v_send, self.send_to),
-            dist.P2POp(dist.irecv, k_recv_buf, self.recv_from),
-            dist.P2POp(dist.irecv, v_recv_buf, self.recv_from),
-        ]
-        reqs = dist.batch_isend_irecv(ops)
-        # Record the event on default stream AFTER P2P submission so that
-        # stream_compute.wait_event(block.ready_event) stalls compute stream
-        # until the irecv is complete — preventing data races at block 1024+.
-        block.ready_event.record()
-
-        # Store reqs for the caller to wait on before the next broadcast.
-        # Do NOT auto-wait here — the caller controls timing for overlap.
-        block.reqs = reqs
-
-        if self.debug:
-            logger.debug("[prefetcher] P2P posted, rank_src=%d prefetch_depth=%d",
-                         self.recv_from, self.prefetch_depth)
-
-        self._inflight.append(block)
-        return block
-
-    def wait_and_get(self, consume_stream: torch.cuda.Stream) -> Optional[_KVBlock]:
-        """Block until the oldest in-flight KV block is ready, return it."""
-        if not self._inflight:
-            return None
-        block = self._inflight.popleft()
-        # Make the compute stream wait on the comm event
-        consume_stream.wait_event(block.ready_event)
-        return block
 
 
 # ---------------------------------------------------------------------------
@@ -332,18 +214,9 @@ class RASDInference:
         # Ring state (set when distributed is active)
         self._rank       = dist.get_rank()       if dist.is_initialized() else 0
         self._world_size = dist.get_world_size() if dist.is_initialized() else 1
-        # Optional dedicated NCCL sub-group for broadcast signal. Set externally
-        # by run_experiment.py before generate() so that broadcast operations
-        # don't share a NCCL sequence counter with P2P ops on the default group.
+        # Optional dedicated NCCL sub-group (legacy carry-over; unused after
+        # ring moved into the attention forward). Kept None for compatibility.
         self._signal_group = None
-
-        self._prefetcher = AsyncKVRingPrefetcher(
-            stream=self.stream_comm,
-            rank=self._rank,
-            world_size=self._world_size,
-            prefetch_depth=config.prefetch_depth,
-            debug=config.debug,
-        )
 
         if config.debug:
             logging.basicConfig(level=logging.DEBUG)
@@ -354,12 +227,17 @@ class RASDInference:
     # ------------------------------------------------------------------
 
     def _setup_streams(self):
-        """Create three dedicated CUDA streams."""
+        """Create the two CUDA streams used by the verify loop.
+
+        After R3 (ring lives inside LlamaAttention.forward), there is no
+        separate KV-ring communication stream — P2P rotation runs as part
+        of the target verify forward on stream_compute. Only two streams
+        survive: target compute and draft generation.
+        """
         if not torch.cuda.is_available():
             raise RuntimeError("RASD requires CUDA.")
         self.stream_compute = torch.cuda.Stream()   # target model forward
         self.stream_draft   = torch.cuda.Stream()   # draft model forward
-        self.stream_comm    = torch.cuda.Stream()   # KV ring communication
 
     def _build_hf_config(self, model_name: str, revision: Optional[str],
                          context_length: int, label: str):
@@ -425,6 +303,13 @@ class RASDInference:
             self.target_model = self.target_model.to(self._device)
         self.target_model.eval()
 
+        # Install ring-attention forward on every LlamaAttention layer.
+        # No-op when world_size <= 1 (preserves single-rank exactness).
+        from src.models.ring_llama_attention import install_ring_attention
+        ws = dist.get_world_size() if dist.is_initialized() else 1
+        rk = dist.get_rank()       if dist.is_initialized() else 0
+        install_ring_attention(self.target_model, world_size=ws, rank=rk)
+
         draft_hf_config = self._build_hf_config(
             cfg.draft_model_name, cfg.draft_revision, cfg.context_length, label="draft",
         )
@@ -463,32 +348,6 @@ class RASDInference:
                              getattr(self.draft_model.config, "n_positions", 4096))
 
     # ------------------------------------------------------------------
-    # KV cache helpers
-    # ------------------------------------------------------------------
-
-    def _extract_kv_block(
-        self,
-        past_kv,
-        block_idx: int,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Slice one KV block from a HuggingFace past_key_values tuple.
-
-        past_kv : tuple of (key, value) per layer, each (B, H, S, D)
-        Returns (k_block, v_block) each (num_layers, B, H, block_size, D)
-        """
-        bs = self.cfg.kv_block_size
-        start = block_idx * bs
-        end   = start + bs
-        keys   = torch.stack([layer[0][:, :, start:end, :] for layer in past_kv])
-        values = torch.stack([layer[1][:, :, start:end, :] for layer in past_kv])
-        return keys, values
-
-    def _alloc_kv_buffers(self, past_kv) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Allocate receive buffers matching one KV block shape."""
-        k_ex, v_ex = self._extract_kv_block(past_kv, 0)
-        return torch.empty_like(k_ex), torch.empty_like(v_ex)
-
-    # ------------------------------------------------------------------
     # Core generation loop
     # ------------------------------------------------------------------
 
@@ -516,15 +375,52 @@ class RASDInference:
 
         # ---- Prefill: run target model on the prompt to get KV cache ----
         print(f"[TRACE rank={self._rank}] calling target prefill...", flush=True)
+        # Under multi-rank (R3 dual-cache layout), each rank owns the contiguous
+        # slice [rank*S/W, (rank+1)*S/W) of the prompt. Each rank embeds and
+        # forwards its own slice; the patched LlamaAttention performs ring
+        # attention across ranks for cross-slice attention. Position IDs are
+        # the absolute global positions so RoPE produces correct embeddings.
+        if self._world_size > 1:
+            assert S % self._world_size == 0, (
+                f"context_length={S} must be divisible by world_size={self._world_size} "
+                f"for contiguous sequence sharding"
+            )
+            S_local = S // self._world_size
+            start = self._rank * S_local
+            end   = start + S_local
+            local_ids = input_ids[:, start:end].contiguous()
+            local_pos = torch.arange(start, end, device=device).unsqueeze(0).expand(B, -1)
+            # attention_mask under sharding is implicit (causal handled by ring kernel)
+            local_attn_mask = None
+        else:
+            local_ids = input_ids
+            local_pos = None
+            local_attn_mask = attention_mask
+
         with torch.cuda.stream(self.stream_compute):
             target_out = self.target_model(
-                input_ids,
-                attention_mask=attention_mask,
+                local_ids,
+                attention_mask=local_attn_mask,
+                position_ids=local_pos,
                 use_cache=True,
             )
-            past_kv        = target_out.past_key_values
-            next_token_logit = target_out.logits[:, -1, :]
+            past_kv          = target_out.past_key_values
+            local_last_logit = target_out.logits[:, -1, :]
         self.stream_compute.synchronize()
+
+        # Freeze the prefill boundary on every patched attention module so
+        # subsequent decode forwards know where the sharded prefill ends and
+        # the replicated tail begins.
+        if self._world_size > 1:
+            from src.models.ring_llama_attention import set_prefill_len
+            set_prefill_len(self.target_model, prefill_len=local_ids.shape[1])
+
+        # The "first generated token" is sampled from the LAST GLOBAL position's
+        # logits, which only rank world_size-1 holds. Broadcast it so every rank
+        # samples the same cur_token (deterministic given same seed + same RNG).
+        if self._world_size > 1:
+            dist.broadcast(local_last_logit, src=self._world_size - 1)
+        next_token_logit = local_last_logit
         print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
 
         if cfg.debug:
@@ -552,11 +448,11 @@ class RASDInference:
         # Target vocab size — used to clamp/validate tokens before embedding
         target_vocab = self.target_model.config.vocab_size
 
-        # Pending P2P reqs from the previous round — must be waited on BEFORE
-        # broadcasting the signal for the next round to keep NCCL ops in order.
-        # (broadcast and batch_isend_irecv share the same NCCL sequence counter;
-        # submitting one before the other is done causes a SeqNum mismatch crash.)
-        pending_reqs: List = []
+        # Global sequence length — needed under multi-rank to compute correct
+        # position_ids for each verify forward. After prefill of S prompt
+        # tokens, global_seqlen = S. The seed `cur_token` is at position S,
+        # the first verified token will be at position S+1, etc.
+        global_seqlen = S
 
         # Tracking
         total_accepted   = 0
@@ -592,51 +488,10 @@ class RASDInference:
                 self.stream_draft.synchronize()
                 logger.debug("[RASD] round=%d draft_tokens=%s", n_rounds, draft_seq[0].tolist())
 
-            # === PREFETCH SIGNAL + P2P (stream_comm) ===
-            # NCCL ordering: wait on previous round's P2P reqs FIRST, then broadcast.
-            # This serialises broadcast [seq N] → P2P [seq N+1] on the NCCL timeline
-            # regardless of which CUDA stream each op runs on.
-            # The GPU still overlaps compute and comm — target forward runs on
-            # stream_compute while this round's P2P runs on stream_comm concurrently.
-            if self._world_size > 1 and past_kv is not None:
-                # 1. Drain previous round's P2P (ensures NCCL ordering)
-                print(f"[TRACE rank={self._rank}] round={n_rounds} draining {len(pending_reqs)} pending P2P reqs", flush=True)
-                for r in pending_reqs:
-                    r.wait()
-                pending_reqs = []
-
-                # 2. Submit this round's P2P (no signal — peers run for a
-                # fixed max_new_tokens rounds, eliminating the need for any
-                # collective in the loop and avoiding the NCCL deadlock that
-                # broadcast/all_reduce on sub-groups caused at block≥1024).
-                # Wrap block_idx by the number of *available* KV blocks, not
-                # world_size. With large kv_block_size (e.g. 2048) and short
-                # context (8192), there may be fewer blocks than ranks. Cycling
-                # past the end produces empty tensors → NCCL size mismatch → deadlock.
-                n_kv_blocks = max(1, past_kv[0][0].shape[2] // cfg.kv_block_size)
-                block_idx = (n_rounds + 1) % n_kv_blocks
-                k_send, v_send = self._extract_kv_block(past_kv, block_idx)
-                k_send = k_send.contiguous()
-                v_send = v_send.contiguous()
-                k_buf, v_buf   = self._alloc_kv_buffers(past_kv)
-                # Tick gate: signal peers BEFORE submitting P2P. Sending
-                # ticks after batch_isend_irecv deadlocks because dist.send
-                # (unbatched) serializes behind the batch — it can't start
-                # until the batch completes, but the batch's irecv needs
-                # the peer's isend, and the peer is blocked on the tick.
-                tick = torch.zeros(1, dtype=torch.int32, device=device)
-                for peer in range(1, self._world_size):
-                    dist.send(tick, peer)
-                pending_block  = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
-                self._prefetcher._inflight.clear()  # we track reqs via pending_reqs; don't accumulate blocks
-                pending_reqs   = pending_block.reqs
-                print(f"[TRACE rank={self._rank}] round={n_rounds} ticks sent + P2P submitted", flush=True)
-            else:
-                pending_block = None
-
             # === VERIFICATION PHASE (stream_compute) ===
-            if pending_block is not None:
-                self.stream_compute.wait_event(pending_block.ready_event)
+            # Ring rotation now lives inside LlamaAttention.forward (R3 dual-cache);
+            # there is no separate prefetcher block any more. The only required
+            # cross-stream wait is between draft and compute streams.
 
             # Target verify reads draft_seq/draft_logits written on stream_draft.
             # Without this wait, fast kernels (bf16) launch the target forward
@@ -656,9 +511,20 @@ class RASDInference:
                 # analysis/m3_post_analysis_plan.md Check 2 and
                 # tests/test_verification_math.py for the spec.
                 t_input = torch.cat([cur_token, draft_seq], dim=1)     # (B, k+1)
+                # Under multi-rank, supply absolute position_ids so RoPE in
+                # each ring-patched LlamaAttention layer uses correct positions.
+                # cur_token sits at global_seqlen, draft_seq at global_seqlen+1..
+                if self._world_size > 1:
+                    t_pos = torch.arange(
+                        global_seqlen, global_seqlen + t_input.shape[1],
+                        device=device,
+                    ).unsqueeze(0).expand(B, -1)
+                else:
+                    t_pos = None
                 t_out   = self.target_model(
                     t_input,
                     past_key_values=past_kv,
+                    position_ids=t_pos,
                     use_cache=True,
                 )
                 target_logits_v = t_out.logits                          # (B, k+1, vocab)
@@ -739,37 +605,19 @@ class RASDInference:
                     )
                     draft_past_kv = catchup.past_key_values
 
+            # Track global sequence length for next round's RoPE positions.
+            # The verify just committed (n_acc + 1) new tokens to the global
+            # context: n_acc accepted draft tokens + 1 bonus or resampled token.
+            global_seqlen += n_acc + 1
+
             # Early stop on EOS
             if (cur_token == self.tokenizer.eos_token_id).all():
                 break
 
         # ---- Finalize ----
-        # Drain last P2P, then continue doing dummy P2P rounds so peers
-        # (which run for exactly max_new_tokens rounds) don't hang.
-        if self._world_size > 1:
-            for r in pending_reqs:
-                r.wait()
-            pending_reqs = []
-
-            # Peers expect max_new_tokens total P2P rounds. Rank 0 did
-            # n_rounds so far. Continue with dummy P2P for the remainder.
-            remaining = cfg.max_new_tokens - n_rounds
-            if remaining > 0 and past_kv is not None:
-                k_send, v_send = self._extract_kv_block(past_kv, 0)
-                k_send = k_send.contiguous()
-                v_send = v_send.contiguous()
-                k_buf, v_buf = self._alloc_kv_buffers(past_kv)
-                print(f"[TRACE rank={self._rank}] draining {remaining} remaining P2P rounds for peers", flush=True)
-                tick = torch.zeros(1, dtype=torch.int32, device=device)
-                for i in range(remaining):
-                    # Tick gate: peers wait for this before their P2P
-                    for peer in range(1, self._world_size):
-                        dist.send(tick, peer)
-                    block = self._prefetcher.schedule(k_send, v_send, k_buf, v_buf)
-                    self._prefetcher._inflight.clear()
-                    for r in block.reqs:
-                        r.wait()
-
+        # Ring rotation now lives inside the attention forward, so there is
+        # no out-of-band P2P state to drain or "dummy P2P rounds" to run for
+        # peers. All ranks executed identical generate() loops in lockstep.
         torch.cuda.synchronize()
         t_end = time.perf_counter()
 

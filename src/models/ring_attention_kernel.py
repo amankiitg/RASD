@@ -8,19 +8,37 @@ LlamaAttention patch can call the same kernel.
 
 Layout
 ------
-Contiguous slice per rank (R0.1 in the plan doc):
-    Rank r holds K/V for absolute positions [r * S_local, (r+1) * S_local).
+Contiguous slice per rank (R0.1):
+    Rank r holds K/V for prefill positions [r * S_local, (r+1) * S_local).
 
-Causal masking per ring step
-----------------------------
+Decode tail (replicated across ranks, R3 design refinement 2026-05-05):
+    During decode, every rank appends new K/V positions to its cache
+    (since hidden_states is replicated, the new K/V is identical on every
+    rank). These trailing positions form a "replicated tail" that the
+    kernel attends to ONCE locally — not in the ring rotation.
+
+Causal masking per ring step (prefill only)
+-------------------------------------------
 Rank r at step s reads K/V from source rank sr = (r - s) mod W:
     sr <  r : full attend (past rank)            — causal=False, no mask
     sr == r : self-step, FA-2 causal=True        — within-slice diagonal mask
     sr >  r : skip (future rank, would violate causality)
 
-This pattern only handles **prefill** where every rank's queries are at the
-"end" of its own slice. For autoregressive decode, queries can be at
-positions strictly past the prefilled K/V — see ring_attention_decode below.
+Decode path
+-----------
+The cache layout each rank holds is `[sharded_prefill_local | replicated_tail]`
+of total length `S_local_prefill + tail_count`. The decode kernel:
+  1. Splits the local K/V into prefill (first S_local_prefill positions) and
+     tail (last tail_count positions).
+  2. Runs ring attention against the sharded prefill — W steps, each rotating
+     prefill K/V to the next rank. Returns partial (out, lse).
+  3. Runs local attention against the replicated tail (no comm) with causal
+     masking when S_q == tail_count (the verify case). Returns partial
+     (out, lse).
+  4. Combines the two via the online-softmax `_combine` identity.
+
+This ensures the tail is counted exactly once across the whole attention
+computation, while every rank produces the same final output (Q is replicated).
 """
 
 from __future__ import annotations
@@ -219,62 +237,35 @@ def ring_attention_prefill(
 # Ring attention — decode path (Q is replicated across ranks at the "tail")
 # ---------------------------------------------------------------------------
 
-def ring_attention_decode(
-    q_global: torch.Tensor,       # (B, H, S_q, D)  — Q for newly-decoded positions, replicated
-    k_local: torch.Tensor,        # (B, H, S_k_local, D) — local K slice
-    v_local: torch.Tensor,        # (B, H, S_k_local, D) — local V slice
+def _ring_against_sharded(
+    q_global: torch.Tensor,       # (B, H, S_q, D) — replicated Q
+    k_sharded_local: torch.Tensor,  # (B, H, S_local_prefill, D)
+    v_sharded_local: torch.Tensor,
     rank: int,
     world_size: int,
-    new_kv_owner_rank: int,       # which rank owns the just-appended K/V tail
-    new_kv_count: int,            # how many positions at the END of that rank's slice are "new"
-    scale: Optional[float] = None,
-    dropout_p: float = 0.0,
-    process_group: Optional["dist.ProcessGroup"] = None,
-) -> torch.Tensor:
-    """Ring attention for decode/verify: Q at the tail attending to all past K/V.
+    scale: float,
+    dropout_p: float,
+    process_group,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Ring W steps over the sharded prefill K/V.
 
-    Q is replicated on every rank (S_q tokens, typically 1 for greedy decode
-    or k+1 for spec-decode verify). K/V is sharded contiguously.
-
-    The k+1 NEW K/V positions live at the end of `new_kv_owner_rank`'s slice.
-    For everyone except that rank, all local K positions are strictly < all
-    Q positions → unconditional attend. For new_kv_owner_rank, the last
-    `new_kv_count` K positions need a causal mask vs. their corresponding Q.
-
-    Args
-        q_global              : (B, H, S_q, D), same on every rank
-        k_local, v_local      : (B, H, S_k_local, D)
-        rank, world_size      : ring topology
-        new_kv_owner_rank     : the rank whose slice contains the just-appended Q-aligned K/V
-        new_kv_count          : 0 if K cache is "frozen" (no new appends this step) else S_q
-        scale                 : 1/sqrt(D) if None
-        process_group         : optional dist process group
-
-    Returns
-        out_global : (B, H, S_q, D) — replicated on every rank (up to bf16 noise)
+    Returns (out, lse) where lse is in fp32. All ranks' K/V slices are
+    same-sized (S_local_prefill); causal masking is unconditional (no
+    self-step diagonal) because Q's absolute positions are strictly past
+    all prefill positions during decode.
     """
-    B, H, S_q, D = q_global.shape
-    if scale is None:
-        scale = 1.0 / math.sqrt(D)
-
     if world_size == 1:
-        # Q sees all K/V; the last new_kv_count positions need causal alignment
-        # with Q's own positions. _attn_step's causal=True already does this
-        # when S_k > S_q (mask diagonal=S_k-S_q), so just call once.
-        out, _lse = _attn_step(
-            q_global, k_local, v_local, scale=scale, dropout_p=dropout_p,
-            causal=(new_kv_count == S_q),
-        )
-        return out
+        return _attn_step(q_global, k_sharded_local, v_sharded_local,
+                          scale=scale, dropout_p=dropout_p, causal=False)
 
     assert _DIST_AVAILABLE and dist.is_initialized(), \
-        "ring_attention_decode requires torch.distributed initialised when world_size > 1"
+        "_ring_against_sharded requires torch.distributed initialised when world_size > 1"
 
     send_to   = (rank + 1) % world_size
     recv_from = (rank - 1) % world_size
 
-    k_cur = k_local.contiguous()
-    v_cur = v_local.contiguous()
+    k_cur = k_sharded_local.contiguous()
+    v_cur = v_sharded_local.contiguous()
     k_buf = torch.empty_like(k_cur)
     v_buf = torch.empty_like(v_cur)
 
@@ -282,23 +273,10 @@ def ring_attention_decode(
     lse_acc: Optional[torch.Tensor] = None
 
     for step in range(world_size):
-        sr = (rank - step) % world_size  # source rank of currently-held K/V
-
-        # During decode, Q's absolute positions are *all* past every rank's
-        # prefilled K/V. So we always attend (no skip). The only causal
-        # consideration is the new-tail block when sr == new_kv_owner_rank.
-        if sr == new_kv_owner_rank and new_kv_count > 0 and new_kv_count == S_q:
-            # The last new_kv_count K positions are pairwise causal with Q.
-            out_step, lse_step = _attn_step(
-                q_global, k_cur, v_cur,
-                scale=scale, dropout_p=dropout_p, causal=True,
-            )
-        else:
-            out_step, lse_step = _attn_step(
-                q_global, k_cur, v_cur,
-                scale=scale, dropout_p=dropout_p, causal=False,
-            )
-
+        out_step, lse_step = _attn_step(
+            q_global, k_cur, v_cur,
+            scale=scale, dropout_p=dropout_p, causal=False,
+        )
         if out_acc is None:
             out_acc, lse_acc = out_step, lse_step
         else:
@@ -317,7 +295,97 @@ def ring_attention_decode(
             k_cur, k_buf = k_buf, k_cur
             v_cur, v_buf = v_buf, v_cur
 
-    return out_acc
+    return out_acc, lse_acc
+
+
+def ring_attention_decode(
+    q_global: torch.Tensor,       # (B, H, S_q, D)  — replicated Q
+    k_local: torch.Tensor,        # (B, H, S_local_prefill + tail_count, D)
+    v_local: torch.Tensor,        # (B, H, S_local_prefill + tail_count, D)
+    rank: int,
+    world_size: int,
+    tail_count: int,              # number of REPLICATED tail positions at the end
+    scale: Optional[float] = None,
+    dropout_p: float = 0.0,
+    process_group: Optional["dist.ProcessGroup"] = None,
+) -> torch.Tensor:
+    """Ring attention for decode/verify under the dual-cache layout.
+
+    Each rank's local K/V is structured as:
+        [sharded_prefill_local | replicated_tail]
+    where the prefill part has S_local_prefill = N/W positions (rank r holds
+    [r*S_local..(r+1)*S_local) of the global prefill) and the tail has
+    `tail_count` positions that are IDENTICAL on every rank (the decoded
+    tokens accumulated since prefill).
+
+    The kernel:
+      Pass 1 — ring W steps against the sharded prefill (K/V slices rotate
+               between ranks). Each step contributes attention against
+               1/W of the prefill positions; combined via online-softmax.
+      Pass 2 — local attention against the replicated tail (no comm). When
+               S_q == tail_count we mask causally (new K/V is the same
+               positions as Q); otherwise attend unconditionally (tail
+               positions are all "past" wrt Q).
+      Combine — merge pass-1 and pass-2 outputs via the log-sum-exp identity.
+
+    Args
+        q_global              : (B, H, S_q, D), same on every rank
+        k_local, v_local      : (B, H, S_local_prefill + tail_count, D)
+        rank, world_size      : ring topology
+        tail_count            : number of trailing positions in k_local that
+                                are the replicated tail (NOT in the ring)
+        scale, dropout_p      : standard attention args
+        process_group         : optional dist process group
+
+    Returns
+        out_global : (B, H, S_q, D) — replicated on every rank (up to bf16 noise)
+    """
+    B, H, S_q, D = q_global.shape
+    if scale is None:
+        scale = 1.0 / math.sqrt(D)
+    S_total_local = k_local.shape[2]
+    S_prefill_local = S_total_local - tail_count
+    assert S_prefill_local >= 0, \
+        f"tail_count={tail_count} exceeds k_local.shape[2]={S_total_local}"
+
+    has_prefill = S_prefill_local > 0
+    has_tail    = tail_count > 0
+
+    if not has_prefill and not has_tail:
+        raise ValueError("ring_attention_decode: empty K/V")
+
+    if not has_prefill:
+        # Only tail (degenerate; no prefill positions to ring over).
+        out, _ = _attn_step(
+            q_global, k_local, v_local,
+            scale=scale, dropout_p=dropout_p, causal=(S_q == tail_count),
+        )
+        return out
+
+    # Pass 1: ring against sharded prefill
+    k_prefill = k_local[:, :, :S_prefill_local, :].contiguous()
+    v_prefill = v_local[:, :, :S_prefill_local, :].contiguous()
+    out_prefill, lse_prefill = _ring_against_sharded(
+        q_global, k_prefill, v_prefill,
+        rank=rank, world_size=world_size,
+        scale=scale, dropout_p=dropout_p,
+        process_group=process_group,
+    )
+
+    if not has_tail:
+        return out_prefill
+
+    # Pass 2: local against replicated tail (causal when S_q matches tail length)
+    k_tail = k_local[:, :, S_prefill_local:, :]
+    v_tail = v_local[:, :, S_prefill_local:, :]
+    out_tail, lse_tail = _attn_step(
+        q_global, k_tail, v_tail,
+        scale=scale, dropout_p=dropout_p, causal=(S_q == tail_count),
+    )
+
+    # Combine the two passes via online-softmax identity.
+    out_combined, _ = _combine(out_prefill, lse_prefill, out_tail, lse_tail)
+    return out_combined
 
 
 # ---------------------------------------------------------------------------

@@ -17,9 +17,20 @@ Calling convention (driver responsibilities)
   Prefill: hidden_states is each rank's local slice (S_local = N/W tokens).
            position_ids must be the absolute positions
            [rank*S_local, (rank+1)*S_local).
-  Decode:  hidden_states is the SAME on every rank (Q replicated). Only the
-           rank world_size-1 actually appends the new K/V to its local cache;
-           other ranks leave their cache untouched.
+           After prefill, the driver MUST set `_ring_prefill_len` on every
+           attention module to S_local — this freezes the prefill boundary
+           for subsequent decode calls.
+  Decode:  hidden_states is the SAME on every rank (Q replicated). Every
+           rank appends the new K/V to its local cache (the tail is
+           "replicated" identical across ranks since hidden_states is
+           identical). The kernel splits prefill vs tail via `_ring_prefill_len`.
+
+Dual-cache layout (R3 design refinement 2026-05-05):
+  Each layer's HF past_key_value contains, in order:
+      [sharded_prefill_local | replicated_tail]
+  The prefill part has _ring_prefill_len positions (rank's contiguous slice).
+  The tail part grows monotonically during decode (subject to truncation on
+  partial rejection) and is identical on every rank.
 
 Tested locally for the world_size=1 fall-through path. Multi-rank validation
 runs on pod (R6) since transformers==4.44.2 is not installed locally.
@@ -97,25 +108,15 @@ def _ring_llama_attention_forward(
         cos, sin = self.rotary_emb(v, position_ids)
     q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
-    # 3. Cache update — only the owning rank appends new K/V
-    #    During prefill, hidden_states is the local slice → each rank appends
-    #    its own slice. During decode, hidden_states is replicated → only
-    #    rank world_size-1 appends; others leave their cache untouched.
+    # 3. Cache update — every rank appends new K/V (dual-cache layout).
+    #    During prefill: hidden_states is each rank's local slice → each
+    #    rank's appended K/V is its own contiguous prefill slice.
+    #    During decode:  hidden_states is replicated across ranks → each
+    #    rank appends the SAME new K/V positions as the global "tail".
     is_prefill = (past_key_value is None) or _cache_is_empty(past_key_value, self.layer_idx)
-    new_kv_owner_rank = world_size - 1  # contiguous layout: tail goes to last rank
-
-    if is_prefill:
-        # Each rank appends its local slice
-        k_full, v_full = _cache_append(past_key_value, k, v, self.layer_idx, sin, cos, cache_position)
-    else:
-        if rank == new_kv_owner_rank:
-            k_full, v_full = _cache_append(past_key_value, k, v, self.layer_idx, sin, cos, cache_position)
-        else:
-            # Non-owner ranks: read existing cache, don't mutate
-            k_full, v_full = _cache_read(past_key_value, self.layer_idx)
-            if k_full is None:
-                # No cache yet — shouldn't happen during decode, but guard anyway
-                k_full, v_full = k, v
+    k_full, v_full = _cache_append(
+        past_key_value, k, v, self.layer_idx, sin, cos, cache_position,
+    )
 
     # 4. GQA expansion (no-op for Llama-2 where num_kv_heads == num_heads)
     k_full = repeat_kv(k_full, num_kv_groups)
@@ -124,17 +125,20 @@ def _ring_llama_attention_forward(
     # 5. Ring attention
     scale = 1.0 / math.sqrt(head_dim)
     if is_prefill:
+        # Q is sharded (each rank holds local slice); K/V is sharded.
         attn_out = ring_attention_prefill(
             q, k_full, v_full,
             rank=rank, world_size=world_size, scale=scale,
         )
     else:
-        new_kv_count = q_len  # number of new K/V positions appended this call
+        # Q is replicated; K/V is [sharded_prefill | replicated_tail].
+        # The driver sets `_ring_prefill_len` after prefill so we can split.
+        prefill_len = getattr(self, "_ring_prefill_len", k_full.shape[2] - q_len)
+        tail_count = k_full.shape[2] - prefill_len
         attn_out = ring_attention_decode(
             q, k_full, v_full,
             rank=rank, world_size=world_size,
-            new_kv_owner_rank=new_kv_owner_rank,
-            new_kv_count=new_kv_count, scale=scale,
+            tail_count=tail_count, scale=scale,
         )
 
     # 6. Output projection
@@ -230,6 +234,9 @@ def install_ring_attention(target_model, world_size: int, rank: int) -> int:
             continue
         attn._ring_rank = rank
         attn._ring_world_size = world_size
+        # Initial prefill_len = 0; the driver sets the real value after prefill
+        # completes (RASDInference._prefill is responsible).
+        attn._ring_prefill_len = 0
         attn._ring_original_forward = attn.forward
         attn.forward = MethodType(_ring_llama_attention_forward, attn)
         n_patched += 1
@@ -237,3 +244,27 @@ def install_ring_attention(target_model, world_size: int, rank: int) -> int:
     logger.info("[ring] patched %d LlamaAttention layers (rank=%d, world_size=%d)",
                 n_patched, rank, world_size)
     return n_patched
+
+
+def set_prefill_len(target_model, prefill_len: int) -> int:
+    """Freeze the prefill boundary on every patched attention module.
+
+    Called by RASDInference after prefill completes. Each subsequent decode
+    forward will treat positions [0, prefill_len) of its local cache as the
+    sharded prefill (rotated through the ring) and positions
+    [prefill_len, end) as the replicated tail (attended locally).
+
+    Returns the number of attention modules updated. No-op (returns 0) if
+    install_ring_attention was never called or world_size <= 1.
+    """
+    layers = getattr(getattr(target_model, "model", target_model), "layers", None)
+    if layers is None:
+        return 0
+    n_set = 0
+    for layer in layers:
+        attn = getattr(layer, "self_attn", None)
+        if attn is None or not hasattr(attn, "_ring_world_size"):
+            continue
+        attn._ring_prefill_len = prefill_len
+        n_set += 1
+    return n_set

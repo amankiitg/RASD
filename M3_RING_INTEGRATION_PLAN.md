@@ -162,61 +162,79 @@ Key correctness invariants captured here:
 4. Draft model runs entirely locally on each rank with full replicated
    KV — no comm during draft phase.
 
-### Phase R1 — Ring attention forward, single-layer correctness (2-3 days)
+### Phase R1 — Ring attention forward, single-layer correctness ✅ done 2026-05-05
 
-- [ ] **R1.1** Extract the ring step from `ring_attention_flash.py:_ring_forward`
-  into a free function `ring_attention(q, k_local, v_local, ...)` that takes
-  pre-projected Q/K/V (so it can be called from inside an HF attention layer
-  rather than owning its own QKV).
-- [ ] **R1.2** Unit test in `tests/test_ring_attention.py`:
-  - Single-rank: ring output == FA-2 output exactly.
-  - Multi-rank (gloo backend, CPU, 4 fake "ranks" via subprocess): ring output
-    matches single-rank reference for the same total sequence.
-  - Causal masking: per-step mask must respect rank offset (rank `r` step `s`
-    attends to keys at absolute positions starting `((r-s) mod W) * N/W`).
-- [ ] **R1.3** Numerical tolerance: bf16 ring output should match FA-2 bf16
-  reference within 1e-3 absolute on 8k×8h×128d random inputs.
+- [x] **R1.1** Extracted [src/models/ring_attention_kernel.py](src/models/ring_attention_kernel.py)
+  with `ring_attention_prefill` and `ring_attention_decode` free functions.
+  Pre-projected Q/K/V interface, FA-2 + SDPA dispatch, online-softmax merge.
+- [x] **R1.2** [tests/test_ring_attention.py](tests/test_ring_attention.py) — 8/8 green.
+  Single-process math (4 tests) plus real multi-process gloo (4 tests) at
+  W∈{2,4} for both prefill and decode.
+- [x] **R1.3** Numerical tolerance: single-rank kernel matches reference bit-exactly
+  (atol < 1e-5 fp32). bf16 numerical tolerance check deferred to R6 (CUDA-only).
 
-### Phase R2 — Patch into Llama target attention (2-3 days)
+### Phase R2 — Patch into Llama target attention ✅ done 2026-05-05
 
-- [ ] **R2.1** Subclass `LlamaAttention` (or monkey-patch its `forward`) to
-  call our `ring_attention` when `world_size > 1`, and standard SDPA/FA-2
-  when `world_size == 1`. The `past_key_value` argument supplies the local
-  K/V slice; the QKV projections stay unchanged from HF.
-- [ ] **R2.2** Wire the patch into `_load_models` in `rasd_inference.py`:
-  after `from_pretrained`, walk `target_model.model.layers` and replace each
-  `.self_attn` with the ring-aware version. Keep weights, replace forward.
-- [ ] **R2.3** Validation: with `world_size=1`, target outputs must be
-  byte-identical to current main on a fixed seed prompt. With `world_size=2`,
-  outputs must match `world_size=1` on the same prompt within bf16 tolerance.
-  Log this as a CI-equivalent integration test (skipped if no GPU/no NCCL).
+- [x] **R2.1** Monkey-patch `LlamaAttention.forward` per instance via
+  [src/models/ring_llama_attention.py](src/models/ring_llama_attention.py).
+  `world_size==1` falls through to original forward (preserves single-rank
+  exactness). Cache helpers handle DynamicCache and legacy tuple.
+- [x] **R2.2** `install_ring_attention(target_model, world_size, rank)` walks
+  `target_model.model.layers` and replaces `.self_attn.forward`. Will be
+  called from `_load_models` during R3.
+- [x] **R2.3** Plumbing tests in [tests/test_ring_llama_attention.py](tests/test_ring_llama_attention.py) —
+  10/10 green. Multi-rank correctness on real Llama gated on R6 pod time
+  (transformers==4.44.2 not installed locally).
 
-### Phase R3 — KV cache layout for sharded sequence (1-2 days)
+### Phase R3 — KV cache layout + spec integration (merged with R4)
 
-- [ ] **R3.1** Refactor `past_kv` semantics in `rasd_inference.py`:
-  - On prefill: each rank holds only its position-slice of the K/V.
-  - During decode: appended tokens go to round-robin owning rank.
-  - All cross-references (`past_kv[0][0].shape[2]` etc.) must become
-    "global sequence length" (sum across ranks) vs "local slice length"
-    consistently. Add helper `global_seqlen(past_kv, world_size)`.
-- [ ] **R3.2** Update `_extract_kv_block` and `_alloc_kv_buffers` for the new
-  layout. The ring P2P still rotates blocks but now **inside** the attention
-  forward, not as a separate prefetch loop in `generate_text`.
-- [ ] **R3.3** Update `_truncate_kv` for partial rejection. Truncating
-  `(k - 1 - n_acc)` positions from the round-robin layout means each rank
-  truncates `ceil((k-1-n_acc-r)/W)` for the appropriate offset.
+R3 and R4 are now one phase — `_extract_kv_block` and `_alloc_kv_buffers`
+exist solely to feed `AsyncKVRingPrefetcher`, so the prefetcher deletion
+and the layout refactor belong in the same commit.
 
-### Phase R4 — Speculative integration (1-2 days)
+**Two preserved invariants throughout R3:**
 
-- [ ] **R4.1** Remove the now-redundant `AsyncKVRingPrefetcher` and its
-  invocations in `generate_text` ([rasd_inference.py:601-635](src/models/rasd_inference.py#L601-L635)).
-  The ring rotation is now handled inside the attention layer, not as a
-  separate prefetch.
-- [ ] **R4.2** Re-evaluate the three CUDA streams. With ring-inside-attention,
-  P2P happens during the verify forward itself — `stream_comm` may collapse
-  into the attention forward's own stream usage. Update the stream-ordering
-  invariants in `feedback_spec_verify_fix.md` accordingly.
-- [ ] **R4.3** Run `tests/test_verification_math.py` (6 tests) on the
+1. **`world_size=1` byte-equivalence.** The current single-rank verify path
+   has α≈0.4 NF4 / ≈0.7 bf16 and 6/6 verify-math tests green. R3 must not
+   regress this — every multi-rank code branch is gated on `world_size > 1`,
+   and `tests/test_verification_math.py` stays as the regression gate.
+2. **Driver-agnostic sharding.** Each rank receives the full prompt and
+   slices internally inside `_prefill`. `run_experiment.py` does not need
+   to know about sharding — the same `engine.generate_text(prompt)` call
+   works at world_size 1 or 8.
+
+**Tasks:**
+
+- [ ] **R3.1** Wire `install_ring_attention(target_model, world_size, rank)`
+  into [`_load_models`](src/models/rasd_inference.py#L364) right after
+  `target_model = AutoModelForCausalLM.from_pretrained(...)`. No-op when
+  `world_size <= 1`.
+- [ ] **R3.2** Refactor `_prefill` to slice `input_ids` per rank:
+  `local_ids = input_ids[:, rank*S/W : (rank+1)*S/W]`,
+  `position_ids = arange(rank*S/W, (rank+1)*S/W)`. Pass these to
+  `target_model(...)`. Draft model continues to receive full `input_ids`
+  (replicated KV per R0.3).
+- [ ] **R3.3** Update `_truncate_kv` for the contiguous layout: only the
+  rank whose slice owns the just-appended tail truncates
+  `(k - 1 - n_acc)` positions. With `new_kv_owner_rank = world_size-1`,
+  that's just rank W-1; other ranks' caches are unchanged during decode.
+- [ ] **R3.4** Delete `AsyncKVRingPrefetcher` (the entire class) and its
+  invocation block at [generate_text:601-635](src/models/rasd_inference.py#L601-L635).
+  Ring rotation now lives inside `LlamaAttention.forward`, not as a separate
+  prefetch loop.
+- [ ] **R3.5** Delete `_extract_kv_block` and `_alloc_kv_buffers` — only
+  the prefetcher used them.
+- [ ] **R3.6** Re-evaluate the three CUDA streams. With ring-inside-attention,
+  `stream_comm` no longer has work to do — it can be removed. `stream_compute`
+  and `stream_draft` stay (they cover the parallel target verify vs. draft
+  generation pipeline). Update the stream-ordering invariants in
+  `feedback_spec_verify_fix.md` once R3 lands.
+- [ ] **R3.7** Tests added in the same commit:
+  - `test_local_slice_indexing` — verify the `_prefill` slice math
+    (positions, edge cases at world_size that doesn't divide S).
+  - `test_truncate_kv_owner_only` — `_truncate_kv` only modifies rank W-1's
+    cache during decode partial rejection.
+- [ ] **R3.8** Run `tests/test_verification_math.py` (6 tests) on the
   ring-integrated path. The math invariants (packed verify, residual resample,
   KV truncation) must still hold; only the attention computation changes.
 
@@ -245,11 +263,21 @@ Key correctness invariants captured here:
 
 ## Open design questions
 
-1. **Causal masking with round-robin layout.** Standard ring attention
-   assumes contiguous slices. Round-robin breaks contiguity. Either (a)
-   accept that causal masks become irregular per ring step, or (b) use
-   contiguous slices and accept periodic load imbalance. Need to think
-   through which is cheaper to implement in FA-2's varlen API.
+1. ~~**Causal masking with round-robin layout.**~~ Resolved during R1
+   reading (2026-05-05): flipped R0.1 to contiguous slices. Round-robin's
+   per-position causal masking would have required custom CUDA. Contiguous
+   uses the standard literature pattern (skip future-rank, full-attend
+   past-rank, FA-2 `causal=True` at self-step). See R0.1 above for full
+   rationale.
+
+1a. **A3/A4 ablation axes after R3.4 deletes the prefetcher.** With ring
+   rotation now inside `LlamaAttention.forward`, `kv_block_size` (A3) and
+   `prefetch_depth` (A4) lose their original meaning. Two options for
+   the re-ablation: (a) drop A3/A4 entirely from the 49-row grid (down to
+   ~30 rows of A1/A2/A5), (b) redefine A3 as ring step micro-batching and
+   A4 as compute/comm overlap depth and re-design the experiments. Decide
+   before R6.5 launches; not a blocker for R3.
+
 2. **Draft KV growth.** If draft is replicated, its KV grows linearly per
    rank (no sharding). At 64k that's 4 GB/rank — fine. At 1M (M4 target),
    that's 64 GB/rank — won't fit. Will need ring on draft too for M4.
@@ -315,16 +343,15 @@ behavior. Otherwise it's strictly optional.
 
 ## Effort estimate
 
-| Phase | Days | Notes |
+| Phase | Days | Status |
 |---|---|---|
-| R0 design lock | 1 | Pin decisions in this doc |
-| R1 kernel correctness | 2-3 | Unit tests are the gate |
-| R2 Llama patch | 2-3 | Risk: HF version coupling |
-| R3 KV layout | 1-2 | Round-robin bookkeeping |
-| R4 spec integration | 1-2 | Remove old prefetcher |
-| R5 stream audit | 1 | Smaller now ring is in-layer |
-| R6 validation matrix | 2-3 | Mostly pod cost |
-| **Total** | **10-15 days** | Plus ~$100 pod budget for R6 |
+| R0 design lock | 1 | ✅ done 2026-05-05 |
+| R1 kernel correctness | 2-3 | ✅ done 2026-05-05 (ring_attention_kernel.py + 8 tests) |
+| R2 Llama patch | 2-3 | ✅ done 2026-05-05 (ring_llama_attention.py + 10 tests) |
+| R3+R4 KV layout + prefetcher removal | 2-3 | merged; in progress |
+| R5 stream audit | 1 | smaller now ring is in-layer |
+| R6 validation matrix | 2-3 | mostly pod cost |
+| **Total** | **10-15 days** | plus ~$100 pod budget for R6 |
 
 ## References
 

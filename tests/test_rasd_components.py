@@ -1,11 +1,15 @@
 """
 Unit tests for RASD inference components.
 
-Covers the three riskiest pieces before running the full ablation grid:
+Covers the riskiest pieces before running the full ablation grid:
   1. _sample             — token sampling (greedy + stochastic)
   2. _acceptance_mask    — accept/reject criterion (Leviathan et al.)
-  3. AsyncKVRingPrefetcher — prefetch logic in sync (depth=0) and async (depth=1,2)
-                             using a mock dist backend to avoid needing real NCCL
+  3. RASDConfig defaults — guard against accidental knob breakage
+
+The former AsyncKVRingPrefetcher tests were removed in R3 (the prefetcher
+itself was deleted when ring rotation moved into the LlamaAttention forward;
+see M3_RING_INTEGRATION_PLAN.md). Ring kernel and patch correctness now lives
+in tests/test_ring_attention.py and tests/test_ring_llama_attention.py.
 
 Run on the pod:
     cd /workspace/RASD && python -m pytest tests/ -v
@@ -18,12 +22,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 import torch
 import torch.nn.functional as F
-from unittest.mock import MagicMock, patch
 
 from src.models.rasd_inference import (
     _sample,
     _acceptance_mask,
-    AsyncKVRingPrefetcher,
     RASDConfig,
 )
 
@@ -161,155 +163,7 @@ class TestAcceptanceMask:
 
 
 # ---------------------------------------------------------------------------
-# 3. AsyncKVRingPrefetcher
-# ---------------------------------------------------------------------------
-
-class TestAsyncKVRingPrefetcher:
-    """
-    Tests the prefetcher in isolation using mock dist ops.
-    We patch dist.batch_isend_irecv to return fake completed requests so we
-    don't need a real NCCL process group. This tests the buffer management,
-    event recording, and queue logic — the parts most likely to have bugs.
-    """
-
-    def _make_prefetcher(self, prefetch_depth, debug=False):
-        if DEVICE == "cpu":
-            pytest.skip("Prefetcher tests require CUDA")
-        stream = torch.cuda.Stream()
-        return AsyncKVRingPrefetcher(
-            stream=stream,
-            rank=0,
-            world_size=2,
-            prefetch_depth=prefetch_depth,
-            debug=debug,
-        )
-
-    def _make_kv(self, tokens=512, layers=4, heads=8, head_dim=64):
-        """Create a pair of KV tensors shaped (layers, B=1, H, tokens, D)."""
-        shape = (layers, 1, heads, tokens, head_dim)
-        k = torch.randn(shape, device=DEVICE, dtype=torch.bfloat16)
-        v = torch.randn(shape, device=DEVICE, dtype=torch.bfloat16)
-        return k, v
-
-    def _mock_req(self):
-        req = MagicMock()
-        req.wait = MagicMock(return_value=None)
-        return req
-
-    # dist.P2POp validates the process group in its __init__ before we even
-    # reach batch_isend_irecv, so we must mock it too.
-    def _dist_patches(self):
-        mock_reqs = [self._mock_req() for _ in range(4)]
-        return (
-            patch("torch.distributed.P2POp", return_value=MagicMock()),
-            patch("torch.distributed.batch_isend_irecv", return_value=mock_reqs),
-            mock_reqs,
-        )
-
-    def test_sync_depth0_returns_block(self):
-        """prefetch_depth=0: schedule() returns a block synchronously."""
-        pf = self._make_prefetcher(prefetch_depth=0)
-        k_send, v_send = self._make_kv()
-        k_buf,  v_buf  = self._make_kv()
-
-        p2p_patch, batch_patch, mock_reqs = self._dist_patches()
-        with p2p_patch, batch_patch:
-            block = pf.schedule(k_send, v_send, k_buf, v_buf)
-
-        assert block is not None
-        assert block.keys is k_buf
-        assert block.values is v_buf
-        # sync path: all wait() calls made
-        for r in mock_reqs:
-            r.wait.assert_called_once()
-
-    def test_async_depth1_enqueues_block(self):
-        """prefetch_depth=1: schedule() enqueues the block, wait_and_get() returns it."""
-        pf = self._make_prefetcher(prefetch_depth=1)
-        k_send, v_send = self._make_kv()
-        k_buf,  v_buf  = self._make_kv()
-
-        p2p_patch, batch_patch, _ = self._dist_patches()
-        with p2p_patch, batch_patch:
-            block = pf.schedule(k_send, v_send, k_buf, v_buf)
-
-        assert len(pf._inflight) == 1
-
-        consume_stream = torch.cuda.Stream()
-        retrieved = pf.wait_and_get(consume_stream)
-
-        assert retrieved is block
-        assert len(pf._inflight) == 0    # dequeued
-
-    def test_async_depth2_two_blocks_in_flight(self):
-        """prefetch_depth=2: can schedule 2 blocks and retrieve them in FIFO order."""
-        pf = self._make_prefetcher(prefetch_depth=2)
-        blocks = []
-
-        for _ in range(2):
-            k_s, v_s = self._make_kv()
-            k_b, v_b = self._make_kv()
-            p2p_patch, batch_patch, _ = self._dist_patches()
-            with p2p_patch, batch_patch:
-                b = pf.schedule(k_s, v_s, k_b, v_b)
-            blocks.append(b)
-
-        assert len(pf._inflight) == 2
-
-        consume_stream = torch.cuda.Stream()
-        r1 = pf.wait_and_get(consume_stream)
-        r2 = pf.wait_and_get(consume_stream)
-
-        assert r1 is blocks[0]   # FIFO
-        assert r2 is blocks[1]
-        assert len(pf._inflight) == 0
-
-    def test_wait_and_get_empty_returns_none(self):
-        """wait_and_get on empty queue returns None without error."""
-        pf = self._make_prefetcher(prefetch_depth=1)
-        consume_stream = torch.cuda.Stream()
-        result = pf.wait_and_get(consume_stream)
-        assert result is None
-
-    def test_recv_buffer_is_separate_from_send(self):
-        """The block returned must hold the recv buffers, not the send tensors."""
-        pf = self._make_prefetcher(prefetch_depth=1)
-        k_send, v_send = self._make_kv()
-        k_buf,  v_buf  = self._make_kv()
-
-        p2p_patch, batch_patch, _ = self._dist_patches()
-        with p2p_patch, batch_patch:
-            block = pf.schedule(k_send, v_send, k_buf, v_buf)
-
-        assert block.keys   is k_buf
-        assert block.values is v_buf
-        assert block.keys   is not k_send
-        assert block.values is not v_send
-
-    def test_debug_mode_does_not_crash(self):
-        """debug=True path should complete without errors."""
-        pf = self._make_prefetcher(prefetch_depth=1, debug=True)
-        k_s, v_s = self._make_kv()
-        k_b, v_b = self._make_kv()
-        p2p_patch, batch_patch, _ = self._dist_patches()
-        with p2p_patch, batch_patch:
-            block = pf.schedule(k_s, v_s, k_b, v_b)
-        assert block is not None
-
-    def test_rank_src_recorded_correctly(self):
-        """block.rank_src should be recv_from = (rank - 1) % world_size."""
-        pf = self._make_prefetcher(prefetch_depth=1)
-        k_s, v_s = self._make_kv()
-        k_b, v_b = self._make_kv()
-        p2p_patch, batch_patch, _ = self._dist_patches()
-        with p2p_patch, batch_patch:
-            block = pf.schedule(k_s, v_s, k_b, v_b)
-        # rank=0, world_size=2 → recv_from = (0-1) % 2 = 1
-        assert block.rank_src == 1
-
-
-# ---------------------------------------------------------------------------
-# 4. RASDConfig defaults
+# 3. RASDConfig defaults
 # ---------------------------------------------------------------------------
 
 class TestRASDConfig:
