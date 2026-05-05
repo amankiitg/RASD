@@ -292,6 +292,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             quantize_target   = bool(run.get("quantize_target", False)),
             temperature       = float(run.get("temperature", 1.0)),
             top_p             = float(run.get("top_p", 1.0)),
+            context_length    = int(run.get("context_length", 0)),
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
         )

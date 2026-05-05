@@ -81,6 +81,12 @@ class RASDConfig:
     max_new_tokens: int = 256
     dtype: str = "bfloat16"             # "float16" | "bfloat16"
 
+    # Context length — used to decide RoPE scaling at model load.
+    # Llama-2 native max_position_embeddings = 4096; anything larger needs
+    # rope_scaling. We use linear interpolation (factor = ceil(ctx/native)).
+    # 0 / None = no override (use the model's native max).
+    context_length: int = 0
+
     # Quantisation (to fit draft + target on same GPUs)
     quantize_draft: bool = True          # 4-bit NF4 via bitsandbytes
     quantize_target: bool = False
@@ -355,6 +361,30 @@ class RASDInference:
         self.stream_draft   = torch.cuda.Stream()   # draft model forward
         self.stream_comm    = torch.cuda.Stream()   # KV ring communication
 
+    def _build_hf_config(self, model_name: str, revision: Optional[str],
+                         context_length: int, label: str):
+        """Load the model's HF config and apply linear RoPE scaling if needed.
+
+        Llama-2 ships with max_position_embeddings=4096. To run at longer
+        contexts (e.g. 64k for the M3 ablation), we set rope_scaling with
+        factor = ceil(ctx / native_max) so token positions get linearly
+        interpolated into the trained RoPE range.
+        """
+        from transformers import AutoConfig
+        import math
+
+        hf_cfg = AutoConfig.from_pretrained(model_name, revision=revision)
+        if context_length and context_length > hf_cfg.max_position_embeddings:
+            native_max = hf_cfg.max_position_embeddings
+            factor = float(math.ceil(context_length / native_max))
+            hf_cfg.rope_scaling = {"type": "linear", "factor": factor}
+            hf_cfg.max_position_embeddings = context_length
+            logger.info(
+                "[RoPE] %s: ctx=%d > native=%d → linear scaling factor=%.1f",
+                label, context_length, native_max, factor,
+            )
+        return hf_cfg
+
     def _load_models(self):
         """Load target and (optionally quantised) draft models.
 
@@ -363,13 +393,17 @@ class RASDInference:
           MPS (MacBook) — no quantization (bitsandbytes unsupported), .to("mps")
           CPU           — no quantization, .to("cpu")
         """
-        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         from src.utils.device import DeviceCapabilities
 
         cfg = self.cfg
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         self._caps = DeviceCapabilities.detect(local_rank=local_rank)
         self._device = self._caps.device
+
+        target_hf_config = self._build_hf_config(
+            cfg.target_model_name, cfg.target_revision, cfg.context_length, label="target",
+        )
 
         logger.info("Loading target model: %s  [device=%s]", cfg.target_model_name, self._device)
         target_bnb = None
@@ -381,6 +415,7 @@ class RASDInference:
 
         self.target_model = AutoModelForCausalLM.from_pretrained(
             cfg.target_model_name,
+            config=target_hf_config,
             revision=cfg.target_revision,
             torch_dtype=cfg.torch_dtype,
             quantization_config=target_bnb,
@@ -389,6 +424,10 @@ class RASDInference:
         if self._caps.device_type in ("mps", "cpu") and target_bnb is None:
             self.target_model = self.target_model.to(self._device)
         self.target_model.eval()
+
+        draft_hf_config = self._build_hf_config(
+            cfg.draft_model_name, cfg.draft_revision, cfg.context_length, label="draft",
+        )
 
         logger.info("Loading draft model: %s  [device=%s]", cfg.draft_model_name, self._device)
         draft_bnb = None
@@ -400,6 +439,7 @@ class RASDInference:
 
         self.draft_model = AutoModelForCausalLM.from_pretrained(
             cfg.draft_model_name,
+            config=draft_hf_config,
             revision=cfg.draft_revision,
             torch_dtype=cfg.torch_dtype,
             quantization_config=draft_bnb,
