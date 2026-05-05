@@ -3,6 +3,42 @@
 Tracking file for finishing the ring-attention/spec-decoding integration that was
 deferred during M3. Created 2026-05-05 after the Check-4 audit surfaced the gap.
 
+## Status snapshot (2026-05-05, end of day)
+
+**Phases R0–R3.5 complete. 76/76 tests green locally. Pushed to main on three
+commits: c7800c1 (R0–R2), 09f7d98 (R3 dual-cache integration), d45ccbc (R3.5
+A3/A4 redefinition).**
+
+Architecture target (sequence-sharded KV via ring-in-attention with online
+softmax) is met in code:
+- `src/models/ring_attention_kernel.py` — `ring_attention_prefill` and
+  `ring_attention_decode` free functions with online-softmax merge, dual-cache
+  decode (sharded prefill + replicated tail), and chunked + prefetched
+  rotation.
+- `src/models/ring_llama_attention.py` — `install_ring_attention` monkey-patches
+  every `LlamaAttention.forward`. `set_prefill_len` freezes the prefill
+  boundary after prefill so decode forwards know the sharded/tail split.
+- `src/models/rasd_inference.py` — ring is fully wired into `generate()`:
+  prefill slices `input_ids` per rank, broadcasts the last logit, sets
+  `_ring_prefill_len`; decode passes absolute `position_ids`; the legacy
+  `AsyncKVRingPrefetcher` and its helpers are deleted (~370 lines removed,
+  ~70 added). Stream count went 3 → 2.
+- A3/A4 ablation knobs preserved with **real** semantics in the new
+  architecture: `cfg.kv_block_size` controls per-step batch_isend_irecv
+  chunk size; `cfg.prefetch_depth` toggles compute/comm overlap.
+
+What's left:
+- **R5** — multi-rank stream re-audit on the integrated path + a 2-rank
+  smoke. Smaller now ring is in-layer (only `stream_compute` ↔ `stream_draft`
+  to coordinate; the third stream is gone).
+- **R6** — Lambda pod validation matrix (1/2/8-rank smokes at 8k, 64k memory
+  check, full 49-row re-ablation at 64k×8). This is where real Llama,
+  real CUDA, real NCCL get tested. Budget ~$70–90.
+
+Also-pending (deferred but not blockers):
+- Enrich wandb per-round telemetry (do during R6).
+- Lambda SSH key registration, persistent filesystem, instance provisioning.
+
 ## Why this exists
 
 During the post-stream-race audit (2026-05-05) we discovered that the verify
@@ -374,11 +410,116 @@ behavior. Otherwise it's strictly optional.
 |---|---|---|
 | R0 design lock | 1 | ✅ done 2026-05-05 |
 | R1 kernel correctness | 2-3 | ✅ done 2026-05-05 (ring_attention_kernel.py + 8 tests) |
+| R1.5 dual-cache decode kernel refactor | (in-line) | ✅ done 2026-05-05 (caught during R3 reading; 4 new tests) |
 | R2 Llama patch | 2-3 | ✅ done 2026-05-05 (ring_llama_attention.py + 10 tests) |
-| R3+R4 KV layout + prefetcher removal | 2-3 | merged; in progress |
-| R5 stream audit | 1 | smaller now ring is in-layer |
-| R6 validation matrix | 2-3 | mostly pod cost |
-| **Total** | **10-15 days** | plus ~$100 pod budget for R6 |
+| R2.5 dual-cache patch + set_prefill_len helper | (in-line) | ✅ done 2026-05-05 (2 new tests) |
+| R3+R4 KV layout + prefetcher removal | 2-3 | ✅ done 2026-05-05 (rasd_inference.py surgery; 5 new tests; commit 09f7d98) |
+| R3.5 A3/A4 redefinition + chunked/prefetched ring | 0.5 | ✅ done 2026-05-05 (commit d45ccbc; 16+2 new tests) |
+| R5 stream audit | 1 | pending — smaller now ring is in-layer |
+| R6 validation matrix | 2-3 | pending — mostly pod cost |
+| **Total** | **~10 days actual / 10-15 estimated** | plus ~$100 pod budget for R6 |
+
+## Recent updates (chronological)
+
+**2026-05-05** — Three commits land all of R0–R3.5:
+
+1. `c7800c1` — *Ring/spec integration R0–R2: kernel + Llama patch + RoPE scaling.*
+   Audit during the multi-rank stream review revealed the original "ring
+   attention" path never fed prefetched KV blocks into the target's attention
+   forward — `world_size>1` had each rank holding the full local KV with
+   ring P2P being decorative. This commit captured the finding in
+   `M3_RING_INTEGRATION_PLAN.md`, locked R0 design (contiguous KV slices,
+   replicated draft, no ring on draft), shipped the layout-agnostic ring
+   kernel free functions (R1) with FA-2 + online-softmax merge and 8 tests
+   (single-process math + multi-process gloo at W∈{2,4}), and shipped the
+   `install_ring_attention` monkey-patch with 10 plumbing tests (R2). Also
+   threaded `context_length` through `RASDConfig` for 64k RoPE scaling
+   (`_build_hf_config` helper applies linear rope_scaling factor when ctx
+   exceeds the model's native 4096). 18/18 tests green at this point.
+
+2. `09f7d98` — *Ring/spec integration R3 (merged R3+R4): finish dual-cache
+   wiring.* Surfaced two design refinements during R3 reading that fed back
+   into R1/R2:
+
+   - **R0.1 flip**: round-robin → contiguous slice layout. Round-robin
+     causal masking would have required custom CUDA; contiguous matches the
+     standard literature pattern (skip future-rank steps, full-attend
+     past-rank, FA-2 `causal=True` at self-step). The 256-token decode
+     imbalance is ~3% at 64k base — negligible.
+   - **R1.5 + R2.5 dual-cache decode**: the original R1 decode kernel
+     implicitly required equal-size K/V across ranks during decode. Under
+     the contiguous design, only rank W-1 grows, breaking this. Solution:
+     during decode, every rank appends new K/V to a "replicated tail"
+     (identical on all ranks since hidden_states is replicated). The kernel
+     splits the per-rank cache into [sharded_prefill | replicated_tail],
+     runs ring W steps over the prefill, runs one local pass over the tail,
+     and combines via online softmax. Adds ~33 MB per rank for 256 decode
+     tokens × 32 layers — negligible. Test layer added.
+
+   Then the actual rasd_inference.py surgery: deleted `AsyncKVRingPrefetcher`
+   class, `_KVBlock`, `_extract_kv_block`, `_alloc_kv_buffers`, the 40-line
+   P2P+tick block in the verify loop, and the post-loop "drain remaining
+   P2P" block. Added: install_ring_attention call in `_load_models`, sliced
+   prefill with absolute position_ids, broadcast of the last logit from
+   rank W-1, `set_prefill_len` call after prefill, `global_seqlen` tracking
+   for verify position_ids. Stream count: 3 → 2. ~370 lines removed, ~70
+   added. 59/59 tests green.
+
+3. `d45ccbc` — *R3.5: redefine A3/A4 ablation axes onto ring-in-attention
+   architecture.* The 49-row ablation grid is preserved by remapping
+   `kv_block_size` and `prefetch_depth` onto the new architecture (they
+   were going to be obsolete after R3 deleted the prefetcher). New
+   semantics: A3 = per-step batch_isend_irecv chunk size; A4 = ring-step
+   prefetch depth. `_issue_rotation` returns `(reqs, assemble_fn)` with the
+   assemble_fn handling chunked recv (gloo's recv requires contiguous
+   tensors, so chunked path uses per-chunk buffers and copies into the
+   destination after wait). 16 parameterized invariance tests cover
+   `(chunk_size ∈ {None, 2, 4, 8}) × (prefetch_depth ∈ {0, 1}) × {prefill,
+   decode}` to enforce that varying knobs only changes timing, never
+   correctness. 76/76 tests green.
+
+## A3/A4 are real, not cosmetic
+
+The redefined A3/A4 axes do **genuinely different work** in the kernel —
+this is not just preserving a knob name to keep the YAML happy. Validating
+that the ablation will produce meaningful curves on the pod:
+
+**A3 (chunk_size) — what differs at runtime:**
+- Number of NCCL ops per ring rotation: `4` (unchunked) vs `4 * ceil(S_local
+  / chunk_size)` (chunked). At 64k context with W=8 (S_local=8k):
+  chunk_size=2048 → 16 ops/rotation; chunk_size=256 → 128 ops/rotation.
+  Each op carries CUDA launch overhead.
+- Allocations: unchunked path allocates zero buffers per rotation; chunked
+  path allocates `2 * ceil(S_local/chunk_size)` contiguous recv buffers
+  each rotation.
+- Memory bandwidth: chunked path's `assemble_fn` copies temp buffers into
+  the destination after wait — O(S_local × H × D × bf16) per rotation per
+  layer. At 64k×W=8 across 32 layers, that's nontrivial memory-bus traffic.
+- Expected curve: U-shape with a sweet spot around 512–1024. Smaller
+  chunks suffer launch overhead; very large chunks (= unchunked) are
+  fastest in raw bandwidth but show NCCL bandwidth saturation differences
+  at the limit.
+
+**A4 (prefetch_depth) — what differs at runtime:**
+- Sync (depth=0): host calls `r.wait()` then launches `_attn_step` — comm
+  and compute serialize on the host timeline.
+- Async (depth≥1): rotation s+1's `batch_isend_irecv` lands on NCCL's
+  internal stream BEFORE the FA-2 kernel for step s launches on the
+  compute stream. `r.wait()` happens at the top of the next iteration.
+- On A100 SXM with NCCL: NCCL P2P runs ~50–100 GB/s intra-node; FA-2 at
+  64k×8 heads is ~1–2 ms per layer. The two genuinely overlap on the GPU.
+- Expected effect: meaningful tps win for async (likely 10–25% at 64k
+  scales where comm time is non-trivial relative to compute). depth=2
+  saturates at depth=1 behaviour because each ring rotation depends on
+  the previous one's recv as its send — documented limit.
+
+**Why this is more meaningful than the M3 numbers:**
+The OLD prefetcher's output was never consumed by attention (the audit that
+started this whole plan). M3's A3/A4 numbers reflected only the comm
+scheduling overhead of an unused mechanism. The NEW A3/A4 numbers will
+reflect actual ring throughput because the rotation output IS consumed by
+the FA-2 kernel inside the attention forward — there's a genuine
+correctness coupling now. Strictly more publishable.
 
 ## References
 
