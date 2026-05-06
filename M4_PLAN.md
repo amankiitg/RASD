@@ -2,6 +2,29 @@
 
 Tracking file for M4 work. Strategy, phased order, and deliverables.
 
+## M3 → M4 configuration inheritance (2026-05-06)
+
+R6.5 settled the M3 ablation axes. M4's 36-run final matrix should NOT
+re-ablate them — it should **lock all knobs at M3's winners** and vary
+only the cross-method × cross-context grid that the paper actually
+needs. This saves ~3-4× the compute and keeps the matrix's signal clean.
+
+| M3 axis | R6.5 finding | M4 lock |
+|---|---|---|
+| **A2** spec_steps k | k=4 / k=8 tps-equivalent; α monotonic in k | `spec_steps=4` |
+| **A3** kv_block_size | tps monotonic, 2048 wins ~40% over default 512 | **`kv_block_size=2048`** (revise from M3 default 512) |
+| **A4** prefetch_depth | sync == async-1 == async-2 (identical to logged precision) | `prefetch_depth=1`; do NOT sweep |
+| **A1** draft size | TinyLlama-1.1B ≈ Sheared-LLaMA-1.3B (within seed noise) | `draft = princeton-nlp/Sheared-LLaMA-1.3B` |
+| **A5** target | 7B works at 64k×W=8 NF4; 13B OOMs on 40 GB | `target = meta-llama/Llama-2-7b-hf`; 13B revisits *after* C11 lands |
+
+**M4 final-matrix shape (36 runs)**: method × context × seed
+= {RASD, Ring, Sliding} × {128k, 256k, 512k, 1M} × {42, 123, 456}.
+All other knobs locked at M3 winners above.
+
+This is a structural simplification: M3 was an ablation along 5 axes
+at fixed ctx; M4 is a method-comparison along 1 axis (ctx) at fixed
+ablation winners. The two milestones produce complementary evidence.
+
 ## Status snapshot (2026-05-06 — major revision)
 
 > **What changed since the 2026-04-16 snapshot below this section:** the
