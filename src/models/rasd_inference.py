@@ -137,6 +137,16 @@ class RASDConfig:
     # (acceptance rate vs token position).
     log_per_token: bool = False
 
+    # M4 C6 — generation checkpoint/resume.
+    # checkpoint_every == 0 disables (M3 byte-identical default).
+    # When > 0, save verify-loop state every N rounds to
+    # `<checkpoint_dir>/<run_id>/round_<n>.pt`. On generate() entry,
+    # if a checkpoint exists for this run_id, restore state and skip
+    # prefill — saves the bulk of pod time at 1M context.
+    checkpoint_every: int = 0
+    checkpoint_dir:   Optional[str] = None
+    run_id:           Optional[str] = None
+
     @property
     def torch_dtype(self) -> torch.dtype:
         return torch.bfloat16 if self.dtype == "bfloat16" else torch.float16
@@ -497,6 +507,72 @@ class RASDInference:
                              getattr(self.draft_model.config, "n_positions", 4096))
 
     # ------------------------------------------------------------------
+    # M4 C6 — checkpoint helpers (no-ops when checkpoint_every == 0)
+    # ------------------------------------------------------------------
+
+    def _try_load_checkpoint(self):
+        """Return the latest GenerationCheckpoint for this run+rank, or None.
+
+        Returns None when:
+          * cfg.checkpoint_dir is unset
+          * cfg.run_id is unset
+          * no checkpoint file exists for this (run_id, rank)
+        """
+        cfg = self.cfg
+        if not cfg.checkpoint_dir or not cfg.run_id:
+            return None
+        from src.models.checkpoint import GenerationCheckpoint, latest_checkpoint
+        path = latest_checkpoint(cfg.checkpoint_dir, cfg.run_id, rank=self._rank)
+        if path is None:
+            return None
+        ckpt = GenerationCheckpoint.load(path)
+        # Move tensors to the engine's device so the verify loop runs natively
+        if hasattr(self, "_device"):
+            ckpt = ckpt.move_tensors_to(self._device)
+        return ckpt
+
+    def _maybe_save_checkpoint(self, *, n_rounds, global_seqlen,
+                               total_accepted, total_draft_toks,
+                               cur_token, generated, past_kv, draft_past_kv,
+                               per_token_trace, prefill_len):
+        """Save a GenerationCheckpoint for the current rank, if scheduled.
+
+        No-op when cfg.checkpoint_every == 0 (the default; preserves M3
+        byte-identical behavior). All ranks save their own KV slice into
+        per-rank files — the on-disk layout is rank-aware.
+        """
+        cfg = self.cfg
+        if cfg.checkpoint_every <= 0 or not cfg.checkpoint_dir or not cfg.run_id:
+            return
+        from src.models.checkpoint import (
+            GenerationCheckpoint, checkpoint_path, should_save_this_round,
+        )
+        if not should_save_this_round(cfg.checkpoint_every, n_rounds):
+            return
+        ckpt = GenerationCheckpoint(
+            n_rounds=n_rounds,
+            global_seqlen=global_seqlen,
+            total_accepted=total_accepted,
+            total_draft_toks=total_draft_toks,
+            prefill_len=prefill_len,
+            cur_token=cur_token.detach().cpu(),
+            generated=[t.detach().cpu() for t in generated],
+            past_kv=tuple(
+                tuple(t.detach().cpu() for t in layer) for layer in past_kv
+            ),
+            draft_past_kv=tuple(
+                tuple(t.detach().cpu() for t in layer) for layer in draft_past_kv
+            ),
+            per_token_trace=list(per_token_trace),
+        )
+        path = checkpoint_path(
+            cfg.checkpoint_dir, cfg.run_id, round_idx=n_rounds, rank=self._rank,
+        )
+        ckpt.save(path)
+        if self._rank == 0:
+            logger.info("[checkpoint] saved %s", path)
+
+    # ------------------------------------------------------------------
     # Core generation loop
     # ------------------------------------------------------------------
 
@@ -522,114 +598,151 @@ class RASDInference:
 
         print(f"[TRACE rank={self._rank}] generate() start, S={S}, block_size={cfg.kv_block_size}", flush=True)
 
+        # ---- C6 RESUME: try to load a checkpoint and skip prefill ----
+        # Gated on cfg.checkpoint_every > 0 — when 0 (the default), this
+        # whole branch is skipped and the M3 path is byte-identical.
+        ckpt = self._try_load_checkpoint() if cfg.checkpoint_every > 0 else None
+
         # ---- Prefill: run target model on the prompt to get KV cache ----
-        print(f"[TRACE rank={self._rank}] calling target prefill...", flush=True)
-        # Under multi-rank (R3 dual-cache layout), each rank owns the contiguous
-        # slice [rank*S/W, (rank+1)*S/W) of the prompt. Each rank embeds and
-        # forwards its own slice; the patched LlamaAttention performs ring
-        # attention across ranks for cross-slice attention. Position IDs are
-        # the absolute global positions so RoPE produces correct embeddings.
-        if self._world_size > 1:
-            # Auto-truncate prompt to nearest multiple of world_size so the
-            # contiguous sequence shard math works regardless of caller's
-            # exact tokenization. (Tokenizers can produce off-by-a-few token
-            # counts that don't divide evenly — happens regularly with
-            # synthetic prompts that target a specific token count.)
-            if S % self._world_size != 0:
-                S_aligned = (S // self._world_size) * self._world_size
-                if self._rank == 0:
-                    logger.warning(
-                        "context_length=%d not divisible by world_size=%d; "
-                        "truncating to %d for contiguous sequence sharding",
-                        S, self._world_size, S_aligned,
-                    )
-                input_ids = input_ids[:, :S_aligned].contiguous()
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:, :S_aligned].contiguous()
-                S = S_aligned
-            S_local = S // self._world_size
-            start = self._rank * S_local
-            end   = start + S_local
-            local_ids = input_ids[:, start:end].contiguous()
-            local_pos = torch.arange(start, end, device=device).unsqueeze(0).expand(B, -1)
-            # attention_mask under sharding is implicit (causal handled by ring kernel)
-            local_attn_mask = None
+        if ckpt is None:
+            # ============================================================
+            # Fresh start — run target + draft prefill, sample seed token
+            # ============================================================
+            # Under multi-rank (R3 dual-cache layout), each rank owns the contiguous
+            # slice [rank*S/W, (rank+1)*S/W) of the prompt. Each rank embeds and
+            # forwards its own slice; the patched LlamaAttention performs ring
+            # attention across ranks for cross-slice attention. Position IDs are
+            # the absolute global positions so RoPE produces correct embeddings.
+            if self._world_size > 1:
+                # Auto-truncate prompt to nearest multiple of world_size so the
+                # contiguous sequence shard math works regardless of caller's
+                # exact tokenization. (Tokenizers can produce off-by-a-few token
+                # counts that don't divide evenly — happens regularly with
+                # synthetic prompts that target a specific token count.)
+                if S % self._world_size != 0:
+                    S_aligned = (S // self._world_size) * self._world_size
+                    if self._rank == 0:
+                        logger.warning(
+                            "context_length=%d not divisible by world_size=%d; "
+                            "truncating to %d for contiguous sequence sharding",
+                            S, self._world_size, S_aligned,
+                        )
+                    input_ids = input_ids[:, :S_aligned].contiguous()
+                    if attention_mask is not None:
+                        attention_mask = attention_mask[:, :S_aligned].contiguous()
+                    S = S_aligned
+                S_local = S // self._world_size
+                start = self._rank * S_local
+                end   = start + S_local
+                local_ids = input_ids[:, start:end].contiguous()
+                local_pos = torch.arange(start, end, device=device).unsqueeze(0).expand(B, -1)
+                # attention_mask under sharding is implicit (causal handled by ring kernel)
+                local_attn_mask = None
+            else:
+                local_ids = input_ids
+                local_pos = None
+                local_attn_mask = attention_mask
+
+            with torch.cuda.stream(self.stream_compute):
+                target_out = self.target_model(
+                    local_ids,
+                    attention_mask=local_attn_mask,
+                    position_ids=local_pos,
+                    use_cache=True,
+                )
+                past_kv          = target_out.past_key_values
+                local_last_logit = target_out.logits[:, -1, :]
+            self.stream_compute.synchronize()
+
+            # Freeze the prefill boundary on every patched attention module so
+            # subsequent decode forwards know where the sharded prefill ends and
+            # the replicated tail begins.
+            prefill_len = local_ids.shape[1]
+            if self._world_size > 1:
+                from src.models.ring_llama_attention import set_prefill_len
+                set_prefill_len(self.target_model, prefill_len=prefill_len)
+
+            # The "first generated token" is sampled from the LAST GLOBAL position's
+            # logits, which only rank world_size-1 holds. Broadcast it so every rank
+            # samples the same cur_token (deterministic given same seed + same RNG).
+            if self._world_size > 1:
+                dist.broadcast(local_last_logit, src=self._world_size - 1)
+            next_token_logit = local_last_logit
+            print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
+
+            if cfg.debug:
+                logger.debug("[RASD] prefill done, S=%d", S)
+
+            # Prefill draft model — same tokenizer/vocab as target (LLaMA-2 SentencePiece, vocab=32000).
+            # Truncate to draft model's max sequence length if prompt is very long
+            # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens for recency.
+            raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
+            draft_ids = raw_draft_ids[:, -self.draft_max_len:]
+            print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
+            with torch.cuda.stream(self.stream_draft):
+                draft_out = self.draft_model(draft_ids, use_cache=True)
+                draft_past_kv = draft_out.past_key_values
+            self.stream_draft.synchronize()
+            print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
+
+            if cfg.debug:
+                pass
+
+            # Seed the first generated token from target prefill (target-vocab safe)
+            cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
+            generated  = [cur_token]
+
+            # TTFT (C12, mentor M4 metric): time from generate() entry to the
+            # first output token being sampled. Captures prefill cost (target +
+            # draft + first-token broadcast under multi-rank) but excludes the
+            # speculative verify loop. All ranks lockstep on cur_token sample;
+            # rank 0's reading is representative.
+            torch.cuda.synchronize()
+            t_first_token = time.perf_counter()
+
+            # Global sequence length — needed under multi-rank to compute correct
+            # position_ids for each verify forward. After prefill of S prompt
+            # tokens, global_seqlen = S. The seed `cur_token` is at position S,
+            # the first verified token will be at position S+1, etc.
+            global_seqlen = S
+
+            # Tracking
+            total_accepted   = 0
+            total_draft_toks = 0
+            n_rounds         = 0
+            # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
+            per_token_trace: List[Dict] = []
         else:
-            local_ids = input_ids
-            local_pos = None
-            local_attn_mask = attention_mask
-
-        with torch.cuda.stream(self.stream_compute):
-            target_out = self.target_model(
-                local_ids,
-                attention_mask=local_attn_mask,
-                position_ids=local_pos,
-                use_cache=True,
+            # ============================================================
+            # C6 Resume — restore state, skip prefill, jump into the loop
+            # ============================================================
+            past_kv          = ckpt.past_kv
+            draft_past_kv    = ckpt.draft_past_kv
+            cur_token        = ckpt.cur_token
+            generated        = list(ckpt.generated)
+            global_seqlen    = ckpt.global_seqlen
+            n_rounds         = ckpt.n_rounds
+            total_accepted   = ckpt.total_accepted
+            total_draft_toks = ckpt.total_draft_toks
+            per_token_trace  = list(ckpt.per_token_trace)
+            prefill_len      = ckpt.prefill_len
+            # Restore the patched ring attention's prefill boundary so the
+            # next decode forward knows where sharded prefill ends.
+            if self._world_size > 1:
+                from src.models.ring_llama_attention import set_prefill_len
+                set_prefill_len(self.target_model, prefill_len=prefill_len)
+            # Recompute S from saved state — global_seqlen at checkpoint
+            # time = S + (sum of per-round contributions). Total tokens
+            # in `generated` = 1 (initial cur_token) + sum of contributions.
+            generated_total = sum(t.shape[1] for t in generated)
+            S = global_seqlen - (generated_total - 1)
+            # TTFT is meaningless on resume (we skipped prefill); record 0
+            # so downstream metrics handling doesn't NaN.
+            t_first_token = t_start
+            logger.info(
+                "[checkpoint] rank=%d resumed n_rounds=%d global_seqlen=%d "
+                "(skipped prefill)", self._rank, n_rounds, global_seqlen,
             )
-            past_kv          = target_out.past_key_values
-            local_last_logit = target_out.logits[:, -1, :]
-        self.stream_compute.synchronize()
-
-        # Freeze the prefill boundary on every patched attention module so
-        # subsequent decode forwards know where the sharded prefill ends and
-        # the replicated tail begins.
-        if self._world_size > 1:
-            from src.models.ring_llama_attention import set_prefill_len
-            set_prefill_len(self.target_model, prefill_len=local_ids.shape[1])
-
-        # The "first generated token" is sampled from the LAST GLOBAL position's
-        # logits, which only rank world_size-1 holds. Broadcast it so every rank
-        # samples the same cur_token (deterministic given same seed + same RNG).
-        if self._world_size > 1:
-            dist.broadcast(local_last_logit, src=self._world_size - 1)
-        next_token_logit = local_last_logit
-        print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
-
-        if cfg.debug:
-            logger.debug("[RASD] prefill done, S=%d", S)
-
-        # Prefill draft model — same tokenizer/vocab as target (LLaMA-2 SentencePiece, vocab=32000).
-        # Truncate to draft model's max sequence length if prompt is very long
-        # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens for recency.
-        raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
-        draft_ids = raw_draft_ids[:, -self.draft_max_len:]
-        print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
-        with torch.cuda.stream(self.stream_draft):
-            draft_out = self.draft_model(draft_ids, use_cache=True)
-            draft_past_kv = draft_out.past_key_values
-        self.stream_draft.synchronize()
-        print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
-
-        if cfg.debug:
-            pass
-
-        # Seed the first generated token from target prefill (target-vocab safe)
-        cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
-        generated  = [cur_token]
-
-        # TTFT (C12, mentor M4 metric): time from generate() entry to the
-        # first output token being sampled. Captures prefill cost (target +
-        # draft + first-token broadcast under multi-rank) but excludes the
-        # speculative verify loop. All ranks lockstep on cur_token sample;
-        # rank 0's reading is representative.
-        torch.cuda.synchronize()
-        t_first_token = time.perf_counter()
-
-        # Target vocab size — used to clamp/validate tokens before embedding
-        target_vocab = self.target_model.config.vocab_size
-
-        # Global sequence length — needed under multi-rank to compute correct
-        # position_ids for each verify forward. After prefill of S prompt
-        # tokens, global_seqlen = S. The seed `cur_token` is at position S,
-        # the first verified token will be at position S+1, etc.
-        global_seqlen = S
-
-        # Tracking
-        total_accepted   = 0
-        total_draft_toks = 0
-        n_rounds         = 0
-        # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
-        per_token_trace: List[Dict] = []
 
         # ---- Main speculative decoding loop ----
         while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
@@ -837,6 +950,17 @@ class RASDInference:
             # The verify just committed (n_acc + 1) new tokens to the global
             # context: n_acc accepted draft tokens + 1 bonus or resampled token.
             global_seqlen += n_acc + 1
+
+            # ---- C6 SAVE: periodic checkpoint of verify-loop state ----
+            # Gated on cfg.checkpoint_every > 0 (default 0 = disabled).
+            # All ranks save their own KV slice (per-rank file path).
+            self._maybe_save_checkpoint(
+                n_rounds=n_rounds, global_seqlen=global_seqlen,
+                total_accepted=total_accepted, total_draft_toks=total_draft_toks,
+                cur_token=cur_token, generated=generated,
+                past_kv=past_kv, draft_past_kv=draft_past_kv,
+                per_token_trace=per_token_trace, prefill_len=prefill_len,
+            )
 
             # Early stop on EOS
             if (cur_token == self.tokenizer.eos_token_id).all():
