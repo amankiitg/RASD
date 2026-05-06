@@ -1,0 +1,41 @@
+# Local development requirements (analysis + tests + figures, no CUDA needed)
+#
+# Use this file for:
+#   * Running the test suite locally (pytest tests/)
+#   * Generating figures + LaTeX tables from existing M3 CSVs
+#   * Iterating on src/analysis/ scripts and the M4 sidecars
+#
+# For pod-side experiments (training/inference at long context with NF4
+# quantization, ring attention, flash-attn) use environment_gpu.yml — that
+# pins transformers==4.44.2 + accelerate==0.33.0 + bitsandbytes>=0.49.0
+# which are the versions every M3 result was produced under.
+#
+# Pinned to the .venv_analysis interpreter (Python 3.14, CPU torch).
+#
+# To recreate this env from scratch:
+#   python3.14 -m venv .venv_analysis
+#   source .venv_analysis/bin/activate
+#   pip install -r requirements.txt
+
+# Test runner
+pytest==9.0.3
+
+# Core ML (CPU torch — distributed primitives + tensor ops only; no CUDA kernels)
+torch==2.11.0
+transformers==5.5.4
+tokenizers==0.22.2
+safetensors==0.7.0
+
+# Data + numerics for analysis track
+numpy==2.4.4
+pandas==3.0.2
+scipy==1.17.1
+
+# Figures + tables (mentor M4 deliverables F1-F7)
+matplotlib==3.10.8
+seaborn==0.13.2
+tabulate==0.10.0
+
+# Utilities
+PyYAML==6.0.3
+tqdm==4.67.3
