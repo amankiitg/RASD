@@ -2,6 +2,33 @@
 
 Tracking file for M4 work. Strategy, phased order, and deliverables.
 
+## Mentor M4 spec alignment (2026-05-06)
+
+The mentor's M4 brief asks for: final 1M-context runs vs baselines × 3 seeds,
+bootstrap CIs, 5 publication figures, LaTeX tables, error analysis on
+low-α sequences, and 5 metrics (tps, latency/token, α, PPL, TTFT).
+Mapping each mentor ask to a plan section so nothing falls through:
+
+| Mentor ask | Plan section | Status |
+|---|---|---|
+| Final 1M × baselines × 3 seeds | P3.5 (36-run matrix) | code: pending |
+| Bootstrap CIs | A3 + `src/analysis/bootstrap.py` | scaffolded |
+| Throughput (tps) | already logged in M3 CSV | ✅ |
+| Latency per output token (ms) | derived from tps + token count; add column | pending |
+| Acceptance rate α | already logged | ✅ |
+| Perplexity (PPL) | C3-C5 (PG-19 + evaluator + sidecar) | pending |
+| **TTFT** (un-deprioritized 2026-05-06) | new sidecar timer in `_prefill` | pending |
+| **Fig 1** throughput vs context, 95% CI bands | F1 | pending — needs Phase 3 data |
+| **Fig 2** heatmap throughput × draft_size × spec_steps | A4 (revised from bars to heatmap) | rewrite needed |
+| **Fig 3** stacked time breakdown compute/comm/idle | C7 (promoted from conditional → required) | pending |
+| **Fig 4** α vs token position | F3 + per-position sidecar (un-deprioritized) | pending |
+| **Fig 5** qualitative text comparison table | F5 (new) | pending |
+| LaTeX tables | A5 / F6 (`pandas.to_latex()`) | scaffolded |
+| `analysis/error_analysis.md` on low-α sequences | F4 (consolidated path) | pending |
+| Checkpoint/resume for long runs | C6 (mentor risk mitigation) | pending |
+| GPU health checks before final runs | new Phase 3 preflight | pending |
+| Negative-result pivot path | bottleneck story = Fig 3 + profiler insurance | covered by C7 promotion |
+
 ## M3 → M4 configuration inheritance (2026-05-06)
 
 R6.5 settled the M3 ablation axes. M4's 36-run final matrix should NOT
@@ -306,10 +333,18 @@ memory dominates.
 provides additional headroom but is not strictly required for the M4
 target.
 
-#### P5 — Minimal profiler (conditional)
-C7. `torch.profiler` context-manager wrapper with NVTX ranges at round boundaries — **only build if P1-P4 land and we still need a "why fast" story for the paper**. Skip entirely if results speak for themselves.
+#### P6 — Profiler / time-breakdown (REQUIRED — mentor Fig 3)
 
-#### P6 — Tick-gate regression test (cheap, high-value, mostly OBSOLETE)
+C7. **`torch.profiler` context-manager wrapper with NVTX ranges at round
+boundaries** — promoted from conditional → required 2026-05-06 to satisfy
+mentor's **Figure 3 (stacked bar: compute / comm / idle for Ring vs RASD)**.
+Also serves as insurance for the negative-result pivot path called out in
+the mentor's risks section: if final tps gains are marginal, the time-
+breakdown becomes the headline story. Build locally; tested on CPU
+gloo at small ctx; run on pod during Phase 3.5 final matrix as a sidecar
+on a subset of cells (one seed × all 4 contexts × {RASD, Ring}).
+
+#### P7 — Tick-gate regression test (cheap, high-value, mostly OBSOLETE)
 
 C8. ~~Gloo-backend regression test for tick-gate ordering~~ —
 **partially obsoleted by M3 redesign**: the entire `AsyncKVRingPrefetcher`
@@ -321,9 +356,19 @@ batched_isend_irecv ordering at world_size > 4 — already partially
 covered by `tests/test_ring_attention.py::TestKnobInvariance` at
 W∈{2,4} via gloo. Could extend to W=8 (gloo CPU) for cheap.
 
-#### Deprioritized / likely dropped
-~~TTFT split timing~~ — product-serving metric, not research-paper evidence
-~~Per-position acceptance sidecar .jsonl~~ — approximate from round-level logs for Figure 4
+#### P8 — Mentor-required sidecars (RESTORED 2026-05-06 from deprioritized)
+
+C12. **TTFT split timer** — instrument `_prefill` start/end and emit the
+delta to wandb + CSV as `ttft_ms`. Mentor lists TTFT as a core metric.
+Implementation: ~30 lines, additive column, no behavior change. Tested
+locally on CPU gloo.
+
+C13. **Per-position acceptance sidecar `.jsonl`** — log `{round_idx,
+position, accepted: bool, draft_token, target_token}` per spec round
+to a per-run sidecar file. Required for Figure 4 (α vs token position)
+to be rigorous rather than approximated from round-level logs.
+Implementation: ~50 lines in `rasd_inference.py` behind `--log-per-token`
+flag (default off so M3 replay stays byte-identical).
 
 ### Phase 3 — Pod required (Lambda 8x A100 SXM4 40 GB, gpu_8x_a100)
 
@@ -334,23 +379,46 @@ headroom but isn't strictly required. Capacity is volatile but
 consistently shows up in europe-central-1 (no rasd-fs filesystem there
 — scp results back each session).
 
+P3.0. **GPU health-check preflight** (mentor risk mitigation) — before
+any long-running 1M cell, run `nvidia-smi -q | grep -i "ecc\|xid\|throttl"`
+on all 8 GPUs; confirm 0 MiB used at idle; run a 1-min NCCL all-reduce
+loopback to catch flapping interconnect. Aborts session if any rank
+fails. Script: `scripts/gpu_health_check.sh`.
 P3.1. Run Phase 0 completion on first pod (capture_pod_env.sh → `requirements-lock.txt`, pin_hf_revisions.py → Llama-2 hashes, replay_m3_smoke.sh → confirm drift ≤15%)
 P3.2. RoPE scaling validation: PPL at 32k/128k/512k/1M on 1 GPU (needs C1+C4)
 P3.3. Smoke tests: single RASD run at 32k, 128k, 512k, 1M context (validate NF4 KV doesn't OOM at the long end)
 P3.4. Baseline validation: Ring + Sliding end-to-end at 128k, 1M
-P3.5. **Final 36-run matrix** — RASD+Ring+Sliding × {128k, 256k, 512k, 1M} × 3 seeds. Use `max_new_tokens=64` for memory + tps (sufficient for headline numbers); optionally subset of cells re-run at `max_new_tokens=256` for α stability.
-P3.6. Profiler pass (only if C7 built)
+P3.5. **Final 36-run matrix** — RASD+Ring+Sliding × {128k, 256k, 512k, 1M} × 3 seeds. Use `max_new_tokens=64` for memory + tps (sufficient for headline numbers); optionally subset of cells re-run at `max_new_tokens=256` for α stability. **Per-position sidecar (C13) enabled on all RASD cells**; TTFT (C12) on all cells.
+P3.6. **Profiler sidecar pass** (C7 — REQUIRED for Fig 3): one seed × all
+4 contexts × {RASD, Ring} = 8 cells with `torch.profiler` enabled,
+capturing compute / comm / idle breakdown. Adds ~10% overhead, run
+separately from P3.5 to keep headline tps numbers clean.
 
 ### Phase 4 — Post-pod, local
-Assemble paper deliverables from real data.
+Assemble paper deliverables from real data. Figure list is mentor's 5
+figures verbatim (alignment matrix at top of file).
 
-F1. Figure 1 throughput vs context (real CSV + 95% CI bands)
-F2. Figure 3 stacked time breakdown (only if profiler ran; else drop)
-F3. Figure 4 acceptance vs token position (approximated from round-level logs)
-F4. Figure 5 memory footprint RASD vs baselines
-F5. `results/final/final_results.json` (aggregate metrics, per-seed)
-F6. LaTeX tables with real numbers
-F7. Manuscript sections (methods, results, discussion)
+F1. **Figure 1 — Throughput vs context length** (line plot, RASD vs Ring
+    vs Sliding, contexts ∈ {128k, 256k, 512k, 1M}, 95% CI bands from
+    bootstrap over 3 seeds). Source: Phase 3.5 CSV.
+F2. **Figure 2 — Heatmap of throughput × draft_size × spec_steps**
+    summarizing the M3 ablation. Source: `ablations_r65.csv` (existing).
+    *Note: replaces the earlier "ablation bars" plan; rewrite required.*
+F3. **Figure 3 — Stacked bar: time breakdown (compute / comm / idle)**
+    Ring vs RASD. Source: C7 profiler sidecar from Phase 3.5 subset.
+F4. **Figure 4 — α vs token position** (line, with smoothing). Source:
+    C13 per-position sidecar `.jsonl` from Phase 3.5 final-matrix runs.
+F5. **Figure 5 — Qualitative text comparison table** (3-5 sample
+    prompts × {target-only, RASD} generated continuations, side by side).
+    Source: capture sample generations during Phase 3.5; manual curation.
+F6. `results/final/final_results.json` (aggregate metrics, per-seed,
+    includes tps / latency_ms_per_token / α / PPL / TTFT).
+F7. LaTeX tables via `pandas.to_latex()` — main results + ablation
+    summary + per-context breakdown.
+F8. **`analysis/error_analysis.md`** — examine sequences with abnormally
+    low α from per-position sidecar. Hypothesize failure modes (topic
+    shifts, complex syntax, etc.). Mentor deliverable verbatim.
+F9. Manuscript sections (methods, results, discussion).
 
 ### Conditional
 X1. LongBench / L-Eval task-accuracy eval — **pending mentor approval**. Scope: pick 2-3 LongBench tasks, run target-only vs RASD at 64k, compare EM/F1. Adds ~1 pod-day; only if mentor says PG-19 perplexity is insufficient.
@@ -358,15 +426,36 @@ X1. LongBench / L-Eval task-accuracy eval — **pending mentor approval**. Scope
 ### Admin
 Z1. Send mentor follow-up email: FA+Ring implementation details + LongBench scope question + cost note ($200 burned on 8k M3; asking about cheaper alternatives for M4)
 
-## Deliverables
+## Deliverables (mentor-aligned 2026-05-06)
 
 - `results/final/final_results.json` — aggregated metrics, per-seed per-config
-- `figures/` — Figure 1 (throughput vs context), Figure 2 (ablation bars), Figure 3 (per-position acceptance), Figure 4 (memory), Figure 5 (latency breakdown)
-- `tables/` — LaTeX ablation summary + final results tables
+  (tps, latency_ms_per_token, α, PPL, TTFT)
+- `figures/` — **5 publication-quality PDFs** matching mentor's Fig 1-5:
+  - `fig1_throughput_vs_context.pdf` — line plot, 95% CI bands
+  - `fig2_ablation_heatmap.pdf` — heatmap throughput × draft_size × spec_steps
+  - `fig3_time_breakdown.pdf` — stacked bar compute/comm/idle, Ring vs RASD
+  - `fig4_acceptance_vs_position.pdf` — line plot from per-position sidecar
+  - `fig5_qualitative_examples.pdf` — text comparison table
+- `tables/` — LaTeX via `pandas.to_latex()`: ablation summary + main results
+  + per-context breakdown
+- `analysis/error_analysis.md` — low-α sequence analysis (mentor deliverable)
 - `manuscript/` — methods, results, discussion sections
 - Mentor emails: implementation details, LongBench scope, cost ask
 
 ## Risks / anticipated fixes (updated 2026-05-06)
+
+- **Marginal performance gain at 1M (mentor risk)** — if final tps gain
+  vs Ring baseline is within CI overlap, paper pivots to **bottleneck
+  analysis as the primary contribution**: Figure 3 (compute/comm/idle
+  breakdown via C7 profiler) becomes the headline figure, supported by
+  per-position acceptance fall-off (Figure 4 from C13 sidecar). This is
+  why C7 was promoted from conditional → required and C13 was restored
+  from deprioritized. Both must land before Phase 3.5 to keep this
+  pivot path open.
+- **Hardware instability during long runs (mentor risk)** — addressed
+  by: (a) C6 checkpoint/resume, (b) P3.0 GPU health-check preflight,
+  (c) per-rank memory ceiling already validated at ~25 GB / 40 GB in
+  M3 R6.5, leaving 15 GB headroom for fragmentation under long runs.
 
 - **A4 async-ring inconclusive at W=8 max_new ≥ 32** (M3 plan Issue #1).
   Worst case: R6.5 runs sync-only (A4 levels 1, 2 dropped from paper). Best
