@@ -183,6 +183,55 @@ through ctx=128k×W=8. **At ctx=512k+ it's the dominant memory cost.**
   **Defer until C0c (R6.5) lands.** Adding TP before M3 is closed risks
   destabilizing the ablation surface.
 
+C10. **Install flash-attn explicitly** — currently we get FA-2 implicitly
+because PyTorch's `F.scaled_dot_product_attention` dispatches to the FA-2
+backend on Ampere+ GPUs with bf16/fp16 inputs. The explicit
+`pip install --no-build-isolation flash-attn` is typically 10–20% faster
+than SDPA's FA-2 backend (less dispatch overhead, more aggressive kernel
+fusion). Required for the strongest 1M tps story. Note: flash-attn build
+strips torch from the isolated env, so use `--no-build-isolation` per
+the [reference_lambda_setup.md](.claude/projects/-Users-amankesarwani-PycharmProjects-RASD/memory/reference_lambda_setup.md)
+gotcha. The kernel already has the dispatch logic at
+[src/models/ring_attention_kernel.py:_attn_step](src/models/ring_attention_kernel.py)
+— installing flash-attn flips `_FLASH_AVAILABLE = True`, no other code change needed.
+
+### Long-context memory equation (added 2026-05-06)
+
+Per-rank memory at context N, world_size W, with each ingredient
+contributing or shrinking specific terms. Target weights (bf16) and
+LLaMA-2-7B (32 layers × 32 heads × 128 head_dim) used for arithmetic.
+
+| Ingredient | Without it | With it | Why |
+|---|---|---|---|
+| **FlashAttention** (FA-2) | O(N²) for the score matrix per layer per rank — at 1M, **~32 GB/layer = ~1 TB/rank** total | O(N) blocked tiling — **a few hundred MB/rank** total | tiles Q,K,V into SRAM; never materialises S = Q@Kᵀ in HBM |
+| **Ring (sequence-parallel)** | full N positions of K/V on every rank — at 1M, **~540 GB/rank** | 1/W of K/V — at W=8, 1M, ~**68 GB/rank** | each rank holds N/W positions; rotation moves them through the ring during the forward |
+| **Option B (don't RoPE-scale draft)** | draft KV scales to target's N — at 1M, **~190 GB/rank** | draft capped at native 4k — **~770 MB/rank** | draft only ever sees `draft_max_len` recent tokens; speculative decoding tolerates this asymmetry |
+| **Tensor-parallel weights (C9)** | weights replicated W× — **4 GB/rank NF4** or 13 GB bf16 | weights split W ways — at W=8, **0.5 GB/rank NF4** or 1.6 GB bf16 | column/row-parallel linears with all-reduce after o_proj and down_proj |
+
+**Net per-rank budget at 1M, W=8, NF4 weights, all four ingredients enabled:**
+
+| Component | GB |
+|---|---|
+| Target weights (TP'd) | 0.5 |
+| Target K/V cache (ring-sharded, bf16) | ~68 |
+| Draft weights (replicated, NF4) | 0.7 |
+| Draft KV (Option B, bf16, 4k cap) | 0.8 |
+| Activations + FA tile workspace | ~3 |
+| Allocator fragmentation | ~10 |
+| **Total** | **~83** — tight on 80 GB |
+
+**To make 1M comfortable on 80 GB**, one of these is also needed:
+- **NF4 KV cache** (target K/V in 4-bit): cuts the 68 GB → ~17 GB. Total drops to ~32 GB, comfortable.
+- **W=16 ranks** instead of 8: each rank holds 1/16 of K/V → 34 GB. Total ~50 GB.
+- **80 GB SXM4** is the minimum hardware tier; 40 GB SXM2 cannot fit 1M with current architecture even with all four ingredients.
+
+**Crucial insight:** at 1M, K/V cache (ring-sharded) is the dominant
+memory cost — **~80% of the budget**. TP saves ~3.5 GB on weights, FA
+saves ~1 TB on attention scores, ring saves ~470 GB on K/V replication,
+Option B saves ~190 GB on draft KV. **The big lever for K/V at 1M is
+either NF4 KV-cache quantization (saves ~50 GB) or higher world_size
+(saves linearly with W).**
+
 #### P5 — Minimal profiler (conditional)
 C7. `torch.profiler` context-manager wrapper with NVTX ranges at round boundaries — **only build if P1-P4 land and we still need a "why fast" story for the paper**. Skip entirely if results speak for themselves.
 
