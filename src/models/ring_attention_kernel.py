@@ -366,6 +366,12 @@ def _ring_against_sharded(
     pending_assemble = None  # callable invoked after wait if chunked recv
     use_async = prefetch_depth >= 1
     _trace = os.environ.get("RING_TRACE") == "1"
+    # RING_TIMING=1 → wall-clock per-step prints from rank 0 only.
+    # Cumulative elapsed ms in each phase (wait, issue, compute) so we can
+    # see where async-mode time is being spent at high max_new counts.
+    _timing = os.environ.get("RING_TIMING") == "1" and rank == 0
+    if _timing:
+        import time as _t
 
     if _trace:
         print(f"[ring rank={rank}] entering loop W={world_size} async={use_async} chunk={chunk_size}", flush=True)
@@ -375,6 +381,8 @@ def _ring_against_sharded(
             print(f"[ring rank={rank}] step={step} top: pending={'yes' if pending_reqs else 'no'}", flush=True)
         # Drain any in-flight rotation from the previous iteration and swap
         # so k_cur/v_cur point to the just-received slice.
+        if _timing:
+            _t_step_start = _t.perf_counter()
         if pending_reqs is not None:
             if _trace:
                 print(f"[ring rank={rank}] step={step} waiting on {len(pending_reqs)} reqs", flush=True)
@@ -388,6 +396,8 @@ def _ring_against_sharded(
             pending_assemble = None
             k_cur, k_buf = k_buf, k_cur
             v_cur, v_buf = v_buf, v_cur
+        if _timing:
+            _t_after_wait = _t.perf_counter()
 
         # Async path: schedule next rotation BEFORE compute so it overlaps.
         if use_async and step < world_size - 1:
@@ -399,6 +409,8 @@ def _ring_against_sharded(
             )
             if _trace:
                 print(f"[ring rank={rank}] step={step} async rotation issued, n_reqs={len(pending_reqs)}", flush=True)
+        if _timing:
+            _t_after_issue = _t.perf_counter()
 
         if _trace:
             print(f"[ring rank={rank}] step={step} computing attn", flush=True)
@@ -412,6 +424,8 @@ def _ring_against_sharded(
             out_acc, lse_acc = _combine(out_acc, lse_acc, out_step, lse_step)
         if _trace:
             print(f"[ring rank={rank}] step={step} attn+combine done", flush=True)
+        if _timing:
+            _t_after_compute = _t.perf_counter()
 
         # Sync path: schedule rotation AFTER compute and stash reqs for the
         # top of the next iteration to wait on (uniform with async path).
@@ -421,6 +435,18 @@ def _ring_against_sharded(
             pending_reqs, pending_assemble = _issue_rotation(
                 k_cur, v_cur, k_buf, v_buf,
                 send_to, recv_from, chunk_size, process_group,
+            )
+
+        if _timing:
+            _t_step_end = _t.perf_counter()
+            print(
+                f"[ring TIMING rank=0 step={step}] "
+                f"wait={(_t_after_wait-_t_step_start)*1000:7.2f}ms "
+                f"issue={(_t_after_issue-_t_after_wait)*1000:7.2f}ms "
+                f"compute={(_t_after_compute-_t_after_issue)*1000:7.2f}ms "
+                f"trail={(_t_step_end-_t_after_compute)*1000:7.2f}ms "
+                f"total={(_t_step_end-_t_step_start)*1000:7.2f}ms",
+                flush=True,
             )
 
     if _trace:

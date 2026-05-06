@@ -154,34 +154,75 @@ C5. Wire PPL logging into `run_experiment.py` alongside existing throughput metr
 #### P3 — Checkpoint/resume (pod-$ protection)
 C6. Generation checkpoint/resume — write state every N tokens, resume on failure. At 1M context a single run is 20+ min; one crash = one pod-hour lost without this.
 
-#### P4 — Tensor parallelism (NEW 2026-05-06, BLOCKER for 1M+ on 40 GB hardware)
+#### P4 — NF4 KV-cache quantization (NEW 2026-05-06, primary 1M lever)
 
-C9. **Megatron-style tensor parallelism for weight sharding.** Currently
-target weights are replicated per rank — at NF4 that's 4 GB/rank, fine
-through ctx=128k×W=8. **At ctx=512k+ it's the dominant memory cost.**
-1M context on 80 GB hardware needs both ring (sequence-parallel) AND TP
-(weight-parallel) to fit comfortably.
+**Replaces TP (C9) as the critical-path lever for 1M memory budget.**
+Per-rank memory analysis showed K/V cache (post-ring sharding) is ~80%
+of the budget at 1M; weights are <5%. NF4 KV cuts the KV term by ~4x
+(~51 GB/rank saved at 1M); TP cuts the weight term by ~3.5 GB/rank.
+NF4 KV is ~14x bigger savings AND lower engineering risk.
 
-  Implementation outline (from M3 plan Issue #4):
-  - Column-parallel: `q_proj`, `k_proj`, `v_proj`, `gate_proj`, `up_proj`
-    (split along output dim). Saves W× the weight memory at the cost of
-    no extra comm — these layers naturally produce per-rank slices.
-  - Row-parallel: `o_proj`, `down_proj` (split along input dim). Add
-    `all_reduce(SUM)` after each.
-  - Embedding + LM head: split along vocab dim. Add `all_gather` for
-    final logits projection.
-  - Combine with ring sequence-parallel: each rank holds 1/W of weights
-    (TP) AND 1/W of K/V cache positions (ring). Total memory savings:
-    target weights from 13 GB → 1.6 GB/rank (bf16) or 4 GB → 500 MB/rank
-    (NF4) at W=8. Per-layer all-reduce cost ~2 MB at hidden=4096 — small
-    relative to ring P2P.
+C11. **NF4 KV-cache quantization for target model.** Quantize target
+K/V cache entries to 4-bit NF4 format (bitsandbytes-compatible) at write
+time; dequantize at read time inside the ring kernel. Draft KV stays
+bf16 (it's already small under Option B).
 
-  Reference architectures: Megatron-LM, DeepSpeed-Ulysses (sequence-only),
-  vLLM's tensor parallelism. Engineering: ~1 week if done from scratch;
-  potentially less if we adopt an existing library's TP layer wrappers.
+  Implementation outline:
+  - Dual-cache integration: extend the existing sharded-prefill +
+    replicated-tail layout in [src/models/ring_attention_kernel.py](src/models/ring_attention_kernel.py)
+    to store both halves as NF4 with per-block scale factors.
+  - Quantize at KV-append time (after each verify round). Per-block
+    granularity (e.g. 64 positions/block) for scale factor amortization.
+  - Dequantize-into-SRAM inside the ring step's `_attn_step` before the
+    FA-2 call. FA-2 still operates on bf16 tiles; quantization is a
+    storage/transport optimization, not a kernel-level change.
+  - For the cross-rank rotation, send NF4-packed K/V (4x less wire
+    traffic). Each rank dequantizes the received block before its
+    `_attn_step`. Net P2P bandwidth savings: ~4x.
 
-  **Defer until C0c (R6.5) lands.** Adding TP before M3 is closed risks
-  destabilizing the ablation surface.
+  Reference: bitsandbytes 4-bit NF4 kernels (already a project dependency).
+  KIVI (Liu et al. 2024), KVQuant (Hooper et al. 2024) for prior art on
+  per-channel/per-block quantization at long context.
+
+  Engineering: ~1-2 weeks. Quality validation gate before committing:
+  - Validation smoke (~30 min pod time, ~$10): ctx ∈ {8k, 64k} ×
+    kv_dtype ∈ {bf16, NF4} × seed ∈ {42, 123, 456}. Confirms α drop ≤
+    0.03 absolute.
+  - PG19-long PPL benchmark (~20 min, ~$5): bf16 vs NF4 KV at ctx=64k×W=8.
+    Targets <2% PPL increase per published KIVI/KVQuant results.
+  - Throughput micro-benchmark (~15 min, ~$5): tps at ctx ∈ {8k, 32k, 64k}.
+    Confirms NF4 net-positive at long context (memory bandwidth dominates
+    dequant overhead per FA-2 access pattern).
+
+  **Escape hatch — NF8 KV** if NF4 PPL degradation is unacceptable
+  (>3% on PG19): switch to 8-bit symmetric quant. 2x KV savings instead
+  of 4x — at 1M×W=8 that's 34 GB/rank instead of 17 GB, still fits 40 GB
+  SXM2 with headroom (~38 GB total per-rank). Implementation reuses the
+  same NF4 plumbing with int8 dtype.
+
+  **Paper framing:** appendix subsection ("Appendix B.3: NF4 KV-cache
+  validation"), not a 7th ablation axis. Three small tables (α, PPL,
+  tps) defending the choice. Avoids 2x'ing the headline 49-row grid.
+
+#### P5 — Tensor parallelism (DEMOTED to future-work / 70B+ regime)
+
+C9. ~~**Megatron-style tensor parallelism for weight sharding.**~~
+**Demoted 2026-05-06.** Per-rank memory analysis showed TP saves
+~3.5 GB/rank at 1M while NF4 KV saves ~51 GB/rank. TP also competes
+with ring for the fixed 8-GPU budget (TP=2 + SP=4 halves your ring
+degree vs SP=8 + no TP), which actively *hurts* the 1M context-per-memory
+budget on a fixed GPU count.
+
+  **TP becomes critical at target ≥ 30B** where weights become the
+  dominant memory cost (Llama-2-70B NF4 = ~35 GB/rank replicated, OOM).
+  For the **7B target** evaluated in this paper, NF4 KV alone is the
+  right lever. Paper framing: "Tensor parallelism is orthogonal and
+  would benefit larger model targets (70B+) where weight memory
+  dominates KV memory. Out of scope for the 7B target studied here."
+
+  Future work item for follow-up paper (M5+): RASD with Llama-2-70B
+  target + TP + ring + spec + NF4 KV at 1M. Different paper, different
+  scope.
 
 C10. **Install flash-attn explicitly** — currently we get FA-2 implicitly
 because PyTorch's `F.scaled_dot_product_attention` dispatches to the FA-2
@@ -208,29 +249,39 @@ LLaMA-2-7B (32 layers × 32 heads × 128 head_dim) used for arithmetic.
 | **Option B (don't RoPE-scale draft)** | draft KV scales to target's N — at 1M, **~190 GB/rank** | draft capped at native 4k — **~770 MB/rank** | draft only ever sees `draft_max_len` recent tokens; speculative decoding tolerates this asymmetry |
 | **Tensor-parallel weights (C9)** | weights replicated W× — **4 GB/rank NF4** or 13 GB bf16 | weights split W ways — at W=8, **0.5 GB/rank NF4** or 1.6 GB bf16 | column/row-parallel linears with all-reduce after o_proj and down_proj |
 
-**Net per-rank budget at 1M, W=8, NF4 weights, all four ingredients enabled:**
+**Net per-rank budget at 1M, W=8, NF4 weights, FA-2 + ring + Option B + NF4 KV (no TP):**
 
 | Component | GB |
 |---|---|
-| Target weights (TP'd) | 0.5 |
-| Target K/V cache (ring-sharded, bf16) | ~68 |
+| Target weights (NF4, replicated) | 4.0 |
+| Target K/V cache (ring-sharded, NF4) | ~17 |
 | Draft weights (replicated, NF4) | 0.7 |
 | Draft KV (Option B, bf16, 4k cap) | 0.8 |
 | Activations + FA tile workspace | ~3 |
-| Allocator fragmentation | ~10 |
-| **Total** | **~83** — tight on 80 GB |
+| Allocator fragmentation | ~5 |
+| **Total** | **~30** — fits 40 GB SXM2 with headroom |
 
-**To make 1M comfortable on 80 GB**, one of these is also needed:
-- **NF4 KV cache** (target K/V in 4-bit): cuts the 68 GB → ~17 GB. Total drops to ~32 GB, comfortable.
-- **W=16 ranks** instead of 8: each rank holds 1/16 of K/V → 34 GB. Total ~50 GB.
-- **80 GB SXM4** is the minimum hardware tier; 40 GB SXM2 cannot fit 1M with current architecture even with all four ingredients.
+**Crucial insight (revised 2026-05-06):** at 1M, K/V cache is ~80% of the
+post-ring budget. The four scale-out levers and their savings at 1M, W=8:
 
-**Crucial insight:** at 1M, K/V cache (ring-sharded) is the dominant
-memory cost — **~80% of the budget**. TP saves ~3.5 GB on weights, FA
-saves ~1 TB on attention scores, ring saves ~470 GB on K/V replication,
-Option B saves ~190 GB on draft KV. **The big lever for K/V at 1M is
-either NF4 KV-cache quantization (saves ~50 GB) or higher world_size
-(saves linearly with W).**
+| Lever | Saves per rank | Engineering cost |
+|---|---|---|
+| FA-2 (attention scores) | ~1 TB | already shipped |
+| Ring W=8 (K/V sharding) | ~470 GB | already shipped (M3) |
+| Option B (draft KV cap) | ~190 GB | already shipped (M3) |
+| **NF4 KV cache (target K/V)** | **~51 GB** | **~1-2 weeks (M4 critical path)** |
+| TP W=8 (weight sharding) | ~3.5 GB | ~2-6 weeks (DEMOTED — see C9) |
+
+**TP is ~14x smaller savings than NF4 KV with similar-or-higher engineering
+cost.** TP also competes with ring for fixed 8-GPU budget (TP=2 + SP=4
+halves ring degree vs SP=8). For the **7B target evaluated here, NF4 KV
+alone closes the 1M memory budget on 40 GB SXM2 hardware** — TP is
+unnecessary. TP becomes critical only at 30B+ targets where weight
+memory dominates.
+
+**Hardware tier:** 40 GB SXM2 sufficient at 1M with NF4 KV. 80 GB SXM4
+provides additional headroom but is not strictly required for the M4
+target.
 
 #### P5 — Minimal profiler (conditional)
 C7. `torch.profiler` context-manager wrapper with NVTX ranges at round boundaries — **only build if P1-P4 land and we still need a "why fast" story for the paper**. Skip entirely if results speak for themselves.
@@ -299,9 +350,15 @@ Z1. Send mentor follow-up email: FA+Ring implementation details + LongBench scop
 - **RoPE scaling at 1M** may produce NaN/inf with linear scaling
   (factor=256 is far past linear's regime of validity). C2b adds YaRN
   before the 1M push.
-- **Memory at 1M × 8 ranks** — even with NF4 + FA-2 + ring + Option B,
-  weight memory becomes the dominant cost. **Tensor parallelism (C9) is
-  required.** Without TP, 1M context will OOM even on 80 GB hardware.
+- **Memory at 1M × 8 ranks** — K/V cache is ~80% of post-ring budget.
+  **NF4 KV-cache quantization (C11) is the critical-path lever**, cuts
+  K/V from ~68 GB → ~17 GB per rank. With NF4 KV, 1M fits 40 GB SXM2 at
+  ~30 GB/rank. TP (C9) demoted to future work (saves only ~3.5 GB/rank
+  for 7B target; relevant only at 30B+).
+- **NF4 KV quality regression** — published KIVI/KVQuant results show
+  <2% PPL degradation, but α impact for spec decoding has not been
+  characterized. C11 includes a validation smoke before committing
+  (8k+64k × bf16/NF4). NF8 escape hatch documented if PPL exceeds 3%.
 - **Lambda multi-GPU capacity is volatile.** R6 work used europe-central-1
   (no rasd-fs filesystem) because that's where capacity returned. For R6.5
   prefer us-west-2 if available; otherwise live with cold model loads
@@ -323,9 +380,15 @@ re-ablation rolled into M4, revised budget:
 | Analysis track (local) | $0 | partial |
 | C0a + C0b (M3 issue verification, ~30 min × $15.92/hr) | ~$8 | pending |
 | C0c R6.5 49-row re-ablation (~3-4 hr × $15.92/hr) | $50-80 | pending |
+| C11 NF4 KV validation smoke + PPL + tps micro-bench (~1 hr) | ~$20 | pending |
 | Phase 3 (PPL + throughput at 1M) | $80-120 | pending |
 | Conditional LongBench | +$50-80 | pending mentor |
 | **M4 budget cap (revised)** | **$250–350** | up from original $250 |
+
+**Engineering-time savings from TP demotion:** ~3 weeks of critical-path
+work removed (C9 was 2-6 weeks; C11 is 1-2 weeks). Net M4 timeline buffer
+gained: ~2-3 weeks. Reduces MLSys 2027 Oct 30 deadline pressure
+substantially.
 
 **Cumulative project spend (2026-05-06):** ~$224 (M3 + R6 partial).
 Total project budget revisits if final M4 estimates land at the

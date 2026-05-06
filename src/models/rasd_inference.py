@@ -527,6 +527,20 @@ class RASDInference:
             self.stream_draft.wait_stream(torch.cuda.current_stream())
             self.stream_compute.wait_stream(torch.cuda.current_stream())
 
+            # === R6 ASYNC-RING DRAIN (2026-05-06) ===
+            # Multi-rank async ring (cfg.prefetch_depth >= 1) at W=8 was
+            # observed to deadlock around 7-13 verify rounds — the failure
+            # threshold varied with seed (max_new=32 PASSed at seed=42 but
+            # FAILed at seed=123) suggesting a timing-sensitive race rather
+            # than a count-based bug. The most likely culprit is cumulative
+            # NCCL/CUDA-event state on stream_compute from many ring forwards;
+            # an explicit synchronize between rounds drains pending P2P state
+            # so each round starts clean. Cost: ~1ms per round for the host
+            # block, negligible vs the per-round verify forward (~10ms-100ms).
+            # Single-rank or sync-mode multi-rank: no-op (no in-flight work).
+            if self._world_size > 1 and cfg.prefetch_depth >= 1:
+                torch.cuda.synchronize()
+
             # === DRAFT PHASE (stream_draft) ===
             # Generate k tokens with the cheap draft model.
             draft_tokens  = []
@@ -606,6 +620,23 @@ class RASDInference:
 
             if cfg.debug:
                 self.stream_compute.synchronize()
+
+            # === MULTI-RANK CONSENSUS (Fix2 2026-05-06) ===
+            # Ring attention's online-softmax merges K/V slices in a
+            # rank-DIFFERENT order (rank r processes K_r → K_{r-1} → ...).
+            # Floating-point bf16 (and even fp32) merge is non-associative,
+            # so target_logits_v has small numerical drift across ranks.
+            # When accept_prob = p_target/p_draft is near a `r ~ U[0,1)`
+            # threshold, ranks can flip independently → n_acc DIFFERS across
+            # ranks → _truncate_kv produces different local cache sizes →
+            # next round's ring P2P size mismatches → NCCL coalesced timeout
+            # at SeqNum ~3500-3600 (root cause of R6 deadlock 2026-05-06).
+            # Fix: broadcast target_logits_v and draft_logits from rank 0
+            # so all ranks compute identical accept/reject, n_acc, cur_token.
+            # Cost: ~1 MB broadcast per round. Negligible.
+            if self._world_size > 1:
+                dist.broadcast(target_logits_v, src=0)
+                dist.broadcast(draft_logits, src=0)
 
             # === ACCEPT / REJECT ===
             accepted, n_acc = _acceptance_mask(
