@@ -29,6 +29,7 @@ Usage
 import argparse
 import csv
 import itertools
+import json
 import logging
 import os
 import signal
@@ -59,9 +60,41 @@ CSV_FIELDS = [
     "context_length", "dtype",
     # metrics
     "tokens_generated", "time_sec", "throughput_tps",
-    "acceptance_rate", "mean_latency_ms", "gpu_peak_mem_mb",
+    "acceptance_rate", "mean_latency_ms", "ttft_ms",
+    "gpu_peak_mem_mb",
     "n_rounds", "status", "error",
 ]
+
+
+def _per_token_sidecar_path(output_csv: str | Path, run_id: str) -> Path:
+    """Where C13 per-position trace .jsonl lands for a given run.
+
+    Sits next to the CSV under a `per_token/` subdir so the directory
+    layout stays grep-friendly:
+
+        results/ablations/ablations_r65.csv
+        results/ablations/per_token/A2_k4_s42.jsonl
+        results/ablations/per_token/A3_block2048_s123.jsonl
+        ...
+    """
+    return Path(output_csv).resolve().parent / "per_token" / f"{run_id}.jsonl"
+
+
+def write_per_token_sidecar(
+    trace: list[dict] | None, output_csv: str | Path, run_id: str
+) -> Path | None:
+    """Write per-position trace records (C13) as one-record-per-line JSONL.
+
+    Returns the path written, or None if `trace` is empty/None.
+    """
+    if not trace:
+        return None
+    path = _per_token_sidecar_path(output_csv, run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        for record in trace:
+            f.write(json.dumps(record) + "\n")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -290,10 +323,24 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             context_length    = int(run.get("context_length", 0)),
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
+            # C13 per-position trace (M4 Phase A2). Default off so M3
+            # replay is byte-identical when --log-per-token is unset.
+            log_per_token     = bool(run.get("log_per_token", False)),
         )
         engine = RASDInference(cfg)
         prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
         _, metrics = engine.generate_text(prompt)
+
+        # Pull the per-position trace out of the metrics dict before
+        # wandb logging — it's a list-of-dicts, not a wandb-loggable
+        # scalar. Only rank 0 receives a non-None trace (others get
+        # None per RASDInference.generate's rank-0 guard).
+        trace = metrics.pop("per_token_trace", None)
+        if local_rank == 0:
+            sidecar = write_per_token_sidecar(trace, output_csv, run["run_id"])
+            if sidecar is not None:
+                log.info("Wrote per-position trace: %s (%d records)",
+                         sidecar, len(trace))
 
         row.update({
             "tokens_generated": metrics["tokens_generated"],
@@ -301,6 +348,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             "throughput_tps":   round(metrics["throughput_tps"], 2),
             "acceptance_rate":  round(metrics["acceptance_rate"], 4),
             "mean_latency_ms":  round(metrics["mean_latency_ms"], 3),
+            "ttft_ms":          round(metrics["ttft_ms"], 3),
             "gpu_peak_mem_mb":  round(metrics["gpu_peak_mem_mb"], 1),
             "n_rounds":         metrics["n_rounds"],
             "status":           "ok",
@@ -444,13 +492,16 @@ def main():
     parser.add_argument("--nproc",    type=int, default=8,
                         help="GPUs per run (torchrun nproc_per_node). Use 1 for single-GPU. "
                              "Default 8 — required for ring attention A3/A4 ablations.")
+    parser.add_argument("--log-per-token", action="store_true",
+                        help="Enable C13 per-position acceptance trace sidecar "
+                             "(.jsonl per run, source for Figure 4). "
+                             "Default off so M3 replay stays byte-identical.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     # ---- Subprocess worker path ----
     if args._worker:
-        import json
         run = json.loads(args._worker)
         output_csv = args.output
         _run_single_worker(run, args.wandb_project, output_csv)
@@ -458,6 +509,11 @@ def main():
 
     cfg        = load_config(args.config)
     all_runs   = build_run_configs(cfg, args.groups, args.debug, seed_filter=args.seeds)
+    # Propagate the --log-per-token flag onto every run dict so the
+    # subprocess worker picks it up (each run is serialized via --_worker).
+    if args.log_per_token:
+        for r in all_runs:
+            r["log_per_token"] = True
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))
