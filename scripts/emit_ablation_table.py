@@ -9,12 +9,9 @@ Usage:
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pandas as pd
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.analysis.metrics import GROUP_LABELS, GROUPS
 from src.analysis.tables import df_to_booktabs
@@ -50,10 +47,11 @@ def main():
     df_to_booktabs(
         df,
         out,
-        caption=("M3 ablation results (8k context, 8$\\times$A100 SXM). "
-                 "Mean and 95\\% bootstrap CI per level over 3 seeds "
-                 "(deterministic early-EOS rows with tokens\\_generated $<$ 20 excluded; "
-                 "see \\S Error Analysis)."),
+        caption=("M3 ablation results (R6.5 re-ablation, 64k context, "
+                 "8$\\times$A100-SXM4-40GB). Mean and 95\\% bootstrap CI "
+                 "per level over 3 seeds (deterministic early-EOS rows "
+                 "with tokens\\_generated $<$ 20 excluded; see "
+                 "\\S Error Analysis)."),
         label="tab:m3-ablation",
         column_format="llrrr",
     )

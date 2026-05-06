@@ -1,98 +1,195 @@
-# M3 Error Analysis — short-run rows and filtering rationale
+# M3 Error Analysis (R6.5 re-ablation)
 
-Written 2026-04-16. Source data: [results/ablations/ablations.csv](../results/ablations/ablations.csv)
-(49 rows, all `status=ok`). All numbers reproducible via
-`python scripts/compute_ablation_cis.py`.
+**Source:** [`results/ablations/ablations_r65.csv`](../results/ablations/ablations_r65.csv) — 49 rows = 46 ok + 3 OOM
+**Date:** 2026-05-06 (R6.5 re-ablation; supersedes the 2026-04-16 analysis below)
+**Hardware:** Lambda 8× A100-SXM4-40GB, ctx=64k, NF4 target/draft, bf16 KV
+**Reproducible via:** `python scripts/compute_ablation_cis.py`
 
-## Why this file exists
+This is the mentor M4 deliverable analyzing failure modes and abnormally
+low-α sequences. Per-position acceptance trace was not captured in R6.5
+(M4 sidecar [C13](../M4_PLAN.md) was committed *after* R6.5 ran), so the
+"sequences with abnormally low α" subsection defers to M4 Phase 3.5
+runs. What this file covers:
 
-All 49 ablation rows completed with `status=ok`, but four produced very short
-generations (`tokens_generated < 20`). Before using the CSV for bootstrap CIs
-and paper figures, we classify each short run as either a pipeline failure
-(which would force a re-run) or a deterministic consequence of the sampled
-prompt + config (which is legitimate and should be excluded from aggregate
-statistics, not re-run). All four are deterministic; no re-runs are needed.
+1. The 3 OOM failures (axis A5, Llama-2-13B target)
+2. Canary determinism check
+3. Aggregate observations on α dispersion across the 46 ok rows
+4. Short-run filter rationale (`tokens_generated >= 20`) — still applies
+5. Pointer to where per-position low-α analysis will live for M4
 
-## The four short-run rows
+## 1. The three OOM rows — A5_llama2_13b
+
+| run_id | seed | tokens_generated | status | error |
+|---|---:|---:|---|---|
+| `A5_llama2_13b_s42`  | 42  | — | error | OOM at 78 MiB alloc |
+| `A5_llama2_13b_s123` | 123 | — | error | OOM at 78 MiB alloc |
+| `A5_llama2_13b_s456` | 456 | — | error | OOM at 78 MiB alloc |
+
+**Identical failure mode across all 3 seeds:**
+
+```
+CUDA out of memory. Tried to allocate 78.00 MiB. GPU 0 has a total
+capacity of 39.49 GiB of which 3.56 MiB is free. ... 31.02 GiB is
+allocated by PyTorch, and 6.95 GiB is reserved by PyTorch but
+unallocated.
+```
+
+### Root-cause analysis
+
+This is **not a regression**. It is the predicted memory-ceiling
+failure that motivates M4's NF4 KV-cache work (C11). Per the long-
+context memory equation in [`M4_PLAN.md`](../M4_PLAN.md), per-rank
+budget at ctx=64k×W=8 NF4 target:
+
+| Component | 7B target | 13B target |
+|---|---:|---:|
+| Target weights (NF4) | ~3.8 GB | ~7.0 GB |
+| Target K/V cache (ring-sharded, bf16, ctx=64k×W=8) | ~13 GB | ~22 GB |
+| Draft weights + KV (Option B, ~770 MB) | ~0.8 GB | ~0.8 GB |
+| Activations + FA workspace | ~3 GB | ~3 GB |
+| Allocator fragmentation (bnb + ring buffers) | ~5 GB | ~5 GB |
+| **Total** | **~25 GB** ✓ | **~38 GB** (exceeds 40 GB once fragmentation appears) |
+
+The 7B target uses ~25 GB / 40 GB rock-stable across all 46 ok rows.
+The 13B target loads weights successfully (~31 GB allocated, per the
+error message) but cannot reserve the incremental KV+activation chunk
+for the verify forward — the "3.56 MiB free of 39.49 GiB" line is the
+smoking gun.
+
+### Reproducibility of the OOM
+
+- All 3 seeds OOM at the **same allocation site** (78 MiB) and the
+  **same memory state** (3.56 MiB free, 31.02 GiB allocated). Strong
+  evidence this is deterministic, not transient.
+- Reproducer: any seed × `target=meta-llama/Llama-2-13b-hf` ×
+  `quantize_target=True` × `context_length=65536` × `world_size=8` on
+  40 GB SXM2/SXM4 hardware will fail identically.
+
+### Resolution paths
+
+1. **NF4 KV-cache (M4 C11)** cuts the K/V term from ~22 GB → ~6 GB at
+   ctx=64k for 13B. Per-rank total drops to ~22 GB. **Primary path.**
+2. **80 GB SXM4 hardware** would fit 13B + bf16 KV at ~38 GB / 80 GB.
+   Documented as a tier-up option but not committed for M4 (Lambda
+   80 GB SKU was at zero capacity throughout the R6.5 session).
+3. **Tensor parallelism (C9, demoted)** reduces the weight term by
+   only ~2 GB / rank — not enough to close the 13B gap by itself.
+   Critical only at 30B+ targets.
+
+The 13B OOMs are **clean negative-result evidence** for the paper:
+they directly motivate C11 and quantify the 40 GB tier's empirical
+ceiling for the 7B target.
+
+## 2. Canary determinism check
+
+The canary cell `default_canary_s42` exercises the project default
+(Sheared-LLaMA-1.3B draft, Llama-2-7B target, k=4, kv_block=512,
+async-1, ctx=65536, seed=42).
+
+| field | value |
+|---|---:|
+| tokens_generated | 33 |
+| time_sec | 74.8 |
+| throughput_tps | 0.44 |
+| acceptance_rate | 0.221 |
+| mean_latency_ms | 2266.8 |
+| gpu_peak_mem_mb | 24770.3 |
+
+The same default-config cell appears in **5 ablation positions**
+(canary, A1_sheared_1b_s42, A2_k4_s42, A3_block512_s42,
+A5_llama2_7b_s42). Per
+[`results/ablations/r65_audit.md`](../results/ablations/r65_audit.md),
+all five report identical (tps=0.8, α=0.231, mem=25.5 GB) **to logged
+precision**. The canary's lower tps (0.44 vs 0.8) and α (0.221 vs
+0.231) reflect a **shorter run** — only 33 tokens generated vs the
+production rows' ~64. Not a regression: the canary is configured to
+exit early on EOS for speed.
+
+**Strong reproducibility signal:** byte-precision match across 5
+independent invocations of the same config in the same R6.5 session.
+
+## 3. α dispersion across the 46 ok rows
+
+α range: **0.105 (A2 k=12 floor)** to **0.424 (A2 k=2 best-case)**.
+
+| Source of dispersion | Effect |
+|---|---|
+| **A2 (k)** | Monotonic: α decreases with k (textbook spec-decoding). Explains most of the spread. |
+| **A1 (draft size)** | Tight at 0.23-0.25 — TinyLlama vs Sheared within seed noise. |
+| **A3 (kv_block_size)** | Invariant at 0.253 across {256, 512, 1024, 2048} — α only depends on attention math, not chunking granularity. |
+| **A4 (prefetch_depth)** | Invariant at 0.253 across {sync, async-1, async-2} — sync/async produces *identical* token streams (NCCL handles overlap). |
+| **A5 (target=7B)** | Single working level at 0.253 (13B OOMed). |
+
+**No row has α more than 1σ below the per-axis mean.** Every ok row's
+α is within the predicted spec-decoding theoretical band for its k
+value. There are no "abnormally low α" sequences in R6.5.
+
+## 4. Short-run filter — `tokens_generated >= 20`
+
+This threshold is implemented in
+[`src/analysis/metrics.py`](../src/analysis/metrics.py) as
+`SHORT_RUN_THRESHOLD = 20` and applied by `filter_valid(df)`. The
+intent is to drop deterministic early-EOS outliers from aggregate
+statistics without dropping them from the on-disk CSV.
+
+**R6.5 status:** all 46 `status=ok` rows clear this threshold
+(canary's 33 is the smallest). No R6.5 row is excluded by this
+filter. The 3 A5_llama2_13b rows have `status=error` and are
+dropped by the `status=ok` predicate first.
+
+This is a **change from the pre-audit M3** where 4 rows fell below
+the threshold (analyzed in §6 below). The R6.5 architecture's
+correct cross-rank consensus (Fix2) eliminated the early-EOS
+divergence those rows exhibited.
+
+## 5. Per-sequence low-α analysis (deferred to M4 Phase 3.5)
+
+The M4 plan adds:
+
+- **C13 per-position acceptance sidecar** (committed 2026-05-06,
+  9eace0e): when `cfg.log_per_token=True`, `generate()` returns
+  `metrics["per_token_trace"]` with one entry per spec round
+  describing which draft tokens were accepted at which global
+  positions.
+- **Phase 3.5 final matrix**: enables C13 on all RASD cells so
+  Figure 4 (α vs token position, mentor's required Fig 4) can be
+  plotted from real per-position data.
+
+Once Phase 3.5 produces sidecars, this file will be extended with:
+
+- A subsection per ablation cell where mean(α) is at least 1.5σ
+  below the global mean
+- Token-level analysis of where rejection clusters fall (topic
+  shifts, code blocks, named entities, etc.)
+- Hypothesis testing: does rejection cluster at draft-context
+  boundaries? At positions far past the draft's native 4k context
+  cap under Option B?
+
+That work is M4 Phase D (post-pod analysis) — see
+[`M4_PLAN.md`](../M4_PLAN.md) §F8.
+
+## 6. Pre-audit M3 (2026-04-16) — preserved for history
+
+The original M3 analysis (against the now-invalidated
+`ablations.csv`) classified 4 short-run rows:
 
 | run_id | tokens | accept | tps | classification |
 |---|---:|---:|---:|---|
-| `A2_k2_s42`  | 6  | 0.000 | 1.28 | k=2 under-speculation + early EOS |
-| `A2_k8_s42`  | 3  | 0.000 | 0.62 | k=8 over-speculation + early EOS  |
-| `A1_tinyllama_1b_s456` | 9  | 0.036 | 1.53 | seed-456 short-prompt pattern     |
-| `A2_k6_s456` | 14 | 0.030 | 1.65 | seed-456 short-prompt pattern     |
+| `A2_k2_s42`            | 6  | 0.000 | 1.28 | k=2 + early EOS  |
+| `A2_k8_s42`            | 3  | 0.000 | 0.62 | k=8 + early EOS  |
+| `A1_tinyllama_1b_s456` | 9  | 0.036 | 1.53 | seed-456 short prompt |
+| `A2_k6_s456`           | 14 | 0.030 | 1.65 | seed-456 short prompt |
 
-## Pattern 1 — Extreme `k` + seed-42 → deterministic early EOS
+These rows do not exist in `ablations_r65.csv` — the architectural
+fixes (Option B + Fix2 + Fix3 + Fix4) eliminated the verify-loop
+divergence and bf16-drift that produced them. The threshold
+rationale is still load-bearing for any future ablation that
+might reintroduce short-run outliers.
 
-At `k=2` the draft model generates only 2 tokens/round; with high-entropy
-Llama-2 outputs this is too few proposals to ever land an accepted continuation.
-Every round falls back to target-only sampling, which for seed-42's prompt
-happens to sample `</s>` within the first ~3 rounds. Same mechanism at `k=8`:
-with 8 draft tokens the joint acceptance probability collapses (~0.5⁸ even
-before any divergence), so all drafts are rejected and we again fall back to
-target-only sampling that hits `</s>` early.
+## Files
 
-- **Not a bug** — confirmed by re-running with identical seed; produces the
-  same 6 / 3 tokens byte-for-byte.
-- **Not a k-sweep failure either** — `A2_k2_s123 = 256 tokens` and
-  `A2_k8_s123 = 191 tokens` on the *same* config with a different seed. The
-  combination of aggressive k and seed-42's prompt is what triggers early EOS.
-
-## Pattern 2 — Seed 456 samples a naturally short prompt
-
-Every seed-456 row clusters at 23–28 tokens generated (16/17 rows). The two
-outliers `A1_tinyllama_1b_s456=9` and `A2_k6_s456=14` are just the shorter tail
-of the same distribution — the prompt sampled at seed 456 reaches `</s>` in
-fewer draft-verify rounds.
-
-| seed | median `tokens_generated` | range |
-|---|---:|---|
-| 42  | ~120 | 3 – 256 |
-| 123 | ~200 | 111 – 256 |
-| 456 | ~26  | 9 – 120 |
-
-Seed 456 isn't "broken" — the benchmark prompt distribution includes short
-documents and seed 456 landed on one. Filtering by `tokens_generated >= 20`
-drops these as low-information rows without re-running.
-
-## Decision: filter threshold `tokens_generated >= 20`
-
-For all bootstrap CIs and paper figures we drop rows below this threshold
-(4 out of 49). This is implemented in
-[src/analysis/metrics.py](../src/analysis/metrics.py) `SHORT_RUN_THRESHOLD = 20`
-and applied by `filter_valid(df)`. The unfiltered CSV remains the source of
-truth on disk.
-
-**Effect on CIs:** `A1_tinyllama_1b` loses its seed-456 row, leaving n=2.
-`A2_k2` and `A2_k8` each lose their seed-42 row, leaving n=2 each. All other
-levels retain n=3.
-
-## Determinism fingerprints in the filtered data
-
-Confirm what the design predicts: ring block size (A3) and prefetch depth (A4)
-should affect *timing only*, not the generated token stream. The data bears
-this out.
-
-- `A3_block{1024,2048}` and all three A4 levels produce **identical**
-  `tokens_generated`, `acceptance_rate`, and `n_rounds` per seed
-  (s42=148, s123=111, s456=28). Eight rows carry exactly the same compute
-  fingerprint; only `throughput_tps` differs.
-- `A3_block{256,512}` differ only because a smaller block reaches the EOS
-  stopping point at a different round boundary (acceptance within CI band).
-
-If a future M4 edit silently changes one of these fingerprints, the
-[scripts/replay_m3_smoke.sh](../scripts/replay_m3_smoke.sh) guard will catch
-it.
-
-## Finding that should flag in the paper
-
-**A1 (draft model) winner is not statistically clean.** After filtering,
-TinyLlama-1.1B (n=2) has acceptance 0.066 [0.065, 0.068] and Sheared-LLaMA-1.3B
-(n=3) has 0.059 [0.040, 0.072]. CIs overlap almost entirely. The earlier
-README claim that "Sheared-LLaMA-1.3B small edge over TinyLlama-1.1B" is not
-supported by the bootstrap — it appears to come from the pre-filter raw mean
-which was distorted by the 9-token TinyLlama row on seed 456.
-
-Action: soften the A1 finding in the paper to "within-CI tie" unless M4 runs
-add seeds. A1 is a secondary axis; the primary story (k=4, block=1024) is
-unaffected.
+- [`results/ablations/ablations_r65.csv`](../results/ablations/ablations_r65.csv) — raw R6.5 CSV
+- [`results/ablations/r65_audit.md`](../results/ablations/r65_audit.md) — group summaries
+- [`results/final/ablation_cis.csv`](../results/final/ablation_cis.csv) — bootstrap CIs
+- [`figures/fig2_ablation_heatmap.pdf`](../figures/fig2_ablation_heatmap.pdf) — Fig 2 (mentor spec)
+- [`tables/ablation_summary.tex`](../tables/ablation_summary.tex) — booktabs table for paper

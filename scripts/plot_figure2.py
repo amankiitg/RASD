@@ -11,13 +11,10 @@ Output: figures/fig2_ablation_bars.{pdf,png}
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.analysis.figures import apply_rcparams, save
 from src.analysis.metrics import GROUP_LABELS, GROUPS, LEVEL_ORDER

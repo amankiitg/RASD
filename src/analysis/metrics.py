@@ -51,8 +51,14 @@ LEVEL_LABELS = {
 }
 
 
-def load_ablations(path: str | Path = "results/ablations/ablations.csv") -> pd.DataFrame:
-    """Read the ablation CSV and coerce numeric columns."""
+def load_ablations(path: str | Path = "results/ablations/ablations_r65.csv") -> pd.DataFrame:
+    """Read the ablation CSV and coerce numeric columns.
+
+    Default path points at the R6.5 re-ablation (post-audit, 46 valid +
+    3 predicted-OOM rows at ctx=64k×W=8 NF4 on Lambda 8×A100-SXM4-40GB).
+    The earlier `ablations.csv` from RunPod 8k-context is invalidated by
+    the 2026-04-16 audit and should not be used for paper figures.
+    """
     df = pd.read_csv(path)
     numeric = ["tokens_generated", "time_sec", "throughput_tps",
                "acceptance_rate", "mean_latency_ms", "gpu_peak_mem_mb", "n_rounds"]
