@@ -108,9 +108,17 @@ class RASDConfig:
 
     # Context length — used to decide RoPE scaling at model load.
     # Llama-2 native max_position_embeddings = 4096; anything larger needs
-    # rope_scaling. We use linear interpolation (factor = ceil(ctx/native)).
-    # 0 / None = no override (use the model's native max).
+    # rope_scaling. 0 / None = no override (use the model's native max).
     context_length: int = 0
+
+    # RoPE scaling strategy when context_length > native_max_position.
+    # M3 used "linear" (factor = ceil(ctx/native)). Linear interpolation
+    # is known to degrade quality past factor ≈ 16; for 1M context
+    # (factor=256 over Llama-2's 4k), YaRN is recommended.
+    #   "linear"   — linear position interpolation (M3 default; preserved)
+    #   "yarn"     — YaRN (Peng et al. 2024), preferred for factor > 16
+    #   "dynamic"  — NTK-aware dynamic scaling
+    rope_type: str = "linear"
 
     # Quantisation (to fit draft + target on same GPUs)
     quantize_draft: bool = True          # 4-bit NF4 via bitsandbytes
@@ -192,6 +200,41 @@ def _acceptance_mask(
     n_accepted = first_reject[0].item() if len(first_reject) > 0 else k
 
     return accepted, int(n_accepted)
+
+
+def _build_rope_scaling_dict(rope_type: str, factor: float,
+                             native_max: int) -> Dict:
+    """Return the rope_scaling dict to set on hf_cfg for the given strategy.
+
+    Pure function so it's unit-testable without loading a model. Returns
+    the canonical key set transformers ≥ 4.42 expects:
+
+      * "linear"  → {"type": "linear",  "factor": F}
+      * "yarn"    → {"type": "yarn",    "factor": F,
+                     "original_max_position_embeddings": native_max}
+      * "dynamic" → {"type": "dynamic", "factor": F}  (NTK-aware)
+
+    Beta and mscale parameters for YaRN are left at the transformers
+    defaults — overrideable by the user setting them on the hf_cfg
+    after-the-fact if needed for paper-quality runs.
+
+    Raises ValueError on an unknown rope_type.
+    """
+    rt = rope_type.lower()
+    if rt == "linear":
+        return {"type": "linear", "factor": float(factor)}
+    if rt == "dynamic":
+        return {"type": "dynamic", "factor": float(factor)}
+    if rt == "yarn":
+        return {
+            "type": "yarn",
+            "factor": float(factor),
+            "original_max_position_embeddings": int(native_max),
+        }
+    raise ValueError(
+        f"Unknown rope_type={rope_type!r}; "
+        f"expected one of 'linear', 'yarn', 'dynamic'"
+    )
 
 
 def _build_per_token_record(
@@ -299,13 +342,24 @@ class RASDInference:
 
     def _build_hf_config(self, model_name: str, revision: Optional[str],
                          context_length: int, label: str,
-                         apply_rope_scaling: bool = True):
-        """Load the model's HF config and apply linear RoPE scaling if needed.
+                         apply_rope_scaling: bool = True,
+                         rope_type: str = "linear"):
+        """Load the model's HF config and apply RoPE scaling if needed.
 
         Llama-2 ships with max_position_embeddings=4096. To run at longer
-        contexts (e.g. 64k for the M3 ablation), we set rope_scaling with
-        factor = ceil(ctx / native_max) so token positions get linearly
-        interpolated into the trained RoPE range.
+        contexts (e.g. 64k for the M3 ablation, 1M for M4), we set
+        rope_scaling with factor = ceil(ctx / native_max).
+
+        `rope_type` selects the scaling strategy (default linear, preserved
+        from M3):
+          * "linear"   — Position interpolation. Works well up to
+                         factor ≈ 16 (e.g. 64k from 4k). Degrades past
+                         that.
+          * "yarn"     — Peng et al. 2024. Frequency-aware scaling that
+                         maintains quality at large factors. Recommended
+                         for 1M context (factor=256 over Llama-2-7B's 4k).
+          * "dynamic"  — NTK-aware dynamic scaling (uses the original
+                         theta with rescaled frequencies).
 
         `apply_rope_scaling` defaults to True (target). For the **draft**
         model we pass False: capping the draft at its native context cap
@@ -325,11 +379,13 @@ class RASDInference:
                 and context_length > hf_cfg.max_position_embeddings):
             native_max = hf_cfg.max_position_embeddings
             factor = float(math.ceil(context_length / native_max))
-            hf_cfg.rope_scaling = {"type": "linear", "factor": factor}
+            hf_cfg.rope_scaling = _build_rope_scaling_dict(
+                rope_type, factor, native_max,
+            )
             hf_cfg.max_position_embeddings = context_length
             logger.info(
-                "[RoPE] %s: ctx=%d > native=%d → linear scaling factor=%.1f",
-                label, context_length, native_max, factor,
+                "[RoPE] %s: ctx=%d > native=%d → %s scaling factor=%.1f",
+                label, context_length, native_max, rope_type, factor,
             )
         elif (not apply_rope_scaling and context_length
                 and context_length > hf_cfg.max_position_embeddings):
@@ -357,7 +413,8 @@ class RASDInference:
         self._device = self._caps.device
 
         target_hf_config = self._build_hf_config(
-            cfg.target_model_name, cfg.target_revision, cfg.context_length, label="target",
+            cfg.target_model_name, cfg.target_revision, cfg.context_length,
+            label="target", rope_type=cfg.rope_type,
         )
 
         logger.info("Loading target model: %s  [device=%s]", cfg.target_model_name, self._device)

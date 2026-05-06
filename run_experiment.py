@@ -321,6 +321,9 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             temperature       = float(run.get("temperature", 1.0)),
             top_p             = float(run.get("top_p", 1.0)),
             context_length    = int(run.get("context_length", 0)),
+            # C2b RoPE strategy. Default "linear" preserves M3 behavior.
+            # Use "yarn" for M4 1M context (factor=256 over Llama-2's 4k).
+            rope_type         = str(run.get("rope_type", "linear")),
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
             # C13 per-position trace (M4 Phase A2). Default off so M3
