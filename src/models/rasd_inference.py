@@ -434,10 +434,23 @@ class RASDInference:
         # attention across ranks for cross-slice attention. Position IDs are
         # the absolute global positions so RoPE produces correct embeddings.
         if self._world_size > 1:
-            assert S % self._world_size == 0, (
-                f"context_length={S} must be divisible by world_size={self._world_size} "
-                f"for contiguous sequence sharding"
-            )
+            # Auto-truncate prompt to nearest multiple of world_size so the
+            # contiguous sequence shard math works regardless of caller's
+            # exact tokenization. (Tokenizers can produce off-by-a-few token
+            # counts that don't divide evenly — happens regularly with
+            # synthetic prompts that target a specific token count.)
+            if S % self._world_size != 0:
+                S_aligned = (S // self._world_size) * self._world_size
+                if self._rank == 0:
+                    logger.warning(
+                        "context_length=%d not divisible by world_size=%d; "
+                        "truncating to %d for contiguous sequence sharding",
+                        S, self._world_size, S_aligned,
+                    )
+                input_ids = input_ids[:, :S_aligned].contiguous()
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, :S_aligned].contiguous()
+                S = S_aligned
             S_local = S // self._world_size
             start = self._rank * S_local
             end   = start + S_local
