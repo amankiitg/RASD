@@ -122,6 +122,13 @@ class RASDConfig:
     # Debug
     debug: bool = False
 
+    # M4 mentor-required sidecars (default off → M3 replay byte-identical)
+    # When True, generate() returns metrics["per_token_trace"] with one
+    # entry per spec round describing which draft tokens were accepted
+    # and where they sat in the global sequence. Source for Figure 4
+    # (acceptance rate vs token position).
+    log_per_token: bool = False
+
     @property
     def torch_dtype(self) -> torch.dtype:
         return torch.bfloat16 if self.dtype == "bfloat16" else torch.float16
@@ -185,6 +192,38 @@ def _acceptance_mask(
     n_accepted = first_reject[0].item() if len(first_reject) > 0 else k
 
     return accepted, int(n_accepted)
+
+
+def _build_per_token_record(
+    round_idx: int,
+    global_pos_start: int,
+    spec_steps: int,
+    n_acc: int,
+    draft_seq: torch.Tensor,
+    accepted: torch.Tensor,
+) -> Dict:
+    """One row of the per-position acceptance sidecar (.jsonl entry).
+
+    Pure function so it can be unit-tested without booting an engine.
+    Schema is the contract Figure 4 (α vs token position) reads from.
+
+    Args:
+        round_idx          : 0-indexed verify round
+        global_pos_start   : position of cur_token at round start (the
+                             k draft tokens span global_pos_start+1..+k)
+        spec_steps         : k — number of draft tokens proposed
+        n_acc              : how many of the k were accepted (prefix)
+        draft_seq          : (B, k) draft token IDs
+        accepted           : (B, k) bool mask from _acceptance_mask
+    """
+    return {
+        "round_idx":        int(round_idx),
+        "global_pos_start": int(global_pos_start),
+        "spec_steps":       int(spec_steps),
+        "n_acc":            int(n_acc),
+        "draft_tokens":     draft_seq[0].tolist(),
+        "accepted":         [bool(x) for x in accepted[0].tolist()],
+    }
 
 
 def _truncate_kv(past_kv, new_len: int):
@@ -511,6 +550,14 @@ class RASDInference:
         cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
         generated  = [cur_token]
 
+        # TTFT (C12, mentor M4 metric): time from generate() entry to the
+        # first output token being sampled. Captures prefill cost (target +
+        # draft + first-token broadcast under multi-rank) but excludes the
+        # speculative verify loop. All ranks lockstep on cur_token sample;
+        # rank 0's reading is representative.
+        torch.cuda.synchronize()
+        t_first_token = time.perf_counter()
+
         # Target vocab size — used to clamp/validate tokens before embedding
         target_vocab = self.target_model.config.vocab_size
 
@@ -524,6 +571,8 @@ class RASDInference:
         total_accepted   = 0
         total_draft_toks = 0
         n_rounds         = 0
+        # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
+        per_token_trace: List[Dict] = []
 
         # ---- Main speculative decoding loop ----
         while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
@@ -659,6 +708,19 @@ class RASDInference:
                 cfg.temperature,
             )
 
+            # C13 per-position sidecar — cur_token sits at global_seqlen,
+            # the k draft tokens span global_seqlen+1..global_seqlen+k.
+            # n_rounds is still 0-indexed at this point (incremented next line).
+            if cfg.log_per_token:
+                per_token_trace.append(_build_per_token_record(
+                    round_idx=n_rounds,
+                    global_pos_start=global_seqlen,
+                    spec_steps=cfg.spec_steps,
+                    n_acc=n_acc,
+                    draft_seq=draft_seq,
+                    accepted=accepted,
+                ))
+
             total_accepted   += n_acc
             total_draft_toks += cfg.spec_steps
             n_rounds         += 1
@@ -740,6 +802,7 @@ class RASDInference:
             "throughput_tps":    tokens_gen / elapsed if elapsed > 0 else 0.0,
             "acceptance_rate":   total_accepted / max(total_draft_toks, 1),
             "mean_latency_ms":   elapsed * 1000 / max(tokens_gen, 1),
+            "ttft_ms":           (t_first_token - t_start) * 1000,
             "gpu_peak_mem_mb":   torch.cuda.max_memory_allocated(device) / 1024 ** 2,
             "n_rounds":          n_rounds,
             "spec_steps":        cfg.spec_steps,
@@ -749,6 +812,12 @@ class RASDInference:
             "target_model":      cfg.target_model_name,
             "seed":              cfg.seed,
         }
+        if cfg.log_per_token:
+            # Only rank 0 returns the trace to avoid duplicate sidecars;
+            # all ranks lockstep so traces are identical anyway.
+            metrics["per_token_trace"] = (
+                per_token_trace if self._rank == 0 else None
+            )
 
         return generated_ids, metrics
 
