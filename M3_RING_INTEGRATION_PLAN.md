@@ -315,32 +315,73 @@ and the layout refactor belong in the same commit.
 
 ## R6 Open Issues (must address before R6.5)
 
-### Issue #1 — Async ring (prefetch_depth=1) flaky at W=8
+### Issue #1 — Async ring (prefetch_depth=1) at W=8: status inconclusive
 
 **A4-critical.** The A4 ablation has 3 levels: sync=0, async-1=1, async-2=2.
-Sync is stable; async at W=8 deadlocks/aborts at max_new ≥ 32 on real
-NCCL. Unit tests (gloo, CPU) pass at all configs because gloo's P2P
-semantics differ. Bug is NCCL-specific, only reproducible on multi-GPU
-pod. Fix options:
+
+**What the data actually shows from the 2026-05-06 session (honest readout):**
+
+| max_new | mode | result |
+|---|---|---|
+| 64 | async (fp16 target) | SIGABRT after 11 min (NCCL timeout) |
+| 32 | async (NF4) | hung silently after prefill, killed by 480s timeout |
+| 8 | **sync** (NF4) | ✅ works |
+| 2 | async + RING_TRACE | ✅ works (single verify iter only) |
+| 16 | async (NF4) | ✅ works (multiple verify iters) |
+| 32 | async (NF4) | Traceback in output but my grep filter chopped it |
+
+So sync is solid at every config tested. Async works at max_new ≤ 16,
+flaky/inconclusive at max_new ≥ 32. **One failed run at max_new=32 isn't
+enough evidence to say the bug is real** — could be transient NCCL issue,
+env-var difference, or genuine bug at high iteration counts.
+
+**To resolve:** re-run async at max_new ∈ {16, 32, 64, 128} × seed ∈
+{42, 123, 456} on a multi-GPU pod with full stderr captured (no grep
+filter). 12 runs ≈ 1 hr pod time at $15.92/hr ≈ $16. Cheap diagnostic.
+
+**Fix options if it IS a real bug:**
 1. Run R6.5 in sync-only mode → loses A4 levels 1, 2 (drops paper claim
    from 3-level to 1-level for that axis).
 2. Insert `dist.barrier()` between ring rotations → eliminates async
    overlap (defeats A4=1 purpose) but unblocks correctness.
-3. Deep NCCL profiling on a replacement pod → most thorough but most
-   expensive in compute time and complexity.
+3. Deep NCCL profiling on a replacement pod.
 
 ### Issue #2 — 64k context exceeds 40 GB SXM2 per-rank budget
 
 **Memory math correction:** plan-doc estimate of "per-rank K/V ~4 GB" was
-correct in isolation but total per-rank usage at ctx=64k×W=8 NF4 is ~36 GB
-(target weights replicated + **draft KV replicated per R0.3 = 5.7 GB
-extra** + NF4 dequant overhead + activations + 12 GB allocator
-fragmentation). Two paths forward:
-1. **Wait for 80 GB capacity** (`gpu_8x_a100_80gb_sxm4` $22.32/hr; Lambda
-   chronically backlogged but worth polling).
-2. **Run R6.5 at ctx=32k** on 40 GB hardware. Per-rank ~28 GB → fits
-   comfortably. Departs from the M3 plan's 64k claim but still validates
-   ring-attention scaling well above the M3-buggy 8k baseline.
+correct in isolation but total per-rank usage at ctx=64k×W=8 NF4 is ~36 GB.
+Corrected breakdown of the dominant non-target components:
+- target weights replicated: ~4 GB
+- **draft KV replicated per R0.3: ~12 GB at 64k** (was originally
+  estimated as 5.7 GB — the underestimate was the biggest miss)
+- NF4 dequant temporaries: ~3-5 GB
+- activations + LM head: ~5-6 GB
+- allocator fragmentation: ~12 GB
+
+**Partial fix landed 2026-05-06 — Option B: don't RoPE-scale the draft.**
+
+Commit (forthcoming) — `_build_hf_config(..., apply_rope_scaling=False)`
+when called for the draft model. Caps the draft at its native context
+(Sheared-LLaMA-1.3B = 4096) regardless of `cfg.context_length`. The
+existing `draft_ids = raw_draft_ids[:, -self.draft_max_len:]` truncation
+in `generate()` already feeds only the recent native_max tokens to the
+draft. Per-rank draft KV at ctx=64k drops from ~12 GB → ~770 MB
+(`4096 × 24 × 16 × 128 × 2 × 2`). Saves **~11 GB/rank**. New per-rank
+total at ctx=64k×W=8: ~25 GB → fits 40 GB SXM2 with headroom.
+
+Tradeoff: draft sees only the last 4k tokens of context regardless of
+target ctx. Speculative decoding tolerates this asymmetry (drafts
+typically have shorter native contexts than targets). May cost a small
+amount of α at very long contexts but is the standard practice for
+production spec-decoding setups. Option A (full draft KV sharding via
+ring) is deferred to M4 1M-context where draft sharding is mandatory.
+
+Tests added: `tests/test_rasd_components.py::TestRoPEScalingGate`
+(2 tests) — regression guard that target stays scaled and draft does
+not, even when ctx > native_max.
+
+**Still needed for R6.5 at ctx=64k×W=8 on 40 GB hardware:** confirm
+empirically that per-rank usage now fits in next pod session.
 
 ### Issue #3 — Region mismatch (compute ≠ filesystem)
 

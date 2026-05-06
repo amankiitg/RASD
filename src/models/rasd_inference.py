@@ -259,19 +259,31 @@ class RASDInference:
         self.stream_draft   = torch.cuda.Stream()   # draft model forward
 
     def _build_hf_config(self, model_name: str, revision: Optional[str],
-                         context_length: int, label: str):
+                         context_length: int, label: str,
+                         apply_rope_scaling: bool = True):
         """Load the model's HF config and apply linear RoPE scaling if needed.
 
         Llama-2 ships with max_position_embeddings=4096. To run at longer
         contexts (e.g. 64k for the M3 ablation), we set rope_scaling with
         factor = ceil(ctx / native_max) so token positions get linearly
         interpolated into the trained RoPE range.
+
+        `apply_rope_scaling` defaults to True (target). For the **draft**
+        model we pass False: capping the draft at its native context cap
+        (Sheared-LLaMA-1.3B = 4096) saves ~11 GB/rank of replicated KV at
+        ctx=64k vs scaling the draft to match the target. Speculative
+        decoding tolerates a smaller draft window — the
+        `draft_ids = raw_draft_ids[:, -self.draft_max_len:]` truncation in
+        generate() already gives the draft only the most recent native_max
+        tokens of context. R6.4 OOM analysis (2026-05-06) showed draft KV
+        was eating ~12 GB/rank at ctx=64k under the old behaviour.
         """
         from transformers import AutoConfig
         import math
 
         hf_cfg = AutoConfig.from_pretrained(model_name, revision=revision)
-        if context_length and context_length > hf_cfg.max_position_embeddings:
+        if (apply_rope_scaling and context_length
+                and context_length > hf_cfg.max_position_embeddings):
             native_max = hf_cfg.max_position_embeddings
             factor = float(math.ceil(context_length / native_max))
             hf_cfg.rope_scaling = {"type": "linear", "factor": factor}
@@ -279,6 +291,13 @@ class RASDInference:
             logger.info(
                 "[RoPE] %s: ctx=%d > native=%d → linear scaling factor=%.1f",
                 label, context_length, native_max, factor,
+            )
+        elif (not apply_rope_scaling and context_length
+                and context_length > hf_cfg.max_position_embeddings):
+            logger.info(
+                "[RoPE] %s: skipping scaling (caller-disabled); native_max=%d "
+                "stays — caller is expected to truncate inputs to that window.",
+                label, hf_cfg.max_position_embeddings,
             )
         return hf_cfg
 
@@ -337,8 +356,15 @@ class RASDInference:
             prefetch_depth=cfg.prefetch_depth,
         )
 
+        # Don't RoPE-scale the draft: keeping it at its native context cap
+        # (Sheared-LLaMA-1.3B = 4096) saves ~11 GB/rank of replicated draft
+        # KV at ctx=64k. The `self.draft_max_len` truncation below already
+        # feeds the draft only its native_max recent tokens. See
+        # _build_hf_config docstring for the R6.4 OOM analysis that drove
+        # this decision.
         draft_hf_config = self._build_hf_config(
-            cfg.draft_model_name, cfg.draft_revision, cfg.context_length, label="draft",
+            cfg.draft_model_name, cfg.draft_revision, cfg.context_length,
+            label="draft", apply_rope_scaling=False,
         )
 
         logger.info("Loading draft model: %s  [device=%s]", cfg.draft_model_name, self._device)

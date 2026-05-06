@@ -205,3 +205,75 @@ class TestRASDConfig:
             for overrides in ablation_configs:
                 cfg = RASDConfig(seed=seed, **overrides)
                 assert cfg.seed == seed
+
+
+# ---------------------------------------------------------------------------
+# 4. _build_hf_config — RoPE scaling gating (R6.4 follow-up)
+# ---------------------------------------------------------------------------
+
+class TestRoPEScalingGate:
+    """Regression guard: draft must NOT be RoPE-scaled.
+
+    R6.4 OOM analysis (2026-05-06) found that auto-RoPE-scaling the draft to
+    match the target's context_length blew the per-rank memory budget at
+    64k×8 because the draft's KV cache is replicated (per R0.3) — at ctx=64k
+    that's ~12 GB/rank just for draft KV. Capping the draft at its native
+    context cap (Sheared-LLaMA-1.3B = 4096) saves ~11 GB/rank. The
+    `apply_rope_scaling=False` flag on `_build_hf_config` enforces this
+    asymmetry; this test guards against accidental flips.
+    """
+
+    def test_target_keeps_rope_scaling_at_high_ctx(self, monkeypatch):
+        # Mock AutoConfig.from_pretrained to avoid network/disk hits
+        from src.models import rasd_inference
+
+        class FakeCfg:
+            max_position_embeddings = 4096
+            rope_scaling = None
+
+        def fake_from_pretrained(*args, **kwargs):
+            return FakeCfg()
+
+        # Monkeypatch the import inside the function
+        import transformers
+        monkeypatch.setattr(transformers, "AutoConfig",
+                            type("AC", (), {"from_pretrained": staticmethod(fake_from_pretrained)}))
+
+        # Stub out RASDInference instance with just enough state
+        class StubEngine:
+            _build_hf_config = rasd_inference.RASDInference._build_hf_config
+
+        engine = StubEngine()
+        out = engine._build_hf_config(
+            "any-model", None, context_length=65536, label="target",
+            apply_rope_scaling=True,  # default for target
+        )
+        assert out.max_position_embeddings == 65536, \
+            "target must be RoPE-scaled when ctx > native_max"
+        assert out.rope_scaling is not None
+        assert out.rope_scaling["type"] == "linear"
+        assert out.rope_scaling["factor"] == 16.0  # ceil(65536 / 4096)
+
+    def test_draft_is_not_rope_scaled_at_high_ctx(self, monkeypatch):
+        from src.models import rasd_inference
+
+        class FakeCfg:
+            max_position_embeddings = 4096
+            rope_scaling = None
+
+        import transformers
+        monkeypatch.setattr(transformers, "AutoConfig",
+                            type("AC", (), {"from_pretrained": staticmethod(lambda *a, **k: FakeCfg())}))
+
+        class StubEngine:
+            _build_hf_config = rasd_inference.RASDInference._build_hf_config
+
+        engine = StubEngine()
+        out = engine._build_hf_config(
+            "any-model", None, context_length=65536, label="draft",
+            apply_rope_scaling=False,  # the value passed for draft in _load_models
+        )
+        assert out.max_position_embeddings == 4096, \
+            "draft must stay at native context (no RoPE scaling) " \
+            "even when target ctx exceeds it — R6.4 memory fix"
+        assert out.rope_scaling is None
