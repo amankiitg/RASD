@@ -120,6 +120,17 @@ def _ring_llama_attention_forward(
         past_key_value, k, v, self.layer_idx, sin, cos, cache_position,
     )
 
+    # 3a. M4 C11 — NF4 KV-cache lossy bf16 path.
+    # When the installer set _ring_kv_quant=True, the K/V returned from
+    # the cache is round-tripped through NF4 quantize→dequantize before
+    # being passed to the ring kernel. This exercises the codec on real
+    # attention activations and lets us measure α/PPL impact end-to-end.
+    # The actual cache *storage* still holds bf16 — true memory savings
+    # require subclassing DynamicCache or an external NF4 store, which
+    # is M4 Phase C work. Default is False; M3 byte-identical when off.
+    if getattr(self, "_ring_kv_quant", False):
+        k_full, v_full = _kv_quant_round_trip(k_full, v_full)
+
     # 4. GQA expansion (no-op for Llama-2 where num_kv_heads == num_heads)
     k_full = repeat_kv(k_full, num_kv_groups)
     v_full = repeat_kv(v_full, num_kv_groups)
@@ -178,6 +189,34 @@ def _cache_is_empty(past_key_value, layer_idx: int) -> bool:
     return False
 
 
+def _kv_quant_round_trip(
+    k_full: torch.Tensor, v_full: torch.Tensor, block_size: int = 64,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """NF4 quantize→dequantize round-trip on the full K and V tensors.
+
+    Used by _ring_llama_attention_forward when `attn._ring_kv_quant` is
+    True. Pure transformation — input shape and dtype preserved, values
+    perturbed by NF4 reconstruction error (~3-5% relative L2 on real
+    KV activations per KIVI/KVQuant).
+
+    Defensive: if the head_dim isn't divisible by `block_size`, skip the
+    round-trip (return inputs unchanged) so a misconfigured model doesn't
+    crash the verify loop. The pod-side validation gate (C11) will
+    surface this case early if it ever fires for the M4 target models.
+    """
+    from src.models.nf4_kv import dequantize_nf4, quantize_nf4
+
+    head_dim = k_full.shape[-1]
+    if head_dim % block_size != 0:
+        return k_full, v_full
+    dtype = k_full.dtype
+    k_codes, k_scales = quantize_nf4(k_full.contiguous(), block_size=block_size)
+    v_codes, v_scales = quantize_nf4(v_full.contiguous(), block_size=block_size)
+    k_dq = dequantize_nf4(k_codes, k_scales, block_size=block_size, dtype=dtype)
+    v_dq = dequantize_nf4(v_codes, v_scales, block_size=block_size, dtype=dtype)
+    return k_dq, v_dq
+
+
 def _cache_append(past_key_value, k_new: torch.Tensor, v_new: torch.Tensor,
                   layer_idx: int, sin, cos, cache_position
                   ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -218,6 +257,7 @@ def install_ring_attention(
     rank: int,
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
+    kv_quant: bool = False,
 ) -> int:
     """Replace each LlamaAttention.forward with the ring-aware version.
 
@@ -228,11 +268,18 @@ def install_ring_attention(
                         None / 0 / >= S_local = single chunk (no chunking).
         prefetch_depth  A4. 0 = synchronous; >= 1 = async overlap (one
                         rotation in flight while compute proceeds).
+        kv_quant        M4 C11. When True, every K/V tensor returned from
+                        the cache is round-tripped through NF4
+                        quantize→dequantize before being passed to the
+                        ring kernel. This "lossy bf16 path" exercises
+                        the codec on real activations; actual cache-
+                        storage savings are deferred to Phase C.
 
     The original forward is stored as `_ring_original_forward` on each
-    instance so multi-rank=1 falls through unchanged. Five attributes are
+    instance so multi-rank=1 falls through unchanged. Six attributes are
     added to each attention module: `_ring_rank`, `_ring_world_size`,
-    `_ring_prefill_len`, `_ring_chunk_size`, `_ring_prefetch_depth`.
+    `_ring_prefill_len`, `_ring_chunk_size`, `_ring_prefetch_depth`,
+    `_ring_kv_quant`.
     """
     if world_size is None or world_size <= 1:
         return 0
@@ -257,14 +304,15 @@ def install_ring_attention(
         # A3 / A4 ablation knobs (see kernel docstring).
         attn._ring_chunk_size = chunk_size
         attn._ring_prefetch_depth = prefetch_depth
+        attn._ring_kv_quant = bool(kv_quant)
         attn._ring_original_forward = attn.forward
         attn.forward = MethodType(_ring_llama_attention_forward, attn)
         n_patched += 1
 
     logger.info(
         "[ring] patched %d LlamaAttention layers (rank=%d, world_size=%d, "
-        "chunk_size=%s, prefetch_depth=%d)",
-        n_patched, rank, world_size, chunk_size, prefetch_depth,
+        "chunk_size=%s, prefetch_depth=%d, kv_quant=%s)",
+        n_patched, rank, world_size, chunk_size, prefetch_depth, kv_quant,
     )
     return n_patched
 

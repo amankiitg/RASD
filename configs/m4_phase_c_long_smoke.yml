@@ -1,0 +1,72 @@
+# M4 Phase C — long-context single-prompt smokes (P3.3)
+#
+# Single-prompt × single-seed at four contexts to validate that RASD
+# fits memory and produces sane output before committing to the full
+# 12-run RASD matrix at the same contexts. Used by:
+#
+#   scripts/phase_c_pod_session.sh -> p33_long_ctx_smokes
+#
+# Configuration is M3-locked at the R6.5 winners:
+#   * draft  = Sheared-LLaMA-1.3B  (A1 winner)
+#   * target = Llama-2-7B          (A5 winner; 13B re-evaluates after C11 lands)
+#   * spec_steps = 4               (A2 sweet spot)
+#   * kv_block_size = 2048         (A3 winner — 94% tps gain over 512)
+#   * prefetch_depth = 1           (A4 winner; sync == async-1 == async-2)
+#
+# What this exercises that M3 didn't:
+#   * YaRN RoPE at long context (factor=8 to 256)
+#   * NF4 KV-cache (cfg.kv_quant=true) — primary 1M memory lever
+#
+# Expected runtime per cell at max_new_tokens=64:
+#   ctx=32k    ~5 min     (~1.3 GB activations)
+#   ctx=128k   ~12 min    (~5 GB activations)
+#   ctx=512k   ~50 min    (~20 GB activations; per-rank usage ~25 GB / 40 GB)
+#   ctx=1M     ~120 min   (~30 GB / 40 GB — *just* fits per memory equation)
+
+canary:
+  id:   "smoke_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision: null                                                    # gated; pinned by pin_hf_revisions.py on pod
+  draft_revision:  "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:      4
+  kv_block_size:   2048           # M3 A3 winner (94% tps gain over default 512)
+  prefetch_depth:  1
+  rope_type:       "yarn"         # M4 C2b — linear fails past factor=16
+  kv_quant:        true           # M4 C11 — NF4 KV-cache on (validated by P3.3)
+  max_new_tokens:  64
+  dtype:           "bfloat16"
+  quantize_draft:  true
+  quantize_target: true
+  temperature:     1.0
+  top_p:           1.0
+  seeds:           [42]            # 1 seed for smoke
+
+# ---------------------------------------------------------------------------
+# SMOKE — RASD single-prompt at four contexts
+# Factor: context_length
+# Each level varies only the prompt length; everything else stays default.
+# ---------------------------------------------------------------------------
+SMOKE:
+  name:   "long_context_smoke"
+  factor: "context_length"
+  levels:
+    - id: "SMOKE_ctx32k"
+      context_length: 32768
+      notes: "32k — sanity at moderate context (RoPE factor=8, YaRN trivial)"
+
+    - id: "SMOKE_ctx128k"
+      context_length: 131072
+      notes: "128k — RoPE factor=32, beyond linear's range of validity"
+
+    - id: "SMOKE_ctx512k"
+      context_length: 524288
+      notes: "512k — RoPE factor=128, half-million-token forward pass"
+
+    - id: "SMOKE_ctx1M"
+      context_length: 1048576
+      notes: "1M — RoPE factor=256, NF4 KV-cache critical to fit 40 GB SXM4"

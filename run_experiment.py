@@ -324,6 +324,9 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C2b RoPE strategy. Default "linear" preserves M3 behavior.
             # Use "yarn" for M4 1M context (factor=256 over Llama-2's 4k).
             rope_type         = str(run.get("rope_type", "linear")),
+            # C11 NF4 KV-cache. Default False -> M3 byte-identical.
+            # Phase C P3.5 final matrix uses kv_quant=true at all contexts.
+            kv_quant          = bool(run.get("kv_quant", False)),
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
             # C13 per-position trace (M4 Phase A2). Default off so M3

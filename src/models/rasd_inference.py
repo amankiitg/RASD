@@ -147,6 +147,16 @@ class RASDConfig:
     checkpoint_dir:   Optional[str] = None
     run_id:           Optional[str] = None
 
+    # M4 C11 — NF4 KV-cache (default off; M3 byte-identical when off).
+    # When True, the patched LlamaAttention forward routes K/V through
+    # an NF4 quantize→dequantize round-trip on every step. This is the
+    # "lossy bf16 path" — exercises the codec on real attention
+    # activations and lets us measure α/PPL impact. Actual cache-storage
+    # savings (subclassing DynamicCache or external NF4 store) are
+    # M4 Phase C work; the codec behavior is validated here on every
+    # cell of the matrix.
+    kv_quant: bool = False
+
     @property
     def torch_dtype(self) -> torch.dtype:
         return torch.bfloat16 if self.dtype == "bfloat16" else torch.float16
@@ -460,6 +470,7 @@ class RASDInference:
             rank=rk,
             chunk_size=cfg.kv_block_size,
             prefetch_depth=cfg.prefetch_depth,
+            kv_quant=cfg.kv_quant,
         )
 
         # Don't RoPE-scale the draft: keeping it at its native context cap
