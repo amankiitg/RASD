@@ -295,17 +295,60 @@ and the layout refactor belong in the same commit.
   single-rank baseline within bootstrap CIs. **This is pod work; folded
   into R6.1/R6.2.**
 
-### Phase R6 — Validation matrix (2-3 days, mostly pod time)
+### Phase R6 — Validation matrix (mostly done; R6.5 deferred)
 
-- [ ] **R6.1** Single-rank 8k smoke (regression check vs current main).
-- [ ] **R6.2** 2-rank 8k smoke. α vs single-rank: should be statistically
-  indistinguishable.
-- [ ] **R6.3** 8-rank 8k smoke. Same α target.
-- [ ] **R6.4** 8-rank 64k smoke (1 prompt, 64 tokens). Memory check:
-  per-rank target KV should be ~4 GB, not ~33 GB.
-- [ ] **R6.5** Full 49-row re-ablation at 64k×8. Now A3 (`kv_block_size`)
-  and A4 (`prefetch_depth`) actually mean something — ring step granularity
-  and pipeline depth.
+- [x] **R6.1** Single-rank 8k smoke ✅ 2026-05-05 (NF4 α=0.654, bf16 α=0.682).
+- [x] **R6.2** 2-rank 8k smoke ✅ 2026-05-06 (α=0.312, peak 28.4 GB/rank).
+- [x] **R6.3** 8-rank 8k smoke ✅ 2026-05-06 (sync stable; async stable at
+  max_new ≤ 16, flaky at max_new ≥ 32 — see Open Issues).
+- [⚠] **R6.4** 8-rank 64k smoke — **OOM at 35.7 GB / 40 GB on the SXM2
+  variant**. Sharding works as designed (target K/V correctly reduced to
+  4.3 GB/rank), but other components (replicated draft KV, NF4 dequant
+  temporaries, allocator fragmentation) push total per-rank usage past
+  40 GB. Backed off to ctx=16k, which passed at 20.9 GB/rank ✅. 64k
+  needs the 80 GB SXM4 SKU (`gpu_8x_a100_80gb_sxm4`). See
+  [results/r6/r6_audit.md](results/r6/r6_audit.md) Issue #2 for the full
+  per-rank memory breakdown.
+- [ ] **R6.5** Full 49-row re-ablation — **deferred** until either (a) 80
+  GB capacity available on Lambda OR (b) sweep is rescoped to ctx=32k
+  to fit 40 GB. Also gated on Issue #1 below.
+
+## R6 Open Issues (must address before R6.5)
+
+### Issue #1 — Async ring (prefetch_depth=1) flaky at W=8
+
+**A4-critical.** The A4 ablation has 3 levels: sync=0, async-1=1, async-2=2.
+Sync is stable; async at W=8 deadlocks/aborts at max_new ≥ 32 on real
+NCCL. Unit tests (gloo, CPU) pass at all configs because gloo's P2P
+semantics differ. Bug is NCCL-specific, only reproducible on multi-GPU
+pod. Fix options:
+1. Run R6.5 in sync-only mode → loses A4 levels 1, 2 (drops paper claim
+   from 3-level to 1-level for that axis).
+2. Insert `dist.barrier()` between ring rotations → eliminates async
+   overlap (defeats A4=1 purpose) but unblocks correctness.
+3. Deep NCCL profiling on a replacement pod → most thorough but most
+   expensive in compute time and complexity.
+
+### Issue #2 — 64k context exceeds 40 GB SXM2 per-rank budget
+
+**Memory math correction:** plan-doc estimate of "per-rank K/V ~4 GB" was
+correct in isolation but total per-rank usage at ctx=64k×W=8 NF4 is ~36 GB
+(target weights replicated + **draft KV replicated per R0.3 = 5.7 GB
+extra** + NF4 dequant overhead + activations + 12 GB allocator
+fragmentation). Two paths forward:
+1. **Wait for 80 GB capacity** (`gpu_8x_a100_80gb_sxm4` $22.32/hr; Lambda
+   chronically backlogged but worth polling).
+2. **Run R6.5 at ctx=32k** on 40 GB hardware. Per-rank ~28 GB → fits
+   comfortably. Departs from the M3 plan's 64k claim but still validates
+   ring-attention scaling well above the M3-buggy 8k baseline.
+
+### Issue #3 — Region mismatch (compute ≠ filesystem)
+
+R6.2-R6.4 ran in europe-central-1 because that's where 8x A100 capacity
+appeared. Filesystem `rasd-fs` is in us-west-2 — not attachable. We ran
+on ephemeral storage and scp'd results back. For R6.5, prefer launching
+in us-west-2 if capacity returns there; otherwise live with cold model
+loads each session and remember to scp results before terminating.
 
 ## Open design questions
 
