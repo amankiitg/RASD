@@ -302,14 +302,20 @@ W∈{2,4} via gloo. Could extend to W=8 (gloo CPU) for cheap.
 ~~TTFT split timing~~ — product-serving metric, not research-paper evidence
 ~~Per-position acceptance sidecar .jsonl~~ — approximate from round-level logs for Figure 4
 
-### Phase 3 — Pod required
-Only runs that need A100s. Order reflects dependencies on Compute-track items above.
+### Phase 3 — Pod required (Lambda 8x A100 SXM4 40 GB, gpu_8x_a100)
+
+**Hardware decision 2026-05-06**: stay on Lambda ($2000 credit) using
+the 40 GB SXM2 tier ($15.92/hr). With NF4 KV (C11), per-rank memory at
+1M fits comfortably (~30 GB / 40 GB). 80 GB SXM4 would give more
+headroom but isn't strictly required. Capacity is volatile but
+consistently shows up in europe-central-1 (no rasd-fs filesystem there
+— scp results back each session).
 
 P3.1. Run Phase 0 completion on first pod (capture_pod_env.sh → `requirements-lock.txt`, pin_hf_revisions.py → Llama-2 hashes, replay_m3_smoke.sh → confirm drift ≤15%)
 P3.2. RoPE scaling validation: PPL at 32k/128k/512k/1M on 1 GPU (needs C1+C4)
-P3.3. Smoke tests: single RASD run at 32k, 128k, 512k, 1M context
+P3.3. Smoke tests: single RASD run at 32k, 128k, 512k, 1M context (validate NF4 KV doesn't OOM at the long end)
 P3.4. Baseline validation: Ring + Sliding end-to-end at 128k, 1M
-P3.5. **Final 36-run matrix** — RASD+Ring+Sliding × {128k, 256k, 512k, 1M} × 3 seeds
+P3.5. **Final 36-run matrix** — RASD+Ring+Sliding × {128k, 256k, 512k, 1M} × 3 seeds. Use `max_new_tokens=64` for memory + tps (sufficient for headline numbers); optionally subset of cells re-run at `max_new_tokens=256` for α stability.
 P3.6. Profiler pass (only if C7 built)
 
 ### Phase 4 — Post-pod, local
@@ -370,28 +376,45 @@ Z1. Send mentor follow-up email: FA+Ring implementation details + LongBench scop
   600-1800s. Patch per-phase. Already extended to 600s in
   [scripts/r6_verify_runner.sh](scripts/r6_verify_runner.sh).
 
-## Cost discipline (revised 2026-05-06)
+## Cost discipline (revised 2026-05-06 with 1M target + Lambda commitment)
 
-Original M4 budget was $250 assuming M3 was complete. With the M3
-re-ablation rolled into M4, revised budget:
+User confirmed 2026-05-06: $2000 Lambda credit available; stay on Lambda
+even with capacity volatility. 1M context is in scope. NF4 KV (C11)
+chosen over TP (C9) — saves ~14x more memory for ~half the eng cost.
 
-| Phase | Estimated $ | Status |
-|---|---|---|
-| Analysis track (local) | $0 | partial |
-| C0a + C0b (M3 issue verification, ~30 min × $15.92/hr) | ~$8 | pending |
-| C0c R6.5 49-row re-ablation (~3-4 hr × $15.92/hr) | $50-80 | pending |
-| C11 NF4 KV validation smoke + PPL + tps micro-bench (~1 hr) | ~$20 | pending |
-| Phase 3 (PPL + throughput at 1M) | $80-120 | pending |
-| Conditional LongBench | +$50-80 | pending mentor |
-| **M4 budget cap (revised)** | **$250–350** | up from original $250 |
+| Phase | Detail | Estimated $ | Status |
+|---|---|---|---|
+| Analysis track (local) | bootstrap CIs, Figure 2, ablation tables | $0 | partial |
+| **R6 verification** | C0a (Issue #1) + C0b (Issue #2 / Option B) | $11 | ✅ done 2026-05-06 |
+| **R6.5 49-row re-ablation** at ctx=64k×W=8 | ~5 hr live now | ~$80 | 🔄 IN PROGRESS (45/48 done as of 13:48 UTC) |
+| Phase A pivot on same instance | install flash-attn (C10), 128k/256k/512k smokes to find 40 GB ceiling | ~$15 | pending |
+| C11 NF4 KV implementation | local engineering, ~1-2 weeks | $0 | pending |
+| C11 NF4 KV validation | smoke + PPL + tps micro-bench at ctx ∈ {8k, 64k} | ~$30 | pending |
+| C2b YaRN RoPE | local engineering, ~2-3 days | $0 | pending |
+| C3-C6 PPL infrastructure | PG-19 prep + evaluator + wandb wiring + checkpoint/resume | $0 + ~$30 pod test | pending |
+| Phase 3 long-context smokes | RASD at 128k/256k/512k/1M single-prompt × 1 seed | ~$50 | pending |
+| Phase 3 baseline validation | Ring + Sliding × 4 contexts | ~$30 | pending |
+| **Phase 3 final 36-run matrix** | RASD+Ring+Sliding × 4 contexts × 3 seeds at max_new=64 (~6 hr) | ~$95 | pending |
+| Phase 3 paper-quality subset | RASD only × 4 contexts × 1 seed at max_new=256 (~3 hr) | ~$50 | pending |
+| Conditional LongBench | pending mentor approval | +$50-80 | pending |
+| **M4 total (with 1M, Lambda 40 GB tier)** | | **~$390** | |
 
-**Engineering-time savings from TP demotion:** ~3 weeks of critical-path
-work removed (C9 was 2-6 weeks; C11 is 1-2 weeks). Net M4 timeline buffer
-gained: ~2-3 weeks. Reduces MLSys 2027 Oct 30 deadline pressure
-substantially.
+**Cumulative project spend:**
+- M3 (RunPod 8k baseline, INVALIDATED): $200
+- R6.1 (Lambda 1x A100): $1.50
+- R6.2-R6.4 (Lambda 8x A100, partial): $22
+- R6.5 + verification (Lambda 8x A100, today): ~$95 burned through 14:00 UTC
+- **Subtotal**: ~$320
 
-**Cumulative project spend (2026-05-06):** ~$224 (M3 + R6 partial).
-Total project budget revisits if final M4 estimates land at the
-upper end. Consider RunPod for R6.5 if Lambda 8x stays scarce — RunPod
-8x A100 80 GB SXM is reliably available at ~$15/hr, slightly cheaper
-than Lambda's 80 GB SKU.
+**Total project budget on 1M-context target (Lambda 40 GB tier):** ~$320
+spent + ~$310 remaining = ~$630.
+
+**Engineering-time impact of NF4 KV vs TP:** TP would have been 2-6
+weeks critical-path; NF4 KV is 1-2 weeks. Saves ~3 weeks → reduces
+deadline pressure significantly.
+
+**Hardware tier rationale:** Lambda 8x A100 SXM4 80 GB is $22.32/hr
+when available (rare). Lambda 8x A100 SXM2 40 GB is $15.92/hr (more
+reliably available). 30% cheaper. With NF4 KV, 1M fits 40 GB, so the
+80 GB tier provides headroom but no functional advantage for our 7B
+target. Net: 40 GB SXM2 is the right tier for M4.
