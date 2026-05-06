@@ -180,12 +180,18 @@ stage "p35_final_matrix" final_matrix
 # (Fig 3 source data)
 # ------------------------------------------------------------------
 profiler_sidecar_pass() {
-    # The runner needs a --profile flag wired — the M4 plan calls for
-    # this in P3.6 specifically. For now, this is a placeholder showing
-    # what the call would look like once that flag lands.
-    echo "Profiler sidecar pass requires --profile flag in run_experiment.py"
-    echo "(implementation TBD — RoundProfiler primitive ready in src/analysis/profiler.py)"
-    return 0
+    # Run the matrix once more with --profile, on a subset (1 seed at all
+    # 4 contexts) to keep overhead bounded. Output at
+    # results/final/profiler_pass/profiler_pass.csv + per-run JSON
+    # sidecars at .../profiler/<run_id>.json — Fig 3 source data.
+    torchrun --nproc-per-node=8 --master_port=29500 \
+        run_experiment.py \
+        --config configs/m4_final_matrix.yml \
+        --output results/final/profiler_pass/profiler_pass.csv \
+        --resume \
+        --nproc 8 \
+        --seeds 42 \
+        --profile
 }
 stage "p36_profiler_pass" profiler_sidecar_pass
 

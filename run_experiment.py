@@ -97,6 +97,35 @@ def write_per_token_sidecar(
     return path
 
 
+def _profiler_sidecar_path(output_csv: str | Path, run_id: str) -> Path:
+    """Where C7 profiler summary lands for a given run.
+
+    Sits next to the CSV under a `profiler/` subdir, mirroring the
+    `per_token/` layout for per-position traces:
+
+        results/final/final_matrix.csv
+        results/final/profiler/M4_ctx128k_s42.json
+        results/final/profiler/M4_ctx256k_s42.json
+        ...
+    """
+    return Path(output_csv).resolve().parent / "profiler" / f"{run_id}.json"
+
+
+def write_profiler_sidecar(
+    summary: dict | None, output_csv: str | Path, run_id: str
+) -> Path | None:
+    """Write a RoundProfiler.summary dict (C7) to <profiler>/<run_id>.json.
+
+    Returns the path written, or None if `summary` is empty/None.
+    """
+    if not summary:
+        return None
+    path = _profiler_sidecar_path(output_csv, run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, indent=2))
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Config loading & grid expansion
 # ---------------------------------------------------------------------------
@@ -335,18 +364,37 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         )
         engine = RASDInference(cfg)
         prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
-        _, metrics = engine.generate_text(prompt)
+
+        # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
+        # run["profile"] = True (set from --profile CLI flag below).
+        profile_enabled = bool(run.get("profile", False)) and local_rank == 0
+        if profile_enabled:
+            from src.analysis.profiler import RoundProfiler
+            with RoundProfiler(enabled=True) as _prof:
+                _, metrics = engine.generate_text(prompt)
+            metrics["_profiler_summary"] = _prof.summary
+        else:
+            _, metrics = engine.generate_text(prompt)
 
         # Pull the per-position trace out of the metrics dict before
         # wandb logging — it's a list-of-dicts, not a wandb-loggable
         # scalar. Only rank 0 receives a non-None trace (others get
         # None per RASDInference.generate's rank-0 guard).
         trace = metrics.pop("per_token_trace", None)
+        prof_summary = metrics.pop("_profiler_summary", None)
         if local_rank == 0:
             sidecar = write_per_token_sidecar(trace, output_csv, run["run_id"])
             if sidecar is not None:
                 log.info("Wrote per-position trace: %s (%d records)",
                          sidecar, len(trace))
+            prof_path = write_profiler_sidecar(prof_summary, output_csv, run["run_id"])
+            if prof_path is not None:
+                log.info("Wrote profiler summary: %s "
+                         "(compute=%.1fms, comm=%.1fms, idle=%.1fms)",
+                         prof_path,
+                         prof_summary["compute_us"] / 1000,
+                         prof_summary["comm_us"]    / 1000,
+                         prof_summary["idle_us"]    / 1000)
 
         row.update({
             "tokens_generated": metrics["tokens_generated"],
@@ -502,6 +550,14 @@ def main():
                         help="Enable C13 per-position acceptance trace sidecar "
                              "(.jsonl per run, source for Figure 4). "
                              "Default off so M3 replay stays byte-identical.")
+    parser.add_argument("--profile", action="store_true",
+                        help="Wrap each generate() call in a torch.profiler "
+                             "context (C7 RoundProfiler). Writes per-run "
+                             "compute/comm/idle JSON sidecar to "
+                             "<output_dir>/profiler/<run_id>.json. Source for "
+                             "Figure 3 (mentor stacked time breakdown). "
+                             "Adds ~10%% overhead — run on a subset, not the "
+                             "headline matrix.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -520,6 +576,9 @@ def main():
     if args.log_per_token:
         for r in all_runs:
             r["log_per_token"] = True
+    if args.profile:
+        for r in all_runs:
+            r["profile"] = True
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))

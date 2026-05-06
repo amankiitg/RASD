@@ -189,3 +189,67 @@ class TestIntegrationPoints:
             "C5 regression: write_per_token_sidecar not gated by "
             "`if local_rank == 0:` — would duplicate writes 8x"
         )
+
+
+class TestProfileFlag:
+    """C7 profiler --profile CLI flag wiring."""
+
+    def test_profile_cli_flag_present(self):
+        assert "--profile" in RUN_EXP_SRC, (
+            "--profile flag missing from run_experiment.py"
+        )
+
+    def test_profile_propagates_to_run_dict(self):
+        """`if args.profile: r['profile'] = True` must be present so
+        the subprocess worker picks it up via the JSON-serialized run."""
+        assert re.search(
+            r"if args\.profile:[\s\S]{0,200}r\[[\"\']profile[\"\']\]\s*=\s*True",
+            RUN_EXP_SRC,
+        ), (
+            "C7 regression: --profile not propagated to run dict in main()"
+        )
+
+    def test_profiler_wraps_generate(self):
+        """RoundProfiler must wrap the engine.generate_text call when on."""
+        assert "from src.analysis.profiler import RoundProfiler" in RUN_EXP_SRC, (
+            "C7 regression: RoundProfiler not imported in worker"
+        )
+        assert re.search(
+            r"with RoundProfiler\(enabled=True\)[\s\S]{0,200}engine\.generate_text",
+            RUN_EXP_SRC,
+        ), (
+            "C7 regression: RoundProfiler not wrapping generate_text call"
+        )
+
+    def test_profile_disabled_path_uses_existing_call(self):
+        """When --profile is off, the existing un-wrapped generate_text
+        path must still be hit — no overhead, no behavior change."""
+        # Look for the else branch with the bare generate_text call
+        assert re.search(
+            r"else:\s*\n\s+_, metrics = engine\.generate_text\(prompt\)",
+            RUN_EXP_SRC,
+        ), (
+            "C7 regression: profile-disabled path is missing or wrapped"
+        )
+
+    def test_profiler_summary_popped_before_wandb(self):
+        """The summary dict shouldn't go to wandb.log as raw payload."""
+        assert 'metrics.pop("_profiler_summary"' in RUN_EXP_SRC, (
+            "C7 regression: _profiler_summary not popped before wandb"
+        )
+
+    def test_profiler_sidecar_written_only_on_rank_zero(self):
+        """Profiler sidecar gated by `if local_rank == 0:` like per-token trace."""
+        assert re.search(
+            r"if local_rank == 0:[\s\S]{0,400}write_profiler_sidecar\(",
+            RUN_EXP_SRC,
+        ), (
+            "C7 regression: write_profiler_sidecar not gated by rank-0"
+        )
+
+    def test_profiler_sidecar_path_under_profiler_subdir(self):
+        from run_experiment import _profiler_sidecar_path
+        from pathlib import Path
+        p = _profiler_sidecar_path(Path("/tmp/results.csv"), "M4_ctx128k_s42")
+        assert p.name == "M4_ctx128k_s42.json"
+        assert p.parent.name == "profiler"
