@@ -2,17 +2,58 @@
 
 Tracking file for M4 work. Strategy, phased order, and deliverables.
 
-## Status snapshot (2026-04-16)
+## Status snapshot (2026-05-06 — major revision)
 
-- **M3 ablation study**: complete — 49/49 rows in [results/ablations/ablations.csv](results/ablations/ablations.csv)
-- **Mentor's M3 asks**:
-  - ✅ Blockwise FA + ring attention ([src/models/rasd_inference.py](src/models/rasd_inference.py))
-  - ✅ Memory validated to 512k ([results/baselines/flash_memory_validation.csv](results/baselines/flash_memory_validation.csv))
-  - ⏳ Full RASD at long-context (1M) — deferred to M4
-  - ❓ LongBench / L-Eval task-accuracy eval — used PG-19 perplexity instead; asking mentor whether to add
-  - ⏳ Implementation-details email — pending
-- **M3 context length**: 8k (conservative start; ring partitioning + tick-ordering validated at block=2048)
-- **Spend so far**: ~$200 on RunPod A100s for M3 — M4 cost strategy must be frugal
+> **What changed since the 2026-04-16 snapshot below this section:** the
+> 2026-04-16 audit ([results/quant_mini/check4_audit.md](results/quant_mini/check4_audit.md))
+> found that the original M3 implementation had **four coupled defects**
+> in the speculative-verify path that were suppressing α to 0.06–0.11
+> across all 49 ablation rows, plus a deeper architectural gap where
+> **ring attention's prefetched K/V was never consumed by the target's
+> attention forward** — at world_size>1 each rank actually held the full
+> sequence's K/V locally and the ring P2P was decorative. Three weeks
+> of redesign work landed on main as the **R0–R3.5 + R5 + R6.x** task
+> sequence in [M3_RING_INTEGRATION_PLAN.md](M3_RING_INTEGRATION_PLAN.md).
+> Ring attention now correctly lives inside `LlamaAttention.forward`
+> with a dual-cache (sharded prefill + replicated decode tail) layout.
+
+**Current state of M3 (2026-05-06):**
+
+- **M3 ablation study**: ❌ INVALIDATED 2026-04-16 (post-analysis bug found).
+  Original 49-row CSV not paper-defensible. Re-ablation **R6.5 PENDING**;
+  gated on Issues #1, #2 in the M3 plan doc.
+- **Code (R0–R3.5, R5)**: ✅ landed across 11 commits since 2026-05-05.
+  78/78 unit tests green. Architecture is now correct.
+- **R6 validation matrix** (Lambda Cloud, 8x A100 SXM):
+  - R6.1 single-rank smoke (NF4 α=0.654 / bf16 α=0.682) ✅ 2026-05-05
+  - R6.2 2-rank 8k smoke (α=0.312, 28.4 GB/rank) ✅ 2026-05-06
+  - R6.3 8-rank 8k sync (α=0.625, 13.4 GB/rank) ✅ 2026-05-06
+  - R6.3 8-rank 8k async (max_new=16) ✅; max_new ≥ 32 inconclusive ⚠
+  - R6.4 8-rank 64k OOM at 35.7 GB / 40 GB ❌; ctx=16k fits ✅
+  - **Option B fix landed** 2026-05-06 (commit eb9297a): don't RoPE-scale
+    the draft. Cuts per-rank draft KV at ctx=64k from ~12 GB → ~770 MB.
+    Predicted new per-rank usage at 64k×8 NF4: ~25 GB → fits 40 GB SXM2.
+    Pod-side empirical verification pending (Issue #2 in M3 plan).
+- **Mentor's M3 asks** (revised):
+  - ⚠ Blockwise FA + ring attention — REWRITTEN. Original was structurally
+    broken; new implementation in
+    [src/models/ring_attention_kernel.py](src/models/ring_attention_kernel.py)
+    + [src/models/ring_llama_attention.py](src/models/ring_llama_attention.py)
+    is empirically validated through R6.3 sync at 8 ranks and ctx=16k.
+    64k empirical confirmation pending Option B verification on pod.
+  - ⏳ Memory validated to 512k — old [results/baselines/flash_memory_validation.csv](results/baselines/flash_memory_validation.csv)
+    was for the standalone `RingAttentionFlash` kernel, not the production
+    target+ring path. Needs re-validation with the new architecture.
+  - ⏳ Full RASD at long-context (1M) — deferred to M4. **Tensor
+    parallelism (weight sharding) needed for this.** See M3 plan Issue #4.
+  - ❓ LongBench / L-Eval task-accuracy eval — still pending mentor input.
+  - ⏳ Implementation-details email — pending.
+- **M3 context length**: validated to 16k×W=8 in R6 (2026-05-06).
+  64k×W=8 fits Option B prediction; pod-side confirmation pending.
+- **Spend so far**: ~$224 cumulative ($200 RunPod M3 + $1.50 Lambda R6.1 +
+  $22 Lambda R6.2-R6.4). M4 budget cap revised below.
+
+## Status snapshot (2026-04-16) — preserved for history
 
 ## Strategy
 
@@ -64,17 +105,46 @@ A3. Bootstrap CIs for per-axis winners (A1/A2/A3/A4/A5 on tps + acceptance)
 A4. Figure 2: ablation bar charts with CIs (from M3 data)
 A5. LaTeX `tables/ablation_summary.tex` from ablations.csv
 
-### Compute track — priority-ordered (reprioritized 2026-04-16)
+### Compute track — priority-ordered (re-revised 2026-05-06)
 
-Ordering reflects paper-evidence value: **RoPE is the 1M blocker, PPL+throughput
-is the core claim, checkpoint/resume is pod-$ protection, everything else is
-secondary.** TTFT and per-position acceptance are deprioritized — TTFT is a
-product-serving metric (not our research angle), per-position Fig 4 can be
-approximated from existing round-level logs.
+**Top priority is now closing M3** — finishing R6.5 (49-row re-ablation)
+on the new architecture. Without that, no published numbers from M3 are
+defensible. Then M4 proper proceeds with PPL + 1M context + TP.
+
+#### P0 — Close M3 first (NEW, ahead of everything else)
+
+C0a. Resolve M3 plan Issue #1 (A4 async-ring inconclusive). Run async at
+`max_new ∈ {16, 32, 64} × seed ∈ {42, 123}` on 8-GPU pod with full stderr
+captured per run (no grep filtering). Script:
+[scripts/r6_verify_runner.sh](scripts/r6_verify_runner.sh). ~6 runs ×
+3-5 min ≈ 30 min pod time = ~$8.
+
+C0b. Resolve M3 plan Issue #2 (Option B verification). Re-run R6.4 at
+ctx=64k×W=8 NF4 sync; confirm per-rank usage drops from 35.7 GB to ~25 GB
+matching the prediction. Bundled into the same runner script.
+
+C0c. **R6.5 — Full 49-row re-ablation at 64k×W=8** with new architecture.
+Gated on C0a + C0b passing. Wandb project `rasd-m3-reablation-64k`.
+~3-4 hr pod time = ~$50–80 at $15.92/hr.
 
 #### P1 — RoPE scaling (BLOCKER for 1M)
-C1. RoPE scaling code path (YaRN or dynamic-NTK — pick when starting this item) behind `--rope-scaling` flag, default off → M3 unchanged
-C2. Smoke-test RoPE numerically on single GPU at 64k locally (if laptop can fit; else first pod action)
+
+C1. ~~RoPE scaling code path behind `--rope-scaling` flag~~
+**C1 partially landed in M3 redesign:** `_build_hf_config` in
+[src/models/rasd_inference.py](src/models/rasd_inference.py) supports
+linear RoPE scaling for the target. Validated end-to-end at ctx=8192
+in R6.1. **Open work:** scaling to 64k+ with verified PPL (no NaN/inf).
+The R6.4 OOM blocked the 64k empirical check — Option B (2026-05-06)
+unblocks it.
+
+C2. ~~Smoke-test RoPE numerically on single GPU at 64k~~ — fold into
+C0b above (R6.4 verification with Option B). 64k single-GPU was ruled
+out by R6.4 memory analysis; needs ring sharding which we now have.
+
+C2b. **YaRN or NTK-aware scaling for 1M** — current Option B uses linear
+RoPE scaling on target only. Linear interpolation is known to degrade
+quality at 16x+ scaling factor. For 1M (factor=256 over Llama-2's native
+4k), YaRN is widely recommended. Add when starting the 1M push.
 
 #### P2 — Perplexity + throughput (core evidence)
 C3. PG-19 preprocessing verification (tokenization, seq-length distribution, produces 1M-token chunks)
@@ -84,11 +154,49 @@ C5. Wire PPL logging into `run_experiment.py` alongside existing throughput metr
 #### P3 — Checkpoint/resume (pod-$ protection)
 C6. Generation checkpoint/resume — write state every N tokens, resume on failure. At 1M context a single run is 20+ min; one crash = one pod-hour lost without this.
 
-#### P4 — Minimal profiler (conditional)
-C7. `torch.profiler` context-manager wrapper with NVTX ranges at round boundaries — **only build if P1-P3 land and we still need a "why fast" story for the paper**. Skip entirely if results speak for themselves.
+#### P4 — Tensor parallelism (NEW 2026-05-06, BLOCKER for 1M+ on 40 GB hardware)
 
-#### P5 — Tick-gate regression test (cheap, high-value)
-C8. Gloo-backend regression test for tick-gate ordering (catches a block=2048 regression without CUDA). Tiny, guards commit dc14915.
+C9. **Megatron-style tensor parallelism for weight sharding.** Currently
+target weights are replicated per rank — at NF4 that's 4 GB/rank, fine
+through ctx=128k×W=8. **At ctx=512k+ it's the dominant memory cost.**
+1M context on 80 GB hardware needs both ring (sequence-parallel) AND TP
+(weight-parallel) to fit comfortably.
+
+  Implementation outline (from M3 plan Issue #4):
+  - Column-parallel: `q_proj`, `k_proj`, `v_proj`, `gate_proj`, `up_proj`
+    (split along output dim). Saves W× the weight memory at the cost of
+    no extra comm — these layers naturally produce per-rank slices.
+  - Row-parallel: `o_proj`, `down_proj` (split along input dim). Add
+    `all_reduce(SUM)` after each.
+  - Embedding + LM head: split along vocab dim. Add `all_gather` for
+    final logits projection.
+  - Combine with ring sequence-parallel: each rank holds 1/W of weights
+    (TP) AND 1/W of K/V cache positions (ring). Total memory savings:
+    target weights from 13 GB → 1.6 GB/rank (bf16) or 4 GB → 500 MB/rank
+    (NF4) at W=8. Per-layer all-reduce cost ~2 MB at hidden=4096 — small
+    relative to ring P2P.
+
+  Reference architectures: Megatron-LM, DeepSpeed-Ulysses (sequence-only),
+  vLLM's tensor parallelism. Engineering: ~1 week if done from scratch;
+  potentially less if we adopt an existing library's TP layer wrappers.
+
+  **Defer until C0c (R6.5) lands.** Adding TP before M3 is closed risks
+  destabilizing the ablation surface.
+
+#### P5 — Minimal profiler (conditional)
+C7. `torch.profiler` context-manager wrapper with NVTX ranges at round boundaries — **only build if P1-P4 land and we still need a "why fast" story for the paper**. Skip entirely if results speak for themselves.
+
+#### P6 — Tick-gate regression test (cheap, high-value, mostly OBSOLETE)
+
+C8. ~~Gloo-backend regression test for tick-gate ordering~~ —
+**partially obsoleted by M3 redesign**: the entire `AsyncKVRingPrefetcher`
+class (which owned the tick gate) was deleted in commit 09f7d98 when ring
+moved into the attention forward. The tick-gate ordering bug from
+commit dc14915 cannot recur because the code path no longer exists.
+What DOES still need a regression test is the new ring kernel's
+batched_isend_irecv ordering at world_size > 4 — already partially
+covered by `tests/test_ring_attention.py::TestKnobInvariance` at
+W∈{2,4} via gloo. Could extend to W=8 (gloo CPU) for cheap.
 
 #### Deprioritized / likely dropped
 ~~TTFT split timing~~ — product-serving metric, not research-paper evidence
@@ -129,18 +237,49 @@ Z1. Send mentor follow-up email: FA+Ring implementation details + LongBench scop
 - `manuscript/` — methods, results, discussion sections
 - Mentor emails: implementation details, LongBench scope, cost ask
 
-## Risks / anticipated fixes
+## Risks / anticipated fixes (updated 2026-05-06)
 
-- **RoPE scaling at 1M** may produce NaN/inf with naive linear scaling → YaRN or NTK-aware needed. Validate on single GPU before ring.
-- **Memory at 1M × 8 ranks** — 4-bit NF4 + FA-2 should fit, but prefetch_depth=2 may push over 80GB per rank; fall back to 1 or 0 if needed.
-- **Tick-ordering regression** — gloo test in Phase 2 catches this before pod time.
-- **Long-run orphaned VRAM** — stick to the 5-step clean-kill sequence in [configs/ablations.yml](configs/ablations.yml); never `pkill -9`.
-- **Subprocess timeout** — 120s worked for 8k; 1M context may need 600-1800s. Patch per-phase.
+- **A4 async-ring inconclusive at W=8 max_new ≥ 32** (M3 plan Issue #1).
+  Worst case: R6.5 runs sync-only (A4 levels 1, 2 dropped from paper). Best
+  case: it was transient; characterization in C0a clarifies.
+- **64k×W=8 fits 40 GB hardware with Option B but only just** (~25 GB
+  used, ~15 GB headroom). Any additional growth (longer ablation
+  configs, FA-2 install, fragmentation) could push over. C0b
+  empirically confirms; if tight, drop ablation rows that grow memory
+  the most (e.g. `kv_block_size=2048` builds bigger ring buffers).
+- **RoPE scaling at 1M** may produce NaN/inf with linear scaling
+  (factor=256 is far past linear's regime of validity). C2b adds YaRN
+  before the 1M push.
+- **Memory at 1M × 8 ranks** — even with NF4 + FA-2 + ring + Option B,
+  weight memory becomes the dominant cost. **Tensor parallelism (C9) is
+  required.** Without TP, 1M context will OOM even on 80 GB hardware.
+- **Lambda multi-GPU capacity is volatile.** R6 work used europe-central-1
+  (no rasd-fs filesystem) because that's where capacity returned. For R6.5
+  prefer us-west-2 if available; otherwise live with cold model loads
+  each session and remember to scp results before terminating.
+- **Long-run orphaned VRAM** — Lambda's pod-per-instance design means
+  each launch is a clean GPU. No equivalent of RunPod's orphaned-memory
+  problem.
+- **Subprocess timeout** — 120s worked for 8k; 1M context may need
+  600-1800s. Patch per-phase. Already extended to 600s in
+  [scripts/r6_verify_runner.sh](scripts/r6_verify_runner.sh).
 
-## Cost discipline
+## Cost discipline (revised 2026-05-06)
 
-- Phase 1-2 = $0 (laptop only)
-- Phase 3 = 1 pod rental, target <$150
-- Phase 4 = $0 (laptop only)
-- Conditional LongBench ≈ +$50-80 if approved
-- Budget cap: $250 total for M4
+Original M4 budget was $250 assuming M3 was complete. With the M3
+re-ablation rolled into M4, revised budget:
+
+| Phase | Estimated $ | Status |
+|---|---|---|
+| Analysis track (local) | $0 | partial |
+| C0a + C0b (M3 issue verification, ~30 min × $15.92/hr) | ~$8 | pending |
+| C0c R6.5 49-row re-ablation (~3-4 hr × $15.92/hr) | $50-80 | pending |
+| Phase 3 (PPL + throughput at 1M) | $80-120 | pending |
+| Conditional LongBench | +$50-80 | pending mentor |
+| **M4 budget cap (revised)** | **$250–350** | up from original $250 |
+
+**Cumulative project spend (2026-05-06):** ~$224 (M3 + R6 partial).
+Total project budget revisits if final M4 estimates land at the
+upper end. Consider RunPod for R6.5 if Lambda 8x stays scarce — RunPod
+8x A100 80 GB SXM is reliably available at ~$15/hr, slightly cheaper
+than Lambda's 80 GB SKU.

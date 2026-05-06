@@ -383,6 +383,43 @@ not, even when ctx > native_max.
 **Still needed for R6.5 at ctx=64k×W=8 on 40 GB hardware:** confirm
 empirically that per-rank usage now fits in next pod session.
 
+### Issue #4 — Tensor parallelism / weight sharding deferred to M4
+
+**Surfaced 2026-05-06 during the R6.4 OOM analysis.** Currently each rank
+holds the **full target model weights** (replicated, not sharded):
+- Target Llama-2-7B NF4: ~4 GB / rank × 8 ranks = 32 GB total cluster
+- Target bf16: ~13 GB / rank × 8 ranks = 104 GB total cluster
+- Draft Sheared-LLaMA-1.3B NF4: ~0.7 GB / rank × 8 ranks = 5.6 GB total cluster
+
+The architecture is **sequence-parallel only** (ring attention shards K/V
+along the sequence dim). **Tensor parallel** (Megatron-style sharding of
+`q_proj`/`k_proj`/`v_proj` weight matrices across ranks with all-reduce
+after `o_proj`/`down_proj`) is a separate orthogonal axis we have not
+implemented.
+
+**Why we don't need TP for M3:**
+- 64k×W=8 NF4 with Option B fits 40 GB SXM2: ~25 GB/rank used.
+- Adding TP would save ~4 GB/rank but cost meaningful tps via the per-layer
+  all-reduces (2 all-reduces × 32 layers × every forward).
+- Net negative for the M3 milestone.
+
+**Where TP starts to matter (estimated):**
+
+| Context | Per-rank GB at W=8 NF4 + Option B | Fits 40 GB? | Fits 80 GB? |
+|---|---|---|---|
+| 64k | ~25 | ✅ | ✅ |
+| 128k | ~29 | ✅ | ✅ |
+| 256k | ~37 | tight | ✅ |
+| 512k | ~53 | ❌ | ✅ |
+| 1M (M4 target) | ~80+ | ❌ | tight |
+
+**Recommendation:** add TP in M4 alongside the 1M-context push. Standard
+Megatron-style implementation: column-parallel for QKV/up_proj/gate_proj,
+row-parallel for o_proj/down_proj, all-gather logits at the LM head.
+Combining ring sequence-parallel + tensor-parallel is well-trodden in the
+Megatron literature; engineering cost is real but bounded. See
+[M4_PLAN.md](M4_PLAN.md) for the M4 work item.
+
 ### Issue #3 — Region mismatch (compute ≠ filesystem)
 
 R6.2-R6.4 ran in europe-central-1 because that's where 8x A100 capacity
