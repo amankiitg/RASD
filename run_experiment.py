@@ -236,12 +236,15 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int,
 def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     """Worker executed in a subprocess — full isolation, fresh CUDA context.
 
-    When launched via torchrun (nproc>1):
-      - Rank 0 runs the full RASDInference pipeline and logs metrics.
-      - Ranks 1..N-1 run _ring_peer_loop(), participating in P2P KV ring
-        sends/receives so that rank 0's AsyncKVRingPrefetcher has live peers.
-        This is what makes A3 (kv_block_size) and A4 (prefetch_depth) meaningful.
-    Only rank 0 writes results to the CSV.
+    Post-R3 architecture (2026-05-06): ALL ranks run the full
+    RASDInference.generate() pipeline in lockstep. Ring attention happens
+    inside LlamaAttention.forward; there is no master/slave pattern. Only
+    rank 0 initialises wandb and writes the result CSV.
+
+    The previous _ring_peer_loop pattern (rank 0 = master, ranks 1..N-1 =
+    passive P2P participants) was for the old AsyncKVRingPrefetcher; that
+    code was deleted in commit 09f7d98 when ring moved into the attention
+    forward.
     """
     import json, sys
     import torch.distributed as dist
@@ -260,15 +263,6 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             backend="nccl",
             device_id=torch.device(f"cuda:{local_rank}"),
         )
-        if local_rank != 0:
-            # Non-rank-0: participate in ring comms only, then exit
-            _ring_peer_loop(
-                local_rank, world_size,
-                int(run.get("kv_block_size", 512)),
-                max_rounds=int(run.get("max_new_tokens", 256)),
-            )
-            dist.destroy_process_group()
-            return
     else:
         torch.cuda.set_device(0)
 
@@ -276,7 +270,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     row["status"] = "error"
     row["error"]  = ""
 
-    wb_run = init_wandb(run, wandb_project)
+    # Only rank 0 logs to wandb (avoids 8x duplicate runs in the project).
+    wb_run = init_wandb(run, wandb_project) if local_rank == 0 else None
     try:
         cfg = RASDConfig(
             target_model_name = run["target_model_name"],
@@ -310,10 +305,11 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             "n_rounds":         metrics["n_rounds"],
             "status":           "ok",
         })
-        log_wandb(wb_run, metrics)
+        if wb_run is not None:
+            log_wandb(wb_run, metrics)
     except Exception as exc:
         row["error"] = str(exc)
-        if wb_run:
+        if wb_run is not None:
             import wandb; wb_run.finish(exit_code=1)
 
     # Write results BEFORE destroy_process_group — destroy can hang if peers
