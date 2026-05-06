@@ -874,30 +874,65 @@ Mean tps across 3 seeds at default (k=4, prefetch=1):
   irecv chunk size is essentially free at our scale. The default 512
   is conservative; production setups should use 1024 or 2048.
 
-### A4 (prefetch_depth) — sync vs async-1 essentially identical at our scale
+### A4 (prefetch_depth) — explicit overlap is a no-op at our scale
 
-Partial data so far (sync mode complete, async to come):
+Final data (3 seeds × 3 levels = 9 rows, all complete):
 
-| prefetch_depth | seed 42 tps | seed 123 tps | seed 456 tps |
-|---|---|---|---|
-| 0 (sync) | 0.8 | 0.9 | 0.9 |
-| 1 (async-1, default) | 0.8 | 0.9 | 0.9 |
-| 2 (async-2) | TBD | TBD | TBD |
+| prefetch_depth | mean tps | mean α |
+|---|---|---|
+| 0 (sync) | 0.87 | 0.253 |
+| 1 (async-1, default) | 0.87 | 0.253 |
+| 2 (async-2) | 0.87 | 0.253 |
 
-**Interpretation for the paper (preliminary):**
-- Async-1's compute/comm overlap **does not measurably help** at the
-  current architecture. NCCL's internal P2P stream already overlaps
-  with compute on the user stream, so the extra "issue rotation early"
-  doesn't add concurrency on top of what NCCL provides for free.
-- This is a useful **negative result** — the architectural assumption
-  that explicit async overlap pays off needs revisiting at this scale.
-  Could be different at much longer contexts (where ring rotation time
-  dominates compute and overlap matters more).
-- **Determinism: ✅** sync vs async-1 produce identical α to 3
-  decimal places at every seed. Confirms Fix2 is doing its job — the
-  cross-rank consensus broadcast eliminates the bf16-noise drift that
-  caused ranks to diverge. The answer is identical regardless of
-  comm scheduling, which is the correctness invariant we'd want.
+**Identical to logged precision across all 3 levels at every seed** —
+not noise within rounding, *literally* the same numbers.
+
+#### Why this is interesting (paper-worthy commentary)
+
+There's a common architectural assumption in distributed-transformer
+literature that explicit compute/comm overlap helps. The pre-R3
+architecture in this codebase enshrined that assumption: a dedicated
+`AsyncKVRingPrefetcher` posted `batch_isend_irecv` ahead of the target
+verify forward on its own `stream_comm`, controlled by `prefetch_depth`.
+
+The audit finding — that the prefetcher's K/V output **was never
+consumed by attention** — has a useful corollary: under the OLD
+architecture, A4's "depth" was almost certainly measuring artifacts
+(wasted comm overhead piling up on `stream_comm`), not real overlap
+benefit. That likely explains why the original M3 A4 results looked
+"a bit weird" in retrospect.
+
+Under the NEW architecture (R3, ring-in-attention), `prefetch_depth`
+becomes a real knob: depth=0 issues `batch_isend_irecv` AFTER attn
+compute, depth≥1 issues it BEFORE. This actually controls when the
+host-side call happens. **The flat A4 result then says something
+specific about NCCL**: PyTorch's NCCL backend (v2.26+) submits P2P to
+its own internal stream and manages cross-stream sync via CUDA events.
+Whether the host issues the call early or late, NCCL's GPU-side
+scheduling is the same. We don't need to micromanage overlap from
+Python.
+
+#### Practical takeaways
+
+1. **Don't pay code complexity for explicit overlap** unless you've
+   measured a benefit. With modern NCCL + ring-in-attention, the
+   runtime gives you overlap for free.
+2. **The OLD prefetcher's A4 was probably noise around a broken
+   mechanism**; the NEW A4 measurement is honest, and it says "no
+   effect." That's a useful negative result for the paper — it
+   reframes the architectural question from "how much overlap is
+   optimal?" to "is explicit overlap even necessary?"
+3. **Caveat for M4 (1M context)**: at 1M, per-rotation transfer size
+   grows ~16x over 64k. Ring rotation time may begin to dominate per-
+   step compute at that scale, and explicit prefetch could become
+   non-trivial. Worth re-measuring before concluding overlap is
+   universally moot.
+4. **Determinism implication**: identical numbers across A4 levels at
+   every seed is also the strongest possible evidence Fix2 is working.
+   The cross-rank consensus broadcast eliminates the bf16-noise drift
+   that previously caused ranks to diverge; the result is identical
+   regardless of comm scheduling, which is the correctness invariant
+   we'd want.
 
 ### A5 (target_model_name) — Llama-2-7B vs Mistral-7B
 
