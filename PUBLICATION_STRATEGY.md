@@ -49,13 +49,29 @@ ML-for-Systems)              : deadline ~Aug-Sept 2026
 
 ## Why skip NeurIPS 2026 main track
 
-- Paper deadline ~May 22, 2026 → ~16 days from today (2026-05-06).
-- R6.5 not run, no 64k α data, no baselines set up.
-- A rushed submission with un-validated results is worse than no submission;
-  bad reviews go on file even after rejection.
-- Workshop track at NeurIPS 2026 is the right substitute: explicit for
-  in-progress work, ~Aug-Sept deadline, much higher accept rate, still
-  on CV.
+**REVISED 2026-05-06 (PM):** The NeurIPS 2026 main-track paper deadline
+is **today, May 6, 2026 AOE** ([source](https://neurips.cc/Conferences/2026/Dates))
+— not May 22 as originally noted. The Evaluations & Datasets track has
+the same deadline. Both gates close at AOE end-of-day = ~30 hours from
+mid-day UTC May 6.
+
+This is operationally infeasible:
+
+- Phase C (the bundled pod session) is ~10 hours by itself
+- Lambda 8× A100 capacity is currently zero across all regions
+- M3+M4 paper draft does not yet exist; experiments.md only covers M3
+- Even if everything went perfectly we cannot deliver M3+M4 with
+  Fig 1/3/4/5, error-analysis, ablation tables, and a polished
+  manuscript in 30 hours
+
+A rushed submission with un-validated 1M-context results is worse
+than no submission; bad reviews go on file even after rejection.
+
+**Substitute (still feasible):** NeurIPS 2026 workshops. Long-context /
+efficient-inference workshops typically have late-July through
+mid-September deadlines. ENLSP, ML-for-Systems, and similar venues
+are the intended audience for this work. Non-archival, much higher
+accept rate, still on CV.
 
 ## Why skip ICLR / ICML
 
@@ -138,8 +154,17 @@ For positioning vs other published work at submission time:
 
 ## Revision log
 
-- 2026-05-06: Created. Initial plan after extended venue discussion.
+- 2026-05-06 (PM): User asked "can we do NeurIPS this year?" — answer
+  no for NeurIPS 2026 main + Evaluations & Datasets tracks (full paper
+  deadline is **today, May 6, 2026 AOE** per neurips.cc/Conferences/2026/Dates;
+  M3+M4 paper not draftable in 30 hours). Still yes for NeurIPS 2026
+  workshops (later in summer) + arXiv preprint + MLSys 2027 primary.
+  Updated "Why skip NeurIPS 2026 main track" section with corrected
+  deadline (was wrongly noted as May 22 in the original draft). Plan
+  unchanged: MLSys 2027 primary, NeurIPS 2026 workshop parallel,
+  arXiv preprint when M4 paper polished.
+- 2026-05-06 (AM): Created. Initial plan after extended venue discussion.
   Considered ICLR 2027 → demoted to "skip" because MLSys is the better
   fit and the 1-month window difference doesn't justify the worse
-  reviewer match. Considered NeurIPS 2026 main → demoted to "skip" because
-  16-day deadline is impossible with R6.5 unrun.
+  reviewer match. Considered NeurIPS 2026 main → demoted to "skip"
+  (deadline math was wrong then; corrected this PM).
