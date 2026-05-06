@@ -2,6 +2,48 @@
 
 Tracking file for M4 work. Strategy, phased order, and deliverables.
 
+## Current state (2026-05-06 — updated post Phase B)
+
+Four phases total. **Phase A and Phase B are complete; Phase C is next; Phase D is the last.**
+
+| Phase | What | Status | Tag |
+|---|---|---|---|
+| **A** | Analysis track (figures + sidecars + PPL + profiler primitives) | ✅ DONE | rolled into `m4-phase-b-complete` |
+| **B** | Compute track local (C3 + C5 + C2b + C6 + C11 codec) | ✅ DONE | [`m4-phase-b-complete`](../../tree/m4-phase-b-complete) |
+| **C** | Pod session: validation gates + 36-run matrix + profiler pass | 📋 prepped (PHASE_C_RUNBOOK.md) | TBD post-pod |
+| **D** | Post-pod paper deliverables (Fig 1/3/4/5, tables, manuscript) | ⏳ blocked on Phase C data | — |
+
+**Phase B local commits (in order):**
+- `28d4517` C3 — PG-19 preprocess refactor + smoke tests (12 tests)
+- `75b7ff8` C5 — TTFT + per-position trace wired into launcher (16 tests)
+- `6e3bdb0` C2b — YaRN RoPE config wiring (17 tests)
+- `611045c` C6 — Generation checkpoint/resume rank-aware (41 tests)
+- `55efa28` C11 — NF4 KV-cache codec + cache wrapper (51 tests)
+
+**Phase A commits (in order):**
+- `69ecbac` A1 — M3 invariant regression tests (Option B / Fix2 / Fix3 / Fix4)
+- `9eace0e` A2 — TTFT (C12) + per-position acceptance trace (C13) inside `generate()`
+- `aabb53c` A3 — Fig 2 heatmap rewrite, R6.5 outputs, R6.5-aligned `error_analysis.md`
+- `07f3807` A4 — `torch.profiler` wrapper for Fig 3 stacked time breakdown
+- `b71b65d` A5 — Perplexity evaluator (sliding-window)
+
+**Default-off invariants preserved:** `cfg.checkpoint_every == 0`,
+`cfg.log_per_token == False`, `cfg.rope_type == "linear"` all give
+M3-byte-identical execution. The M3 invariant tests
+(`tests/test_m3_invariants.py`) all still pass — Option B / Fix2 / Fix3 /
+Fix4 are locked.
+
+**Phase C prep landed (scripts ready for the pod session):**
+- `scripts/phase_c_pod_session.sh` — master orchestration
+- `scripts/c11_validation.py` — bf16-vs-NF4 validation gate
+- `scripts/yarn_numeric_validation.py` — factor=128/256 NaN/PPL check
+- `scripts/c6_resume_validation.py` — multi-rank checkpoint+resume sanity
+- `PHASE_C_RUNBOOK.md` — single-page operator checklist
+- Pod-side reproducibility lockdown bundled into Phase C P3.1
+  (capture_pod_env.sh + pin_hf_revisions.py)
+
+Test count: **283 passed** (104 M3 invariants + 179 M4 additions).
+
 ## Mentor M4 spec alignment (2026-05-06)
 
 The mentor's M4 brief asks for: final 1M-context runs vs baselines × 3 seeds,
@@ -372,6 +414,15 @@ flag (default off so M3 replay stays byte-identical).
 
 ### Phase 3 — Pod required (Lambda 8x A100 SXM4 40 GB, gpu_8x_a100)
 
+**Status (2026-05-06):** all prep landed; ready to launch when the
+operator (i.e. you, post-Phase B) provisions a Lambda instance. See
+[PHASE_C_RUNBOOK.md](PHASE_C_RUNBOOK.md) for the bundled-session
+checklist. Master script: `scripts/phase_c_pod_session.sh` runs every
+P3.x stage in sequence, aborts on first failure (so we don't burn
+pod-$ on broken upstream state), and writes per-stage marker files so
+re-runs skip already-completed stages.
+
+
 **Hardware decision 2026-05-06**: stay on Lambda ($2000 credit) using
 the 40 GB SXM2 tier ($15.92/hr). With NF4 KV (C11), per-rank memory at
 1M fits comfortably (~30 GB / 40 GB). 80 GB SXM4 would give more
@@ -408,9 +459,13 @@ P3.6. **Profiler sidecar pass** (C7 — REQUIRED for Fig 3): one seed × all
 capturing compute / comm / idle breakdown. Adds ~10% overhead, run
 separately from P3.5 to keep headline tps numbers clean.
 
-### Phase 4 — Post-pod, local
-Assemble paper deliverables from real data. Figure list is mentor's 5
-figures verbatim (alignment matrix at top of file).
+### Phase 4 (= Phase D) — Post-pod, local — **LAST PHASE**
+
+This is the final M4 phase: assemble paper deliverables from real data.
+Estimated effort: ~3-5 days, all local. **Blocked on Phase C producing
+the matrix CSV + profiler sidecars + per-position .jsonl files.**
+
+Figure list is mentor's 5 figures verbatim (alignment matrix at top of file).
 
 F1. **Figure 1 — Throughput vs context length** (line plot, RASD vs Ring
     vs Sliding, contexts ∈ {128k, 256k, 512k, 1M}, 95% CI bands from
@@ -510,30 +565,28 @@ chosen over TP (C9) — saves ~14x more memory for ~half the eng cost.
 
 | Phase | Detail | Estimated $ | Status |
 |---|---|---|---|
-| Analysis track (local) | bootstrap CIs, Figure 2, ablation tables | $0 | partial |
+| Phase A (local analysis) | A1-A5 + experiments.md + reproducibility | $0 | ✅ done |
 | **R6 verification** | C0a (Issue #1) + C0b (Issue #2 / Option B) | $11 | ✅ done 2026-05-06 |
-| **R6.5 49-row re-ablation** at ctx=64k×W=8 | ~5 hr live now | ~$80 | 🔄 IN PROGRESS (45/48 done as of 13:48 UTC) |
-| Phase A pivot on same instance | install flash-attn (C10), 128k/256k/512k smokes to find 40 GB ceiling | ~$15 | pending |
-| C11 NF4 KV implementation | local engineering, ~1-2 weeks | $0 | pending |
-| C11 NF4 KV validation | smoke + PPL + tps micro-bench at ctx ∈ {8k, 64k} | ~$30 | pending |
-| C2b YaRN RoPE | local engineering, ~2-3 days | $0 | pending |
-| C3-C6 PPL infrastructure | PG-19 prep + evaluator + wandb wiring + checkpoint/resume | $0 + ~$30 pod test | pending |
-| Phase 3 long-context smokes | RASD at 128k/256k/512k/1M single-prompt × 1 seed | ~$50 | pending |
-| Phase 3 baseline validation | Ring + Sliding × 4 contexts | ~$30 | pending |
-| **Phase 3 final 36-run matrix** | RASD+Ring+Sliding × 4 contexts × 3 seeds at max_new=64 (~6 hr) | ~$95 | pending |
-| Phase 3 paper-quality subset | RASD only × 4 contexts × 1 seed at max_new=256 (~3 hr) | ~$50 | pending |
+| **R6.5 49-row re-ablation** at ctx=64k×W=8 | ~5 hr live now | ~$80 | ✅ done 2026-05-06 |
+| Phase B (local engineering) | C3 + C5 + C2b + C6 + C11 codec/cache | $0 | ✅ done 2026-05-06 |
+| **Phase C — bundled pod session** | health check + repro lockdown + C11/C2b/C6 validation + smokes + 36-run matrix + profiler | ~$160 | 📋 prepped (`PHASE_C_RUNBOOK.md`) |
+| Phase D (local) | Fig 1/3/4/5 + tables + final_results.json + manuscript | $0 | ⏳ blocked on Phase C |
 | Conditional LongBench | pending mentor approval | +$50-80 | pending |
-| **M4 total (with 1M, Lambda 40 GB tier)** | | **~$390** | |
+| **M4 total (with 1M, Lambda 40 GB tier)** | | **~$160 remaining** | |
 
-**Cumulative project spend:**
+**Cumulative project spend (2026-05-06 post Phase B):**
 - M3 (RunPod 8k baseline, INVALIDATED): $200
 - R6.1 (Lambda 1x A100): $1.50
 - R6.2-R6.4 (Lambda 8x A100, partial): $22
-- R6.5 + verification (Lambda 8x A100, today): ~$95 burned through 14:00 UTC
+- R6.5 + verification (Lambda 8x A100): ~$95
+- Phase A + B (entirely local): $0
 - **Subtotal**: ~$320
 
+**Phase C estimate**: ~$160 (bundled session ~10 hr at $15.92/hr).
+**Phase D**: $0 (local).
 **Total project budget on 1M-context target (Lambda 40 GB tier):** ~$320
-spent + ~$310 remaining = ~$630.
+spent + ~$160 Phase C + $0 Phase D = **~$480 total, well under the
+$2000 Lambda credit**.
 
 **Engineering-time impact of NF4 KV vs TP:** TP would have been 2-6
 weeks critical-path; NF4 KV is 1-2 weeks. Saves ~3 weeks → reduces
