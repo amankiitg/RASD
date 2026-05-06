@@ -44,7 +44,8 @@ computation, while every rank produces the same final output (Q is replicated).
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+import os
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -364,13 +365,23 @@ def _ring_against_sharded(
     pending_reqs: Optional[List] = None
     pending_assemble = None  # callable invoked after wait if chunked recv
     use_async = prefetch_depth >= 1
+    _trace = os.environ.get("RING_TRACE") == "1"
+
+    if _trace:
+        print(f"[ring rank={rank}] entering loop W={world_size} async={use_async} chunk={chunk_size}", flush=True)
 
     for step in range(world_size):
+        if _trace:
+            print(f"[ring rank={rank}] step={step} top: pending={'yes' if pending_reqs else 'no'}", flush=True)
         # Drain any in-flight rotation from the previous iteration and swap
         # so k_cur/v_cur point to the just-received slice.
         if pending_reqs is not None:
+            if _trace:
+                print(f"[ring rank={rank}] step={step} waiting on {len(pending_reqs)} reqs", flush=True)
             for r in pending_reqs:
                 r.wait()
+            if _trace:
+                print(f"[ring rank={rank}] step={step} wait done; swapping buffers", flush=True)
             if pending_assemble is not None:
                 pending_assemble()
             pending_reqs = None
@@ -380,11 +391,17 @@ def _ring_against_sharded(
 
         # Async path: schedule next rotation BEFORE compute so it overlaps.
         if use_async and step < world_size - 1:
+            if _trace:
+                print(f"[ring rank={rank}] step={step} issuing async rotation (send→{send_to}, recv←{recv_from})", flush=True)
             pending_reqs, pending_assemble = _issue_rotation(
                 k_cur, v_cur, k_buf, v_buf,
                 send_to, recv_from, chunk_size, process_group,
             )
+            if _trace:
+                print(f"[ring rank={rank}] step={step} async rotation issued, n_reqs={len(pending_reqs)}", flush=True)
 
+        if _trace:
+            print(f"[ring rank={rank}] step={step} computing attn", flush=True)
         out_step, lse_step = _attn_step(
             q_global, k_cur, v_cur,
             scale=scale, dropout_p=dropout_p, causal=False,
@@ -393,15 +410,21 @@ def _ring_against_sharded(
             out_acc, lse_acc = out_step, lse_step
         else:
             out_acc, lse_acc = _combine(out_acc, lse_acc, out_step, lse_step)
+        if _trace:
+            print(f"[ring rank={rank}] step={step} attn+combine done", flush=True)
 
         # Sync path: schedule rotation AFTER compute and stash reqs for the
         # top of the next iteration to wait on (uniform with async path).
         if not use_async and step < world_size - 1:
+            if _trace:
+                print(f"[ring rank={rank}] step={step} issuing sync rotation", flush=True)
             pending_reqs, pending_assemble = _issue_rotation(
                 k_cur, v_cur, k_buf, v_buf,
                 send_to, recv_from, chunk_size, process_group,
             )
 
+    if _trace:
+        print(f"[ring rank={rank}] loop done; returning", flush=True)
     return out_acc, lse_acc
 
 
