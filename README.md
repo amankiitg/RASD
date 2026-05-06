@@ -69,6 +69,23 @@ The four fixes that took the architecture from "structurally broken" to "produce
 
 Full chronicle in [`M3_RING_INTEGRATION_PLAN.md`](M3_RING_INTEGRATION_PLAN.md) (fix log + live R6.5 findings at the bottom). Mentor summary: [`docs/M3_mentor_summary.md`](docs/M3_mentor_summary.md).
 
+## Reproducing results
+
+For a cold-start walkthrough — hardware → environment setup → exact
+commands → expected outputs — see **[REPRODUCE.md](REPRODUCE.md)**. It
+covers both reproducing the M3 ablation on Lambda 8×A100 and
+regenerating figures + tables locally with no GPU.
+
+The repo uses **two environments** intentionally:
+
+| Goal | File | Hardware | Pinned |
+|---|---|---|---|
+| Re-run experiments | [`environment_gpu.yml`](environment_gpu.yml) | 8× A100-SXM4-40 GB | `transformers==4.44.2` + `accelerate==0.33.0` + `bitsandbytes>=0.49.0` (canonical for results) |
+| Tests, figures, analysis | [`requirements.txt`](requirements.txt) | any CPU (≥Python 3.10) | newer libs appropriate for analysis only |
+
+`m3-reablation` git tag points at the exact commit that produced
+[`results/ablations/ablations_r65.csv`](results/ablations/ablations_r65.csv).
+
 ## Quick start
 
 ### Local smoke test (1 GPU or CPU)
@@ -76,9 +93,12 @@ Full chronicle in [`M3_RING_INTEGRATION_PLAN.md`](M3_RING_INTEGRATION_PLAN.md) (
 ```bash
 conda env create -f environment_gpu.yml
 conda activate rasd-gpu
-pytest tests/
+pip install -e .                 # makes `from src.models...` importable
+pytest tests/                    # 91 tests, ~40s
 python run_experiment.py --config configs/ablations.yml --dry-run
 ```
+
+For local-only analysis without CUDA, use [`requirements.txt`](requirements.txt) instead — see [REPRODUCE.md](REPRODUCE.md) §2.
 
 ### Full ablation grid (8×A100 node)
 

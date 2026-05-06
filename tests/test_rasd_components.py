@@ -15,10 +15,6 @@ Run on the pod:
     cd /workspace/RASD && python -m pytest tests/ -v
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 import pytest
 import torch
 import torch.nn.functional as F

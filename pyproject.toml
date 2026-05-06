@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rasd"
+version = "0.4.0"
+description = "Ring Attention with Speculative Decoding for long-context LLM inference"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Research code; see literature_review/ for prior work" }
+authors = [{ name = "Aman Kesarwani" }]
+
+# Runtime deps are intentionally NOT listed here — `pip install -e .`
+# is for making `src` importable (replaces sys.path hacks across tests).
+# Use:
+#   * `requirements.txt`      for local analysis + tests + figures
+#   * `environment_gpu.yml`   for pod-side experiments (CUDA + bnb + flash-attn)
+# These two files are the source of truth for environments; pyproject.toml
+# only handles package discovery.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+exclude = ["tests*", ".venv_analysis*", "results*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Repo root on sys.path so `from src.models...` resolves cleanly even
+# without `pip install -e .` in transient envs.
+pythonpath = ["."]

@@ -130,8 +130,8 @@ Figures are drawn from the resulting CSV after pod teardown.
 Make sure we can always replay M2/M3 exactly, even after M4 refactors.
 
 0.1 ✅ Tag `m3-complete` at current HEAD so `git checkout m3-complete` replays M3
-0.2 ⏳ `requirements-lock.txt` — run [scripts/capture_pod_env.sh](scripts/capture_pod_env.sh) on next pod before anything else; commit the output
-0.3 ✅ Pin HF model revisions in [configs/ablations.yml](configs/ablations.yml) (Sheared-LLaMA-1.3B, TinyLlama_v1.1). Llama-2 (gated) — run [scripts/pin_hf_revisions.py](scripts/pin_hf_revisions.py) on pod with HF_TOKEN to capture those two hashes
+0.2 ⏳ **(d)** `requirements-lock.txt` — run [scripts/capture_pod_env.sh](scripts/capture_pod_env.sh) on next pod before anything else; commit the output. **Now bundled into Phase C P3.1** — kept here as the canonical TODO marker for reproducibility.
+0.3 ⏳ **(e)** Pin HF model revisions in [configs/ablations.yml](configs/ablations.yml). Sheared-LLaMA-1.3B + TinyLlama_v1.1 done; Llama-2 (gated) hashes still missing — run [scripts/pin_hf_revisions.py](scripts/pin_hf_revisions.py) on pod with HF_TOKEN. **Bundled into Phase C P3.1.**
 0.4 ✅ Wire `revision=` through `RASDConfig` → `from_pretrained` (additive, default None = HEAD so no M3 semantics change)
 0.5 ✅ Added `--seeds` flag to `run_experiment.py` for subsetting
 0.6 ✅ [scripts/replay_m3_smoke.sh](scripts/replay_m3_smoke.sh) — runs one seed per group, asserts throughput within 15% of golden CSV
@@ -384,7 +384,21 @@ any long-running 1M cell, run `nvidia-smi -q | grep -i "ecc\|xid\|throttl"`
 on all 8 GPUs; confirm 0 MiB used at idle; run a 1-min NCCL all-reduce
 loopback to catch flapping interconnect. Aborts session if any rank
 fails. Script: `scripts/gpu_health_check.sh`.
-P3.1. Run Phase 0 completion on first pod (capture_pod_env.sh → `requirements-lock.txt`, pin_hf_revisions.py → Llama-2 hashes, replay_m3_smoke.sh → confirm drift ≤15%)
+P3.1. **Reproducibility lockdown** — first thing on the pod, before any
+experiment work, close the two open reproducibility gaps:
+  - **(d)** `bash scripts/capture_pod_env.sh > requirements-lock.txt` —
+    captures exact transitive pip+conda versions on the pod that produces
+    M4 results. Commit immediately. Without this, third-party
+    reproduction relies on `environment_gpu.yml` resolving to the same
+    transitive versions, which is not guaranteed (HuggingFace/PyPI
+    packages move).
+  - **(e)** `python scripts/pin_hf_revisions.py` (with `HF_TOKEN` set
+    inline) — captures Llama-2-7b-hf and Llama-2-13b-hf model commit
+    hashes into `configs/ablations.yml`. The non-gated drafts
+    (Sheared-LLaMA-1.3B, TinyLlama_v1.1) are already pinned. Commit.
+  - Then run `bash scripts/replay_m3_smoke.sh` (one seed per group) —
+    asserts throughput within 15% of golden CSV. Catches semantic
+    regressions before burning $80 on the full M4 grid.
 P3.2. RoPE scaling validation: PPL at 32k/128k/512k/1M on 1 GPU (needs C1+C4)
 P3.3. Smoke tests: single RASD run at 32k, 128k, 512k, 1M context (validate NF4 KV doesn't OOM at the long end)
 P3.4. Baseline validation: Ring + Sliding end-to-end at 128k, 1M

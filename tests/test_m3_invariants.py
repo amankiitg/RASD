@@ -15,14 +15,9 @@ One functional test (Option B build_hf_config) does mock-instantiate the
 config builder to verify the runtime branch actually skips RoPE scaling.
 """
 
-import os
 import re
-import sys
 from pathlib import Path
 from unittest.mock import patch
-
-# Match the sys.path convention used by the rest of the test suite
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RASD_INF_SRC = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
