@@ -65,8 +65,10 @@ SMOKE:
 
     - id: "SMOKE_ctx512k"
       context_length: 524288
+      checkpoint_every: 4    # ~50-min run; checkpoint every 4 rounds (Phase C blocker #2)
       notes: "512k — RoPE factor=128, half-million-token forward pass"
 
     - id: "SMOKE_ctx1M"
       context_length: 1048576
+      checkpoint_every: 4    # ~120-min run; recover from crash within 4 rounds
       notes: "1M — RoPE factor=256, NF4 KV-cache critical to fit 40 GB SXM4"

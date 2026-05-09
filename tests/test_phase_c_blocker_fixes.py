@@ -441,6 +441,74 @@ class TestThirdPassBlocker3Timeout:
             )
 
 
+class TestThirdPassBlocker2CheckpointPlumbing:
+    """3rd-pass review: RASDConfig had checkpoint_every / checkpoint_dir
+    / run_id but run_experiment.py never plumbed them through. Phase C
+    1M runs ran with checkpointing disabled — every crash on a 120-min
+    cell would have lost the full run. The mentor M4 risk-mitigation
+    plan explicitly named checkpointing as required."""
+
+    def test_rasd_config_call_passes_checkpoint_every(self):
+        """The RASDConfig(...) call in _run_single_worker must read
+        checkpoint_every from the run dict so YAML overrides take
+        effect."""
+        rep = (REPO_ROOT / "run_experiment.py").read_text()
+        assert re.search(
+            r'checkpoint_every\s*=\s*int\(run\.get\([\"\']checkpoint_every[\"\'],\s*0\)\)',
+            rep,
+        ), (
+            "3rd-pass blocker 2 regression: RASDConfig() not reading "
+            "checkpoint_every from run dict"
+        )
+
+    def test_rasd_config_call_passes_checkpoint_dir(self):
+        rep = (REPO_ROOT / "run_experiment.py").read_text()
+        assert "checkpoint_dir" in rep
+        # Must derive a sensible default from output_csv path
+        assert re.search(
+            r'checkpoint_dir\s*=\s*\([\s\S]{0,200}Path\(output_csv\)',
+            rep,
+        ), "3rd-pass blocker 2 regression: checkpoint_dir not derived from output_csv"
+
+    def test_rasd_config_call_passes_run_id(self):
+        rep = (REPO_ROOT / "run_experiment.py").read_text()
+        assert re.search(
+            r'run_id\s*=\s*run\[[\"\']run_id[\"\']\]',
+            rep,
+        ), "3rd-pass blocker 2 regression: run_id not passed to RASDConfig"
+
+    def test_checkpoint_every_cli_flag_present(self):
+        rep = (REPO_ROOT / "run_experiment.py").read_text()
+        assert "--checkpoint-every" in rep, (
+            "3rd-pass blocker 2 regression: --checkpoint-every CLI flag missing"
+        )
+
+    def test_long_ctx_yaml_levels_set_checkpoint_every(self):
+        """The 512k and 1M cells in both M4 YAMLs must declare a non-zero
+        checkpoint_every. Without this, the headline 1M cells run with
+        checkpointing disabled and a crash kills the run."""
+        for yaml_path in ("configs/m4_phase_c_long_smoke.yml",
+                          "configs/m4_final_matrix.yml"):
+            text = (REPO_ROOT / yaml_path).read_text()
+            # Find the ctx512k and ctx1M level blocks; each must contain
+            # a `checkpoint_every: <int>` line within ~10 lines of the id
+            for level_id_substring in ("ctx512k", "ctx1M"):
+                m = re.search(
+                    rf'id:\s*"\w+_{level_id_substring}"[\s\S]{{0,400}}?'
+                    r"checkpoint_every:\s*(\d+)",
+                    text,
+                )
+                assert m is not None, (
+                    f"3rd-pass blocker 2 regression: {yaml_path} level "
+                    f"{level_id_substring!r} missing checkpoint_every"
+                )
+                ce = int(m.group(1))
+                assert ce >= 1, (
+                    f"3rd-pass blocker 2 regression: {yaml_path} "
+                    f"{level_id_substring} has checkpoint_every={ce}"
+                )
+
+
 class TestSecondPassFix4BaselinesCoverage:
     """P3.4 baselines stage previously ran only at 128k+1M, no seeds.
     The M4 final matrix grid is 4 contexts × 3 seeds — Phase D Figure

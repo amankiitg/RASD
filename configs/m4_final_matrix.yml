@@ -63,8 +63,10 @@ M4:
 
     - id: "M4_ctx512k"
       context_length: 524288
+      checkpoint_every: 4    # ~50-min run; recover from crash (Phase C blocker #2)
       notes: "512k — three-quarter point (factor=128)"
 
     - id: "M4_ctx1M"
       context_length: 1048576
+      checkpoint_every: 4    # ~120-min run; without this every crash loses the cell
       notes: "1M — paper headline number (factor=256, NF4 KV critical)"

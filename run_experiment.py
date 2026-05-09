@@ -370,6 +370,18 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C13 per-position trace (M4 Phase A2). Default off so M3
             # replay is byte-identical when --log-per-token is unset.
             log_per_token     = bool(run.get("log_per_token", False)),
+            # C6 generation checkpoint/resume (Phase C blocker #2 from
+            # 2026-05-10 third-pass review). Default 0 -> disabled.
+            # 1M cells set checkpoint_every>=1 to recover from crashes
+            # — without this every crash on a 120-min cell loses the
+            # full run. checkpoint_dir defaults to <output_csv>/../
+            # checkpoints/ so per-run paths are predictable for resume.
+            checkpoint_every  = int(run.get("checkpoint_every", 0)),
+            checkpoint_dir    = (
+                run.get("checkpoint_dir")
+                or str(Path(output_csv).resolve().parent / "checkpoints")
+            ),
+            run_id            = run["run_id"],
         )
         engine = RASDInference(cfg)
         prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
@@ -562,6 +574,12 @@ def main():
     parser.add_argument("--nproc",    type=int, default=8,
                         help="GPUs per run (torchrun nproc_per_node). Use 1 for single-GPU. "
                              "Default 8 — required for ring attention A3/A4 ablations.")
+    parser.add_argument("--checkpoint-every", type=int, default=0,
+                        help="Save a generation checkpoint every N spec rounds. "
+                             "0 = disabled (M3 byte-identical default). "
+                             "Phase C 1M cells should set >= 4 — every crash "
+                             "on a 120-min run otherwise loses the full run. "
+                             "Path: <output_csv>/../checkpoints/<run_id>/")
     parser.add_argument("--timeout-per-run-s", type=int, default=3600,
                         help="Hard wall-clock timeout per run in seconds. "
                              "Default 3600 (1 hr) is safe for ctx ≤ 64k. "
@@ -602,6 +620,11 @@ def main():
     if args.profile:
         for r in all_runs:
             r["profile"] = True
+    if args.checkpoint_every > 0:
+        for r in all_runs:
+            # Per-run override wins; CLI flag is a default for runs that
+            # don't specify their own checkpoint_every in the YAML
+            r.setdefault("checkpoint_every", args.checkpoint_every)
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))
