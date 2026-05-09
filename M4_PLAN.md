@@ -426,7 +426,8 @@ for the bundled-session checklist.
 #### Phase C blockers (audit log)
 
 External code review on 2026-05-10 surfaced 5 high-risk findings (1st
-pass) plus 4 more on a follow-up pass. All 9 are now fixed.
+pass), 4 more on a follow-up pass, and 6 more on a 3rd adversarial
+pass. All 15 are now fixed.
 
 | # | Finding | Status | Fix commit |
 |---|---|---|---|
@@ -439,6 +440,12 @@ pass) plus 4 more on a follow-up pass. All 9 are now fixed.
 | 2.2 | P3.3 `for ctx in ...` outer loop runs SMOKE group 4× (~$50-80 wasted) | ✅ fixed | `4b69f5d` |
 | 2.3 | RNG fix only saved CPU; `torch.multinomial` on CUDA needs `cuda_rng_state` per device | ✅ fixed | `4b69f5d` |
 | 2.4 | Baselines only at 128k+1M, no seeds, shard-tps underreports by world_size× | ✅ fixed | `4b69f5d` |
+| 3.1 | NF4 checkpoint dequantizes whole cache to bf16 → OOM on save, NF4 lost on resume | ✅ fixed (NF4-native to_serializable / from_serializable) | `bd13cc8` |
+| 3.2 | `checkpoint_every / checkpoint_dir / run_id` never plumbed into Phase C runs → no resume capability on 1M cells | ✅ fixed | `d111337` |
+| 3.3 | Hard-coded 3600s timeout would kill 1M cells (~120 min expected) | ✅ fixed (configurable; long-ctx stages use 14400s) | `cb9bd36` |
+| 3.4 | C11 gate validates codec only; never exercises production NF4DynamicCache pipeline | ✅ fixed (added end-to-end production gate) | `cd153f3` |
+| 3.5 | Skipping `super().__init__()` in NF4DynamicCache leaves `_parameters` dict missing on transformers 4.44.2 (Cache extends nn.Module there) | ✅ fixed (explicit `nn.Module.__init__`) | `cd153f3` |
+| 3.6 | Baseline `throughput_tps` is forward-pass tokens/sec; RASD's is generation tokens/sec — same column name → misleading Figure 1 overlay | ✅ fixed (renamed to `forward_tps`; Figure 1 caption note required) | `cd153f3` |
 
 **Finding #1 status (RESOLVED 2026-05-10, option (b) shipped):**
 `NF4DynamicCache` (commit `2585822`) provides true NF4 storage; the
