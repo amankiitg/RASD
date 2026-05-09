@@ -10,7 +10,7 @@ Four phases total. **Phase A and Phase B are complete; Phase C is next; Phase D 
 |---|---|---|---|
 | **A** | Analysis track (figures + sidecars + PPL + profiler primitives) | ✅ DONE | rolled into `m4-phase-b-complete` |
 | **B** | Compute track local (C3 + C5 + C2b + C6 + C11 codec) | ✅ DONE | [`m4-phase-b-complete`](../../tree/m4-phase-b-complete) |
-| **C** | Pod session: validation gates + matrix + profiler pass | ⚠ blockers fixed; **#1 scope decision pending** | TBD post-pod |
+| **C** | Pod session: validation gates + matrix + profiler pass | ✅ all 5 blockers fixed; ready to launch on capacity | TBD post-pod |
 | **D** | Post-pod paper deliverables (Fig 1/3/4/5, tables, manuscript) | ⏳ blocked on Phase C data | — |
 
 **Phase B local commits (in order):**
@@ -430,47 +430,45 @@ Current state:
 
 | # | Finding | Status | Fix commit |
 |---|---|---|---|
-| 1 | `kv_quant=True` is round-trip only, not storage NF4 → 1M premise breaks | ⚠ **scope decision pending** | not yet |
+| 1 | `kv_quant=True` is round-trip only, not storage NF4 → 1M premise breaks | ✅ fixed (option (b) — true NF4 storage via NF4DynamicCache) | `2585822` + `c0c1205` |
 | 2 | Double `torchrun` on orchestrator stages (outer + inner) | ✅ fixed | `b993f67` |
 | 3 | `build_run_configs` `A*` prefix filter drops M4 YAMLs | ✅ fixed | `b993f67` |
 | 4 | Baseline stage uses `bash` + wrong flag name | ✅ fixed | `b993f67` |
 | 5 | `rng_state` field never populated → resume divergence under temp>0 | ✅ fixed | `b993f67` |
 
-**Finding #1 scope question (pending):** the in-kernel round-trip
-quantize→dequantize doesn't reduce cache memory — `kv_quant=True`
-is currently a **lossy bf16 path** that only validates codec
-correctness. True memory savings require the cache itself to hold
-NF4 bytes (subclass DynamicCache or external NF4 store). Per the
-M4_PLAN memory equation, this matters at 1M:
+**Finding #1 status (RESOLVED 2026-05-10, option (b) shipped):**
+`NF4DynamicCache` (commit `2585822`) provides true NF4 storage; the
+in-kernel round-trip path was removed (commit `c0c1205`). When
+`cfg.kv_quant=True`, generate() supplies an empty NF4DynamicCache as
+the initial `past_key_values`; HF's LlamaModel uses it instead of
+constructing its own bf16 DynamicCache. Every patched LlamaAttention
+layer's `update()` then quantizes new K/V on append; reads dequantize
+to bf16 on demand.
+
+**Per-rank memory at long context** — what `kv_quant=True` now actually delivers:
 
 | ctx | bf16 KV / rank (W=8) | NF4 KV / rank | fits 40 GB? |
 |---|---|---|---|
-| 64k | ~13 GB | ~3.5 GB | ✅ either way (R6.5 confirmed) |
+| 64k | ~13 GB | ~3.7 GB | ✅ either way (R6.5 confirmed) |
 | 128k | ~37 GB | ~10 GB | ❌ bf16 / ✅ NF4 |
-| 512k | (OOM bf16) | ~25 GB | ❌ bf16 / ✅ NF4 (tight) |
+| 512k | (OOM bf16) | ~25 GB | ❌ bf16 / ✅ NF4 |
 | 1M | ~68 GB | ~17 GB | ❌ bf16 / ✅ NF4 |
 
-Three remediation paths:
+The 3.55× compression ratio is locked in by
+`tests/test_nf4_dynamic_cache.py::TestMemoryAccounting::test_nf4_cache_uses_3_to_4x_less_than_bf16`.
+M4 final matrix at all four contexts (128k / 256k / 512k / 1M) now
+has a defensible memory budget on the 40 GB SXM4 tier.
 
-1. **(a) Drop ctx > 64k from Phase C.** Validate at 64k only;
-   admit 1M needs the real C11 storage integration first; defer
-   the headline 1M number to a follow-up. Cheapest, smallest scope
-   reduction. Phase D figures degrade to "1M is future work".
-2. **(b) Implement true NF4 storage.** Subclass DynamicCache or
-   write an external NF4-packed store. ~1-2 weeks engineering;
-   needs careful unit tests + multi-rank gloo tests to land safely.
-   Then run Phase C at all four contexts. Hits the original 1M
-   target.
-3. **(c) Move to 80 GB SXM4 hardware** (`gpu_8x_a100_80gb_sxm4`,
-   $22.32/hr). bf16 1M KV at 68 GB / rank fits with headroom on
-   80 GB. No code change needed. But Lambda's 80 GB SKU has been
-   at zero capacity throughout the May 2026 polling window —
-   capacity availability is the blocker.
+`_truncate_kv` was updated to delegate to `NF4DynamicCache.truncate()`
+in-place when the cache type supports it — without that, the M3 code
+path of building a bf16 legacy tuple between rounds would have
+defeated the storage savings after round 1.
 
-Recommendation written by external code reviewer (synthesized):
-"For the M4 1M target, real NF4 storage (b) is the proper path;
-(a) is a defensible scope reduction if the timeline doesn't permit
-1-2 weeks of engineering."
+C11 still has a remaining pod-side validation gate (the old #1
+"smoke + PPL + tps micro-bench at ctx ∈ {8k, 64k}" exit criteria),
+which runs as P3.3 + the existing `scripts/c11_validation.py` once
+capacity returns. Local bound on the lossy-storage error is locked
+by 31 unit tests in `tests/test_nf4_dynamic_cache.py`.
 
 
 

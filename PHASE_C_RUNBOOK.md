@@ -95,6 +95,13 @@ stages, so a crashed pod can `git pull` and re-run to pick up.
   ~38 GB consistently at 1M context, kill the run and investigate
   (NF4 KV is supposed to keep us at ~30 GB).
 
+  Note (2026-05-10): the `kv_quant=true` flag in the M4 YAMLs now
+  exercises **true NF4 storage** via `NF4DynamicCache` (commits
+  `2585822` + `c0c1205`). Earlier doc revisions referred to a
+  round-trip-only path that didn't actually save memory — that has
+  been removed. Per-rank K/V at 1M × W=8 should land at ~17 GB,
+  with total per-rank memory ~30 GB / 40 GB.
+
 ## Post-session checklist
 
 When the master script finishes (or you decide to stop early):
@@ -132,6 +139,24 @@ tables; drafts manuscript sections. ~3-5 days local.
 
 Fig 2 (heatmap) and `analysis/error_analysis.md` (R6.5 portion) are
 already done from Phase A3.
+
+## Phase C blocker fixes (2026-05-10)
+
+External code review surfaced 5 high-risk findings; all 5 are now
+fixed in commits before this runbook's referenced m4-phase-b-complete
+tag. Summary for the operator:
+
+| # | Issue | Fix commit |
+|---|---|---|
+| 1 | `kv_quant=True` round-trip only, not real NF4 storage | `2585822` (NF4DynamicCache class) + `c0c1205` (wired into generate) |
+| 2 | Double torchrun on orchestrator stages | `b993f67` |
+| 3 | `build_run_configs` filtered groups by `A*` prefix only | `b993f67` |
+| 4 | Baselines stage used `bash` + `--contexts` | `b993f67` |
+| 5 | RNG state never populated → resume divergence | `b993f67` |
+
+If you're rolling back to a tag before any of these commits, the
+issues above re-apply. Recommended starting point: tag whatever
+includes `c0c1205` or later.
 
 ## Risks during this session
 
