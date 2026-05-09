@@ -388,6 +388,59 @@ class TestSecondPassFix3CudaRngState:
         assert torch.equal(loaded.cuda_rng_state, ckpt.cuda_rng_state)
 
 
+class TestThirdPassBlocker3Timeout:
+    """3rd-pass review: 3600s hard timeout will SIGTERM 1M cells.
+    The smoke YAML's own comment says ctx=1M ~120 min. We need a
+    configurable per-run timeout, raised for the long-context stages."""
+
+    def test_no_hardcoded_3600_timeout(self):
+        """The bare 3600 magic number must be gone — replaced with a
+        parametrized timeout argument."""
+        # Find the proc.wait() call; its argument should be a variable
+        # name, not the literal 3600
+        m = re.search(
+            r"proc\.wait\(timeout=(\w+)\)",
+            (REPO_ROOT / "run_experiment.py").read_text(),
+        )
+        assert m is not None
+        timeout_arg = m.group(1)
+        assert timeout_arg != "3600", (
+            "3rd-pass blocker 3 regression: hard-coded 60-min timeout "
+            "will SIGTERM 1M runs (~120 min expected)"
+        )
+
+    def test_timeout_per_run_s_cli_flag(self):
+        rep = (REPO_ROOT / "run_experiment.py").read_text()
+        assert "--timeout-per-run-s" in rep, (
+            "3rd-pass blocker 3 regression: --timeout-per-run-s flag missing"
+        )
+
+    def test_long_ctx_stages_use_4hr_timeout(self):
+        """phase_c_pod_session.sh stages that hit ctx >= 128k must pass
+        --timeout-per-run-s with a value >= 14400 (4 hr) — anything less
+        risks killing 1M cells mid-run."""
+        text = PHASE_C_SH
+        for stage_func in ("long_ctx_smokes", "final_matrix",
+                           "profiler_sidecar_pass"):
+            m = re.search(
+                rf"^{stage_func}\(\) \{{(.*?)^\}}",
+                text, re.DOTALL | re.MULTILINE,
+            )
+            assert m is not None
+            body = m.group(1)
+            # Look for --timeout-per-run-s with value >= 14400
+            t = re.search(r"--timeout-per-run-s\s+(\d+)", body)
+            assert t is not None, (
+                f"3rd-pass blocker 3 regression: {stage_func} doesn't "
+                "set --timeout-per-run-s; default 3600 will kill 1M cells"
+            )
+            seconds = int(t.group(1))
+            assert seconds >= 14400, (
+                f"3rd-pass blocker 3 regression: {stage_func} uses "
+                f"timeout {seconds}s; need >= 14400 for 1M (~120 min)"
+            )
+
+
 class TestSecondPassFix4BaselinesCoverage:
     """P3.4 baselines stage previously ran only at 128k+1M, no seeds.
     The M4 final matrix grid is 4 contexts × 3 seeds — Phase D Figure

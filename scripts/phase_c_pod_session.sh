@@ -153,6 +153,11 @@ long_ctx_smokes() {
     # SMOKE group again because run_experiment.py has no per-level
     # filter. (Fix for finding #2 from 2026-05-10 review: was a 4x
     # compute waste = ~$50-80 of pod time for nothing.)
+    #
+    # 4-hour per-run timeout: the 1M cell takes ~120 min per the YAML's
+    # own comment; the default 3600s (1 hr) would SIGTERM it mid-run,
+    # wasting an hour of pod time per failure. (Fix for blocker 3 from
+    # 2026-05-10 third-pass review.)
     python run_experiment.py \
         --config configs/m4_phase_c_long_smoke.yml \
         --output results/m4_smoke/long_smoke.csv \
@@ -160,6 +165,7 @@ long_ctx_smokes() {
         --nproc 8 \
         --groups SMOKE \
         --seeds 42 \
+        --timeout-per-run-s 14400 \
         --log-per-token
 }
 stage "p33_long_ctx_smokes" long_ctx_smokes
@@ -189,11 +195,14 @@ stage "p34_baseline_validation" baseline_validation
 # Same anti-double-torchrun fix as P3.3.
 # ------------------------------------------------------------------
 final_matrix() {
+    # 4-hour per-run timeout for long-context cells (see long_ctx_smokes
+    # comment + finding #3, 2026-05-10).
     python run_experiment.py \
         --config configs/m4_final_matrix.yml \
         --output results/final/final_matrix.csv \
         --resume \
         --nproc 8 \
+        --timeout-per-run-s 14400 \
         --log-per-token
 }
 stage "p35_final_matrix" final_matrix
@@ -208,12 +217,15 @@ profiler_sidecar_pass() {
     # results/final/profiler_pass/profiler_pass.csv + per-run JSON
     # sidecars at .../profiler/<run_id>.json — Fig 3 source data.
     # Same anti-double-torchrun fix as P3.3 / P3.5 (finding #2).
+    # 4-hr per-run timeout (finding #3) since profiler adds ~10% overhead
+    # on top of the 120-min 1M baseline.
     python run_experiment.py \
         --config configs/m4_final_matrix.yml \
         --output results/final/profiler_pass/profiler_pass.csv \
         --resume \
         --nproc 8 \
         --seeds 42 \
+        --timeout-per-run-s 14400 \
         --profile
 }
 stage "p36_profiler_pass" profiler_sidecar_pass

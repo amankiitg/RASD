@@ -433,7 +433,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         dist.destroy_process_group()
 
 
-def execute_run(run: dict, wandb_project: str, output_csv: str, nproc: int = 1) -> dict:
+def execute_run(run: dict, wandb_project: str, output_csv: str,
+                nproc: int = 1, timeout_s: int = 3600) -> dict:
     """Run a single ablation in an isolated subprocess to keep CUDA context clean.
 
     GPU state is contaminated after a CUDA error — running each job in its own
@@ -442,10 +443,16 @@ def execute_run(run: dict, wandb_project: str, output_csv: str, nproc: int = 1) 
     When nproc > 1, launches via torchrun so the ring attention distributed
     primitives (A3 kv_block_size, A4 prefetch_depth) actually exercise multi-GPU
     communication. With nproc=1 the ring is a no-op (world_size=1).
+
+    `timeout_s`: hard wall-clock limit per run. Default 3600s (1 hr) is
+    safe for ablation rows at ctx ≤ 64k. Phase C 1M cells need at least
+    14400s (4 hr) — the smoke YAML's own comment estimates 120 min per
+    1M cell. Raise via --timeout-per-run-s when launching long-context.
     """
     import json, subprocess, sys
 
-    log.info("▶  %s  (seed=%d, nproc=%d)", run["run_id"], run["seed"], nproc)
+    log.info("▶  %s  (seed=%d, nproc=%d, timeout=%ds)",
+             run["run_id"], run["seed"], nproc, timeout_s)
 
     tmp_result = output_csv + f".{run['run_id']}.tmp"
 
@@ -473,9 +480,9 @@ def execute_run(run: dict, wandb_project: str, output_csv: str, nproc: int = 1) 
 
     try:
         proc = subprocess.Popen(cmd, env=env, start_new_session=True)
-        proc.wait(timeout=3600)
+        proc.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        log.error("✗  %s  TIMEOUT after %ds", run["run_id"], 3600)
+        log.error("✗  %s  TIMEOUT after %ds", run["run_id"], timeout_s)
         # Kill entire process group (torchrun + all spawned workers)
         try:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -555,6 +562,13 @@ def main():
     parser.add_argument("--nproc",    type=int, default=8,
                         help="GPUs per run (torchrun nproc_per_node). Use 1 for single-GPU. "
                              "Default 8 — required for ring attention A3/A4 ablations.")
+    parser.add_argument("--timeout-per-run-s", type=int, default=3600,
+                        help="Hard wall-clock timeout per run in seconds. "
+                             "Default 3600 (1 hr) is safe for ctx ≤ 64k. "
+                             "Phase C 1M cells need >= 14400 (4 hr) — see "
+                             "configs/m4_phase_c_long_smoke.yml comment "
+                             "(~120 min per 1M cell). Killing a 1M run mid-way "
+                             "wastes the entire pod-hour spent on it.")
     parser.add_argument("--log-per-token", action="store_true",
                         help="Enable C13 per-position acceptance trace sidecar "
                              "(.jsonl per run, source for Figure 4). "
@@ -625,7 +639,8 @@ def main():
                           "seed":     int(canary_cfg.get("seed", 42)),
                           "max_new_tokens": int(canary_cfg.get("max_new_tokens", 32)),
                           "debug":    args.debug}
-            canary_row = execute_run(canary_run, args.wandb_project, str(output_csv), nproc=args.nproc)
+            canary_row = execute_run(canary_run, args.wandb_project, str(output_csv),
+                                     nproc=args.nproc, timeout_s=args.timeout_per_run_s)
             append_csv(output_csv, canary_row)
             _wait_gpu_idle()
             if canary_row.get("status") != "ok":
@@ -652,7 +667,8 @@ def main():
 
     for i, run in enumerate(pending, 1):
         log.info("[%d/%d]", i, len(pending))
-        row = execute_run(run, args.wandb_project, str(output_csv), nproc=args.nproc)
+        row = execute_run(run, args.wandb_project, str(output_csv),
+                          nproc=args.nproc, timeout_s=args.timeout_per_run_s)
         append_csv(output_csv, row)
         # Wait for all GPU processes from this run to fully exit before starting
         # the next one — prevents CUDA/NCCL state pollution across runs.
