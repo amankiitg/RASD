@@ -41,8 +41,22 @@ import torch
 
 from src.models.nf4_kv import dequantize_nf4, quantize_nf4
 
+# We MUST subclass transformers.cache_utils.Cache. Without that,
+# transformers/llama/modeling_llama.py LlamaModel.forward triggers:
+#   if use_cache and not isinstance(past_key_values, Cache):
+#       past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+# i.e. our duck-typed cache would be replaced by a vanilla bf16
+# DynamicCache before any attention layer sees it, defeating the
+# whole NF4 storage point. (Verified 2026-05-10 against transformers
+# v4.44.2 source.) Cache is the canonical base class on both pod
+# (transformers 4.44.2) and local dev (transformers 5.5.4).
+try:
+    from transformers.cache_utils import Cache as _HFCache
+except ImportError:  # transformers not installed in some test envs
+    _HFCache = object
 
-class NF4DynamicCache:
+
+class NF4DynamicCache(_HFCache):
     """A DynamicCache-compatible cache that stores K/V as packed NF4.
 
     Internal layout:
@@ -61,6 +75,19 @@ class NF4DynamicCache:
         block_size: int = 64,
         dtype: torch.dtype = torch.bfloat16,
     ):
+        # We deliberately skip super().__init__() because the Cache base
+        # class signature is INCOMPATIBLE between transformers versions:
+        #   * 4.44.2 (pod):  Cache.__init__() takes no args
+        #   * 5.5.4 (local): Cache.__init__(layers=None,
+        #                                   layer_class_to_replicate=None,
+        #                                   offloading=False,
+        #                                   offload_only_non_sliding=True)
+        #     and raises ValueError if both `layers` and
+        #     `layer_class_to_replicate` are None.
+        # We manage our own per-layer NF4 state and don't need the
+        # CacheLayer bookkeeping the 5.5.4 base class wants. Subclassing
+        # for `isinstance(cache, Cache) -> True` is what matters; the
+        # constructor chain isn't needed for that.
         self.block_size = block_size
         self.dtype = dtype
         self._k_codes: List[List[torch.Tensor]] = []
@@ -192,6 +219,14 @@ class NF4DynamicCache:
 
     def __getitem__(self, layer_idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return self._dequantize_layer(layer_idx)
+
+    # ------------------------------------------------------------------
+    # Beam search compat — RASD doesn't use beam search; no-op
+    # ------------------------------------------------------------------
+
+    def reorder_cache(self, beam_idx: torch.Tensor) -> None:
+        """No-op: RASD does temperature sampling, not beam search."""
+        return None
 
     # ------------------------------------------------------------------
     # M4 C6 — in-place truncation (preserves NF4 storage between rounds)

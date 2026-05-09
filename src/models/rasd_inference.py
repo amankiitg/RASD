@@ -586,12 +586,22 @@ class RASDInference:
                 tuple(t.detach().cpu() for t in layer) for layer in draft_past_kv
             ),
             per_token_trace=list(per_token_trace),
-            # Save the per-rank RNG state. Under temperature > 0 (the M3
-            # default), _sample / _acceptance_mask consume RNG via
-            # torch.multinomial / torch.rand_like; without restoring this
-            # on resume, a resumed run would diverge from an uninterrupted
-            # one. (Fix for high-risk finding #5, 2026-05-10.)
+            # Save BOTH CPU and CUDA RNG state. Under temperature > 0
+            # (the M3 default), _sample (torch.multinomial on CUDA
+            # tensors) and _acceptance_mask (torch.rand_like on CUDA
+            # accept_prob) consume CUDA RNG, not CPU. Saving only CPU
+            # state would still let resumed runs diverge — the CUDA
+            # generator advances independently. (Fix for finding #3
+            # from 2026-05-10 review; the original Fix #5 only
+            # addressed CPU.)
             rng_state=torch.get_rng_state(),
+            cuda_rng_state=(
+                torch.cuda.get_rng_state(self._device)
+                if torch.cuda.is_available()
+                and getattr(self, "_device", None) is not None
+                and self._device.type == "cuda"
+                else None
+            ),
         )
         path = checkpoint_path(
             cfg.checkpoint_dir, cfg.run_id, round_idx=n_rounds, rank=self._rank,
@@ -780,13 +790,18 @@ class RASDInference:
             # in `generated` = 1 (initial cur_token) + sum of contributions.
             generated_total = sum(t.shape[1] for t in generated)
             S = global_seqlen - (generated_total - 1)
-            # Restore the per-rank RNG state so the resumed verify loop
-            # consumes RNG in the same sequence as an uninterrupted run.
-            # Without this, torch.multinomial / torch.rand_like in the
-            # verify loop would diverge from byte-identical reproduction.
-            # (Fix for high-risk finding #5, 2026-05-10.)
+            # Restore both CPU and CUDA RNG state. CPU alone is
+            # insufficient when sampling runs on CUDA tensors (default
+            # under multi-rank GPU): torch.multinomial / torch.rand_like
+            # consume the device generator. (Fix for finding #3 from
+            # 2026-05-10 review; original Fix #5 only addressed CPU.)
             if ckpt.rng_state is not None:
                 torch.set_rng_state(ckpt.rng_state)
+            if (ckpt.cuda_rng_state is not None
+                    and torch.cuda.is_available()
+                    and getattr(self, "_device", None) is not None
+                    and self._device.type == "cuda"):
+                torch.cuda.set_rng_state(ckpt.cuda_rng_state, self._device)
             # TTFT is meaningless on resume (we skipped prefill); record 0
             # so downstream metrics handling doesn't NaN.
             t_first_token = t_start

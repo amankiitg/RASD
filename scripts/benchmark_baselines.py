@@ -20,6 +20,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -46,11 +47,15 @@ def benchmark_module(
     dim: int,
     device: torch.device,
     runs: int = 3,
+    total_len: Optional[int] = None,
 ) -> dict:
     """Run `mod` for `runs` forward passes and return timing stats.
 
-    For distributed runs the input is a local shard (seq_len already divided
-    by world_size by the caller).
+    For distributed runs the input is a local shard (`seq_len` already
+    divided by `world_size` by the caller). Pass `total_len` so that
+    throughput is reported as total-context tokens/sec, not per-shard
+    — this matches RASD's metric semantics in run_experiment.py and
+    makes the baselines column comparable for Figure 1.
 
     Returns a dict with keys: time_s, throughput_tps, latency_ms
     """
@@ -72,10 +77,17 @@ def benchmark_module(
             elapsed.append(time.perf_counter() - t0)
 
     avg_s = sum(elapsed) / len(elapsed)
+    # Throughput is over the full context. In distributed mode all
+    # ranks process their shard in parallel and finish (≈)
+    # simultaneously, so wall time corresponds to total_len tokens.
+    # Falls back to seq_len for single-rank runs (caller passes
+    # total_len=None, which == seq_len). (Fix for finding #4 from
+    # 2026-05-10 review: previously underreported by world_size×.)
+    measured_len = total_len if total_len is not None else seq_len
     return {
         "time_s": avg_s,
-        "throughput_tps": seq_len / avg_s,          # tokens generated per second
-        "latency_ms": (avg_s / seq_len) * 1_000,    # ms per token
+        "throughput_tps": measured_len / avg_s,
+        "latency_ms": (avg_s / measured_len) * 1_000,
     }
 
 
@@ -87,6 +99,7 @@ CSV_HEADER = [
     "timestamp",
     "baseline",
     "context_length",
+    "seed",
     "device",
     "world_size",
     "time_s",
@@ -118,8 +131,14 @@ def main():
     p.add_argument("--out", default="results/baselines/baselines.csv", help="Output CSV path")
     p.add_argument(
         "--lengths", nargs="+", type=int,
-        default=[131_072, 262_144, 524_288],
-        help="Context lengths to benchmark (default: 128k 256k 512k)",
+        default=[131_072, 262_144, 524_288, 1_048_576],
+        help="Context lengths to benchmark (default: 128k 256k 512k 1M — "
+             "matches the M4 final-matrix grid)",
+    )
+    p.add_argument(
+        "--seeds", nargs="+", type=int, default=[42, 123, 456],
+        help="Seeds to run per (baseline, length). Default matches the "
+             "M4 final matrix's 3-seed grid.",
     )
     p.add_argument("--distributed", action="store_true",
                    help="Initialise torch.distributed (use with torchrun)")
@@ -156,50 +175,63 @@ def main():
     else:
         csv_fh = writer = None
 
-    for total_len in args.lengths:
-        # Each rank processes a shard in distributed mode
-        local_len = total_len // world_size if world_size > 1 else total_len
+    for seed in args.seeds:
+        torch.manual_seed(seed)
+        if device.type == "cuda":
+            torch.cuda.manual_seed_all(seed)
 
-        models = {
-            "ring": RingAttention(
-                dim=args.dim, num_heads=args.heads, block_size=args.block_size
-            ),
-            "sliding": SlidingWindowAttention(
-                dim=args.dim, num_heads=args.heads, window_size=args.window_size
-            ),
-        }
+        for total_len in args.lengths:
+            # Each rank processes a shard in distributed mode
+            local_len = total_len // world_size if world_size > 1 else total_len
 
-        for name, mod in models.items():
-            if rank == 0:
-                print(f"  [{name}] context_length={total_len:,}  local_shard={local_len:,}", flush=True)
+            models = {
+                "ring": RingAttention(
+                    dim=args.dim, num_heads=args.heads, block_size=args.block_size
+                ),
+                "sliding": SlidingWindowAttention(
+                    dim=args.dim, num_heads=args.heads, window_size=args.window_size
+                ),
+            }
 
-            try:
-                stats = benchmark_module(mod, local_len, args.dim, device, runs=args.runs)
-            except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
+            for name, mod in models.items():
                 if rank == 0:
-                    print(f"    FAILED: {exc}", flush=True)
-                stats = {"time_s": -1.0, "throughput_tps": -1.0, "latency_ms": -1.0}
-            finally:
-                del mod
-                if device.type == "cuda":
-                    torch.cuda.empty_cache()
+                    print(
+                        f"  [{name}] context_length={total_len:,}  "
+                        f"local_shard={local_len:,}  seed={seed}",
+                        flush=True,
+                    )
 
-            if rank == 0:
-                row = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "baseline": name,
-                    "context_length": total_len,
-                    "device": args.device,
-                    "world_size": world_size,
-                    **stats,
-                }
-                write_row(writer, csv_fh, row)
-                print(
-                    f"    time={stats['time_s']:.3f}s  "
-                    f"throughput={stats['throughput_tps']:.1f} tok/s  "
-                    f"latency={stats['latency_ms']:.4f} ms/tok",
-                    flush=True,
-                )
+                try:
+                    stats = benchmark_module(
+                        mod, local_len, args.dim, device,
+                        runs=args.runs, total_len=total_len,
+                    )
+                except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
+                    if rank == 0:
+                        print(f"    FAILED: {exc}", flush=True)
+                    stats = {"time_s": -1.0, "throughput_tps": -1.0, "latency_ms": -1.0}
+                finally:
+                    del mod
+                    if device.type == "cuda":
+                        torch.cuda.empty_cache()
+
+                if rank == 0:
+                    row = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "baseline": name,
+                        "context_length": total_len,
+                        "seed": seed,
+                        "device": args.device,
+                        "world_size": world_size,
+                        **stats,
+                    }
+                    write_row(writer, csv_fh, row)
+                    print(
+                        f"    time={stats['time_s']:.3f}s  "
+                        f"throughput={stats['throughput_tps']:.1f} tok/s  "
+                        f"latency={stats['latency_ms']:.4f} ms/tok",
+                        flush=True,
+                    )
 
     if rank == 0:
         csv_fh.close()

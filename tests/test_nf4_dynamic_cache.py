@@ -21,6 +21,36 @@ def _kv(B=1, H=4, S=8, D=128, seed=0):
 
 
 # ---------------------------------------------------------------------------
+# Cache subclass — CRITICAL invariant
+# ---------------------------------------------------------------------------
+
+class TestCacheSubclass:
+    """transformers/llama/modeling_llama.py LlamaModel.forward checks
+    `not isinstance(past_key_values, Cache)` and replaces non-Cache
+    objects via DynamicCache.from_legacy_cache(...). If our cache isn't
+    a Cache subclass, the NF4 storage is silently swapped out for bf16
+    DynamicCache before attention sees it, defeating the whole point.
+
+    This test is the single most important assertion in this file.
+    """
+
+    def test_isinstance_transformers_cache(self):
+        from transformers.cache_utils import Cache
+        cache = NF4DynamicCache()
+        assert isinstance(cache, Cache), (
+            "C11 (b) regression: NF4DynamicCache no longer subclasses "
+            "transformers.cache_utils.Cache. LlamaModel.forward will "
+            "replace it with DynamicCache.from_legacy_cache() before "
+            "attention sees it; kv_quant=True will silently store bf16. "
+            "1M context will OOM at 40 GB SXM4."
+        )
+
+    def test_subclass_relationship_at_class_level(self):
+        from transformers.cache_utils import Cache
+        assert issubclass(NF4DynamicCache, Cache)
+
+
+# ---------------------------------------------------------------------------
 # Initial state
 # ---------------------------------------------------------------------------
 

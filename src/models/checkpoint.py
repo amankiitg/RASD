@@ -116,10 +116,18 @@ class GenerationCheckpoint:
     per_token_trace:    list = field(default_factory=list)
 
     # Random state so resume produces identical continuation given the
-    # same seed (best effort — doesn't capture per-rank RNG under
-    # multi-rank, but Fix2 broadcasts logits so accept/reject is
-    # deterministic across ranks anyway)
-    rng_state:          Optional[torch.Tensor] = None
+    # same seed. Two fields because torch maintains separate generator
+    # state on CPU vs each CUDA device, and our sampling consumes both:
+    #   * cpu_rng_state  — torch.get_rng_state() (CPU generator)
+    #   * cuda_rng_state — torch.cuda.get_rng_state(device) (per-device)
+    # Sampling sites that consume CUDA RNG: torch.multinomial(probs)
+    # and torch.rand_like(...) with CUDA tensors (verify loop's
+    # accept/reject + bonus resampling). Without restoring CUDA RNG,
+    # a resumed run diverges from an uninterrupted one even with
+    # CPU RNG perfectly preserved. (Fix for finding #3 from
+    # 2026-05-10 review.)
+    rng_state:          Optional[torch.Tensor] = None  # CPU generator state
+    cuda_rng_state:     Optional[torch.Tensor] = None  # CUDA generator state for self._device
 
     # ------------------------- I/O -------------------------
 
@@ -143,6 +151,7 @@ class GenerationCheckpoint:
             "draft_past_kv":    self.draft_past_kv,
             "per_token_trace":  list(self.per_token_trace),
             "rng_state":        self.rng_state,
+            "cuda_rng_state":   self.cuda_rng_state,
         }
         torch.save(payload, tmp)
         os.replace(tmp, path)
@@ -170,6 +179,7 @@ class GenerationCheckpoint:
             draft_past_kv    = tuple(d["draft_past_kv"]) if d["draft_past_kv"] is not None else None,
             per_token_trace  = list(d.get("per_token_trace", [])),
             rng_state        = d.get("rng_state"),
+            cuda_rng_state   = d.get("cuda_rng_state"),
         )
 
     # ------------------------- Restore -------------------------

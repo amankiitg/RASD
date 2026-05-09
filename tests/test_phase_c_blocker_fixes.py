@@ -270,3 +270,182 @@ class TestFix5RngState:
             "Fix #5 regression: rng_state restore not guarded by None-check; "
             "old pre-fix checkpoints would crash on resume"
         )
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-10 second-pass review fixes
+# ---------------------------------------------------------------------------
+
+class TestSecondPassFix1CacheSubclass:
+    """The 2nd-pass review found that NF4DynamicCache was duck-typed as
+    DynamicCache but did NOT subclass transformers.cache_utils.Cache.
+    LlamaModel.forward in transformers 4.44.2 explicitly checks
+    `not isinstance(past_key_values, Cache)` and replaces non-Cache
+    objects via DynamicCache.from_legacy_cache(...) → our NF4 storage
+    would have been silently swapped out for bf16. CRITICAL fix."""
+
+    def test_isinstance_cache(self):
+        from transformers.cache_utils import Cache
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        assert isinstance(NF4DynamicCache(), Cache), (
+            "2nd-pass #1 regression: NF4DynamicCache no longer subclasses "
+            "transformers.cache_utils.Cache. LlamaModel.forward will "
+            "replace it before attention sees it; kv_quant=True will "
+            "silently store bf16; 1M context will OOM at 40 GB."
+        )
+
+
+class TestSecondPassFix2NoOuterLoop:
+    """P3.3 long_ctx_smokes had a `for ctx in 32k 128k 512k 1M; do
+    python ... --groups SMOKE; done` loop. Each iteration runs the
+    entire SMOKE group (which itself enumerates all 4 contexts via
+    its level entries), so 4×4 = 16 cells instead of 4. ~$50-80 of
+    pod time wasted."""
+
+    def test_long_ctx_smokes_has_no_outer_for_loop(self):
+        """The long_ctx_smokes function body must not contain a
+        `for ctx in ...; do ... done` style loop; the SMOKE YAML
+        already enumerates all 4 contexts."""
+        m = re.search(
+            r"^long_ctx_smokes\(\) \{(.*?)^\}",
+            PHASE_C_SH, re.DOTALL | re.MULTILINE,
+        )
+        assert m is not None, "long_ctx_smokes function not found"
+        body = m.group(1)
+        # Strip comments before searching for the loop
+        non_comment = "\n".join(
+            line for line in body.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        assert not re.search(r"\bfor\b\s+ctx\b", non_comment), (
+            "2nd-pass #2 regression: long_ctx_smokes has an outer "
+            "`for ctx in ...` loop that runs the SMOKE group 4× — "
+            "wastes ~$50-80 of pod time"
+        )
+
+
+class TestSecondPassFix3CudaRngState:
+    """The original Fix #5 saved `torch.get_rng_state()` (CPU only).
+    Sampling runs on CUDA tensors (torch.multinomial / torch.rand_like
+    on the verify forward's accept_prob tensor), which consumes the
+    CUDA generator state — independent from CPU. Without saving
+    cuda_rng_state, resumed runs still diverge."""
+
+    def test_checkpoint_dataclass_has_cuda_rng_field(self):
+        from src.models.checkpoint import GenerationCheckpoint
+        import dataclasses
+        field_names = {f.name for f in dataclasses.fields(GenerationCheckpoint)}
+        assert "cuda_rng_state" in field_names, (
+            "2nd-pass #3 regression: GenerationCheckpoint missing "
+            "cuda_rng_state field; resumed runs still diverge under "
+            "GPU sampling"
+        )
+
+    def test_save_populates_cuda_rng(self):
+        """_maybe_save_checkpoint must set cuda_rng_state from
+        torch.cuda.get_rng_state(self._device) when CUDA available."""
+        assert "cuda_rng_state=" in RASD_INF_SRC
+        assert "torch.cuda.get_rng_state(self._device)" in RASD_INF_SRC, (
+            "2nd-pass #3 regression: cuda_rng_state not populated from "
+            "torch.cuda.get_rng_state(self._device)"
+        )
+
+    def test_resume_restores_cuda_rng(self):
+        """Resume branch in generate() must call torch.cuda.set_rng_state."""
+        assert "torch.cuda.set_rng_state(ckpt.cuda_rng_state, self._device)" in RASD_INF_SRC, (
+            "2nd-pass #3 regression: resume branch not restoring cuda_rng_state"
+        )
+
+    def test_cuda_restore_guarded_against_none(self):
+        """Old checkpoints had cuda_rng_state=None. Restore must guard."""
+        assert re.search(
+            r"if\s*\(?\s*ckpt\.cuda_rng_state is not None",
+            RASD_INF_SRC,
+        ), (
+            "2nd-pass #3 regression: cuda_rng_state restore not None-guarded"
+        )
+
+    def test_payload_round_trips_cuda_rng(self):
+        """save() / load() preserve cuda_rng_state through the on-disk
+        format."""
+        import torch
+        from src.models.checkpoint import GenerationCheckpoint
+        ckpt = GenerationCheckpoint(
+            n_rounds=1, global_seqlen=10, total_accepted=1,
+            total_draft_toks=2, prefill_len=8,
+            cur_token=torch.tensor([[42]]),
+            generated=[torch.tensor([[1]])],
+            past_kv=tuple([(torch.zeros(1, 2, 4, 4), torch.zeros(1, 2, 4, 4))]),
+            draft_past_kv=tuple([(torch.zeros(1, 2, 4, 4), torch.zeros(1, 2, 4, 4))]),
+            cuda_rng_state=torch.tensor([1, 2, 3, 4], dtype=torch.uint8),
+        )
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pathlib.Path(tmp) / "ckpt.pt"
+            ckpt.save(p)
+            loaded = GenerationCheckpoint.load(p)
+        assert loaded.cuda_rng_state is not None
+        assert torch.equal(loaded.cuda_rng_state, ckpt.cuda_rng_state)
+
+
+class TestSecondPassFix4BaselinesCoverage:
+    """P3.4 baselines stage previously ran only at 128k+1M, no seeds.
+    The M4 final matrix grid is 4 contexts × 3 seeds — Phase D Figure
+    1 needs matching baseline rows for error bars + 1M comparison.
+    Also: the script reported per-shard throughput in distributed
+    mode (seq_len / time where seq_len = local_len), under-reporting
+    by world_size×."""
+
+    def test_phase_c_baselines_invokes_4_contexts(self):
+        m = re.search(
+            r"^baseline_validation\(\) \{(.*?)^\}",
+            PHASE_C_SH, re.DOTALL | re.MULTILINE,
+        )
+        body = m.group(1)
+        # All 4 contexts of the M4 final matrix must be on the command line
+        for length in (131072, 262144, 524288, 1048576):
+            assert str(length) in body, (
+                f"2nd-pass #4 regression: baseline stage missing ctx={length}"
+            )
+
+    def test_phase_c_baselines_invokes_3_seeds(self):
+        m = re.search(
+            r"^baseline_validation\(\) \{(.*?)^\}",
+            PHASE_C_SH, re.DOTALL | re.MULTILINE,
+        )
+        body = m.group(1)
+        for seed in (42, 123, 456):
+            assert str(seed) in body, (
+                f"2nd-pass #4 regression: baseline stage missing seed={seed}"
+            )
+
+    def test_benchmark_baselines_has_seeds_arg(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent /
+               "scripts" / "benchmark_baselines.py").read_text()
+        assert "--seeds" in src, (
+            "2nd-pass #4 regression: benchmark_baselines.py missing --seeds"
+        )
+
+    def test_benchmark_baselines_csv_has_seed_column(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent /
+               "scripts" / "benchmark_baselines.py").read_text()
+        # CSV_HEADER should include "seed"
+        assert re.search(r'CSV_HEADER\s*=\s*\[[^\]]*"seed"', src), (
+            "2nd-pass #4 regression: CSV_HEADER missing 'seed' column"
+        )
+
+    def test_benchmark_module_takes_total_len_for_throughput(self):
+        """Throughput must be reported at total_len, not local shard.
+        Otherwise distributed runs underreport tps by world_size×."""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent /
+               "scripts" / "benchmark_baselines.py").read_text()
+        # The fix routes total_len through to the function and uses it
+        # to compute throughput
+        assert "total_len: Optional[int]" in src or "total_len:" in src
+        assert "measured_len" in src, (
+            "2nd-pass #4 regression: benchmark_module not using total_len "
+            "for throughput; would underreport in distributed mode"
+        )

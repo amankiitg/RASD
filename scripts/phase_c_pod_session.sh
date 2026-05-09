@@ -147,16 +147,20 @@ stage "c6_resume_validation" c6_validation
 # + master_port collisions. (Fix for high-risk finding #2, 2026-05-10.)
 # ------------------------------------------------------------------
 long_ctx_smokes() {
-    for ctx in 32768 131072 524288 1048576; do
-        python run_experiment.py \
-            --config configs/m4_phase_c_long_smoke.yml \
-            --output results/m4_smoke/long_smoke_ctx${ctx}.csv \
-            --resume \
-            --nproc 8 \
-            --groups SMOKE \
-            --seeds 42 \
-            --log-per-token
-    done
+    # The SMOKE group in configs/m4_phase_c_long_smoke.yml already has
+    # all four contexts (32k / 128k / 512k / 1M) as levels. A bash loop
+    # over ctx would expand the grid 4x — each iteration runs the entire
+    # SMOKE group again because run_experiment.py has no per-level
+    # filter. (Fix for finding #2 from 2026-05-10 review: was a 4x
+    # compute waste = ~$50-80 of pod time for nothing.)
+    python run_experiment.py \
+        --config configs/m4_phase_c_long_smoke.yml \
+        --output results/m4_smoke/long_smoke.csv \
+        --resume \
+        --nproc 8 \
+        --groups SMOKE \
+        --seeds 42 \
+        --log-per-token
 }
 stage "p33_long_ctx_smokes" long_ctx_smokes
 
@@ -167,9 +171,14 @@ stage "p33_long_ctx_smokes" long_ctx_smokes
 # so multi-GPU sequence-parallelism actually exercises.)
 # ------------------------------------------------------------------
 baseline_validation() {
+    # Match the M4 final-matrix grid: 4 contexts × 3 seeds × 2 baselines
+    # = 24 baseline rows. Without the seeds + 1M, Phase D Figure 1 has
+    # no Ring/Sliding error bars and no 1M point at all. (Fix for
+    # finding #4 from 2026-05-10 review.)
     torchrun --nproc-per-node=8 --master_port=29500 \
         scripts/benchmark_baselines.py \
-        --lengths 131072 1048576 \
+        --lengths 131072 262144 524288 1048576 \
+        --seeds 42 123 456 \
         --out results/baselines/m4_baselines.csv \
         --distributed
 }
