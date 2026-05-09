@@ -120,16 +120,15 @@ def _ring_llama_attention_forward(
         past_key_value, k, v, self.layer_idx, sin, cos, cache_position,
     )
 
-    # 3a. M4 C11 — NF4 KV-cache lossy bf16 path.
-    # When the installer set _ring_kv_quant=True, the K/V returned from
-    # the cache is round-tripped through NF4 quantize→dequantize before
-    # being passed to the ring kernel. This exercises the codec on real
-    # attention activations and lets us measure α/PPL impact end-to-end.
-    # The actual cache *storage* still holds bf16 — true memory savings
-    # require subclassing DynamicCache or an external NF4 store, which
-    # is M4 Phase C work. Default is False; M3 byte-identical when off.
-    if getattr(self, "_ring_kv_quant", False):
-        k_full, v_full = _kv_quant_round_trip(k_full, v_full)
+    # M4 C11 (true NF4 storage, 2026-05-10): when cfg.kv_quant=True the
+    # caller (RASDInference.generate) supplies an NF4DynamicCache as
+    # past_key_values. Its update() quantizes new K/V on append and
+    # returns dequantized bf16 (k_full, v_full). The previous round-trip
+    # path (_kv_quant_round_trip on every forward) was redundant once
+    # the cache itself does the storage quantization; quantizing the
+    # already-dequantized output again would compound error without
+    # benefit. The _ring_kv_quant attribute is now unused for the
+    # forward path but kept on the module for backward-compat.
 
     # 4. GQA expansion (no-op for Llama-2 where num_kv_heads == num_heads)
     k_full = repeat_kv(k_full, num_kv_groups)

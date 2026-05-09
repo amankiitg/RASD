@@ -136,41 +136,101 @@ class TestInstallerPlumbing:
 
 
 # ---------------------------------------------------------------------------
-# Layer 4: forward gate
+# Layer 4: forward path (true NF4 storage replaces the round-trip helper)
 # ---------------------------------------------------------------------------
 
-class TestForwardGate:
-    def test_forward_branches_on_ring_kv_quant(self):
-        """The forward must call _kv_quant_round_trip only when
-        _ring_kv_quant is True."""
-        # Search for the call site
-        assert "_kv_quant_round_trip(k_full, v_full)" in RING_PATCH_SRC, (
-            "C11 regression: _kv_quant_round_trip not invoked from forward"
+class TestForwardPath:
+    """The 2026-05-10 (b)-scope refactor moved NF4 from a round-trip in
+    the forward to true storage in NF4DynamicCache. The forward no
+    longer calls _kv_quant_round_trip — the cache itself does the
+    quantize-on-append + dequantize-on-read. Quantizing the already-
+    dequantized cache output again would just compound error.
+    """
+
+    def test_round_trip_helper_no_longer_invoked_from_forward(self):
+        """The forward path must NOT call _kv_quant_round_trip — true
+        NF4 storage in the cache makes it redundant. (Helper itself
+        kept in the module for backward-compat tests.)"""
+        # Search for the helper invocation in the forward function.
+        # The function spans from `_ring_llama_attention_forward` to
+        # the next top-level `def`. Pull just that slice.
+        m = re.search(
+            r"def _ring_llama_attention_forward\(.*?\n(?=def |\Z)",
+            RING_PATCH_SRC, re.DOTALL,
+        )
+        assert m is not None, "could not locate _ring_llama_attention_forward"
+        forward_body = m.group(0)
+        assert "_kv_quant_round_trip(k_full, v_full)" not in forward_body, (
+            "C11 regression: forward still invokes _kv_quant_round_trip; "
+            "with true NF4 storage in the cache, this would compound "
+            "quantization error on every read"
         )
 
-    def test_round_trip_gated_by_ring_kv_quant(self):
-        """The round-trip call must be inside `if getattr(self, "_ring_kv_quant", False):`
-        so default-off (no attribute set) means M3-byte-identical."""
+    def test_round_trip_helper_still_exposed(self):
+        """The _kv_quant_round_trip helper itself is kept (used by
+        legacy unit tests + as a debugging tool). Just shouldn't be
+        wired into the forward path anymore."""
+        assert "def _kv_quant_round_trip(" in RING_PATCH_SRC
+
+
+class TestNF4DynamicCacheWired:
+    """The (b) refactor: when cfg.kv_quant=True, generate() supplies an
+    NF4DynamicCache as initial past_key_values."""
+
+    def test_nf4_cache_imported_in_generate(self):
+        from pathlib import Path
+        rasd_inf = (Path(__file__).resolve().parent.parent
+                    / "src" / "models" / "rasd_inference.py").read_text()
+        assert "from src.models.nf4_dynamic_cache import NF4DynamicCache" in rasd_inf, (
+            "C11 (b) regression: NF4DynamicCache import missing from "
+            "rasd_inference.py — generate() can't construct one"
+        )
+
+    def test_nf4_cache_constructed_under_kv_quant_flag(self):
+        """generate() must construct an NF4DynamicCache only when
+        cfg.kv_quant=True. Default off must leave initial_cache=None
+        so HF creates its own bf16 DynamicCache."""
+        from pathlib import Path
+        rasd_inf = (Path(__file__).resolve().parent.parent
+                    / "src" / "models" / "rasd_inference.py").read_text()
+        # Look for the gated construction
         assert re.search(
-            r'if getattr\(self,\s*[\"\']_ring_kv_quant[\"\'],\s*False\)\s*:',
-            RING_PATCH_SRC,
+            r"if cfg\.kv_quant:[\s\S]{0,200}NF4DynamicCache\(",
+            rasd_inf,
         ), (
-            "C11 regression: kv_quant branch not gated by getattr default-False; "
-            "could trigger spuriously if attribute missing"
+            "C11 (b) regression: NF4DynamicCache construction not gated "
+            "by `if cfg.kv_quant:`"
         )
 
-    def test_round_trip_after_cache_append(self):
-        """The round-trip must come AFTER _cache_append returns the full
-        tensors — round-tripping the new k/v BEFORE cache append would
-        produce wrong attention because the cached prefill would still
-        be exact-bf16."""
-        idx_cache_append = RING_PATCH_SRC.find("k_full, v_full = _cache_append")
-        idx_round_trip = RING_PATCH_SRC.find("_kv_quant_round_trip(k_full, v_full)")
-        assert idx_cache_append > 0
-        assert idx_round_trip > 0
-        assert idx_round_trip > idx_cache_append, (
-            "C11 regression: kv_quant round-trip placed BEFORE _cache_append — "
-            "would attend on quantized-new-k/v but exact-cached prefill"
+    def test_initial_cache_passed_to_target_model(self):
+        """target_model(...) call in prefill must pass past_key_values=initial_cache."""
+        from pathlib import Path
+        rasd_inf = (Path(__file__).resolve().parent.parent
+                    / "src" / "models" / "rasd_inference.py").read_text()
+        assert re.search(
+            r"target_out\s*=\s*self\.target_model\([\s\S]{0,400}past_key_values\s*=\s*initial_cache",
+            rasd_inf,
+        ), (
+            "C11 (b) regression: prefill target_model() call doesn't pass "
+            "past_key_values=initial_cache; HF would construct its own "
+            "bf16 cache and the kv_quant flag would have no effect"
+        )
+
+    def test_truncate_kv_preserves_nf4_storage(self):
+        """_truncate_kv must call cache.truncate() in place when the
+        cache has a truncate method — otherwise the next round drops
+        back to bf16 legacy tuple."""
+        from pathlib import Path
+        rasd_inf = (Path(__file__).resolve().parent.parent
+                    / "src" / "models" / "rasd_inference.py").read_text()
+        # Look for the hasattr-based dispatch
+        assert re.search(
+            r"hasattr\(past_kv,\s*[\"\']truncate[\"\'][\s\S]{0,200}past_kv\.truncate\(new_len\)",
+            rasd_inf,
+        ), (
+            "C11 (b) regression: _truncate_kv doesn't dispatch to "
+            "cache.truncate() for cache types that support it; NF4 "
+            "storage would convert to bf16 legacy tuple every round"
         )
 
 

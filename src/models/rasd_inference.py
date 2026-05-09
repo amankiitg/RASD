@@ -292,12 +292,23 @@ def _build_per_token_record(
 def _truncate_kv(past_kv, new_len: int):
     """Truncate past_key_values to `new_len` positions along the seq dim.
 
-    Accepts both legacy tuple-of-tuples and HF DynamicCache (iterable as
-    layer (k, v) tuples). Returns a legacy tuple; the next model forward
-    auto-converts via DynamicCache.from_legacy_cache.
+    Three cases:
+      * NF4DynamicCache (M4 C11) — call its in-place `truncate(new_len)`
+        method and return the same instance. Crucial for preserving
+        NF4 storage across rounds; otherwise the next forward sees a
+        bf16 legacy tuple and we lose the ~3.55x memory savings.
+      * HF DynamicCache (and other types with an iterable layer view) —
+        produce a new legacy tuple of bf16 tensors. Backward-compatible
+        with the M3 code path.
+      * Legacy tuple — same as above.
     """
     if past_kv is None:
         return None
+    # NF4 cache: in-place truncation preserves the storage type
+    if hasattr(past_kv, "truncate") and callable(getattr(past_kv, "truncate")):
+        past_kv.truncate(new_len)
+        return past_kv
+    # Legacy tuple or HF DynamicCache: build a new legacy tuple
     out = []
     for layer in past_kv:
         k, v = layer[0], layer[1]
@@ -660,12 +671,28 @@ class RASDInference:
                 local_pos = None
                 local_attn_mask = attention_mask
 
+            # M4 C11 (true NF4 storage): when cfg.kv_quant=True, supply
+            # an empty NF4DynamicCache as the initial past_key_values so
+            # HF's LlamaModel uses it instead of constructing its own
+            # bf16 DynamicCache. Every patched LlamaAttention layer's
+            # update() call then routes through NF4 quantization at
+            # append time. The cache object is mutated in place across
+            # the rest of the verify loop, so we keep a single instance
+            # for the duration of generate().
+            initial_cache = None
+            if cfg.kv_quant:
+                from src.models.nf4_dynamic_cache import NF4DynamicCache
+                initial_cache = NF4DynamicCache(
+                    block_size=64, dtype=cfg.torch_dtype,
+                )
+
             with torch.cuda.stream(self.stream_compute):
                 target_out = self.target_model(
                     local_ids,
                     attention_mask=local_attn_mask,
                     position_ids=local_pos,
                     use_cache=True,
+                    past_key_values=initial_cache,
                 )
                 past_kv          = target_out.past_key_values
                 local_last_logit = target_out.logits[:, -1, :]
