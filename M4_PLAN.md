@@ -10,7 +10,7 @@ Four phases total. **Phase A and Phase B are complete; Phase C is next; Phase D 
 |---|---|---|---|
 | **A** | Analysis track (figures + sidecars + PPL + profiler primitives) | ✅ DONE | rolled into `m4-phase-b-complete` |
 | **B** | Compute track local (C3 + C5 + C2b + C6 + C11 codec) | ✅ DONE | [`m4-phase-b-complete`](../../tree/m4-phase-b-complete) |
-| **C** | Pod session: validation gates + 36-run matrix + profiler pass | 📋 prepped (PHASE_C_RUNBOOK.md) | TBD post-pod |
+| **C** | Pod session: validation gates + matrix + profiler pass | ⚠ blockers fixed; **#1 scope decision pending** | TBD post-pod |
 | **D** | Post-pod paper deliverables (Fig 1/3/4/5, tables, manuscript) | ⏳ blocked on Phase C data | — |
 
 **Phase B local commits (in order):**
@@ -414,13 +414,64 @@ flag (default off so M3 replay stays byte-identical).
 
 ### Phase 3 — Pod required (Lambda 8x A100 SXM4 40 GB, gpu_8x_a100)
 
-**Status (2026-05-06):** all prep landed; ready to launch when the
-operator (i.e. you, post-Phase B) provisions a Lambda instance. See
-[PHASE_C_RUNBOOK.md](PHASE_C_RUNBOOK.md) for the bundled-session
-checklist. Master script: `scripts/phase_c_pod_session.sh` runs every
-P3.x stage in sequence, aborts on first failure (so we don't burn
-pod-$ on broken upstream state), and writes per-stage marker files so
-re-runs skip already-completed stages.
+**Status (2026-05-10):** four blocker bugs surfaced by external code
+review on 2026-05-10 have been fixed (commit `b993f67`); a fifth
+high-risk finding remains as a **pending scope decision** (see
+"Phase C blockers" subsection below). Master script
+`scripts/phase_c_pod_session.sh` runs every P3.x stage in sequence,
+aborts on first failure, and writes per-stage marker files so re-runs
+skip already-completed stages. See [PHASE_C_RUNBOOK.md](PHASE_C_RUNBOOK.md)
+for the bundled-session checklist.
+
+#### Phase C blockers (audit log)
+
+External code review on 2026-05-10 surfaced 5 high-risk findings.
+Current state:
+
+| # | Finding | Status | Fix commit |
+|---|---|---|---|
+| 1 | `kv_quant=True` is round-trip only, not storage NF4 → 1M premise breaks | ⚠ **scope decision pending** | not yet |
+| 2 | Double `torchrun` on orchestrator stages (outer + inner) | ✅ fixed | `b993f67` |
+| 3 | `build_run_configs` `A*` prefix filter drops M4 YAMLs | ✅ fixed | `b993f67` |
+| 4 | Baseline stage uses `bash` + wrong flag name | ✅ fixed | `b993f67` |
+| 5 | `rng_state` field never populated → resume divergence under temp>0 | ✅ fixed | `b993f67` |
+
+**Finding #1 scope question (pending):** the in-kernel round-trip
+quantize→dequantize doesn't reduce cache memory — `kv_quant=True`
+is currently a **lossy bf16 path** that only validates codec
+correctness. True memory savings require the cache itself to hold
+NF4 bytes (subclass DynamicCache or external NF4 store). Per the
+M4_PLAN memory equation, this matters at 1M:
+
+| ctx | bf16 KV / rank (W=8) | NF4 KV / rank | fits 40 GB? |
+|---|---|---|---|
+| 64k | ~13 GB | ~3.5 GB | ✅ either way (R6.5 confirmed) |
+| 128k | ~37 GB | ~10 GB | ❌ bf16 / ✅ NF4 |
+| 512k | (OOM bf16) | ~25 GB | ❌ bf16 / ✅ NF4 (tight) |
+| 1M | ~68 GB | ~17 GB | ❌ bf16 / ✅ NF4 |
+
+Three remediation paths:
+
+1. **(a) Drop ctx > 64k from Phase C.** Validate at 64k only;
+   admit 1M needs the real C11 storage integration first; defer
+   the headline 1M number to a follow-up. Cheapest, smallest scope
+   reduction. Phase D figures degrade to "1M is future work".
+2. **(b) Implement true NF4 storage.** Subclass DynamicCache or
+   write an external NF4-packed store. ~1-2 weeks engineering;
+   needs careful unit tests + multi-rank gloo tests to land safely.
+   Then run Phase C at all four contexts. Hits the original 1M
+   target.
+3. **(c) Move to 80 GB SXM4 hardware** (`gpu_8x_a100_80gb_sxm4`,
+   $22.32/hr). bf16 1M KV at 68 GB / rank fits with headroom on
+   80 GB. No code change needed. But Lambda's 80 GB SKU has been
+   at zero capacity throughout the May 2026 polling window —
+   capacity availability is the blocker.
+
+Recommendation written by external code reviewer (synthesized):
+"For the M4 1M target, real NF4 storage (b) is the proper path;
+(a) is a defensible scope reduction if the timeline doesn't permit
+1-2 weeks of engineering."
+
 
 
 **Hardware decision 2026-05-06**: stay on Lambda ($2000 credit) using
