@@ -425,16 +425,20 @@ for the bundled-session checklist.
 
 #### Phase C blockers (audit log)
 
-External code review on 2026-05-10 surfaced 5 high-risk findings.
-Current state:
+External code review on 2026-05-10 surfaced 5 high-risk findings (1st
+pass) plus 4 more on a follow-up pass. All 9 are now fixed.
 
 | # | Finding | Status | Fix commit |
 |---|---|---|---|
-| 1 | `kv_quant=True` is round-trip only, not storage NF4 → 1M premise breaks | ✅ fixed (option (b) — true NF4 storage via NF4DynamicCache) | `2585822` + `c0c1205` |
-| 2 | Double `torchrun` on orchestrator stages (outer + inner) | ✅ fixed | `b993f67` |
-| 3 | `build_run_configs` `A*` prefix filter drops M4 YAMLs | ✅ fixed | `b993f67` |
-| 4 | Baseline stage uses `bash` + wrong flag name | ✅ fixed | `b993f67` |
-| 5 | `rng_state` field never populated → resume divergence under temp>0 | ✅ fixed | `b993f67` |
+| 1.1 | `kv_quant=True` is round-trip only, not storage NF4 → 1M premise breaks | ✅ fixed (option (b) — true NF4 storage via NF4DynamicCache) | `2585822` + `c0c1205` |
+| 1.2 | Double `torchrun` on orchestrator stages (outer + inner) | ✅ fixed | `b993f67` |
+| 1.3 | `build_run_configs` `A*` prefix filter drops M4 YAMLs | ✅ fixed | `b993f67` |
+| 1.4 | Baseline stage uses `bash` + wrong flag name | ✅ fixed | `b993f67` |
+| 1.5 | `rng_state` field never populated → resume divergence under temp>0 | ✅ fixed | `b993f67` |
+| 2.1 | NF4DynamicCache must subclass `transformers.cache_utils.Cache` (else `LlamaModel.forward` swaps it for bf16 DynamicCache) | ✅ fixed | `4b69f5d` |
+| 2.2 | P3.3 `for ctx in ...` outer loop runs SMOKE group 4× (~$50-80 wasted) | ✅ fixed | `4b69f5d` |
+| 2.3 | RNG fix only saved CPU; `torch.multinomial` on CUDA needs `cuda_rng_state` per device | ✅ fixed | `4b69f5d` |
+| 2.4 | Baselines only at 128k+1M, no seeds, shard-tps underreports by world_size× | ✅ fixed | `4b69f5d` |
 
 **Finding #1 status (RESOLVED 2026-05-10, option (b) shipped):**
 `NF4DynamicCache` (commit `2585822`) provides true NF4 storage; the
