@@ -75,19 +75,26 @@ class NF4DynamicCache(_HFCache):
         block_size: int = 64,
         dtype: torch.dtype = torch.bfloat16,
     ):
-        # We deliberately skip super().__init__() because the Cache base
+        # We can't call super().__init__() unconditionally — Cache base
         # class signature is INCOMPATIBLE between transformers versions:
-        #   * 4.44.2 (pod):  Cache.__init__() takes no args
+        #   * 4.44.2 (pod):  Cache.__init__() takes no args; Cache extends nn.Module
         #   * 5.5.4 (local): Cache.__init__(layers=None,
         #                                   layer_class_to_replicate=None,
-        #                                   offloading=False,
-        #                                   offload_only_non_sliding=True)
-        #     and raises ValueError if both `layers` and
-        #     `layer_class_to_replicate` are None.
-        # We manage our own per-layer NF4 state and don't need the
-        # CacheLayer bookkeeping the 5.5.4 base class wants. Subclassing
-        # for `isinstance(cache, Cache) -> True` is what matters; the
-        # constructor chain isn't needed for that.
+        #                                   ...) and raises ValueError if
+        #                                   both layers and
+        #                                   layer_class_to_replicate are None.
+        #                                   Cache no longer extends nn.Module.
+        #
+        # On 4.44.2 specifically, Cache extends nn.Module, so without
+        # nn.Module.__init__ being called the subclass instance lacks
+        # _parameters / _modules / _buffers dicts. Anything that calls
+        # cache.to(device), .train(), or recursively walks .modules()
+        # would crash. We don't currently do any of those on our hot
+        # path, but explicitly run nn.Module.__init__ when applicable
+        # so future HF code that does won't blow up. (Fix for blocker
+        # #5 from 2026-05-10 third-pass review.)
+        if isinstance(self, torch.nn.Module):
+            torch.nn.Module.__init__(self)
         self.block_size = block_size
         self.dtype = dtype
         self._k_codes: List[List[torch.Tensor]] = []

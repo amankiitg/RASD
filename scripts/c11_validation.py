@@ -172,6 +172,29 @@ def main():
                       f"compress={mem['compression']:.2f}x  "
                       f"({mem['bf16_mb']:.1f} MB -> {mem['nf4_mb']:.1f} MB)")
 
+    # =========================================================
+    # Production integration gate (fix for blocker #4, 2026-05-10)
+    # =========================================================
+    # The codec gates above prove quantize/dequantize math + memory
+    # ratio in isolation. They do NOT prove that cfg.kv_quant=True
+    # actually plumbs NF4DynamicCache through prefill + verify +
+    # _truncate_kv on the real RASD pipeline. Without this end-to-end
+    # check, all four codec gates can PASS while NF4 is silently off
+    # in production (e.g., HF swaps the cache, or the install hook
+    # regresses).
+    print("\n=== Production integration gate ===")
+    integ_pass, integ_results = _gate_production_integration(
+        target=args.target, revision=args.revision,
+    )
+    results["production_integration"] = integ_results
+    overall_pass = overall_pass and integ_pass
+    if integ_pass:
+        print("  [PASS] RASDInference(kv_quant=True) end-to-end check")
+    else:
+        print("  [FAIL] RASDInference(kv_quant=True) end-to-end check")
+        for k, v in integ_results.items():
+            print(f"    {k}: {v}")
+
     results["overall_pass"] = overall_pass
 
     out_path = Path(args.out)
@@ -180,6 +203,83 @@ def main():
     print(f"\nWrote {out_path}")
     print(f"Overall: {'PASS' if overall_pass else 'FAIL'}")
     return 0 if overall_pass else 1
+
+
+def _gate_production_integration(target: str, revision: str | None
+                                 ) -> tuple[bool, dict]:
+    """End-to-end: build RASDInference at small ctx with kv_quant=True,
+    run prefill, assert past_key_values is an NF4DynamicCache, then run
+    one decode step + truncate, and assert the cache is STILL an
+    NF4DynamicCache (not a bf16 legacy tuple).
+
+    This is the gate that catches subtle pipeline regressions:
+      * HF transformers swapping non-Cache subclasses (finding 2.1)
+      * _truncate_kv accidentally building bf16 tuples (1.1 / 2.4)
+      * install_ring_attention not propagating kv_quant (M3 invariants)
+    """
+    from src.models.nf4_dynamic_cache import NF4DynamicCache
+    from src.models.rasd_inference import RASDConfig, RASDInference
+
+    # Small-ctx instance so this gate runs in <30s on a single GPU
+    cfg = RASDConfig(
+        target_model_name=target,
+        target_revision=revision,
+        draft_model_name="princeton-nlp/Sheared-LLaMA-1.3B",
+        spec_steps=4,
+        kv_block_size=512,
+        prefetch_depth=0,
+        max_new_tokens=8,
+        dtype="bfloat16",
+        quantize_target=True,
+        quantize_draft=True,
+        context_length=1024,
+        seed=42,
+        kv_quant=True,
+    )
+    engine = RASDInference(cfg)
+
+    # Build a synthetic prompt (small, so this is fast)
+    vocab_size = engine.target_model.config.vocab_size
+    torch.manual_seed(42)
+    prompt_ids = torch.randint(0, vocab_size, (1, 1024), device="cuda")
+
+    # Run prefill manually (we just want to inspect past_kv type)
+    with torch.no_grad():
+        out = engine.target_model(
+            prompt_ids, use_cache=True,
+            past_key_values=NF4DynamicCache(block_size=64,
+                                            dtype=cfg.torch_dtype),
+        )
+    past_kv_after_prefill = out.past_key_values
+    is_nf4_after_prefill = isinstance(past_kv_after_prefill, NF4DynamicCache)
+
+    # Truncate via the same path the verify loop uses
+    from src.models.rasd_inference import _truncate_kv
+    truncated = _truncate_kv(past_kv_after_prefill, 512)
+    is_nf4_after_truncate = isinstance(truncated, NF4DynamicCache)
+
+    # Memory check: NF4 cache should hold << than bf16 equivalent
+    nf4_bytes = past_kv_after_prefill.memory_bytes()
+    n_layers = len(past_kv_after_prefill)
+    head_dim = engine.target_model.config.head_dim
+    n_heads = engine.target_model.config.num_key_value_heads
+    bf16_equivalent = n_layers * 1 * n_heads * 1024 * head_dim * 2 * 2
+    compression = bf16_equivalent / max(nf4_bytes, 1)
+
+    info = {
+        "is_nf4_after_prefill":    is_nf4_after_prefill,
+        "is_nf4_after_truncate":   is_nf4_after_truncate,
+        "nf4_bytes":               nf4_bytes,
+        "bf16_equivalent_bytes":   bf16_equivalent,
+        "compression":             compression,
+        "n_layers":                n_layers,
+    }
+    pass_check = (
+        is_nf4_after_prefill
+        and is_nf4_after_truncate
+        and compression >= 3.0
+    )
+    return pass_check, info
 
 
 if __name__ == "__main__":

@@ -435,6 +435,99 @@ class TestThirdPassBlocker1NF4CheckpointPath:
         )
 
 
+class TestThirdPassBlocker5ModuleInit:
+    """3rd-pass review: skipping super().__init__() in NF4DynamicCache
+    works on local transformers 5.5.4 (Cache → object), but on the pod
+    (transformers 4.44.2) Cache extends nn.Module — without nn.Module
+    init, _parameters / _modules / _buffers dicts are missing, and any
+    code that does cache.to(device) / cache.train() / .modules() crashes.
+
+    Fix: explicitly call torch.nn.Module.__init__(self) when applicable.
+    Source-inspection only since local Cache no longer extends
+    nn.Module — runtime verification is a pod-side smoke."""
+
+    def test_explicit_nn_module_init_on_construction(self):
+        """When the base class is an nn.Module, NF4DynamicCache.__init__
+        must run nn.Module.__init__ — otherwise _parameters dict missing."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        import inspect
+        src = inspect.getsource(NF4DynamicCache.__init__)
+        assert re.search(
+            r"isinstance\(self,\s*torch\.nn\.Module\)[\s\S]{0,200}"
+            r"torch\.nn\.Module\.__init__\(self\)",
+            src,
+        ), (
+            "3rd-pass blocker 5 regression: NF4DynamicCache.__init__ "
+            "doesn't run nn.Module.__init__ when applicable; on the "
+            "pod (transformers 4.44.2 Cache extends nn.Module) the "
+            "subclass would lack _parameters / _modules dicts and "
+            "cache.to(device) / .modules() would crash"
+        )
+
+
+class TestThirdPassBlocker4ProductionGate:
+    """3rd-pass review: c11_validation.py captured past_kv from a vanilla
+    model forward and manually quantized — proved codec but did NOT
+    exercise the production NF4DynamicCache pipeline. We could pass C11
+    and have NF4 silently disabled in real RASDInference.
+
+    Fix adds a _gate_production_integration() that builds RASDInference
+    with kv_quant=True, asserts past_kv is NF4DynamicCache after prefill
+    AND after _truncate_kv, plus a memory-ratio check."""
+
+    def test_c11_validation_invokes_rasd_inference(self):
+        """The script must actually instantiate RASDInference with
+        kv_quant=True somewhere — not just call codec helpers."""
+        c11 = (REPO_ROOT / "scripts" / "c11_validation.py").read_text()
+        assert "RASDInference" in c11, (
+            "3rd-pass blocker 4 regression: c11_validation.py doesn't "
+            "instantiate RASDInference; codec gate is uninformative "
+            "about real pipeline integration"
+        )
+        assert "kv_quant=True" in c11, (
+            "3rd-pass blocker 4 regression: c11_validation.py doesn't "
+            "set kv_quant=True; production path never exercised"
+        )
+
+    def test_c11_validation_checks_isinstance_nf4_cache(self):
+        """The new gate must assert isinstance(past_kv, NF4DynamicCache)
+        — that's the failure mode HF could hide (cache swap)."""
+        c11 = (REPO_ROOT / "scripts" / "c11_validation.py").read_text()
+        assert re.search(
+            r"isinstance\(\s*past_kv_after_prefill\s*,\s*NF4DynamicCache\s*\)",
+            c11,
+        ), (
+            "3rd-pass blocker 4 regression: production gate doesn't "
+            "verify past_kv is NF4DynamicCache after prefill; subtle "
+            "cache-swap bugs would slip through"
+        )
+
+    def test_c11_validation_checks_isinstance_after_truncate(self):
+        """_truncate_kv must preserve cache type. The gate must verify."""
+        c11 = (REPO_ROOT / "scripts" / "c11_validation.py").read_text()
+        assert re.search(
+            r"isinstance\(\s*truncated\s*,\s*NF4DynamicCache\s*\)",
+            c11,
+        ), (
+            "3rd-pass blocker 4 regression: gate doesn't verify "
+            "_truncate_kv preserves NF4 cache type"
+        )
+
+    def test_c11_validation_overall_pass_includes_integration(self):
+        """The overall_pass flag must AND in the production gate result."""
+        c11 = (REPO_ROOT / "scripts" / "c11_validation.py").read_text()
+        # The codec gates already AND into overall_pass. The new gate
+        # must do the same — otherwise a failing integration check
+        # wouldn't fail the script.
+        assert re.search(
+            r"overall_pass\s*=\s*overall_pass\s+and\s+integ_pass",
+            c11,
+        ), (
+            "3rd-pass blocker 4 regression: production gate result not "
+            "AND'd into overall_pass; gate failure wouldn't fail script"
+        )
+
+
 class TestThirdPassBlocker3Timeout:
     """3rd-pass review: 3600s hard timeout will SIGTERM 1M cells.
     The smoke YAML's own comment says ctx=1M ~120 min. We need a
@@ -554,6 +647,75 @@ class TestThirdPassBlocker2CheckpointPlumbing:
                     f"3rd-pass blocker 2 regression: {yaml_path} "
                     f"{level_id_substring} has checkpoint_every={ce}"
                 )
+
+
+class TestThirdPassBlocker6BaselineMetricSemantics:
+    """3rd-pass review: baseline benchmark_module reports
+    `throughput_tps = seq_len / forward_time` for a single attention
+    forward pass. RASDInference.generate_text reports
+    `throughput_tps = generated_tokens / total_time` for a full
+    speculative-decoding loop. Different units. Same column name made
+    Phase D Figure 1 trivially overlay-able into a misleading chart.
+
+    Fix: rename baseline's column from throughput_tps → forward_tps.
+    Adds explicit caption note in M4_PLAN.md F1 spec."""
+
+    def test_baseline_csv_uses_forward_tps_not_throughput_tps(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent /
+               "scripts" / "benchmark_baselines.py").read_text()
+        # CSV header must NOT include throughput_tps
+        m = re.search(r'CSV_HEADER\s*=\s*\[(.*?)\]', src, re.DOTALL)
+        assert m is not None
+        header = m.group(1)
+        assert "throughput_tps" not in header, (
+            "3rd-pass blocker 6 regression: baseline CSV still uses "
+            "throughput_tps; Phase D would silently overlay with RASD's "
+            "different-meaning column"
+        )
+        assert "forward_tps" in header, (
+            "3rd-pass blocker 6 regression: baseline CSV missing "
+            "forward_tps column"
+        )
+
+    def test_benchmark_module_returns_forward_tps_key(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent /
+               "scripts" / "benchmark_baselines.py").read_text()
+        # benchmark_module's return dict
+        assert re.search(r'"forward_tps":\s*measured_len\s*/\s*avg_s', src), (
+            "3rd-pass blocker 6 regression: benchmark_module returns "
+            "wrong key (or wrong tps math)"
+        )
+
+    def test_no_throughput_tps_references_in_baseline_script(self):
+        """The script's own print statements + docstrings must use
+        forward_tps consistently. A stray throughput_tps key reference
+        would crash at runtime."""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent /
+               "scripts" / "benchmark_baselines.py").read_text()
+        # Allow throughput_tps in comments/docs that explicitly contrast
+        # with RASD's metric (the caption note). Forbid it as a dict key
+        # access or column reference.
+        assert "stats['throughput_tps']" not in src
+        assert 'stats["throughput_tps"]' not in src
+
+    def test_m4_plan_documents_metric_difference(self):
+        """M4_PLAN's Figure 1 spec must explicitly call out the metric
+        difference so Phase D figure code doesn't silently overlay."""
+        from pathlib import Path
+        plan = (Path(__file__).resolve().parent.parent / "M4_PLAN.md").read_text()
+        # Look for the F1 entry with the caveat language
+        f1_pattern = re.search(
+            r"F1\.[\s\S]{0,2000}?forward_tps[\s\S]{0,400}",
+            plan,
+        )
+        assert f1_pattern is not None, (
+            "3rd-pass blocker 6 regression: M4_PLAN Figure 1 spec "
+            "doesn't document the forward_tps vs throughput_tps "
+            "distinction; Phase D figure code may overlay misleadingly"
+        )
 
 
 class TestSecondPassFix4BaselinesCoverage:

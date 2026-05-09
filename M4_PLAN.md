@@ -523,6 +523,15 @@ Figure list is mentor's 5 figures verbatim (alignment matrix at top of file).
 F1. **Figure 1 — Throughput vs context length** (line plot, RASD vs Ring
     vs Sliding, contexts ∈ {128k, 256k, 512k, 1M}, 95% CI bands from
     bootstrap over 3 seeds). Source: Phase 3.5 CSV.
+    **Metric caveat (blocker #6, 2026-05-10):** RASD's `throughput_tps`
+    is GENERATION tokens / total wall time (prefill + decode);
+    baselines' `forward_tps` is FORWARD-PASS tokens / forward time
+    (no decode loop, no KV cache amortization). Direct y-axis overlay
+    is misleading. Caption MUST clarify: "RASD: speculative-decoding
+    generation throughput; Ring/Sliding: attention-forward throughput
+    on the same context length. Higher is better but units differ."
+    Better long-term: wrap baselines in a decode loop for apples-to-
+    apples; queued as future work.
 F2. **Figure 2 — Heatmap of throughput × draft_size × spec_steps**
     summarizing the M3 ablation. Source: `ablations_r65.csv` (existing).
     *Note: replaces the earlier "ablation bars" plan; rewrite required.*

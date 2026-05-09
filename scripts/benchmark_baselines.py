@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Benchmark RingAttention and SlidingWindowAttention at different context lengths.
 
-Produces a CSV at `results/baselines/baselines.csv` with per-run timing, throughput,
-and latency metrics required by Milestone 2.
+IMPORTANT — THIS METRIC IS NOT GENERATION THROUGHPUT (Phase C blocker
+#6, 2026-05-10). The CSV column is `forward_tps` (forward-pass tokens
+per second from a single attention forward), NOT `throughput_tps` (the
+column name in run_experiment.py results, which is RASD's generation
+tokens per second from a full speculative decoding loop). Different
+units. Phase D Figure 1 must NOT overlay these columns on the same
+y-axis without an explicit caption note.
+
+Produces a CSV at `results/baselines/baselines.csv` with per-run timing,
+forward-pass throughput, and latency metrics required by Milestone 2.
 
 Usage (single GPU / CPU):
     python scripts/benchmark_baselines.py
@@ -11,8 +19,8 @@ Usage (multi-GPU via torchrun, e.g. 8 GPUs):
     torchrun --nproc_per_node=8 scripts/benchmark_baselines.py --distributed
 
 Columns written to CSV:
-    timestamp, baseline, context_length, device, world_size,
-    time_s, throughput_tps, latency_ms
+    timestamp, baseline, context_length, seed, device, world_size,
+    time_s, forward_tps, latency_ms
 """
 import argparse
 import csv
@@ -57,7 +65,11 @@ def benchmark_module(
     — this matches RASD's metric semantics in run_experiment.py and
     makes the baselines column comparable for Figure 1.
 
-    Returns a dict with keys: time_s, throughput_tps, latency_ms
+    Returns a dict with keys: time_s, forward_tps, latency_ms.
+
+    NOTE: `forward_tps` is forward-pass tokens/sec, NOT generation tps.
+    Different from RASDInference.generate_text's `throughput_tps`.
+    See module docstring.
     """
     mod = mod.to(device).eval()
     x = torch.randn(1, seq_len, dim, device=device)
@@ -86,7 +98,7 @@ def benchmark_module(
     measured_len = total_len if total_len is not None else seq_len
     return {
         "time_s": avg_s,
-        "throughput_tps": measured_len / avg_s,
+        "forward_tps": measured_len / avg_s,
         "latency_ms": (avg_s / measured_len) * 1_000,
     }
 
@@ -103,7 +115,7 @@ CSV_HEADER = [
     "device",
     "world_size",
     "time_s",
-    "throughput_tps",
+    "forward_tps",
     "latency_ms",
 ]
 
@@ -209,7 +221,7 @@ def main():
                 except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
                     if rank == 0:
                         print(f"    FAILED: {exc}", flush=True)
-                    stats = {"time_s": -1.0, "throughput_tps": -1.0, "latency_ms": -1.0}
+                    stats = {"time_s": -1.0, "forward_tps": -1.0, "latency_ms": -1.0}
                 finally:
                     del mod
                     if device.type == "cuda":
@@ -228,7 +240,7 @@ def main():
                     write_row(writer, csv_fh, row)
                     print(
                         f"    time={stats['time_s']:.3f}s  "
-                        f"throughput={stats['throughput_tps']:.1f} tok/s  "
+                        f"forward_tps={stats['forward_tps']:.1f} tok/s  "
                         f"latency={stats['latency_ms']:.4f} ms/tok",
                         flush=True,
                     )
