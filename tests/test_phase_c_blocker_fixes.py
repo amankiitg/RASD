@@ -388,6 +388,53 @@ class TestSecondPassFix3CudaRngState:
         assert torch.equal(loaded.cuda_rng_state, ckpt.cuda_rng_state)
 
 
+class TestThirdPassBlocker1NF4CheckpointPath:
+    """3rd-pass review: _maybe_save_checkpoint did
+        past_kv = tuple(tuple(t.detach().cpu() for t in layer) for layer in past_kv)
+    which iterates NF4DynamicCache and dequantizes the FULL cache to
+    bf16 before .cpu(). At ctx=1M × W=8 that's ~64 GB / rank — OOMs on
+    save AND loses NF4 storage permanently after first reload.
+
+    Fix: detect NF4DynamicCache via to_serializable() / from_serializable()
+    so the on-disk form is NF4-native (~3.55x smaller than bf16) and
+    the resume path reconstructs as NF4DynamicCache."""
+
+    def test_maybe_save_uses_to_serializable_for_nf4(self):
+        """The save site must dispatch to to_serializable() when present
+        instead of unconditionally iterating + dequantizing."""
+        rinf = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
+        # The dispatch lives in _maybe_save_checkpoint. Look for the
+        # hasattr(...) check that gates the NF4-native branch.
+        assert re.search(
+            r'hasattr\(past_kv,\s*[\"\']to_serializable[\"\']\)[\s\S]{0,300}'
+            r'past_kv\.to_serializable\(\)',
+            rinf,
+        ), (
+            "3rd-pass blocker 1 regression: _maybe_save_checkpoint does "
+            "not call past_kv.to_serializable() — would dequantize NF4 "
+            "cache to bf16 at save time, OOM at 1M, lose NF4 on resume"
+        )
+
+    def test_resume_branch_reconstructs_nf4_cache(self):
+        """Resume must call NF4DynamicCache.from_serializable when the
+        saved past_kv is the NF4 dict form."""
+        rinf = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
+        assert "from_serializable(ckpt.past_kv)" in rinf, (
+            "3rd-pass blocker 1 regression: resume branch does not "
+            "reconstruct NF4DynamicCache from saved form — would stay "
+            "bf16 forever after resume"
+        )
+
+    def test_resume_dispatches_via_is_nf4_serialized(self):
+        """The reconstruction must be guarded by is_nf4_serialized(...)
+        so legacy bf16 tuples (kv_quant=False) still load correctly."""
+        rinf = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
+        assert "is_nf4_serialized" in rinf, (
+            "3rd-pass blocker 1 regression: resume not dispatching via "
+            "is_nf4_serialized; legacy bf16 checkpoints would crash"
+        )
+
+
 class TestThirdPassBlocker3Timeout:
     """3rd-pass review: 3600s hard timeout will SIGTERM 1M cells.
     The smoke YAML's own comment says ctx=1M ~120 min. We need a

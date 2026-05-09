@@ -283,6 +283,79 @@ class NF4DynamicCache(_HFCache):
         self._v_scales[layer_idx] = new_vs
 
     # ------------------------------------------------------------------
+    # Serialization for checkpointing (M4 C6 + finding #1, 2026-05-10)
+    #
+    # CRITICAL: do NOT dequantize during checkpoint save. The naive code
+    # path `for layer in cache: ...` calls __iter__ which dequantizes
+    # the entire cache to bf16 — at ctx=1M × W=8 that's ~64 GB / rank
+    # materialized on the GPU before .cpu() copies it off, and the
+    # checkpoint file balloons to bf16 size, defeating NF4's whole
+    # ~3.55x compression story. Worse, the resumed legacy bf16 tuple
+    # would force the next round into the bf16 cache path, losing NF4
+    # storage permanently after first reload. Use these two methods
+    # for save/load instead.
+    # ------------------------------------------------------------------
+
+    _SERIALIZED_VERSION_KEY = "_nf4_dynamic_cache_v1"
+
+    def to_serializable(self) -> dict:
+        """Return a dict-of-CPU-tensors that round-trips through torch.save
+        WITHOUT dequantizing. The on-disk size is the same as the
+        in-memory NF4 size (~3.55x smaller than bf16 storage at
+        block_size=64). Reconstruct via NF4DynamicCache.from_serializable()."""
+        return {
+            self._SERIALIZED_VERSION_KEY: True,
+            "block_size": int(self.block_size),
+            "dtype": _dtype_name(self.dtype),
+            "k_codes": [
+                [c.detach().cpu() for c in layer] for layer in self._k_codes
+            ],
+            "k_scales": [
+                [s.detach().cpu() for s in layer] for layer in self._k_scales
+            ],
+            "v_codes": [
+                [c.detach().cpu() for c in layer] for layer in self._v_codes
+            ],
+            "v_scales": [
+                [s.detach().cpu() for s in layer] for layer in self._v_scales
+            ],
+        }
+
+    @classmethod
+    def from_serializable(cls, d: dict) -> "NF4DynamicCache":
+        """Reconstruct an NF4DynamicCache from `to_serializable()` output.
+
+        Tensors come back on CPU; the caller is expected to move them
+        to the model's device via `.move_tensors_to(device)` if needed.
+        """
+        if not is_nf4_serialized(d):
+            raise ValueError(
+                "from_serializable expected a dict produced by "
+                "NF4DynamicCache.to_serializable()"
+            )
+        cache = cls(
+            block_size=d.get("block_size", 64),
+            dtype=_dtype_from_name(d.get("dtype", "bfloat16")),
+        )
+        cache._k_codes  = [list(layer) for layer in d["k_codes"]]
+        cache._k_scales = [list(layer) for layer in d["k_scales"]]
+        cache._v_codes  = [list(layer) for layer in d["v_codes"]]
+        cache._v_scales = [list(layer) for layer in d["v_scales"]]
+        return cache
+
+    def move_tensors_to(self, device) -> "NF4DynamicCache":
+        """Move all stored NF4 tensors to `device`. In-place; returns self.
+        Mirrors GenerationCheckpoint.move_tensors_to for cache restore
+        on resume."""
+        device = torch.device(device)
+        for li in range(len(self._k_codes)):
+            self._k_codes[li]  = [t.to(device) for t in self._k_codes[li]]
+            self._k_scales[li] = [t.to(device) for t in self._k_scales[li]]
+            self._v_codes[li]  = [t.to(device) for t in self._v_codes[li]]
+            self._v_scales[li] = [t.to(device) for t in self._v_scales[li]]
+        return self
+
+    # ------------------------------------------------------------------
     # Memory accounting (informational; used by tests)
     # ------------------------------------------------------------------
 
@@ -302,6 +375,36 @@ class NF4DynamicCache(_HFCache):
             for vs_ in vs_list:
                 total += vs_.numel() * 4
         return total
+
+
+# ---------------------------------------------------------------------------
+# Serialization helpers (module-level so callers can sniff payloads)
+# ---------------------------------------------------------------------------
+
+_DTYPE_NAMES = {
+    torch.bfloat16: "bfloat16",
+    torch.float16:  "float16",
+    torch.float32:  "float32",
+    torch.float64:  "float64",
+}
+
+
+def _dtype_name(dtype: torch.dtype) -> str:
+    return _DTYPE_NAMES.get(dtype, str(dtype).rsplit(".", 1)[-1])
+
+
+def _dtype_from_name(name: str) -> torch.dtype:
+    return getattr(torch, name, torch.bfloat16)
+
+
+def is_nf4_serialized(payload) -> bool:
+    """Return True if `payload` is a dict produced by
+    NF4DynamicCache.to_serializable(). Used by GenerationCheckpoint
+    save/load to detect the NF4-native form without dequantizing."""
+    return (
+        isinstance(payload, dict)
+        and payload.get(NF4DynamicCache._SERIALIZED_VERSION_KEY) is True
+    )
 
 
 # ---------------------------------------------------------------------------

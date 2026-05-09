@@ -308,6 +308,140 @@ class TestMemoryAccounting:
 # Block-size + dtype variations
 # ---------------------------------------------------------------------------
 
+class TestSerialization:
+    """to_serializable / from_serializable / is_nf4_serialized — the
+    NF4-native checkpoint path. Critical because the legacy code path
+    (`for layer in cache: ...`) would dequantize the cache during
+    save and produce a bf16 checkpoint that loses NF4 storage on
+    resume. Fix for high-risk finding #1, 2026-05-10 third-pass review."""
+
+    def test_to_serializable_preserves_nf4_storage_size(self):
+        """The serialized payload must NOT dequantize. Total bytes
+        should match in-memory NF4 size, not bf16 size."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=64)
+        # 32 layers × 64 positions per layer × Llama-2-7B head shape
+        for layer in range(32):
+            cache.update(*_kv(B=1, H=32, S=64, D=128), layer_idx=layer)
+
+        nf4_in_memory_bytes = cache.memory_bytes()
+        bf16_equivalent_bytes = (
+            32     # layers
+            * 1    # B
+            * 32   # H
+            * 64   # S
+            * 128  # D
+            * 2    # bytes per bf16 element
+            * 2    # K and V
+        )
+        # Compute serialized bytes by adding up tensor sizes
+        ser = cache.to_serializable()
+        serialized_bytes = 0
+        for key in ("k_codes", "k_scales", "v_codes", "v_scales"):
+            for layer_chunks in ser[key]:
+                for tensor in layer_chunks:
+                    serialized_bytes += tensor.element_size() * tensor.numel()
+
+        # Serialized must be within ~5% of in-memory NF4 size
+        assert 0.95 * nf4_in_memory_bytes <= serialized_bytes <= 1.05 * nf4_in_memory_bytes
+        # And FAR less than the bf16 equivalent
+        ratio = bf16_equivalent_bytes / serialized_bytes
+        assert ratio > 3.0, (
+            f"to_serializable not preserving NF4 compression: "
+            f"{ratio:.2f}x vs bf16 (expected >3.0x)"
+        )
+
+    def test_to_serializable_marker_present(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache, is_nf4_serialized
+        cache = NF4DynamicCache()
+        cache.update(*_kv(), layer_idx=0)
+        ser = cache.to_serializable()
+        assert is_nf4_serialized(ser), (
+            "is_nf4_serialized must detect to_serializable() output "
+            "so checkpoint loaders can dispatch to from_serializable"
+        )
+
+    def test_is_nf4_serialized_false_on_legacy_tuple(self):
+        from src.models.nf4_dynamic_cache import is_nf4_serialized
+        legacy_tuple = ((torch.zeros(1, 4, 8, 128).bfloat16(),
+                         torch.zeros(1, 4, 8, 128).bfloat16()),)
+        assert not is_nf4_serialized(legacy_tuple)
+        assert not is_nf4_serialized(None)
+        assert not is_nf4_serialized({"foo": "bar"})
+
+    def test_round_trip_preserves_dequantized_values(self):
+        """Save → load must produce a cache that dequantizes to the same
+        values as the original — no extra quantization noise on the
+        round trip (bytes are preserved verbatim)."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache()
+        for layer in range(4):
+            cache.update(*_kv(seed=layer), layer_idx=layer)
+
+        before_layers = [cache._dequantize_layer(i) for i in range(4)]
+        ser = cache.to_serializable()
+        restored = NF4DynamicCache.from_serializable(ser)
+        after_layers = [restored._dequantize_layer(i) for i in range(4)]
+
+        for (k_b, v_b), (k_a, v_a) in zip(before_layers, after_layers):
+            assert torch.equal(k_b, k_a)
+            assert torch.equal(v_b, v_a)
+
+    def test_round_trip_preserves_block_size_and_dtype(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, dtype=torch.float16)
+        cache.update(
+            torch.randn(1, 4, 8, 128, dtype=torch.float16),
+            torch.randn(1, 4, 8, 128, dtype=torch.float16),
+            layer_idx=0,
+        )
+        restored = NF4DynamicCache.from_serializable(cache.to_serializable())
+        assert restored.block_size == 32
+        assert restored.dtype == torch.float16
+
+    def test_round_trip_through_torch_save_load(self, tmp_path):
+        """End-to-end: torch.save the serialized form, torch.load it,
+        reconstruct, and verify dequantized values match."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache()
+        cache.update(*_kv(B=1, H=8, S=16, D=128), layer_idx=0)
+        cache.update(*_kv(B=1, H=8, S=16, D=128, seed=1), layer_idx=1)
+
+        path = tmp_path / "ckpt.pt"
+        torch.save(cache.to_serializable(), path)
+        loaded = torch.load(path, weights_only=False)
+        restored = NF4DynamicCache.from_serializable(loaded)
+
+        for i in range(2):
+            k_orig, v_orig = cache._dequantize_layer(i)
+            k_back, v_back = restored._dequantize_layer(i)
+            assert torch.equal(k_orig, k_back)
+            assert torch.equal(v_orig, v_back)
+
+    def test_from_serializable_rejects_non_nf4_payload(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        with pytest.raises(ValueError, match="from_serializable"):
+            NF4DynamicCache.from_serializable({"random": "dict"})
+        with pytest.raises(ValueError, match="from_serializable"):
+            NF4DynamicCache.from_serializable(((torch.zeros(1, 4, 8, 128),),))
+
+    def test_no_dequantization_during_to_serializable(self):
+        """Spot-check: to_serializable must not invoke __iter__ /
+        _dequantize_layer. We verify by reading the source — it must
+        access self._k_codes / self._v_codes / etc. directly, not via
+        the read API."""
+        import inspect
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        src = inspect.getsource(NF4DynamicCache.to_serializable)
+        assert "_dequantize_layer" not in src, (
+            "to_serializable invoking _dequantize_layer defeats the "
+            "memory-saving guarantee — the whole point is to skip "
+            "dequant during save"
+        )
+        assert "key_cache" not in src
+        assert "value_cache" not in src
+
+
 class TestBlockSizes:
     @pytest.mark.parametrize("block_size", [32, 64, 128])
     def test_round_trip_at_various_block_sizes(self, block_size):

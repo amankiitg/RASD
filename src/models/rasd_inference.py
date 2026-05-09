@@ -571,6 +571,28 @@ class RASDInference:
         )
         if not should_save_this_round(cfg.checkpoint_every, n_rounds):
             return
+        # CRITICAL: when past_kv is an NF4DynamicCache, serialize it
+        # NF4-native via to_serializable(). Iterating it the legacy way
+        # (`for layer in past_kv`) calls __iter__ → _dequantize_layer,
+        # which materializes the FULL bf16 cache on the GPU before
+        # .cpu() — at ctx=1M × W=8 that's ~64 GB / rank, OOMs. Plus the
+        # checkpoint file balloons to bf16 size (~3.55x larger than NF4
+        # storage), and the resumed legacy tuple loses NF4 storage
+        # permanently. (Fix for high-risk finding #1, 2026-05-10
+        # third-pass review.)
+        if hasattr(past_kv, "to_serializable"):
+            serialized_past_kv = past_kv.to_serializable()
+        else:
+            serialized_past_kv = tuple(
+                tuple(t.detach().cpu() for t in layer) for layer in past_kv
+            )
+        if hasattr(draft_past_kv, "to_serializable"):
+            serialized_draft_past_kv = draft_past_kv.to_serializable()
+        else:
+            serialized_draft_past_kv = tuple(
+                tuple(t.detach().cpu() for t in layer) for layer in draft_past_kv
+            )
+
         ckpt = GenerationCheckpoint(
             n_rounds=n_rounds,
             global_seqlen=global_seqlen,
@@ -579,12 +601,8 @@ class RASDInference:
             prefill_len=prefill_len,
             cur_token=cur_token.detach().cpu(),
             generated=[t.detach().cpu() for t in generated],
-            past_kv=tuple(
-                tuple(t.detach().cpu() for t in layer) for layer in past_kv
-            ),
-            draft_past_kv=tuple(
-                tuple(t.detach().cpu() for t in layer) for layer in draft_past_kv
-            ),
+            past_kv=serialized_past_kv,
+            draft_past_kv=serialized_draft_past_kv,
             per_token_trace=list(per_token_trace),
             # Save BOTH CPU and CUDA RNG state. Under temperature > 0
             # (the M3 default), _sample (torch.multinomial on CUDA
@@ -770,8 +788,28 @@ class RASDInference:
             # ============================================================
             # C6 Resume — restore state, skip prefill, jump into the loop
             # ============================================================
-            past_kv          = ckpt.past_kv
-            draft_past_kv    = ckpt.draft_past_kv
+            # If past_kv was serialized in NF4-native form (kv_quant=True
+            # at save time), reconstruct an NF4DynamicCache; otherwise
+            # the legacy bf16 tuple path is fine. (Fix for high-risk
+            # finding #1 from 2026-05-10 third-pass review — without
+            # NF4-native restore, NF4 storage would be permanently lost
+            # after the first reload.)
+            from src.models.nf4_dynamic_cache import (
+                NF4DynamicCache as _NF4DC,
+                is_nf4_serialized as _is_nf4,
+            )
+            if _is_nf4(ckpt.past_kv):
+                past_kv = _NF4DC.from_serializable(ckpt.past_kv)
+                if getattr(self, "_device", None) is not None:
+                    past_kv.move_tensors_to(self._device)
+            else:
+                past_kv = ckpt.past_kv
+            if _is_nf4(ckpt.draft_past_kv):
+                draft_past_kv = _NF4DC.from_serializable(ckpt.draft_past_kv)
+                if getattr(self, "_device", None) is not None:
+                    draft_past_kv.move_tensors_to(self._device)
+            else:
+                draft_past_kv = ckpt.draft_past_kv
             cur_token        = ckpt.cur_token
             generated        = list(ckpt.generated)
             global_seqlen    = ckpt.global_seqlen

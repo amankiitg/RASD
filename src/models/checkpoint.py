@@ -175,8 +175,18 @@ class GenerationCheckpoint:
             prefill_len      = int(d["prefill_len"]),
             cur_token        = d["cur_token"],
             generated        = list(d["generated"]),
-            past_kv          = tuple(d["past_kv"]) if d["past_kv"] is not None else None,
-            draft_past_kv    = tuple(d["draft_past_kv"]) if d["draft_past_kv"] is not None else None,
+            # past_kv may be a tuple-of-tuples (legacy bf16) OR a dict
+            # produced by NF4DynamicCache.to_serializable() — preserve
+            # whichever form is on disk so the resume path can detect
+            # via is_nf4_serialized().
+            past_kv          = (
+                d["past_kv"] if isinstance(d["past_kv"], dict)
+                else (tuple(d["past_kv"]) if d["past_kv"] is not None else None)
+            ),
+            draft_past_kv    = (
+                d["draft_past_kv"] if isinstance(d["draft_past_kv"], dict)
+                else (tuple(d["draft_past_kv"]) if d["draft_past_kv"] is not None else None)
+            ),
             per_token_trace  = list(d.get("per_token_trace", [])),
             rng_state        = d.get("rng_state"),
             cuda_rng_state   = d.get("cuda_rng_state"),
@@ -185,19 +195,37 @@ class GenerationCheckpoint:
     # ------------------------- Restore -------------------------
 
     def move_tensors_to(self, device: torch.device | str) -> "GenerationCheckpoint":
-        """Move every tensor in this checkpoint to `device`. Returns self."""
+        """Move every tensor in this checkpoint to `device`. Returns self.
+
+        Handles both legacy bf16 tuple-of-tuples past_kv and the
+        NF4-native dict form produced by NF4DynamicCache.to_serializable().
+        For the dict form we move every per-layer (codes, scales) tensor
+        in place; the NF4DynamicCache reconstruction happens later in
+        the resume branch via from_serializable() + move_tensors_to().
+        """
         device = torch.device(device)
         self.cur_token = self.cur_token.to(device)
         self.generated = [t.to(device) for t in self.generated]
-        if self.past_kv is not None:
-            self.past_kv = tuple(
-                tuple(t.to(device) for t in layer) for layer in self.past_kv
-            )
-        if self.draft_past_kv is not None:
-            self.draft_past_kv = tuple(
-                tuple(t.to(device) for t in layer) for layer in self.draft_past_kv
-            )
+        self.past_kv = self._move_kv(self.past_kv, device)
+        self.draft_past_kv = self._move_kv(self.draft_past_kv, device)
         return self
+
+    @staticmethod
+    def _move_kv(kv, device):
+        if kv is None:
+            return None
+        if isinstance(kv, dict):
+            # NF4-native serialized form (M4 C11 + finding #1, 2026-05-10)
+            for key in ("k_codes", "k_scales", "v_codes", "v_scales"):
+                if key in kv:
+                    kv[key] = [
+                        [t.to(device) for t in layer] for layer in kv[key]
+                    ]
+            return kv
+        # legacy bf16 tuple-of-tuples
+        return tuple(
+            tuple(t.to(device) for t in layer) for layer in kv
+        )
 
 
 # ---------------------------------------------------------------------------
