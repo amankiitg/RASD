@@ -575,6 +575,12 @@ class RASDInference:
                 tuple(t.detach().cpu() for t in layer) for layer in draft_past_kv
             ),
             per_token_trace=list(per_token_trace),
+            # Save the per-rank RNG state. Under temperature > 0 (the M3
+            # default), _sample / _acceptance_mask consume RNG via
+            # torch.multinomial / torch.rand_like; without restoring this
+            # on resume, a resumed run would diverge from an uninterrupted
+            # one. (Fix for high-risk finding #5, 2026-05-10.)
+            rng_state=torch.get_rng_state(),
         )
         path = checkpoint_path(
             cfg.checkpoint_dir, cfg.run_id, round_idx=n_rounds, rank=self._rank,
@@ -747,6 +753,13 @@ class RASDInference:
             # in `generated` = 1 (initial cur_token) + sum of contributions.
             generated_total = sum(t.shape[1] for t in generated)
             S = global_seqlen - (generated_total - 1)
+            # Restore the per-rank RNG state so the resumed verify loop
+            # consumes RNG in the same sequence as an uninterrupted run.
+            # Without this, torch.multinomial / torch.rand_like in the
+            # verify loop would diverge from byte-identical reproduction.
+            # (Fix for high-risk finding #5, 2026-05-10.)
+            if ckpt.rng_state is not None:
+                torch.set_rng_state(ckpt.rng_state)
             # TTFT is meaningless on resume (we skipped prefill); record 0
             # so downstream metrics handling doesn't NaN.
             t_first_token = t_start

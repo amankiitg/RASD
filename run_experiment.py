@@ -137,13 +137,22 @@ def load_config(path: str) -> dict:
 
 def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
                       seed_filter: Optional[List[int]] = None) -> List[dict]:
-    """Expand the YAML into a flat list of run dicts (one per level × seed)."""
+    """Expand the YAML into a flat list of run dicts (one per level × seed).
+
+    Top-level YAML keys are either the canonical scaffolding keys
+    (`defaults`, `canary`) OR an ablation group. M3 used `A1..A5`; M4
+    introduces `SMOKE` (long-context smokes) and `M4` (final matrix).
+    Filtering by an `A*` prefix would silently drop M4's groups. Instead
+    we exclude the known scaffolding keys and treat the rest as groups.
+    """
+    NON_GROUP_KEYS = {"defaults", "canary"}
+
     defaults = deepcopy(cfg["defaults"])
     seeds    = defaults.pop("seeds")
     if seed_filter:
         seeds = [s for s in seeds if s in seed_filter]
 
-    ablation_keys = [k for k in cfg if k.startswith("A")]
+    ablation_keys = [k for k in cfg if k not in NON_GROUP_KEYS]
     if groups:
         ablation_keys = [k for k in ablation_keys if k in groups]
 

@@ -125,6 +125,8 @@ stage "c2b_yarn_validation" yarn_validation
 # C6 — Checkpoint/resume multi-rank validation (8 GPUs)
 # ------------------------------------------------------------------
 c6_validation() {
+    # c6_resume_validation.py is a torchrun-direct script (no outer
+    # orchestrator) — keep the torchrun here.
     torchrun --nproc-per-node=8 --master_port=29500 \
         scripts/c6_resume_validation.py \
         --target meta-llama/Llama-2-7b-hf \
@@ -136,11 +138,17 @@ stage "c6_resume_validation" c6_validation
 # ------------------------------------------------------------------
 # P3.3 — long-context smokes: RASD at 32k, 128k, 512k, 1M
 # (single-prompt, NF4 KV enabled, YaRN RoPE)
+#
+# IMPORTANT: do NOT wrap run_experiment.py in `torchrun` here.
+# run_experiment.py is the orchestrator — it reads the YAML, expands
+# the matrix, and spawns its own per-row `torchrun --nproc_per_node=8`
+# inside execute_run(). Wrapping the orchestrator with torchrun causes
+# 8 orchestrators to each spawn 8-way torchrun = 64-way GPU contention
+# + master_port collisions. (Fix for high-risk finding #2, 2026-05-10.)
 # ------------------------------------------------------------------
 long_ctx_smokes() {
     for ctx in 32768 131072 524288 1048576; do
-        torchrun --nproc-per-node=8 --master_port=29500 \
-            run_experiment.py \
+        python run_experiment.py \
             --config configs/m4_phase_c_long_smoke.yml \
             --output results/m4_smoke/long_smoke_ctx${ctx}.csv \
             --resume \
@@ -154,19 +162,25 @@ stage "p33_long_ctx_smokes" long_ctx_smokes
 
 # ------------------------------------------------------------------
 # P3.4 — baseline validation: Ring + Sliding at 128k and 1M
+# (Fix for high-risk finding #4, 2026-05-10: was `bash` + `--contexts`;
+# the script is Python and the flag is `--lengths`. Added `--distributed`
+# so multi-GPU sequence-parallelism actually exercises.)
 # ------------------------------------------------------------------
 baseline_validation() {
-    bash scripts/benchmark_baselines.py --contexts 131072 1048576 \
-        --out results/baselines/m4_baselines.csv
+    torchrun --nproc-per-node=8 --master_port=29500 \
+        scripts/benchmark_baselines.py \
+        --lengths 131072 1048576 \
+        --out results/baselines/m4_baselines.csv \
+        --distributed
 }
 stage "p34_baseline_validation" baseline_validation
 
 # ------------------------------------------------------------------
-# P3.5 — final 36-run matrix: RASD/Ring/Sliding x {128k,256k,512k,1M} x 3 seeds
+# P3.5 — final 12-run RASD matrix (4 contexts x 3 seeds).
+# Same anti-double-torchrun fix as P3.3.
 # ------------------------------------------------------------------
 final_matrix() {
-    torchrun --nproc-per-node=8 --master_port=29500 \
-        run_experiment.py \
+    python run_experiment.py \
         --config configs/m4_final_matrix.yml \
         --output results/final/final_matrix.csv \
         --resume \
@@ -184,8 +198,8 @@ profiler_sidecar_pass() {
     # 4 contexts) to keep overhead bounded. Output at
     # results/final/profiler_pass/profiler_pass.csv + per-run JSON
     # sidecars at .../profiler/<run_id>.json — Fig 3 source data.
-    torchrun --nproc-per-node=8 --master_port=29500 \
-        run_experiment.py \
+    # Same anti-double-torchrun fix as P3.3 / P3.5 (finding #2).
+    python run_experiment.py \
         --config configs/m4_final_matrix.yml \
         --output results/final/profiler_pass/profiler_pass.csv \
         --resume \
