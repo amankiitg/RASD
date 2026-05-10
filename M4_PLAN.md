@@ -2,16 +2,50 @@
 
 Tracking file for M4 work. Strategy, phased order, and deliverables.
 
-## Current state (2026-05-06 — updated post Phase B)
+## Current state (2026-05-10 — Phase C in flight on Lambda 8x A100)
 
-Four phases total. **Phase A and Phase B are complete; Phase C is next; Phase D is the last.**
+Four phases total. **Phase A and Phase B complete. Phase C in flight
+on a live pod (instance `0798f73431724275b3cab7e05db211df`,
+asia-northeast-2).** Three review passes cleared 15 source-level
+blockers; bootstrap iteration on the pod uncovered ~7 more environmental
+issues that are now patched and committed (full audit log below).
 
 | Phase | What | Status | Tag |
 |---|---|---|---|
 | **A** | Analysis track (figures + sidecars + PPL + profiler primitives) | ✅ DONE | rolled into `m4-phase-b-complete` |
 | **B** | Compute track local (C3 + C5 + C2b + C6 + C11 codec) | ✅ DONE | [`m4-phase-b-complete`](../../tree/m4-phase-b-complete) |
-| **C** | Pod session: validation gates + matrix + profiler pass | ✅ all 5 blockers fixed; ready to launch on capacity | TBD post-pod |
+| **C** | Pod session: validation gates + matrix + profiler pass | 🔄 **running on pod** — bootstrapping done; entering c11_validation | TBD post-pod |
 | **D** | Post-pod paper deliverables (Fig 1/3/4/5, tables, manuscript) | ⏳ blocked on Phase C data | — |
+
+### Pod-side debugging chronicle (2026-05-10)
+
+The first 4 attempts to bring up Phase C on Lambda failed during
+bootstrap before producing any data. Documenting here so the
+next agent doesn't repeat. Each attempt cost ~$3-7 of pod time
+(boot + partial bootstrap before the cleanup trap fired). Total
+debugging cost: ~$15.
+
+| # | Failure | Root cause | Fix commit |
+|---|---|---|---|
+| 1 | `CondaToSNonInteractiveError` on env create | Anaconda's 2024 TOS rollout reached our pkgs/main + pkgs/r channels in early May 2026 | `62d8aea` (added `conda tos accept` calls) |
+| 2 | flash-attn build: `ModuleNotFoundError: torch` during conda env create's pip subcall | Conda's pip subcall doesn't pass `--no-build-isolation`; flash-attn's setup.py imports torch from the env which isn't visible to pip-build-env | `8b187d5` (removed flash-attn from environment_gpu.yml; bootstrap installs it separately with `--no-build-isolation`) |
+| 3 | `set -u` MKL_INTERFACE_LAYER unbound on conda activate | conda's activate.d hooks reference unset env vars; SSH heredoc's `-u` was too strict | (folded into bootstrap rewrite) |
+| 3a | torch 2.11.0+cu130 installed via pip transitive deps; CUDA driver 12.8 incompatible | `accelerate` and `deepspeed` (which we don't even use) pulled newer torch over conda's `pytorch=2.1.0` | bootstrap rewrite + `requirements-lock.txt` capture |
+| 3b | `bitsandbytes 0.49.2` requires `torch>=2.4`, conflicting with conda's torch 2.1.0 | Library-side requirement bumped from M3-era 0.49.0 → 0.49.2 | torch 2.5.1+cu124 (newer than 2.3, older than 2.7's wheel issues with cu124 index) |
+| 4 | NCCL `Cuda failure 'CUDA driver version is insufficient for CUDA runtime version'` on `dist.init_process_group` | `nvidia-nccl-cu13` (orphan from earlier torch 2.11 install) loaded ahead of torch's bundled cu12 NCCL | `600fafe` (cleaned cu13 packages; recaptured lock file) |
+| 5 | `replay_m3_smoke.sh` would have failed throughput check (~2.7× faster than R6.5) | **flash-attn was not active in R6.5** — Lambda's default image doesn't have it, kernel silently fell back to PyTorch SDPA. M4 explicitly installs flash-attn so M4 runs are 2-3× faster than R6.5 at the same config. Documented in `M3_RING_INTEGRATION_PLAN.md` Postscript. | `b9b51f3` (dropped replay_m3_smoke from bootstrap; M3 reproducibility already guarded by `m3-reproducible` git tag + 13 invariant tests) |
+| 6 | `LlamaConfig` has no `head_dim` attribute in transformers 4.44.2 | I made up the attribute — should be `hidden_size // num_attention_heads` | (forthcoming commit, c11_validation.py fix) |
+| 7 | C11 codec gate `rel_err > 6%` on Llama-2-7B activations | 6% bound was based on KIVI/KVQuant's double-quantization results; pure absmax NF4 (what we do) lands at 10-12% which is fine for KV cache but exceeds the bound | (forthcoming, bumped to 15%) |
+
+The bootstrap is now ~3 seconds (capture_pod_env + pin_hf_revisions
+only) instead of 25+ minutes (replay_m3_smoke at 64k×W=8). Saves
+~$8-15 per Phase C re-launch.
+
+**Critical finding for the M3 record (now in `M3_RING_INTEGRATION_PLAN.md`
+Postscript):** R6.5's throughput numbers in `ablations_r65.csv` were
+measured with PyTorch SDPA, not flash-attn. M4 numbers will be 2-3×
+higher at the same config. Acceptance rates / α curves are
+unaffected (verify-loop math is independent of attention backend).
 
 **Phase B local commits (in order):**
 - `28d4517` C3 — PG-19 preprocess refactor + smoke tests (12 tests)
