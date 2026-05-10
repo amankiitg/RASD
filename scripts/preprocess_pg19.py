@@ -93,13 +93,48 @@ def chunk_token_stream_to_memmaps(
     return meta
 
 
-def _pg19_token_iter(split: str, tokenizer_name: str, limit: int | None):
-    """Yield per-document token lists from the PG-19 dataset (streaming)."""
+def _load_long_text_dataset(split: str):
+    """Load a long-text corpus for PPL eval, with graceful fallback.
+
+    HF Datasets v4+ removed support for Python-script-based loaders.
+    The canonical 'pg19' dataset on HF Hub uses an old pg19.py loader
+    script and is blocked. We try a parquet mirror first, then fall
+    back to wikitext-103 as a well-supported alternative.
+
+    Returns a (dataset_name, dataset_obj) tuple so callers can log which
+    corpus was actually used.
+    """
     from datasets import load_dataset
+
+    candidates = [
+        # Parquet mirror of PG-19 — no Python loader script, works on v4+
+        ("emozilla/pg19",      dict(split=split, streaming=True)),
+        # Fallback: wikitext-103, standard PPL benchmark corpus
+        ("wikitext",           dict(name="wikitext-103-raw-v1",
+                                    split=split if split != "validation" else "validation",
+                                    streaming=True)),
+    ]
+    last_err: Exception | None = None
+    for name, kwargs in candidates:
+        try:
+            ds = load_dataset(name, **kwargs)
+            return name, ds
+        except Exception as e:
+            last_err = e
+            print(f"  [data] {name}: skipped ({type(e).__name__}: {str(e)[:80]})")
+    raise RuntimeError(
+        f"No long-text corpus loadable for PPL eval; last error: {last_err}"
+    )
+
+
+def _pg19_token_iter(split: str, tokenizer_name: str, limit: int | None):
+    """Yield per-document token lists from a long-text corpus (PG-19
+    via parquet mirror, or wikitext-103 fallback)."""
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
-    ds = load_dataset("pg19", split=split, streaming=True)
+    dataset_name, ds = _load_long_text_dataset(split)
+    print(f"  [data] using {dataset_name}")
     for i, example in enumerate(ds):
         if limit is not None and i >= limit:
             break
