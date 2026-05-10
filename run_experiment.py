@@ -727,7 +727,13 @@ def main():
                 "(re-run with --resume to pick up after fixing).",
                 run["run_id"], row.get("status"),
             )
-            break
+            # sys.exit(1) (not just `break`) so the calling stage in
+            # phase_c_pod_session.sh sees a non-zero exit and the
+            # master script halts. Same class of bug as the canary
+            # path — a bare break + return propagates as Python exit 0,
+            # which made the master script run p34/p35 against a
+            # broken smoke output on 2026-05-10 attempt #4.
+            sys.exit(1)
 
     # Summary
     import csv as _csv
