@@ -288,6 +288,48 @@ RESTART:     iteration=<N> elapsed=<seconds>
 
 Run with `LAMBDA_API_KEY=<key> SKUS=gpu_8x_a100_80gb_sxm4 bash scripts/poll_lambda_capacity.sh`.
 
+### Track decision: 80GB SXM4 only (Track A retired, 2026-05-10 PM)
+
+After 1M landed cleanly on 80GB Track B, Track A (40GB SXM4 with
+768k as max context) is **retired**. All Phase C runs on the 80GB
+pod through `scripts/phase_c_pod_session.sh` (the original
+orchestrator, NOT the `_40gb` variant). The 40GB-variant configs
+and orchestrator are preserved in the repo for future operators
+who only have 40GB capacity available, but they're not the
+default path.
+
+Reasons:
+1. 80GB fits 1M with 40 GB headroom (verified)
+2. Sliding-window single-rank baseline at 768k tripped Track A's
+   failure-guard from a tolerable OOM (the explicit-ceiling fix
+   in `465d714` prevents this on Track B)
+3. Same wandb project (`rasd-m4-phase-c`) for all production runs
+4. Single-pod operations are simpler (one IP, one terminate, one
+   set of monitors)
+
+### Phase C profiler risk note (p36)
+
+Stage `p36_profiler_pass` re-runs the 4 contexts × 1 seed grid with
+`--profile`. The torch.profiler wrapper was committed in Phase A
+(`07f3807`) but **untested at 1M scale**. Risks:
+
+| Risk | Mitigation |
+|---|---|
+| OOM at 1M from profiler trace buffer (+3-5 GB) | 80 GB cap with 40 GB headroom — should fit. If OOMs: drop 1M from `--seeds 42` invocation, run 32k/128k/512k only. |
+| Slow runtime (~10% overhead) | Expected; ~1.5 hr total. Not a failure. |
+| Profiler interference with NCCL async timing | NCCL 1-hr timeout already set; should be tolerant. If hangs, kill via the failure-guard pattern + skip stage. |
+| Disk space for per-rank trace JSONs | ~2 GB total across 4 cells × 8 ranks. Lambda 20 TB local NVMe — non-issue. |
+
+**Combined p36 success odds: ~75-80%.** Most likely outcome: passes
+slowly. Most likely failure: 1M cell OOM or hang. The 32k/128k/512k
+profiler data is the meaningful Figure 3 source anyway (1M's
+profiler data is mostly verify-loop wall-time which we can derive
+from the matrix CSV time_sec / n_rounds).
+
+If p36 fails at 1M: **don't restart the whole stage**. Drop the 1M
+context from `m4_final_matrix.yml`'s level list and re-run p36 with
+just 32k/128k/512k. ~30 min on the pod.
+
 ### New Phase C stages (2026-05-10 PM, after 1M passed on 80GB)
 
 After 1M landed cleanly at 40.3 GB / 80 GB (commit `1f4cc26`), three

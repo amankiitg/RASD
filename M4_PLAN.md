@@ -123,6 +123,25 @@ If 80GB capacity never hits, paper headline is "768k stable" with
 contribution either way; it was responsible for going from
 "OOM at 1M on 80GB" to "fit at 768k on 40GB."
 
+### Single-track decision: Track A skipped, Track B is canonical (2026-05-10 PM)
+
+The original two-track plan envisioned 40GB Track A for ≤768k +
+80GB Track B for 1M. After Track A's pod auto-terminated mid-p34
+(Sliding-window OOM tripping the failure-guard) and 80GB capacity
+came back, **all of Phase C runs on Track B (80GB SXM4)**. Track A
+is preserved historically below; Track B's 1M capacity makes it the
+strict superset for everything M4 needs.
+
+Track B advantages over Track A:
+- 80 GB / rank (vs 40 GB) → 1M context fits with 40 GB headroom
+- Identical chunked NF4 codec output (verified: peak 22,605 MB at
+  512k on both 40GB and 80GB pods, deterministic to the byte)
+- Same per-stage cost as Track A would have been (matrix runtime
+  is dominated by ring attention compute, not memory)
+- Single wandb project (`rasd-m4-phase-c`) for all 9 stages
+
+Cost on Track B: ~$240 estimated total (validated through p35 1M).
+
 ### Phase C v5 — 1M PASSED on 80GB (2026-05-10 PM)
 
 After ~14 hours and 5 attempts, **1M context speculative decoding
