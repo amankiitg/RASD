@@ -66,7 +66,14 @@ class MemoryTracer:
         )
         self._snapshots: List[Dict] = []
         if reset_max_at_start and torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats(self.device)
+            # torch.cuda.reset_peak_memory_stats can raise on some
+            # torch builds when the calling process hasn't initialized
+            # CUDA yet (pytest workers in particular). Treat as
+            # informational since it's just a counter reset.
+            try:
+                torch.cuda.reset_peak_memory_stats(self.device)
+            except RuntimeError:
+                pass
 
     def snapshot(self, label: str, **extra) -> None:
         """Record a labelled memory point. `extra` is merged in for
