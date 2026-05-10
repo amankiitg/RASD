@@ -372,6 +372,11 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # them in the YAML if needed.
             kv_outlier_prefix_size = int(run.get("kv_outlier_prefix_size", 128)),
             kv_block_size_nf4      = int(run.get("kv_block_size_nf4", 32)),
+            # M4 paper memory attribution. Off by default. When True,
+            # rasd_inference.generate() snapshots per-stage GPU memory
+            # via MemoryTracer and writes a JSON sidecar.
+            memory_trace           = bool(run.get("memory_trace", False)),
+            memory_trace_dir       = run.get("memory_trace_dir") or None,
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
             # C13 per-position trace (M4 Phase A2). Default off so M3
@@ -621,6 +626,14 @@ def main():
                              "Figure 3 (mentor stacked time breakdown). "
                              "Adds ~10%% overhead — run on a subset, not the "
                              "headline matrix.")
+    parser.add_argument("--memory-trace", action="store_true",
+                        help="Per-rank GPU memory attribution snapshots at "
+                             "generate() lifecycle points (post-load, post-prefill, "
+                             "post-verify-rounds 1/2/4/8, end). Writes JSON sidecar "
+                             "to <output_dir>/memory_trace/<run_id>.rank<r>.json. "
+                             "Negligible overhead. Source for paper memory "
+                             "attribution figure. Off by default so M3 replay "
+                             "stays byte-identical.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -642,6 +655,15 @@ def main():
     if args.profile:
         for r in all_runs:
             r["profile"] = True
+    if args.memory_trace:
+        for r in all_runs:
+            r["memory_trace"] = True
+            # Default sidecar dir is alongside the output csv:
+            #   <output_csv>/../memory_trace/<run_id>.rank<r>.json
+            r.setdefault(
+                "memory_trace_dir",
+                str(Path(args.output).parent / "memory_trace"),
+            )
     if args.checkpoint_every > 0:
         for r in all_runs:
             # Per-run override wins; CLI flag is a default for runs that

@@ -173,6 +173,13 @@ class RASDConfig:
     # The trade is worth it for acceptance — see Phase C blocker
     # 2026-05-10 NF4 acceptance drop.
     kv_block_size_nf4: int = 32
+    # Memory tracing for paper Figure 3 / attribution. When True,
+    # MemoryTracer.snapshot() is called at lifecycle points in
+    # generate() and a JSON sidecar is written to
+    # <output_dir>/memory_trace/<run_id>.rank<rank>.json. Off by
+    # default — M3 byte-identical when this is False.
+    memory_trace: bool = False
+    memory_trace_dir: Optional[str] = None
 
     @property
     def torch_dtype(self) -> torch.dtype:
@@ -671,6 +678,25 @@ class RASDInference:
 
         print(f"[TRACE rank={self._rank}] generate() start, S={S}, block_size={cfg.kv_block_size}", flush=True)
 
+        # Memory tracer (paper Figure 3 attribution). Off by default;
+        # gated on cfg.memory_trace. Snapshot at every meaningful
+        # lifecycle transition so consecutive deltas attribute peak
+        # memory to its components (post-load, post-prefill, post each
+        # verify round, end). The tracer is per-rank; only rank 0's
+        # JSON is needed for the paper figure but all ranks emit so
+        # asymmetries (e.g. rank-0 outlier-keep prefix) are visible.
+        mem_tracer = None
+        if cfg.memory_trace:
+            from src.models.memory_trace import MemoryTracer
+            trace_dir = cfg.memory_trace_dir or "results/memory_trace"
+            mem_tracer = MemoryTracer(
+                rank=self._rank,
+                run_id=(cfg.run_id or f"rank{self._rank}_S{S}"),
+                out_dir=trace_dir,
+                device=device,
+            )
+            mem_tracer.snapshot("post_load",  S=S, S_local=S // max(self._world_size, 1))
+
         # ---- C6 RESUME: try to load a checkpoint and skip prefill ----
         # Gated on cfg.checkpoint_every > 0 — when 0 (the default), this
         # whole branch is skipped and the M3 path is byte-identical.
@@ -769,6 +795,8 @@ class RASDInference:
                 dist.broadcast(local_last_logit, src=self._world_size - 1)
             next_token_logit = local_last_logit
             print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
+            if mem_tracer is not None:
+                mem_tracer.snapshot("post_target_prefill")
 
             if cfg.debug:
                 logger.debug("[RASD] prefill done, S=%d", S)
@@ -784,6 +812,8 @@ class RASDInference:
                 draft_past_kv = draft_out.past_key_values
             self.stream_draft.synchronize()
             print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
+            if mem_tracer is not None:
+                mem_tracer.snapshot("post_draft_prefill")
 
             if cfg.debug:
                 pass
@@ -1027,6 +1057,12 @@ class RASDInference:
             total_draft_toks += cfg.spec_steps
             n_rounds         += 1
 
+            if mem_tracer is not None and n_rounds in (1, 2, 4, 8):
+                # Snapshot at first few rounds — verify-loop steady-state
+                # is established by round 4. Saves JSON size on long runs
+                # (>100 rounds at 1M).
+                mem_tracer.snapshot(f"post_verify_round_{n_rounds}")
+
             if cfg.debug:
                 logger.debug("[RASD] round=%d accepted=%d/%d", n_rounds, n_acc, cfg.spec_steps)
 
@@ -1131,6 +1167,14 @@ class RASDInference:
             metrics["per_token_trace"] = (
                 per_token_trace if self._rank == 0 else None
             )
+
+        if mem_tracer is not None:
+            mem_tracer.snapshot("end", n_rounds=n_rounds)
+            sidecar_path = mem_tracer.write()
+            if self._rank == 0 and sidecar_path is not None:
+                logger.info("[memory_trace] wrote %s", sidecar_path)
+                # Surface the per-stage attribution in the rank-0 metrics
+                metrics["memory_attribution_mb"] = mem_tracer.attribution_summary()
 
         return generated_ids, metrics
 
