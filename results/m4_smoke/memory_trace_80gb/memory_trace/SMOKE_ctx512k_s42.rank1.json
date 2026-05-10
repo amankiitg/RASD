@@ -1,0 +1,24 @@
+{
+  "run_id": "SMOKE_ctx512k_s42",
+  "rank": 1,
+  "device": "cuda:1",
+  "snapshots": [
+    {
+      "label": "post_load",
+      "allocated_mb": 4884.0087890625,
+      "reserved_mb": 4962.0,
+      "max_alloc_mb": 4884.0087890625,
+      "max_reserved_mb": 4962.0,
+      "S": 501472,
+      "S_local": 62684
+    },
+    {
+      "label": "end",
+      "allocated_mb": 15472.24267578125,
+      "reserved_mb": 15532.0,
+      "max_alloc_mb": 15472.24267578125,
+      "max_reserved_mb": 15532.0,
+      "n_rounds": 36
+    }
+  ]
+}
