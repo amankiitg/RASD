@@ -768,23 +768,15 @@ class RASDInference:
                     bf16_prefix_size=prefix_size,
                 )
 
-            # M4 Phase C 2026-05-10: tried passing num_logits_to_keep=1
-            # to skip materializing the (B, S_local, vocab) logits
-            # tensor (would save ~8 GB at 1M context). I claimed it was
-            # available since transformers 4.38; that was WRONG —
-            # LlamaForCausalLM accepts num_logits_to_keep starting in
-            # transformers 4.45+, and the pod is pinned to 4.44.2 (which
-            # is the M3 reference). Reverting the kwarg here to keep
-            # forward() signatures compatible. To save the 8 GB at 1M
-            # we'd need either:
-            #   (a) upgrade transformers (risky — M3 byte-identical
-            #       constraint), OR
-            #   (b) monkey-patch LlamaForCausalLM.forward to slice
-            #       hidden_states before lm_head when use_cache=True
-            #       and we're in our prefill path.
-            # Deferred. The headline 1M memory budget is set by NF4 KV
-            # + outlier-keep + the per-rank intermediate slope; the
-            # logits saving is an optimization, not load-bearing.
+            # M4 Phase C 2026-05-10 lever #1: only the LAST position's
+            # logits are used downstream (`local_last_logit = ...[:, -1, :]`).
+            # Pass num_logits_to_keep=1 so HF only materializes the final
+            # token's logits row instead of the full (B, S_local, vocab)
+            # tensor. At 1M S_local=128k that's
+            #   128k * 32000 * 2 = 8.2 GB saved per rank;
+            # at 512k it's 4 GB. LlamaForCausalLM gained this kwarg in
+            # transformers 4.45+; we bumped requirements-lock.txt from
+            # 4.44.2 to 4.46.3 specifically to enable this.
             with torch.cuda.stream(self.stream_compute):
                 target_out = self.target_model(
                     local_ids,
@@ -792,6 +784,7 @@ class RASDInference:
                     position_ids=local_pos,
                     use_cache=True,
                     past_key_values=initial_cache,
+                    num_logits_to_keep=1,
                 )
                 past_kv          = target_out.past_key_values
                 local_last_logit = target_out.logits[:, -1, :]

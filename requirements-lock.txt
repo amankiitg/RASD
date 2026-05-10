@@ -109,12 +109,12 @@ six
 smmap==5.0.3
 statsmodels
 sympy==1.13.1
-tokenizers==0.19.1
+tokenizers==0.20.3
 tomli==2.4.1
 torch==2.5.1+cu124
 tornado
 tqdm
-transformers==4.44.2
+transformers==4.46.3
 triton==3.1.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0

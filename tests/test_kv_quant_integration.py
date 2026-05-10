@@ -217,6 +217,37 @@ class TestNF4DynamicCacheWired:
             "bf16 cache and the kv_quant flag would have no effect"
         )
 
+    def test_prefill_uses_num_logits_to_keep_1(self):
+        """The target prefill must pass num_logits_to_keep=1 so HF
+        only materializes the last position's logits. Without this,
+        a full (B, S_local, 32000) tensor is allocated — 8.2 GB at
+        1M context (S_local=128k). Required since we only use
+        ...[:, -1, :] downstream.
+
+        LlamaForCausalLM.forward gained this kwarg in transformers
+        4.45+; we bumped requirements-lock.txt from 4.44.2 to 4.46.3
+        specifically to enable this. (Earlier attempt with 4.44.2
+        failed: 'unexpected keyword argument num_logits_to_keep'.)
+
+        The verify forward (separate call) is intentionally NOT
+        constrained — its t_input is only spec_steps+1 tokens, so
+        keeping all logits there is cheap and we use them all.
+        """
+        from pathlib import Path
+        rasd_inf = (Path(__file__).resolve().parent.parent
+                    / "src" / "models" / "rasd_inference.py").read_text()
+        match = re.search(
+            r"target_out\s*=\s*self\.target_model\("
+            r"[\s\S]{0,600}past_key_values\s*=\s*initial_cache,?"
+            r"[\s\S]{0,300}num_logits_to_keep\s*=\s*1",
+            rasd_inf,
+        )
+        assert match, (
+            "M4 Phase C lever #1 regression: prefill target_model() call "
+            "must pass num_logits_to_keep=1 to skip materializing the "
+            "(B, S_local, 32000) logits tensor. Saves 8.2 GB at 1M context."
+        )
+
     def test_truncate_kv_preserves_nf4_storage(self):
         """_truncate_kv must call cache.truncate() in place when the
         cache has a truncate method — otherwise the next round drops

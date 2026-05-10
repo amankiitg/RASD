@@ -183,6 +183,10 @@ long_ctx_smokes() {
     # pod-$ on 512k/1M cells that are guaranteed to fail downstream.
     # Reviewer's recommended pod-gate order is C11 → C6 → 32k → 128k →
     # only then 512k/1M; this enforces that progression.
+    # --memory-trace: per-rank GPU memory attribution snapshots at
+    # generate() lifecycle points (post-load, post-prefill, post-verify
+    # round 1/2/4/8, end). Source for the paper's memory-attribution
+    # figure. Negligible overhead; off was the silent default before.
     python run_experiment.py \
         --wandb-project rasd-m4-phase-c \
         --config configs/m4_phase_c_long_smoke.yml \
@@ -193,7 +197,8 @@ long_ctx_smokes() {
         --seeds 42 \
         --timeout-per-run-s 14400 \
         --abort-on-failure \
-        --log-per-token
+        --log-per-token \
+        --memory-trace
 }
 stage "p33_long_ctx_smokes" long_ctx_smokes
 
