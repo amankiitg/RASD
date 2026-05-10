@@ -47,6 +47,82 @@ measured with PyTorch SDPA, not flash-attn. M4 numbers will be 2-3×
 higher at the same config. Acceptance rates / α curves are
 unaffected (verify-loop math is independent of attention backend).
 
+### Phase C continuation — 2026-05-10 PM (v4 1M OOM → lever stack → 768k pivot)
+
+The 80GB SXM4 instance brought up after the 40GB chronicle above
+took multiple iterations to land 1M:
+
+| Attempt | Outcome | Root cause |
+|---|---|---|
+| v2 | 1M failed | NCCL collective timeout at 600s (default watchdog); ring rotation per layer at S_local=128k took longer than 10 min wall-clock. **Fix: timedelta(hours=1) on dist.init_process_group + `NCCL_TIMEOUT=3600` env var.** Commit `f1a448a`. |
+| v3 | 1M failed | I added `num_logits_to_keep=1` for 8 GB savings claiming "since transformers 4.38" — actually only available since **4.45**. Pod was on 4.44.2. Reverted, then bumped lock to **transformers 4.46.3 + tokenizers 0.20.3** to enable the kwarg. Commit `c460aa8`. |
+| v4 | 1M OOMed at **73.62 GB / 80 GB** during prefill | Mid-prefill OOM with 8.77 GB "reserved but unallocated" in PyTorch's caching allocator. Memory_trace produced ZERO sidecars because OOM killed the worker before `generate()` returned. Pod terminated; offline work began. |
+
+#### Levers shipped offline post-v4
+
+| Lever | Commit | What | Validated savings |
+|---|---|---|---|
+| `expandable_segments=True` env var | `6482c74` | Set in `phase_c_pod_session.sh` exports. Reduces caching-allocator fragmentation. | **~800 MB at 32k**, ~140 MB at 128k (small at long ctx because the bf16-input path dominates there) |
+| MemoryTracer **incremental** flush + per-layer prefill hooks | `6482c74` | `flush_each_snapshot=True` (default). Per-layer `forward_hook` registered ONLY when `cfg.memory_trace=True`, removed before decode. Mid-prefill OOMs now leave attribution data on disk. | Tooling — enables data-driven decisions on remaining levers |
+| `num_logits_to_keep=1` on prefill | `b6247d7` then `c460aa8` (lock bump) | Skip materializing the (B, S_local, vocab) logits tensor on the prefill forward — we only consume `[..., -1, :]` anyway. Required transformers 4.45+ kwarg. | ~8 GB at 1M (predicted; not yet measured because v4 OOMed before this took effect) |
+| **Chunked NF4 update()** | `a29c15a` | NF4DynamicCache.update() now splits the bf16 input along the sequence axis into chunks of `update_chunk_size=2048` (default) and quantizes each. Bit-identical output (block_size-32 absmax is per-32-element-block regardless of chunk boundaries). | **MEASURED: -2.1 GB at 128k (-17%), -18 GB at 512k (-44%).** Per-layer transient drops from ~380 MB/k tokens to ~100 MB/k tokens. **Largest single lever by far.** |
+| `expandable_segments` + chunked NF4 stack | (combined) | Both compose additively. | At 512k: **22.6 GB peak vs 40.6 GB unchunked** = -44% |
+
+#### What memory_trace data showed (rank-0 trace JSONs, S_local axis)
+
+| Stage | UNCHUNKED transient (peak − allocated) | CHUNKED transient |
+|---|---|---|
+| 32k (S_local=4k) | 1238 MB | 762 MB |
+| 128k (S_local=16k) | 5069 MB | 1593 MB |
+| 512k (S_local=64k) | **24.3 GB** | **6.4 GB** |
+| Slope (MB / 1k S_local) | **~380** | **~100** |
+
+So the per-layer transient — what dominates the OOM at 1M — is
+**4× cheaper per token of S_local with chunking enabled.** The 17 GB
+of unchunked transient at S_local=64k that I couldn't attribute
+architecturally **disappears** with chunking. Most likely cause:
+quantize_nf4's internal bf16→fp32 conversion for absmax computation
+materializes per-element fp32 tensors that the allocator can't
+efficiently reuse at long sequence; chunking calls quantize_nf4
+with 2k-token slices (8 MB internals) instead of 64k-token slices
+(256 MB internals).
+
+#### v5 1M attempt on 40GB pod — pivot to 768k
+
+After the lever stack landed, I attempted 1M on a fresh **40GB SXM4**
+pod (capacity for 80GB was zero across all Lambda regions for hours
+on end). Linear extrapolation of chunked peaks predicted 1M would
+land at ~38 GB / 40 GB cap. The actual run **OOMed at layer 23 of
+prefill** with NCCL deadlock — GPU 0 and 1 stuck at 39.4 GB while
+peers released their memory. So 1M does **not** fit on 40GB even
+with all levers active.
+
+**768k on 40GB** extrapolates to ~31 GB peak. Adopted as the new
+paper headline context with the original `m4_phase_c_long_smoke.yml`
++ `m4_final_matrix.yml` swapped for `_40gb` variants (commit
+`146722c`). Strategy: do everything possible at 768k × 3 seeds
+on 40GB, defer the **1M cell to a separate 80GB-only run** when
+that capacity becomes available.
+
+#### Two-track strategy (2026-05-10 PM)
+
+| Track | Pod | Workload | wandb project | Cost est. |
+|---|---|---|---|---|
+| **A — running now** | 40GB SXM4 ($15.92/hr) | Full Phase C with **768k as max ctx**: validation gates + p33 smoke (32k/128k/512k/768k) + p34 baselines (24 cells) + p35 final matrix (12 cells) + p36 profiler | `rasd-m4-phase-c` | ~$55-72 |
+| **B — auto-launches when 80GB capacity hits** | 80GB SXM4 ($22.32/hr) | **1M-only** subset: smoke + 3-seed matrix + profiler. All cells go into the same `rasd-m4-phase-c` wandb project so Figure 1 has a single source of truth. | `rasd-m4-phase-c` | ~$67 |
+| **Total** | — | — | — | **$120-140** |
+
+80GB capacity poller runs at 15-30 sec jittered intervals with
+cache-busting (the legacy poller had two bugs: `SKUS_ENV="$SKUS"
+echo … | python3` set the env on `echo` not on the python pipe;
+no cache-busting headers — see commit `6e94131`). Self-restarts
+every 3 hours to clear any state drift.
+
+If 80GB capacity never hits, paper headline is "768k stable" with
+1M-on-80GB as future work. The chunked NF4 lever is the load-bearing
+contribution either way; it was responsible for going from
+"OOM at 1M on 80GB" to "fit at 768k on 40GB."
+
 **Phase B local commits (in order):**
 - `28d4517` C3 — PG-19 preprocess refactor + smoke tests (12 tests)
 - `75b7ff8` C5 — TTFT + per-position trace wired into launcher (16 tests)

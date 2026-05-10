@@ -180,6 +180,135 @@ spec rounds (~5-15 min) but halves checkpoint disk + memory.
   been removed. Per-rank K/V at 1M × W=8 should land at ~17 GB,
   with total per-rank memory ~30 GB / 40 GB.
 
+## 2026-05-10 PM update — lever stack + 40GB variant + two-track strategy
+
+After the bundled session above kept OOMing at 1M (see M4_PLAN.md
+"Phase C continuation"), four offline levers landed and the
+deployment shape changed. **Read this section before the next pod
+session.** It supersedes the runbook above when running on a 40GB
+SXM4 pod.
+
+### New environment exports (already in scripts)
+
+`scripts/phase_c_pod_session.sh` AND `scripts/phase_c_pod_session_40gb.sh`
+both export these on entry — you don't need to set them manually:
+
+```bash
+export NCCL_TIMEOUT=3600                         # 1 hr (default 600 = 10 min)
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
+export TORCH_NCCL_BLOCKING_WAIT=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+NCCL bumped to 1 hr because at 1M context, ring-attention coalesced
+ops can block longer than the 10-min default while one rank waits
+for another. `expandable_segments` reduces caching-allocator
+fragmentation (recommended directly by torch's OOM error message
+in the v4 1M failure).
+
+### Memory-trace (--memory-trace) is now ON by default in p33 + p35 + p36
+
+`run_experiment.py --memory-trace` writes per-rank
+`<output_dir>/memory_trace/<run_id>.rank<r>.json` files with
+incremental flush after each snapshot. **A mid-prefill OOM now
+leaves attribution data on disk** (the v4 OOM produced zero traces
+because flush was end-only).
+
+Useful labels: `post_load`, `prefill_after_layer_NN` (per-layer hooks
+fire only when memory_trace is on, removed before decode),
+`post_target_prefill`, `post_draft_prefill`, `post_verify_round_{1,2,4,8}`,
+`end`.
+
+### transformers + tokenizers bumped (lock file)
+
+`requirements-lock.txt` now pins:
+```
+transformers==4.46.3   (was 4.44.2)
+tokenizers==0.20.3     (was 0.19.1)
+```
+
+The bump enables `LlamaForCausalLM.forward(num_logits_to_keep=1)`
+which we use on the prefill forward to skip materializing the full
+(B, S_local, vocab) logits — saves ~8 GB at 1M S_local=128k.
+
+### Chunked NF4 update (the load-bearing lever)
+
+`NF4DynamicCache` now accepts `update_chunk_size` (default 2048 via
+`RASDConfig.nf4_update_chunk_size`). Splits the bf16 input to
+quantize_nf4 into 2k-token chunks instead of feeding S_local at
+once. **Validated savings:**
+
+| ctx | Unchunked transient | Chunked transient | Reduction |
+|---|---|---|---|
+| 32k | 1238 MB | 762 MB | -38% |
+| 128k | 5069 MB | 1593 MB | -69% |
+| 512k | **24.3 GB** | **6.4 GB** | **-74%** |
+
+Slope: ~380 MB / 1k S_local (unchunked) → ~100 MB / 1k S_local (chunked).
+
+Numerically bit-identical to unchunked because block_size-32 absmax
+is computed per 32-element block regardless of chunk boundaries.
+**Zero acceptance impact** verified empirically (32k and 128k
+acceptance match exactly between paths).
+
+### When to use which orchestrator
+
+| If pod is | Use script | Max context | Total time | Cost |
+|---|---|---|---|---|
+| **80GB SXM4** ($22.32/hr) | `scripts/phase_c_pod_session.sh` (the original) | 1M | ~4-5 hr | ~$90-110 |
+| **40GB SXM4** ($15.92/hr) | `scripts/phase_c_pod_session_40gb.sh` (the 768k variant) | 768k | ~3.5-4.5 hr | ~$55-72 |
+
+**Two-track strategy for paper:** if 80GB capacity is available, run
+the original. If only 40GB is available (the common case as of
+2026-05-10), run the 40GB variant for everything ≤768k AND keep an
+80GB capacity poller running so the 1M-only stretch run can be
+launched separately when 80GB capacity hits.
+
+### 80GB capacity poller (use it; the prior version was broken)
+
+`scripts/poll_lambda_capacity.sh` polls Lambda's instance-types API
+at randomized 15-30 sec intervals with cache-busting headers and
+self-restart every 3 hours. **Two bugs in the prior version are
+fixed (commit `6e94131`):**
+
+1. `SKUS_ENV="$SKUS" echo … | python3` set the env on `echo`, not
+   on the piped python3. Python saw an empty SKUS list and matched
+   nothing, ever — the script silently returned "no capacity" forever.
+2. No cache busting — Lambda's API/CDN can serve cached responses
+   to predictable poll cadences.
+
+Output schema (designed to be wrapped by Monitor — each line is one
+notification):
+```
+CAPACITY:    sku=<sku> region=<region> price=$<price>/hr
+NO_CAPACITY: iteration=<N> elapsed=<seconds>     (heartbeat only)
+ERROR:       <description>
+RESTART:     iteration=<N> elapsed=<seconds>
+```
+
+Run with `LAMBDA_API_KEY=<key> SKUS=gpu_8x_a100_80gb_sxm4 bash scripts/poll_lambda_capacity.sh`.
+
+### Post-OOM playbook (if 1M fails on 80GB despite the lever stack)
+
+1. **Don't panic.** Save the memory_trace JSONs:
+   `scp -r ubuntu@<pod>:~/RASD/results/m4_smoke/memory_trace/ ./`.
+   They tell you which prefill layer the OOM hit and the per-stage
+   delta.
+2. **Look at `prefill_after_layer_NN` snapshots in rank 0's JSON.**
+   Identify the layer where allocated + transient first exceeds the
+   GPU cap. Compare allocated growth/layer (KV) to transient
+   (FFN+attn working set). The bigger one tells you which lever to
+   pull next.
+3. **If transient is the bottleneck**: chunked MLP forward (NOT YET
+   IMPLEMENTED) attacks the FFN's gate × up × silu·up triplet. ~25-30
+   GB savings at 1M but a 30-line monkey-patch on `LlamaMLP` —
+   higher integration risk.
+4. **If allocated growth is the bottleneck**: shrink draft model
+   (Sheared 1.3B → TinyLlama 1.1B), or drop `kv_outlier_prefix_size`
+   from 128 to 32.
+5. **If neither is decisive**: accept 768k as paper headline (the
+   40GB variant is already wired up). 1M becomes future work.
+
 ## Post-session checklist
 
 When the master script finishes (or you decide to stop early):
