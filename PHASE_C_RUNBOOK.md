@@ -307,28 +307,45 @@ Reasons:
 4. Single-pod operations are simpler (one IP, one terminate, one
    set of monitors)
 
-### Phase C profiler risk note (p36)
+### Phase C profiler risk note (p36) — UPDATED 2026-05-10 PM via codex review
 
-Stage `p36_profiler_pass` re-runs the 4 contexts × 1 seed grid with
-`--profile`. The torch.profiler wrapper was committed in Phase A
-(`07f3807`) but **untested at 1M scale**. Risks:
+Stage `p36_profiler_pass` re-runs the **3 lower contexts (32k / 128k
+/ 512k) × seed=42** with `--profile`. **1M is intentionally dropped
+from p36** based on codex review. Why:
+
+1. **Full-run profile at 1M is too heavy**. torch.profiler accumulates
+   the event buffer for the entire 25-minute generation; with ~36
+   verify rounds × 32 layers × hundreds of kernels per layer, the
+   event count grows past 500k on rank 0. This can OOM CPU RAM (not
+   GPU) or fail at profiler finalization.
+2. **Only rank 0 profiles** (`run_experiment.py:414`,
+   `profile_enabled = ... and local_rank == 0`). Rank-asymmetric
+   wall-clock at 1M could stall other ranks waiting on NCCL ops.
+3. **1M profiler data adds little**: verify-loop wall-time breakdown
+   is derivable from `final_matrix.csv` (time_sec / n_rounds). Figure
+   3's "compute vs comm vs idle" story is at 32k/128k/512k where the
+   proportions actually differ meaningfully.
+
+**1M-specific profiling deferred** to follow-up paper with proper
+`torch.profiler.schedule(wait, warmup, active, repeat)` so we
+capture only 2-4 verify rounds, not all 36.
 
 | Risk | Mitigation |
 |---|---|
-| OOM at 1M from profiler trace buffer (+3-5 GB) | 80 GB cap with 40 GB headroom — should fit. If OOMs: drop 1M from `--seeds 42` invocation, run 32k/128k/512k only. |
-| Slow runtime (~10% overhead) | Expected; ~1.5 hr total. Not a failure. |
-| Profiler interference with NCCL async timing | NCCL 1-hr timeout already set; should be tolerant. If hangs, kill via the failure-guard pattern + skip stage. |
-| Disk space for per-rank trace JSONs | ~2 GB total across 4 cells × 8 ranks. Lambda 20 TB local NVMe — non-issue. |
+| OOM at 32k/128k/512k from profiler buffer | Smaller event counts (×4-32× smaller than 1M); fits comfortably. |
+| Slow runtime (~10% overhead) | Expected; ~45-60 min total for 3 cells (vs ~1.5 hr if 1M included). |
+| Profiler interference with NCCL async timing | NCCL 1-hr timeout already set. 3-cell window much smaller than 1-hr. |
+| compute_pct + comm_pct + other_pct > 100% (overlap of multi-stream events) | Figure code should normalize to %wall before plotting; current code clamps idle to 0 but doesn't normalize others. **Documented caveat in figure caption.** |
+| Profiler captures only rank 0 — comm patterns rank-0-biased | Caption clearly states "rank 0 profile"; Figure 3 reads representative. |
+| No `round_marker()` actually wired into prefill/draft/verify | Phase D figure code uses operator names (matmul/softmax/nccl/...) to bucket, not round markers. Coarse but defensible. **TODO: wire round_markers in M5 for cleaner per-phase breakdown.** |
 
-**Combined p36 success odds: ~75-80%.** Most likely outcome: passes
-slowly. Most likely failure: 1M cell OOM or hang. The 32k/128k/512k
-profiler data is the meaningful Figure 3 source anyway (1M's
-profiler data is mostly verify-loop wall-time which we can derive
-from the matrix CSV time_sec / n_rounds).
+**Combined p36 success odds: ~92-95%** (up from ~75% before the 1M
+drop). Most likely outcome: clean 3-cell profiler data, ~50 min
+runtime.
 
-If p36 fails at 1M: **don't restart the whole stage**. Drop the 1M
-context from `m4_final_matrix.yml`'s level list and re-run p36 with
-just 32k/128k/512k. ~30 min on the pod.
+**If p36 still fails**: kill the stage, skip it for this paper
+iteration. Figure 3 can fall back to per-stage time_sec from the
+matrix csv as a coarser breakdown.
 
 ### New Phase C stages (2026-05-10 PM, after 1M passed on 80GB)
 

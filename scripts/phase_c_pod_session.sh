@@ -311,9 +311,25 @@ profiler_sidecar_pass() {
     # Same anti-double-torchrun fix as P3.3 / P3.5 (finding #2).
     # 4-hr per-run timeout (finding #3) since profiler adds ~10% overhead
     # on top of the 120-min 1M baseline.
+    # M4 Phase C 2026-05-10 (codex review): 1M dropped from profiler
+    # subset for three reasons:
+    #   1. torch.profiler accumulates an event buffer over the full
+    #      generation. At 1M ctx × 24 min × ~36 verify rounds, the
+    #      event count can be 500k+ on rank 0 alone, eating CPU RAM
+    #      and risking failure at profiler finalization.
+    #   2. Only rank 0 profiles (run_experiment.py L414), creating a
+    #      rank-asymmetric wall-clock. At 1M with NCCL-heavy ops,
+    #      rank-0 slowdown can stall other ranks.
+    #   3. 1M's profiler data adds little: the verify-loop wall-time
+    #      breakdown is derivable from final_matrix.csv's time_sec /
+    #      n_rounds. Figure 3 needs 32k/128k/512k where compute/comm/
+    #      idle proportions actually differ meaningfully.
+    # 1M-specific profiling deferred to a follow-up paper if needed,
+    # with proper torch.profiler.schedule (wait/warmup/active/repeat)
+    # so we only capture a few rounds, not all 36.
     python run_experiment.py \
         --wandb-project rasd-m4-phase-c \
-        --config configs/m4_final_matrix.yml \
+        --config configs/m4_profiler_subset.yml \
         --output results/final/profiler_pass/profiler_pass.csv \
         --resume \
         --nproc 8 \
