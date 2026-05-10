@@ -158,6 +158,10 @@ long_ctx_smokes() {
     # own comment; the default 3600s (1 hr) would SIGTERM it mid-run,
     # wasting an hour of pod time per failure. (Fix for blocker 3 from
     # 2026-05-10 third-pass review.)
+    # --abort-on-failure: stop hard if 32k or 128k fails; don't waste
+    # pod-$ on 512k/1M cells that are guaranteed to fail downstream.
+    # Reviewer's recommended pod-gate order is C11 → C6 → 32k → 128k →
+    # only then 512k/1M; this enforces that progression.
     python run_experiment.py \
         --config configs/m4_phase_c_long_smoke.yml \
         --output results/m4_smoke/long_smoke.csv \
@@ -166,6 +170,7 @@ long_ctx_smokes() {
         --groups SMOKE \
         --seeds 42 \
         --timeout-per-run-s 14400 \
+        --abort-on-failure \
         --log-per-token
 }
 stage "p33_long_ctx_smokes" long_ctx_smokes

@@ -80,6 +80,38 @@ stages, so a crashed pod can `git pull` and re-run to pick up.
 | **p35_final_matrix** | 36-run matrix: {RASD, Ring, Sliding} × {128k, 256k, 512k, 1M} × 3 seeds, `--log-per-token` | no — `--resume` lets us pick up after partial failure |
 | **p36_profiler_pass** | Profiler sidecar pass on a subset (Fig 3 source data) | no |
 
+### Reviewer's recommended pod-gate order (2026-05-10, third pass)
+
+> "Run the pod in this order and stop hard on failure: C11 integration
+> gate → C6 resume gate → 32k smoke → 128k smoke → only then 512k/1M."
+
+The master script's stage sequence already matches this. Three things
+make the "stop hard" enforceable in code:
+
+1. The master script aborts on first non-zero exit between stages
+   (so `c11_validation` failure halts everything before c6 / smokes).
+2. `long_ctx_smokes` passes `--abort-on-failure` to `run_experiment.py`,
+   so a 128k OOM stops the script before 512k/1M attempts. Use
+   `--resume` on a re-run to pick up after the fix.
+3. `final_matrix` does NOT pass `--abort-on-failure` — we WANT to see
+   how the matrix behaves at all 12 cells even if one OOMs. Phase D
+   reads from a partially-failed CSV correctly.
+
+### Host RAM watch (first 512k checkpoint)
+
+NF4 cache at ctx=512k × W=8 holds ~10 GB / rank in NF4-packed bytes.
+At checkpoint save time (`checkpoint_every: 4` in the YAML), each
+rank does `to_serializable() + .cpu()` which copies ~10 GB to host
+RAM, then `torch.save()` writes it to disk. Total host RAM peak
+during a save: 8 ranks × ~10 GB = ~80 GB. At 1M, ~17 GB / rank ×
+8 = ~136 GB.
+
+Lambda's 8x A100 SKU has ~1-2 TB of host RAM so this is fine, but
+**watch `/proc/meminfo` during the first 512k checkpoint** to
+confirm. If host RAM gets tight, drop checkpoint frequency
+(`checkpoint_every: 8` instead of `4`) — recovery loses 1-2 more
+spec rounds (~5-15 min) but halves checkpoint disk + memory.
+
 ### Operational rules
 
 - **NEVER `pkill -9` CUDA processes.** Orphans driver-level VRAM that

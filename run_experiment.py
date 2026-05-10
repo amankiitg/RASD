@@ -580,6 +580,15 @@ def main():
                              "Phase C 1M cells should set >= 4 — every crash "
                              "on a 120-min run otherwise loses the full run. "
                              "Path: <output_csv>/../checkpoints/<run_id>/")
+    parser.add_argument("--abort-on-failure", action="store_true",
+                        help="Stop the grid loop on the first row where "
+                             "status != 'ok'. Default off — useful for the "
+                             "M3 ablation matrix where OOM in one cell "
+                             "shouldn't stop the rest. Phase C smoke stages "
+                             "should set this so a 128k OOM doesn't burn "
+                             "pod-$ on 512k/1M cells that are guaranteed "
+                             "to OOM too. Resume from --resume picks up "
+                             "where the abort happened.")
     parser.add_argument("--timeout-per-run-s", type=int, default=3600,
                         help="Hard wall-clock timeout per run in seconds. "
                              "Default 3600 (1 hr) is safe for ctx ≤ 64k. "
@@ -696,6 +705,17 @@ def main():
         # Wait for all GPU processes from this run to fully exit before starting
         # the next one — prevents CUDA/NCCL state pollution across runs.
         _wait_gpu_idle()
+        # Phase C smoke stages: stop-hard-on-failure so a 128k OOM
+        # doesn't burn pod-$ on 512k/1M cells we know will also OOM.
+        # M3 ablation default is fail-tolerant (no abort) so a single
+        # OOM cell doesn't drop the rest of the matrix.
+        if args.abort_on_failure and row.get("status") != "ok":
+            log.error(
+                "✗  ABORT-ON-FAILURE: row %s status=%s; stopping grid "
+                "(re-run with --resume to pick up after fixing).",
+                run["run_id"], row.get("status"),
+            )
+            break
 
     # Summary
     import csv as _csv
