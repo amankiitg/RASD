@@ -1,0 +1,2 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error
+SMOKE_ctx1M_s42,SMOKE,SMOKE_ctx1M,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,1048576,bfloat16,66,1472.0046,0.04,0.2014,22303.1,332216.51,40283.4,36,ok,
