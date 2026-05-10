@@ -243,19 +243,22 @@ def main():
                             f"to OOM single-rank, this is the paper claim)",
                             flush=True,
                         )
-                        stats = {
+                        # Row dict MUST cover every CSV_HEADER field —
+                        # write_row does `[row[c] for c in CSV_HEADER]`
+                        # and KeyError takes torchrun down with exit 1
+                        # (caught and recovered 2026-05-10 19:48 UTC after
+                        # commit 465d714 missed timestamp + device fields,
+                        # killing Track B's orchestrator post-p33).
+                        write_row(writer, csv_fh, {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "baseline": name,
+                            "context_length": total_len,
+                            "seed": seed,
+                            "device": args.device,
+                            "world_size": world_size,
                             "time_s": -1.0,
                             "forward_tps": -1.0,
                             "latency_ms": -1.0,
-                            "_status": "skipped_past_ceiling",
-                        }
-                        write_row(writer, csv_fh, {
-                            "baseline": name,
-                            "context_length": total_len,
-                            "local_shard": local_len,
-                            "seed": seed,
-                            "world_size": world_size,
-                            **stats,
                         })
                     continue
 
