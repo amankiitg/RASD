@@ -1,0 +1,23 @@
+{
+  "target": "meta-llama/Llama-2-7b-hf",
+  "short_ctx": 65536,
+  "long_ctx": 524288,
+  "ppl_ratio_bound": 2.0,
+  "nan_check": {
+    "ctx_configured": 524288,
+    "L_tested": 8192,
+    "has_nan": false,
+    "has_inf": false,
+    "all_finite": true,
+    "logits_max": 24.75
+  },
+  "ppl_check": {
+    "L_tested": 8192,
+    "ppl_yarn": 141197.765625,
+    "ppl_baseline": 191227.78125,
+    "ratio_to_baseline": 0.7383747523609361
+  },
+  "overall_pass": true,
+  "pass_nan_check": true,
+  "pass_ppl_check": true
+}
