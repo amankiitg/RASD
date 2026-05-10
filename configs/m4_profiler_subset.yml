@@ -22,7 +22,7 @@
 # Expected runtime: ~6 hr total at $15.92/hr ≈ $95.
 
 canary:
-  id:   "matrix_canary_s42"
+  id:   "matrix_profiled_canary_s42"
   seed: 42
   max_new_tokens: 16
 
@@ -53,15 +53,15 @@ M4:
   name:   "rasd_long_context_matrix"
   factor: "context_length"
   levels:
-    - id: "M4_ctx128k"
+    - id: "PROFILED_ctx128k"
       context_length: 131072
       notes: "128k — bottom of mentor's Figure 1 x-axis range"
 
-    - id: "M4_ctx256k"
+    - id: "PROFILED_ctx256k"
       context_length: 262144
       notes: "256k — mid-range (factor=64)"
 
-    - id: "M4_ctx512k"
+    - id: "PROFILED_ctx512k"
       context_length: 524288
       checkpoint_every: 4    # ~50-min run; recover from crash (Phase C blocker #2)
       notes: "512k — three-quarter point (factor=128)"

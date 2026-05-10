@@ -74,6 +74,34 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
+
+# ---------------------------------------------------------------------------
+# NVTX phase markers (M4 Phase C 2026-05-10, codex review on p36 profiler)
+# round_marker() in src/analysis/profiler.py was defined but never called
+# from generate(). These helpers emit NVTX ranges around each phase so
+# torch.profiler captures per-phase wall-time as user annotations in
+# prof.events() (not key_averages, which only sees operator ops).
+# No-ops on CPU / when CUDA NVTX is unavailable.
+# ---------------------------------------------------------------------------
+
+def _nvtx_push(label: str) -> None:
+    """Push an NVTX range. Wrapped in try/except — older torch builds
+    or non-CUDA devices skip silently."""
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.nvtx.range_push(label)
+        except (AttributeError, RuntimeError):
+            pass
+
+
+def _nvtx_pop() -> None:
+    """Pop the most recent NVTX range. Safe to call even if push failed."""
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.nvtx.range_pop()
+        except (AttributeError, RuntimeError):
+            pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -836,6 +864,7 @@ class RASDInference:
                     # the post_target_prefill snapshot still fires.
                     prefill_hook_handles = []
 
+            _nvtx_push("phase:prefill_target")
             with torch.cuda.stream(self.stream_compute):
                 target_out = self.target_model(
                     local_ids,
@@ -848,6 +877,7 @@ class RASDInference:
                 past_kv          = target_out.past_key_values
                 local_last_logit = target_out.logits[:, -1, :]
             self.stream_compute.synchronize()
+            _nvtx_pop()
 
             # Always remove the per-layer hooks before decode. Otherwise
             # every verify round would re-fire 32 hook callbacks, each
@@ -890,10 +920,12 @@ class RASDInference:
                 raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
                 draft_ids = raw_draft_ids[:, -self.draft_max_len:]
                 print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
+                _nvtx_push("phase:prefill_draft")
                 with torch.cuda.stream(self.stream_draft):
                     draft_out = self.draft_model(draft_ids, use_cache=True)
                     draft_past_kv = draft_out.past_key_values
                 self.stream_draft.synchronize()
+                _nvtx_pop()
                 print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
                 if mem_tracer is not None:
                     mem_tracer.snapshot("post_draft_prefill")
@@ -1001,6 +1033,7 @@ class RASDInference:
         # other variable identical to RASD.
         if cfg.spec_steps == 0:
             while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
+                _nvtx_push(f"phase:autoregressive_step_{n_rounds:03d}")
                 # Single-token forward through target. Position is the
                 # next global position past everything already generated.
                 t_input = cur_token  # (B, 1)
@@ -1038,6 +1071,8 @@ class RASDInference:
                     past_kv=past_kv, draft_past_kv=None,
                     per_token_trace=per_token_trace, prefill_len=prefill_len,
                 )
+
+                _nvtx_pop()  # close autoregressive_step_NNN
 
                 if (cur_token == self.tokenizer.eos_token_id).all():
                     break
@@ -1080,6 +1115,7 @@ class RASDInference:
 
         # ---- Main speculative decoding loop ----
         while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
+            _nvtx_push(f"phase:verify_round_{n_rounds:03d}")
 
             # === ITERATION-BOUNDARY STREAM SYNC (R5) ===
             # End of previous round committed cur_token, past_kv, and (under
@@ -1301,6 +1337,8 @@ class RASDInference:
                 past_kv=past_kv, draft_past_kv=draft_past_kv,
                 per_token_trace=per_token_trace, prefill_len=prefill_len,
             )
+
+            _nvtx_pop()  # close verify_round_NNN NVTX range
 
             # Early stop on EOS
             if (cur_token == self.tokenizer.eos_token_id).all():

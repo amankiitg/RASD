@@ -106,9 +106,28 @@ def aggregate_events(events: Iterable, wall_time_us: float) -> Dict[str, float]:
                        in microseconds. Used to derive the idle bucket
                        (= wall - compute - comm), so wall must be > 0.
 
-    Returns dict with keys: compute_us, comm_us, idle_us, other_us,
-    total_us, wall_us — all in microseconds, plus a fraction view
-    `compute_pct / comm_pct / idle_pct / other_pct` for direct plot use.
+    Returns dict with the following keys (all _us values in microseconds):
+
+      Raw event time per bucket (CPU + CUDA self-time, can exceed wall
+      due to multi-stream concurrency):
+        compute_us, comm_us, other_us, total_us, wall_us
+
+      Figure-3-ready normalized fractions guaranteed to sum to 1.0
+      exactly (so a stacked bar plots without gaps):
+        compute_pct, comm_pct, other_pct, idle_pct
+
+      Diagnostic for multi-stream overlap (>0 means async helped;
+      this is the amount that compute+comm+other exceeded wall):
+        overlap_us, overlap_pct
+
+    Normalization fix (codex review 2026-05-10): the pre-fix code
+    computed compute_pct = compute_us / wall_us etc., which under
+    multi-stream concurrency could give sums > 1.0 (kernels overlap
+    in real time but their summed self-time counts each). The fix:
+    when total_event_us > wall_us, scale all three buckets down by
+    wall_us/total_event_us so they sum to exactly 1.0 with idle=0
+    and overlap_pct captures the excess; when total_event_us <
+    wall_us, keep the raw fractions and assign the remainder to idle.
     """
     compute_us = 0.0
     comm_us    = 0.0
@@ -124,30 +143,43 @@ def aggregate_events(events: Iterable, wall_time_us: float) -> Dict[str, float]:
             other_us += t
 
     total_event_us = compute_us + comm_us + other_us
-    # idle = wall - (sum of categorized event times). Clamped to 0
-    # because under multi-stream concurrency, sum of self-times can
-    # exceed wall (kernels overlap). When that happens we report
-    # idle=0 and call the overlap "negative idle in our model" — the
-    # caller can detect this by checking total_event_us > wall_us.
-    idle_us = max(0.0, wall_time_us - total_event_us)
 
-    summary = {
+    if wall_time_us <= 0:
+        wall_time_us = 1.0  # defensive
+
+    overlap_us = max(0.0, total_event_us - wall_time_us)
+    if total_event_us > wall_time_us:
+        # Multi-stream concurrency: scale event buckets so they sum
+        # to wall_us, idle=0, overlap_us captures the excess.
+        scale = wall_time_us / total_event_us
+        compute_pct = (compute_us * scale) / wall_time_us
+        comm_pct    = (comm_us    * scale) / wall_time_us
+        other_pct   = (other_us   * scale) / wall_time_us
+        idle_pct    = 0.0
+        idle_us     = 0.0
+    else:
+        # Standard case: idle = wall - total_event
+        compute_pct = compute_us / wall_time_us
+        comm_pct    = comm_us    / wall_time_us
+        other_pct   = other_us   / wall_time_us
+        idle_us     = wall_time_us - total_event_us
+        idle_pct    = idle_us / wall_time_us
+
+    return {
         "compute_us": compute_us,
         "comm_us":    comm_us,
         "idle_us":    idle_us,
         "other_us":   other_us,
         "total_us":   total_event_us,
         "wall_us":    wall_time_us,
+        "overlap_us": overlap_us,
+        # Figure-3-ready fractions sum to 1.0 exactly
+        "compute_pct": compute_pct,
+        "comm_pct":    comm_pct,
+        "idle_pct":    idle_pct,
+        "other_pct":   other_pct,
+        "overlap_pct": overlap_us / wall_time_us,
     }
-    # Fractions for convenience in figure code; protect against /0
-    denom = wall_time_us if wall_time_us > 0 else 1.0
-    summary.update({
-        "compute_pct": compute_us / denom,
-        "comm_pct":    comm_us    / denom,
-        "idle_pct":    idle_us    / denom,
-        "other_pct":   other_us   / denom,
-    })
-    return summary
 
 
 # ---------------------------------------------------------------------------

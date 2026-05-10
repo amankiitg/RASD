@@ -102,6 +102,41 @@ class _StubEvent:
         self.self_cuda_time_total = cuda_us
 
 
+class TestNVTXPhaseMarkers:
+    """generate() must wrap each major phase with NVTX ranges so
+    torch.profiler captures per-phase wall-time as user annotations.
+    Codex review 2026-05-10: round_marker() was defined in
+    profiler.py but never called from generate(). These tests guard
+    against regressing that fix."""
+
+    def _src(self):
+        from pathlib import Path
+        return (Path(__file__).resolve().parent.parent
+                / "src" / "models" / "rasd_inference.py").read_text()
+
+    def test_nvtx_helpers_defined(self):
+        src = self._src()
+        assert "def _nvtx_push" in src
+        assert "def _nvtx_pop" in src
+
+    def test_prefill_target_wrapped(self):
+        src = self._src()
+        assert 'phase:prefill_target' in src
+
+    def test_prefill_draft_wrapped(self):
+        src = self._src()
+        assert 'phase:prefill_draft' in src
+
+    def test_verify_rounds_wrapped(self):
+        src = self._src()
+        # f-string usage so we match the format
+        assert 'phase:verify_round_' in src
+
+    def test_target_only_steps_wrapped(self):
+        src = self._src()
+        assert 'phase:autoregressive_step_' in src
+
+
 class TestAggregate:
     def test_summary_keys(self):
         """Lock the schema Fig 3 reads from."""
@@ -110,7 +145,11 @@ class TestAggregate:
         expected = {
             "compute_us", "comm_us", "idle_us", "other_us",
             "total_us", "wall_us",
+            # M4 Phase C 2026-05-10 (codex review): overlap diagnostic
+            # for multi-stream concurrency.
+            "overlap_us",
             "compute_pct", "comm_pct", "idle_pct", "other_pct",
+            "overlap_pct",
         }
         assert set(summary.keys()) == expected
 
@@ -147,11 +186,59 @@ class TestAggregate:
         assert s["idle_us"] == 0
 
     def test_zero_wall_no_div_zero(self):
+        """When wall_time_us=0 (degenerate case), aggregate_events
+        falls back to wall=1us and treats event time as 'all compute,
+        massive overlap' rather than dividing by zero. M4 Phase C
+        2026-05-10 (codex normalization fix): pcts are now bounded
+        fractions in [0, 1], not raw ratios that can exceed 100.
+        compute_pct here is 1.0 (100% of wall is compute) because
+        the overlap normalization scales event time down to wall."""
         events = [_StubEvent("aten::matmul", cpu_us=100)]
         s = aggregate_events(events, wall_time_us=0)
-        # Should not raise; pcts should be sane
-        assert s["compute_pct"] == 100  # falls back to denom=1
-        assert s["wall_us"] == 0
+        assert s["wall_us"] == 1.0  # defensive fallback
+        # Overlap branch: 100 us of events vs 1 us wall.
+        assert s["compute_pct"] == 1.0   # 100% of wall is compute
+        assert s["idle_pct"] == 0.0       # no idle when overlap
+        assert s["overlap_us"] > 0        # 100 - 1 = 99 us overlap
+        # Sum of compute+comm+other+idle pct must equal exactly 1.0
+        assert abs(s["compute_pct"] + s["comm_pct"] + s["other_pct"] + s["idle_pct"] - 1.0) < 1e-9
+
+    def test_normalization_invariant_no_overlap(self):
+        """When total_event_us <= wall_us, the four pcts must sum
+        to exactly 1.0 (compute + comm + other + idle = 100% of wall).
+        Closes the codex finding 'compute_pct + comm_pct + other_pct
+        could exceed 100%'."""
+        events = [
+            _StubEvent("aten::matmul",     cpu_us=40),
+            _StubEvent("c10d::broadcast",  cpu_us=20),
+            _StubEvent("aten::contiguous", cpu_us=10),
+        ]
+        s = aggregate_events(events, wall_time_us=200)
+        # No overlap: events sum to 70, wall is 200, idle = 130
+        assert s["overlap_us"] == 0
+        assert abs(s["compute_pct"] + s["comm_pct"] + s["other_pct"] + s["idle_pct"] - 1.0) < 1e-9
+        assert s["idle_us"] == 130
+
+    def test_normalization_invariant_with_overlap(self):
+        """When total_event_us > wall_us (multi-stream overlap),
+        the four pcts must STILL sum to exactly 1.0 — idle goes to 0,
+        compute/comm/other are scaled down, overlap_pct captures the
+        excess. Closes the codex finding about > 100% sums in stacked
+        bar plotting."""
+        events = [
+            _StubEvent("aten::matmul",      cpu_us=180),
+            _StubEvent("nccl::all_reduce",  cpu_us=120),
+        ]
+        s = aggregate_events(events, wall_time_us=200)
+        # 300us events overlap 200us wall
+        assert s["overlap_us"] == 100
+        assert s["idle_pct"] == 0.0
+        # Sum of compute+comm+other+idle must equal 1.0
+        assert abs(s["compute_pct"] + s["comm_pct"] + s["other_pct"] + s["idle_pct"] - 1.0) < 1e-9
+        # Verify scaling preserved bucket ratios (compute:comm = 180:120 = 3:2)
+        assert abs(s["compute_pct"] / s["comm_pct"] - 1.5) < 1e-9
+        # overlap_pct = 100/200 = 0.5
+        assert abs(s["overlap_pct"] - 0.5) < 1e-9
 
     def test_cpu_plus_cuda_summed(self):
         """cpu + cuda time both contribute to bucket totals."""
@@ -211,14 +298,18 @@ class TestRoundProfilerEnabled:
 
     def test_summary_schema_locked(self):
         """Schema must match the Fig 3 contract — same keys as
-        aggregate_events returns directly."""
+        aggregate_events returns directly. Updated 2026-05-10 to
+        include overlap_us / overlap_pct from the codex
+        normalization fix."""
         with RoundProfiler(enabled=True) as p:
             _ = torch.matmul(torch.randn(16, 16), torch.randn(16, 16))
         keys = set(p.summary.keys())
         assert keys == {
             "compute_us", "comm_us", "idle_us", "other_us",
             "total_us", "wall_us",
+            "overlap_us",
             "compute_pct", "comm_pct", "idle_pct", "other_pct",
+            "overlap_pct",
         }
 
     def test_exception_in_body_does_not_leak_profiler(self):
