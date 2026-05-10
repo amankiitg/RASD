@@ -63,11 +63,31 @@ class TestCategorize:
         assert categorize_event("c10d::irecv") == "comm"
         assert categorize_event("aten::batch_isend_irecv") == "comm"
 
-    def test_other_default(self):
-        assert categorize_event("aten::randn") == "other"
-        assert categorize_event("aten::empty") == "other"
-        assert categorize_event("aten::contiguous") == "other"
-        assert categorize_event("CudaStreamSynchronize") == "other"
+    def test_other_explicit_noise(self):
+        """M4 Phase C 2026-05-10: categorize_event was inverted to
+        default-to-compute (not default-to-other). Only explicitly
+        listed SKIP_PATTERNS produce 'other'."""
+        assert categorize_event("aten::empty")   == "other"
+        assert categorize_event("aten::zeros")   == "other"
+        assert categorize_event("cudaLaunchKernel") == "other"
+        assert categorize_event("ProfilerStep")  == "other"
+
+    def test_default_unknown_op_is_compute(self):
+        """Unknown ops default to 'compute' (the codex fix — previously
+        defaulted to 'other' and left 54% of wall in that bucket on
+        the PROFILED_ctx128k_s42 run)."""
+        assert categorize_event("aten::randn")    == "compute"
+        assert categorize_event("aten::some_new_kernel") == "compute"
+
+    def test_compute_includes_flash_attn_and_tensor_ops(self):
+        """The expanded compute taxonomy covers flash-attn and tensor
+        manipulation ops that p36's first run mis-bucketed as 'other'."""
+        assert categorize_event("flash_attn::flash_attn_func") == "compute"
+        assert categorize_event("_flash_attention_forward") == "compute"
+        assert categorize_event("aten::contiguous") == "compute"
+        assert categorize_event("aten::clone")      == "compute"
+        assert categorize_event("aten::view")       == "compute"
+        assert categorize_event("aten::permute")    == "compute"
 
     def test_lowercased_match(self):
         """Mixed-case event names should still classify correctly."""
@@ -166,10 +186,12 @@ class TestAggregate:
         assert abs(s["compute_pct"] - 0.75) < 1e-9
 
     def test_mix_compute_comm_other(self):
+        # Use aten::empty (in SKIP_PATTERNS) for the "other" bucket since
+        # the 2026-05-10 inversion moved aten::contiguous → "compute".
         events = [
-            _StubEvent("aten::matmul",      cpu_us=100),
-            _StubEvent("c10d::broadcast",   cpu_us=20),
-            _StubEvent("aten::contiguous",  cpu_us=10),
+            _StubEvent("aten::matmul",     cpu_us=100),
+            _StubEvent("c10d::broadcast",  cpu_us=20),
+            _StubEvent("aten::empty",      cpu_us=10),
         ]
         s = aggregate_events(events, wall_time_us=200)
         assert s["compute_us"] == 100
@@ -211,7 +233,7 @@ class TestAggregate:
         events = [
             _StubEvent("aten::matmul",     cpu_us=40),
             _StubEvent("c10d::broadcast",  cpu_us=20),
-            _StubEvent("aten::contiguous", cpu_us=10),
+            _StubEvent("aten::empty",      cpu_us=10),
         ]
         s = aggregate_events(events, wall_time_us=200)
         # No overlap: events sum to 70, wall is 200, idle = 130

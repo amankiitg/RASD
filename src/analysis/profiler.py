@@ -38,18 +38,6 @@ from torch.profiler import ProfilerActivity, profile
 # Categorization
 # ---------------------------------------------------------------------------
 
-# Substrings that mark an event as model compute (GEMMs, attention,
-# normalization, activations, embeddings, RoPE). Lowercase compare.
-COMPUTE_PATTERNS: tuple[str, ...] = (
-    "matmul", "::mm", "::bmm", "::addmm", "linear",
-    "softmax",
-    "scaled_dot_product",
-    "layer_norm", "rmsnorm", "rms_norm",
-    "silu", "gelu", "relu",
-    "embedding", "rotary", "rope",
-    "attention",
-)
-
 # Substrings that mark an event as cross-rank communication. NCCL and
 # c10d primitives + the named collective ops we use under multi-rank
 # (Fix2 broadcasts, ring batch_isend_irecv, etc.).
@@ -60,20 +48,77 @@ COMM_PATTERNS: tuple[str, ...] = (
     "::send", "::recv",
     "isend", "irecv",
     "batch_isend_irecv",
+    "p2p", "process_group",
+)
+
+# Substrings that mark an event as noise / non-compute overhead. These
+# don't contribute meaningfully to "what is the GPU doing" — they're
+# allocator, dispatch, profiler self-overhead, data loading, or sync
+# waits that aren't really comm. Bucketed as "other".
+SKIP_PATTERNS: tuple[str, ...] = (
+    "cudalaunchkernel", "cudaeventrecord", "cudaeventquery",
+    "cudahostalloc", "cudafree", "cudamemcpy",
+    "::empty", "::zeros", "::ones",
+    "profilerstep", "profiler_step",
+    "dataloader",
+)
+
+# Optional explicit compute hints kept for backward-compat / docs.
+# The categorization no longer DEPENDS on this list — anything that's
+# not comm and not noise gets bucketed as compute. Listed here so
+# readers know what we EXPECT to dominate compute.
+COMPUTE_PATTERNS: tuple[str, ...] = (
+    # GEMM / matmul / linear
+    "matmul", "::mm", "::bmm", "::addmm", "linear",
+    # Attention kernels
+    "softmax",
+    "scaled_dot_product", "sdpa",
+    "flash_attn", "fa_fwd", "fa_bwd",
+    "_flash_attention_forward",
+    "attention",
+    # Norms
+    "layer_norm", "rmsnorm", "rms_norm", "native_layer_norm",
+    # Activations
+    "silu", "gelu", "relu", "swiglu", "tanh", "sigmoid",
+    # Embedding / positional
+    "embedding", "rotary", "rope",
+    # Tensor manipulation that runs on GPU as part of model forward
+    "::clone", "::contiguous", "::view", "::reshape",
+    "::cat", "::stack", "::permute", "::transpose",
+    "::pad", "::slice",
+    # Elementwise math (narrow patterns to avoid spurious matches)
+    "::add_", "::mul_", "::sub_", "::div_", "::pow_",
+    "::add.", "::mul.", "::sub.", "::div.",
 )
 
 
 def categorize_event(name: str) -> str:
     """Return one of {"compute", "comm", "other"}.
 
+    Logic inverted M4 Phase C 2026-05-10 (codex-flagged: the previous
+    forward-match approach left ~54% of wall-clock in "other" because
+    flash_attn, tensor-manipulation kernels, and generic aten::* ops
+    weren't in COMPUTE_PATTERNS):
+
+      1. If event matches a COMM_PATTERNS substring → "comm"
+      2. Elif event matches a SKIP_PATTERNS substring → "other"
+      3. Else → "compute"   (default; covers anything actually doing
+                             math on tensors, even ops we didn't
+                             explicitly list)
+
+    For the Figure 3 stacked bar this is more honest: "compute" =
+    "useful GPU work that's not comm", "comm" = "cross-rank moves",
+    "other" = "explicitly identified noise / allocator / dispatch",
+    "idle" = "wall − all of the above".
+
     Pure function; covered by tests/test_profiler.py.
     """
     key = name.lower()
     if any(p in key for p in COMM_PATTERNS):
         return "comm"
-    if any(p in key for p in COMPUTE_PATTERNS):
-        return "compute"
-    return "other"
+    if any(p in key for p in SKIP_PATTERNS):
+        return "other"
+    return "compute"
 
 
 # ---------------------------------------------------------------------------
