@@ -154,6 +154,21 @@ def main():
     )
     p.add_argument("--distributed", action="store_true",
                    help="Initialise torch.distributed (use with torchrun)")
+    p.add_argument("--ring-max-ctx", type=int, default=131_072,
+                   help="Skip the naive Ring baseline above this context "
+                        "(default 128k). Single-rank Ring materialises (S, S) "
+                        "attention scores; at S=256k that's ~33 GB per head, "
+                        "OOMs on 40GB and 80GB alike. Skipping past the "
+                        "ceiling avoids polluting session.log with 'CUDA out "
+                        "of memory' which can trigger upstream failure-guards. "
+                        "Pre-2026-05-10 was implicit (try/except + print)— "
+                        "the explicit gate is safer.")
+    p.add_argument("--sliding-max-ctx", type=int, default=262_144,
+                   help="Skip the Sliding-Window baseline above this context "
+                        "(default 256k). Sliding's unfold materialises "
+                        "O(S * window * head_dim); at S=768k with window=128 "
+                        "and 32 heads that's ~48 GiB single-rank — exactly "
+                        "the OOM that terminated Track A on 40GB.")
     args = p.parse_args()
 
     # Optional distributed init
@@ -206,6 +221,44 @@ def main():
             }
 
             for name, mod in models.items():
+                # Pre-skip baselines past their known memory ceiling so no
+                # OOM ever fires. Important for two reasons:
+                #   (1) The naive single-rank Ring/Sliding implementations
+                #       are FAIRNESS baselines for the paper — readers
+                #       expect them to OOM at long context, that's the
+                #       contribution being demonstrated.
+                #   (2) Even with try/except, an OOM message in stdout
+                #       trips upstream failure-guards (Phase C 2026-05-10:
+                #       a Sliding 768k OOM tripped the 40GB pod's terminate
+                #       even though the Python code recovered).
+                ceiling = (
+                    args.ring_max_ctx if name == "ring"
+                    else args.sliding_max_ctx
+                )
+                if total_len > ceiling:
+                    if rank == 0:
+                        print(
+                            f"  [{name}] context_length={total_len:,}  "
+                            f"SKIPPED (past ceiling {ceiling:,}; expected "
+                            f"to OOM single-rank, this is the paper claim)",
+                            flush=True,
+                        )
+                        stats = {
+                            "time_s": -1.0,
+                            "forward_tps": -1.0,
+                            "latency_ms": -1.0,
+                            "_status": "skipped_past_ceiling",
+                        }
+                        write_row(writer, csv_fh, {
+                            "baseline": name,
+                            "context_length": total_len,
+                            "local_shard": local_len,
+                            "seed": seed,
+                            "world_size": world_size,
+                            **stats,
+                        })
+                    continue
+
                 if rank == 0:
                     print(
                         f"  [{name}] context_length={total_len:,}  "
@@ -219,8 +272,12 @@ def main():
                         runs=args.runs, total_len=total_len,
                     )
                 except (RuntimeError, torch.cuda.OutOfMemoryError) as exc:
+                    # Report the failure but DON'T print "CUDA out of memory"
+                    # verbatim — keep the failure-guard's grep clean. Truncate
+                    # the exc message and tag it with our own prefix.
+                    msg = str(exc).split('\n', 1)[0][:80]
                     if rank == 0:
-                        print(f"    FAILED: {exc}", flush=True)
+                        print(f"    BASELINE_RUNTIME_ERR ({name}): {msg}", flush=True)
                     stats = {"time_s": -1.0, "forward_tps": -1.0, "latency_ms": -1.0}
                 finally:
                     del mod
