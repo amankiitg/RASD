@@ -438,6 +438,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     # Write results BEFORE destroy_process_group — destroy can hang if peers
     # are slow to reach the same barrier, and we don't want to lose metrics.
     if local_rank == 0:
+        # mkdir -p the output_csv's parent so writing the .tmp file
+        # doesn't FileNotFoundError on first-run output dirs that
+        # haven't been created yet (results/m4_smoke/, results/final/,
+        # etc.). Bug discovered 2026-05-10 when the M4 smoke canary
+        # generated successfully but failed to persist its result.
+        Path(output_csv).resolve().parent.mkdir(parents=True, exist_ok=True)
         with open(output_csv + f".{run['run_id']}.tmp", "w") as f:
             json.dump(row, f)
 
@@ -679,7 +685,13 @@ def main():
                 log.error("CANARY FAILED — aborting ablation grid. Error: %s",
                           canary_row.get("error", "unknown"))
                 log.error("Fix the issue and re-run. The canary will be skipped once it passes.")
-                return
+                # Use sys.exit(1) instead of `return` so the calling
+                # script (e.g., phase_c_pod_session.sh) sees a non-zero
+                # exit and stops. Bug discovered 2026-05-10: a `return`
+                # exits Python with code 0, so the master script
+                # marked the stage as DONE and proceeded to the next
+                # stage despite a broken canary.
+                sys.exit(1)
             log.info("=== CANARY PASSED (tps=%.1f, accept=%.3f) — starting ablation grid ===",
                      float(canary_row.get("throughput_tps", 0)),
                      float(canary_row.get("acceptance_rate", 0)))

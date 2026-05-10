@@ -104,17 +104,27 @@ stages, so a crashed pod can `git pull` and re-run to pick up.
 
 ### Stage sequence (current as of 2026-05-10)
 
-| Stage | What | Wandb project | Stop on FAIL? |
-|---|---|---|---|
-| **p30_gpu_health** | nvidia-smi ECC/XID scan; confirm 0 MiB idle on all 8 GPUs | — | yes — bad hardware aborts |
-| **p31_repro_lockdown** | `capture_pod_env.sh` → `requirements-lock.txt`; `pin_hf_revisions.py` (Llama-2 hashes). **`replay_m3_smoke.sh` removed 2026-05-10** — M3 is already pinned via `m3-reproducible` git tag + 13 invariant tests; the replay duplicated work + cost ~25 min/launch + would fail throughput tolerance because M4 has flash-attn but R6.5 didn't | — | yes |
-| **c11_validation** | NF4 codec gate at ctx ∈ {1024, 4096} × seeds {42, 123, 456}, plus end-to-end production gate (assert NF4DynamicCache survives prefill + `_truncate_kv`). Pass: rel_err ≤ 15%, compression ≥ 3× | — | yes |
-| **c2b_yarn_validation** | YaRN at ctx=512k (factor=128) — no NaN/inf; PPL within 2× of linear baseline at ctx=64k | — | yes |
-| **c6_resume_validation** | Multi-rank checkpoint+resume produces same final tokens as one-shot | — | yes |
-| **p33_long_ctx_smokes** | RASD single-prompt at 32k / 128k / 512k / 1M (1 seed each), `--abort-on-failure` so 128k OOM doesn't burn pod-$ on doomed 512k/1M | **`rasd-m4-phase-c`** | yes (smoke runner has `--abort-on-failure`) |
-| **p34_baseline_validation** | Ring + Sliding × {128k, 256k, 512k, 1M} × 3 seeds. CSV column is `forward_tps` — **NOT directly comparable to RASD's generation `throughput_tps`** (different metric semantics; Phase D Figure 1 caption must clarify) | — (raw CSV) | yes |
-| **p35_final_matrix** | 12-run RASD matrix: 4 contexts × 3 seeds (Ring/Sliding baselines come from p34, not this YAML), `--log-per-token` | **`rasd-m4-phase-c`** | no — `--resume` lets us pick up after partial failure |
-| **p36_profiler_pass** | Profiler sidecar pass: 4 contexts × seed 42 with `--profile`. Source data for Fig 3 (compute/comm/idle stacked breakdown) | **`rasd-m4-phase-c`** | no |
+Expected runtimes are based on the actual 2026-05-10 pod run on
+Lambda 8× A100-SXM4-40GB in asia-northeast-2 (with flash-attn 2.8.3
+active and `requirements-lock.txt` pins). All assume cold pod
+(no HF cache; first run downloads ~26 GB of Llama-2-7b weights).
+
+| Stage | What | Expected runtime | Wandb project | Stop on FAIL? |
+|---|---|---|---|---|
+| **p30_gpu_health** | nvidia-smi ECC/XID scan; confirm 0 MiB idle on all 8 GPUs | **~1 sec** | — | yes — bad hardware aborts |
+| **p31_repro_lockdown** | `capture_pod_env.sh` → `requirements-lock.txt`; `pin_hf_revisions.py` (Llama-2 hashes). **`replay_m3_smoke.sh` removed 2026-05-10** — M3 is already pinned via `m3-reproducible` git tag + 13 invariant tests | **~3 sec** | — | yes |
+| **c11_validation** | NF4 codec gate at ctx ∈ {1024, 4096} × seeds {42, 123, 456}, plus end-to-end production gate (assert NF4DynamicCache survives prefill + `_truncate_kv`). Pass: rel_err ≤ 15%, compression ≥ 3× | **~30 sec** (single GPU, includes Llama-2-7b model load × 2) | — | yes |
+| **c2b_yarn_validation** | YaRN at ctx=512k (factor=128) — no NaN/inf; PPL within 2× of linear baseline at ctx=64k | **~30 sec** | — | yes |
+| **c6_resume_validation** | Multi-rank checkpoint+resume produces same final tokens as one-shot | **~2 min** (3 generation passes at ctx=4k × W=8) | — | yes |
+| **p33_long_ctx_smokes** | RASD single-prompt at 32k / 128k / 512k / 1M (1 seed each), `--abort-on-failure` so 128k OOM doesn't burn pod-$ on doomed 512k/1M | **~3 hr** (canary 1 min + 32k ~3 min + 128k ~12 min + 512k ~50 min + 1M ~120 min, all sequential) | **`rasd-m4-phase-c`** | yes |
+| **p34_baseline_validation** | Ring + Sliding × {128k, 256k, 512k, 1M} × 3 seeds = 24 baseline rows. CSV column is `forward_tps` — **NOT directly comparable to RASD's generation `throughput_tps`** | **~30 min** (2026-05-10 first run: most cells finish in <1s; 1M Ring/Sliding OOMs in seconds without ring sequence parallelism) | — (raw CSV) | yes |
+| **p35_final_matrix** | 12-run RASD matrix: 4 contexts × 3 seeds (Ring/Sliding baselines come from p34, not this YAML), `--log-per-token`. Each cell at max_new_tokens=64 | **~6-8 hr** (3× p33 cost since 3 seeds; some parallelism saves vs 4-cell smoke) | **`rasd-m4-phase-c`** | no — `--resume` lets us pick up after partial failure |
+| **p36_profiler_pass** | Profiler sidecar pass: 4 contexts × seed 42 with `--profile`. Source data for Fig 3 (compute/comm/idle stacked breakdown) | **~3.5 hr** (~10% slower than p33's seed-42 cells due to profiler overhead) | **`rasd-m4-phase-c`** | no |
+| **TOTAL bundled session** | | **~13-15 hr** | | |
+
+**Cost projection:** ~13-15 hr × $15.92/hr (40GB SXM4) = **$210-240** for a clean end-to-end run on 40GB tier. Plus ~$15-20 of debug overhead from re-runs (e.g., one row OOMs, fix, resume), bringing realistic total to **~$240-260**. Within the $2000 Lambda research credit.
+
+**Pre-stage validation timings (2026-05-10 actual on this pod):** p30+p31+c11+c2b+c6 all completed in **3 minutes** (03:25:37Z → 03:28:48Z). That confirms the ~13-15 hr estimate is dominated by p33+p35+p36 long-context generation, not the pre-stage validation gates.
 
 ### Reviewer's recommended pod-gate order (2026-05-10, third pass)
 
