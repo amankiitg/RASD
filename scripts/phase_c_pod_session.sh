@@ -275,12 +275,17 @@ perplexity_sanity() {
             --tokenizer meta-llama/Llama-2-7b-hf \
             --chunk-size 65536
     fi
-    # Run PPL eval at moderate contexts (NF4 weights, single-rank)
+    # Run PPL eval at moderate contexts (NF4 weights, single-rank).
+    # rope_type=yarn matches the production runs (p33-p35, p35b, p36);
+    # without it vanilla Llama-2 PPL explodes past 4k due to RoPE
+    # extrapolation collapse — masks any quant-quality signal.
     python scripts/eval_perplexity_matrix.py \
         --target meta-llama/Llama-2-7b-hf \
         --contexts 4096 8192 16384 32768 \
         --seeds 42 123 456 \
         --quantize-target \
+        --rope-type yarn \
+        --rope-native-max 4096 \
         --pg19-meta data/processed/pg19/pg19_validation_metadata.json \
         --out results/perplexity/m4_ppl.csv
 }

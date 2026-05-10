@@ -45,13 +45,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import math
+
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 # Make sure src/ is importable when run from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.analysis.perplexity import compute_perplexity  # noqa: E402
+from src.models.rasd_inference import _build_rope_scaling_dict  # noqa: E402
 
 
 CSV_HEADER = [
@@ -64,20 +67,39 @@ CSV_HEADER = [
     "n_tokens",
     "stride",
     "model",
+    "rope_type",
 ]
 
 
-def _load_target(name: str, revision: str | None, quantize: bool, dtype: torch.dtype):
-    """Load the target Llama as RASD does (NF4 weights when quantize=True)."""
+def _load_target(name: str, revision: str | None, quantize: bool, dtype: torch.dtype,
+                 rope_type: str | None = None, rope_factor: float | None = None,
+                 rope_native_max: int | None = None):
+    """Load the target Llama as RASD does (NF4 weights when quantize=True).
+
+    When `rope_type` is set, apply rope_scaling to the loaded config so PPL
+    is measured under the same long-context configuration the production
+    runs use (p33-p35, p35b, p36 all use rope_type=yarn). Without this,
+    PPL >4k explodes due to Llama-2's vanilla RoPE extrapolation collapse,
+    masking whether NF4 quant degraded quality.
+    """
     bnb = None
     if quantize and torch.cuda.is_available():
         bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=dtype)
+    extra_kwargs = {}
+    if rope_type is not None:
+        if rope_factor is None or rope_native_max is None:
+            raise ValueError("rope_factor and rope_native_max required when rope_type set")
+        extra_kwargs["rope_scaling"] = _build_rope_scaling_dict(
+            rope_type, float(rope_factor), int(rope_native_max)
+        )
+        extra_kwargs["max_position_embeddings"] = int(rope_native_max * rope_factor)
     model = AutoModelForCausalLM.from_pretrained(
         name,
         revision=revision,
         torch_dtype=dtype,
         quantization_config=bnb,
         device_map={"": 0} if torch.cuda.is_available() else None,
+        **extra_kwargs,
     )
     model.eval()
     return model
@@ -138,14 +160,35 @@ def main():
     p.add_argument("--out", default="results/perplexity/m4_ppl.csv")
     p.add_argument("--stride", type=int, default=None,
                    help="PPL sliding-window stride (default ctx/2)")
+    p.add_argument("--rope-type", default=None,
+                   choices=["linear", "yarn", "dynamic"],
+                   help="RoPE scaling strategy. Default (unset) loads vanilla "
+                        "Llama-2 (only meaningful at ctx<=4k). Set to 'yarn' "
+                        "to match production runs (p33-p35, p35b, p36) at "
+                        "long context.")
+    p.add_argument("--rope-native-max", type=int, default=4096,
+                   help="Pre-extension training context length "
+                        "(Llama-2-7B native = 4096).")
     args = p.parse_args()
 
     if not torch.cuda.is_available():
         raise RuntimeError("eval_perplexity_matrix requires CUDA (NF4 weights need bnb)")
 
     dtype = getattr(torch, args.dtype)
+    # If rope_type set, size factor to the longest context we'll evaluate
+    # (model is loaded once; YaRN at f=ceil(max_ctx/native) covers all rows).
+    rope_factor = None
+    if args.rope_type is not None:
+        max_ctx = max(args.contexts)
+        rope_factor = max(1.0, math.ceil(max_ctx / args.rope_native_max))
+        print(f"RoPE: type={args.rope_type} factor={rope_factor} "
+              f"native_max={args.rope_native_max} (sized for max_ctx={max_ctx})")
     print(f"Loading target: {args.target} quantize={args.quantize_target}")
-    model = _load_target(args.target, args.revision, args.quantize_target, dtype)
+    model = _load_target(
+        args.target, args.revision, args.quantize_target, dtype,
+        rope_type=args.rope_type, rope_factor=rope_factor,
+        rope_native_max=args.rope_native_max,
+    )
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +226,7 @@ def main():
                     ids.shape[1],
                     args.stride or ctx // 2,
                     args.target,
+                    args.rope_type or "none",
                 ])
                 fh.flush()
                 print(f"    ppl={ppl:.4f}  time={t1-t0:.2f}s")
