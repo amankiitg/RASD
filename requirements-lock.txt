@@ -3,6 +3,12 @@
 # CUDA  Build cuda_12.8.r12.8/compiler.35583870_0
 # Torch 2.5.1+cu124 12.4
 #
+# torch==2.5.1+cu124 is published on PyTorch's own CUDA-12.4 wheel index,
+# not default PyPI. Add it as an extra index so the bulk pip install
+# resolves the cu124 build (default PyPI only has CPU + cu118 wheels at
+# this torch version, neither runnable on a Hopper/Ampere CUDA-12.4 box).
+--extra-index-url https://download.pytorch.org/whl/cu124
+#
 accelerate==0.33.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.5
