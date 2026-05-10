@@ -382,6 +382,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # them in the YAML if needed.
             kv_outlier_prefix_size = int(run.get("kv_outlier_prefix_size", 128)),
             kv_block_size_nf4      = int(run.get("kv_block_size_nf4", 32)),
+            nf4_update_chunk_size  = int(run.get("nf4_update_chunk_size", 2048)),
             # M4 paper memory attribution. Off by default. When True,
             # rasd_inference.generate() snapshots per-stage GPU memory
             # via MemoryTracer and writes a JSON sidecar.

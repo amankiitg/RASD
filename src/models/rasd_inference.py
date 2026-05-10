@@ -173,6 +173,17 @@ class RASDConfig:
     # The trade is worth it for acceptance — see Phase C blocker
     # 2026-05-10 NF4 acceptance drop.
     kv_block_size_nf4: int = 32
+    # M4 Phase C 2026-05-10 NF4 chunked quantization. When > 0, the
+    # NF4 cache's update() call splits the bf16 input along the
+    # sequence axis into chunks of this size and quantizes each
+    # in turn, freeing the slice between chunks. At 1M context this
+    # drops the quant-path peak per layer from ~1.5 GB (S_local=128k
+    # full) to ~24 MB per chunk — the freed headroom directly offsets
+    # the FFN's ~9 GB transient that the trace identified as the
+    # actual OOM contributor. Pass 0 for the legacy single-shot path
+    # (M3 byte-identical). 2048 is the recommended value at long
+    # context (matches kv_block_size for ring rotation granularity).
+    nf4_update_chunk_size: int = 2048
     # Memory tracing for paper Figure 3 / attribution. When True,
     # MemoryTracer.snapshot() is called at lifecycle points in
     # generate() and a JSON sidecar is written to
@@ -766,6 +777,7 @@ class RASDInference:
                     block_size=cfg.kv_block_size_nf4,
                     dtype=cfg.torch_dtype,
                     bf16_prefix_size=prefix_size,
+                    update_chunk_size=cfg.nf4_update_chunk_size,
                 )
 
             # M4 Phase C 2026-05-10 lever #1: only the LAST position's

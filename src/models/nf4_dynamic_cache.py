@@ -75,6 +75,7 @@ class NF4DynamicCache(_HFCache):
         block_size: int = 64,
         dtype: torch.dtype = torch.bfloat16,
         bf16_prefix_size: int = 0,
+        update_chunk_size: int = 0,
     ):
         """Args:
             block_size: NF4 block size for the codec.
@@ -93,6 +94,20 @@ class NF4DynamicCache(_HFCache):
                 first global-tokens at all.
                 Memory cost: 32 layers * 8 KV-heads * 128 tokens * 128
                 head_dim * 2 (K+V) * 2 bytes = 8 MB per rank, negligible.
+            update_chunk_size: when > 0, quantize the NF4 portion of
+                each update() call in chunks of this many tokens along
+                the sequence axis. At 1M context the prefill calls
+                update() with S_local=128k tokens at once, which means
+                bf16 input (256 MB K + 256 MB V), bf16 dequant output
+                (returned to caller, 512 MB), and NF4 codes+scales
+                (525 MB) are ALL live concurrently — ~1.5 GB peak per
+                layer per call competing with FFN's ~9 GB transient.
+                Chunking S_new into 2048-token pieces drops the
+                quant-path peak to ~24 MB per chunk, freeing the
+                competing FFN headroom. Pass 0 (default) for the
+                legacy single-shot path (M3 byte-identical when
+                update_chunk_size=0). 2048 is the recommended value
+                at long context.
         """
         # We can't call super().__init__() unconditionally — Cache base
         # class signature is INCOMPATIBLE between transformers versions:
@@ -119,6 +134,9 @@ class NF4DynamicCache(_HFCache):
         if bf16_prefix_size < 0:
             raise ValueError(f"bf16_prefix_size={bf16_prefix_size} must be >= 0")
         self.bf16_prefix_size = bf16_prefix_size
+        if update_chunk_size < 0:
+            raise ValueError(f"update_chunk_size={update_chunk_size} must be >= 0")
+        self.update_chunk_size = update_chunk_size
         self._k_codes: List[List[torch.Tensor]] = []
         self._k_scales: List[List[torch.Tensor]] = []
         self._v_codes: List[List[torch.Tensor]] = []
@@ -203,12 +221,35 @@ class NF4DynamicCache(_HFCache):
         if n_to_prefix < new_tokens:
             nf4_k = key_states[:, :, n_to_prefix:, :].contiguous()
             nf4_v = value_states[:, :, n_to_prefix:, :].contiguous()
-            kc, ks = quantize_nf4(nf4_k, block_size=self.block_size)
-            vc, vs = quantize_nf4(nf4_v, block_size=self.block_size)
-            self._k_codes[layer_idx].append(kc)
-            self._k_scales[layer_idx].append(ks)
-            self._v_codes[layer_idx].append(vc)
-            self._v_scales[layer_idx].append(vs)
+            nf4_S = nf4_k.shape[2]
+            chunk_size = self.update_chunk_size
+            if chunk_size <= 0 or chunk_size >= nf4_S:
+                # Legacy single-shot path. M3 byte-identical when
+                # update_chunk_size=0 (the default).
+                kc, ks = quantize_nf4(nf4_k, block_size=self.block_size)
+                vc, vs = quantize_nf4(nf4_v, block_size=self.block_size)
+                self._k_codes[layer_idx].append(kc)
+                self._k_scales[layer_idx].append(ks)
+                self._v_codes[layer_idx].append(vc)
+                self._v_scales[layer_idx].append(vs)
+            else:
+                # Chunked path (M4 1M memory pressure mitigation):
+                # quantize chunk-by-chunk so peak transient is bounded
+                # by chunk_size, not nf4_S.
+                # Free the slice references between chunks so the
+                # bf16 input slice from this iteration can be GC'd
+                # before we materialize the next chunk's quantization.
+                for start in range(0, nf4_S, chunk_size):
+                    end = min(start + chunk_size, nf4_S)
+                    k_chunk = nf4_k[:, :, start:end, :].contiguous()
+                    v_chunk = nf4_v[:, :, start:end, :].contiguous()
+                    kc, ks = quantize_nf4(k_chunk, block_size=self.block_size)
+                    vc, vs = quantize_nf4(v_chunk, block_size=self.block_size)
+                    self._k_codes[layer_idx].append(kc)
+                    self._k_scales[layer_idx].append(ks)
+                    self._v_codes[layer_idx].append(vc)
+                    self._v_scales[layer_idx].append(vs)
+                    del k_chunk, v_chunk, kc, ks, vc, vs
 
         return self._dequantize_layer(layer_idx)
 

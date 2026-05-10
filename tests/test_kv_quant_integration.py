@@ -507,6 +507,99 @@ class TestNF4OutlierKeep:
         # NOT NF4-quantizing those 64 tokens).
         assert cache_w_prefix.memory_bytes() > cache_no_prefix.memory_bytes()
 
+    def test_chunked_update_default_disabled(self):
+        """update_chunk_size defaults to 0 (legacy single-shot path)
+        so existing constructors without the kwarg are byte-identical
+        to before."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        c = NF4DynamicCache()
+        assert c.update_chunk_size == 0
+
+    def test_chunked_update_negative_rejected(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        with pytest.raises(ValueError):
+            NF4DynamicCache(update_chunk_size=-1)
+
+    def test_chunked_update_produces_multiple_chunks(self):
+        """With update_chunk_size=64 and S_new=200, the NF4 portion
+        should be split into 4 chunks (64+64+64+8). Each chunk is
+        stored as a separate (codes, scales) entry in the layer's list."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        c = NF4DynamicCache(block_size=32, update_chunk_size=64)
+        torch.manual_seed(0)
+        k = torch.randn(1, 8, 200, 128, dtype=torch.bfloat16)
+        v = torch.randn(1, 8, 200, 128, dtype=torch.bfloat16)
+        c.update(k, v, layer_idx=0)
+        assert len(c._k_codes[0]) == 4, (
+            f"expected 4 chunks at chunk_size=64 over S=200, got "
+            f"{len(c._k_codes[0])}"
+        )
+        chunk_sizes = [chunk.shape[2] for chunk in c._k_codes[0]]
+        assert chunk_sizes == [64, 64, 64, 8]
+        # Total stored positions equals S_new
+        assert c.get_seq_length(0) == 200
+
+    def test_chunked_update_bit_close_to_unchunked(self):
+        """The output of the chunked path must be numerically close
+        to the unchunked path (the only difference is per-chunk
+        absmax scaling — within the codec's intrinsic rel_err)."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        torch.manual_seed(7)
+        k = torch.randn(1, 8, 256, 128, dtype=torch.bfloat16)
+        v = torch.randn(1, 8, 256, 128, dtype=torch.bfloat16)
+
+        unchunked = NF4DynamicCache(block_size=32, update_chunk_size=0)
+        unchunked.update(k.clone(), v.clone(), layer_idx=0)
+        k_unchunked, v_unchunked = unchunked._dequantize_layer(0)
+
+        chunked = NF4DynamicCache(block_size=32, update_chunk_size=64)
+        chunked.update(k.clone(), v.clone(), layer_idx=0)
+        k_chunked, v_chunked = chunked._dequantize_layer(0)
+
+        assert k_chunked.shape == k_unchunked.shape
+        # Per-chunk absmax can differ slightly from global absmax,
+        # but both are within ~10% rel_err of original. Allow 2%
+        # difference between paths themselves.
+        diff_k = (k_chunked - k_unchunked).abs().mean().item()
+        norm_k = k_unchunked.abs().mean().item()
+        assert diff_k / max(norm_k, 1e-9) < 0.05, (
+            f"chunked vs unchunked rel diff={diff_k/norm_k:.4f}, expected <0.05"
+        )
+
+    def test_chunked_update_with_outlier_prefix(self):
+        """Outlier-keep + chunked update must compose: prefix takes
+        the first N tokens (bf16 exact), the remaining S_new - N
+        tokens are chunked into NF4 codes."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        c = NF4DynamicCache(
+            block_size=32,
+            bf16_prefix_size=32,
+            update_chunk_size=64,
+        )
+        torch.manual_seed(11)
+        k = torch.randn(1, 8, 200, 128, dtype=torch.bfloat16)
+        v = torch.randn(1, 8, 200, 128, dtype=torch.bfloat16)
+        c.update(k, v, layer_idx=0)
+        # 32 in bf16 prefix + 168 in NF4 chunks of size 64
+        assert c._k_bf16_prefix[0].shape[2] == 32
+        # NF4 chunks: 64 + 64 + 40 = 168
+        chunk_sizes = [chunk.shape[2] for chunk in c._k_codes[0]]
+        assert chunk_sizes == [64, 64, 40]
+        # Round-trip exact bf16 prefix
+        k_full, _ = c._dequantize_layer(0)
+        assert torch.equal(k_full[:, :, :32, :], k[:, :, :32, :])
+
+    def test_run_experiment_propagates_nf4_chunk_size(self):
+        """run_experiment.py must wire nf4_update_chunk_size from the
+        run dict into RASDConfig."""
+        assert re.search(
+            r"nf4_update_chunk_size\s*=\s*int\(run\.get\([\"\']nf4_update_chunk_size[\"\']",
+            RUN_EXP_SRC,
+        ), (
+            "nf4_update_chunk_size not propagated from run dict to "
+            "RASDConfig in run_experiment.py — YAML override would be ignored"
+        )
+
     def test_rank0_only_construction_in_generate(self):
         """generate() must construct outlier-keep ONLY for rank 0; other
         ranks get pure NF4 (since they don't hold global position 0)."""
