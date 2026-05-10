@@ -1,12 +1,12 @@
 {
-  "rank": 3,
+  "rank": 5,
   "world_size": 8,
   "ctx": 4096,
   "max_new": 16,
   "checkpoint_every": 4,
   "baseline": {
     "tokens_generated": 17,
-    "throughput_tps": 1.3072712549284864,
+    "throughput_tps": 1.2681542052036252,
     "acceptance_rate": 0.75,
     "first_8_tokens": [
       30342,
@@ -21,7 +21,7 @@
   },
   "save_side": {
     "tokens_generated": 17,
-    "throughput_tps": 0.839486770331076,
+    "throughput_tps": 0.8286748451155364,
     "first_8_tokens": [
       30342,
       4429,
@@ -35,7 +35,7 @@
     "same_as_baseline": true
   },
   "checkpoints_on_disk": [
-    "round_4_rank_3.pt"
+    "round_4_rank_5.pt"
   ],
   "has_at_least_one_checkpoint": true,
   "load_side": {
