@@ -717,6 +717,21 @@ def main():
                           "seed":     int(canary_cfg.get("seed", 42)),
                           "max_new_tokens": int(canary_cfg.get("max_new_tokens", 32)),
                           "debug":    args.debug}
+            # 2026-05-10 fix: canary must inherit the same CLI-level
+            # observability flags as the matrix runs (profile, per-token
+            # trace, memory trace). Otherwise the canary silently skips
+            # those sidecars and we can't catch issues like a missing
+            # profile JSON until a 1-hr context run is half done.
+            if args.profile:
+                canary_run["profile"] = True
+            if args.log_per_token:
+                canary_run["log_per_token"] = True
+            if args.memory_trace:
+                canary_run["memory_trace"] = True
+                canary_run.setdefault(
+                    "memory_trace_dir",
+                    str(Path(args.output).parent / "memory_trace"),
+                )
             canary_row = execute_run(canary_run, args.wandb_project, str(output_csv),
                                      nproc=args.nproc, timeout_s=args.timeout_per_run_s)
             append_csv(output_csv, canary_row)

@@ -253,3 +253,36 @@ class TestProfileFlag:
         p = _profiler_sidecar_path(Path("/tmp/results.csv"), "M4_ctx128k_s42")
         assert p.name == "M4_ctx128k_s42.json"
         assert p.parent.name == "profiler"
+
+    def test_canary_inherits_profile_flag(self):
+        """2026-05-10 regression: canary_run is built independently of
+        all_runs, so the loop that sets r['profile']=True from args.profile
+        doesn't reach it. The canary then runs without profiling, producing
+        no profile JSON — and we can't catch JSON-write bugs before the
+        full matrix starts. The fix: explicitly propagate args.profile
+        onto canary_run too."""
+        assert re.search(
+            r"if args\.profile:[\s\S]{0,300}canary_run\[[\"\']profile[\"\']\]\s*=\s*True",
+            RUN_EXP_SRC,
+        ), (
+            "Canary regression: --profile not propagated to canary_run; "
+            "canary will silently skip profiling and miss bugs the matrix hits."
+        )
+
+    def test_canary_inherits_log_per_token_flag(self):
+        """Same shape as profile: canary must mirror --log-per-token too."""
+        assert re.search(
+            r"if args\.log_per_token:[\s\S]{0,300}canary_run\[[\"\']log_per_token[\"\']\]\s*=\s*True",
+            RUN_EXP_SRC,
+        ), (
+            "Canary regression: --log-per-token not propagated to canary_run."
+        )
+
+    def test_canary_inherits_memory_trace_flag(self):
+        """Same shape as profile: canary must mirror --memory-trace too."""
+        assert re.search(
+            r"if args\.memory_trace:[\s\S]{0,400}canary_run\[[\"\']memory_trace[\"\']\]\s*=\s*True",
+            RUN_EXP_SRC,
+        ), (
+            "Canary regression: --memory-trace not propagated to canary_run."
+        )
