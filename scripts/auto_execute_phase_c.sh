@@ -201,6 +201,12 @@ source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
 source ~/miniconda3/etc/profile.d/conda.sh
 
 if ! conda env list | grep -q rasd-gpu; then
+    # Accept Anaconda TOS — required since 2024 policy change for the
+    # default pkgs/main + pkgs/r channels. Without this, conda env
+    # create exits with CondaToSNonInteractiveError. (Hit on
+    # 2026-05-10 first auto-execute attempt; cost ~\$6.50 to discover.)
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
     conda env create -f environment_gpu.yml
 fi
 conda activate rasd-gpu
