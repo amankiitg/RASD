@@ -51,6 +51,16 @@ mkdir -p $PHASE_C_DIR
 export NCCL_TIMEOUT=3600
 export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
 export TORCH_NCCL_BLOCKING_WAIT=1
+
+# expandable_segments: reduces PyTorch caching-allocator fragmentation.
+# At 1M context, the v4 OOM showed 8.77 GB "reserved but unallocated"
+# alongside 62.94 GB live tensors — the allocator was sitting on
+# fragmented chunks too small for the next 7.64 GB request. With
+# expandable_segments=True, the allocator keeps a virtual address
+# space that grows incrementally and avoids the small-chunk
+# fragmentation pattern. Reclaims most of that 8.77 GB.
+# (Recommendation surfaced by torch's own OOM error message in v4.)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 LOG_DIR=$PHASE_C_DIR/logs
 mkdir -p $LOG_DIR
 

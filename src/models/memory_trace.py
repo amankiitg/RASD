@@ -44,6 +44,15 @@ class MemoryTracer:
     On `write()`, dump the full sequence as JSON. Diff between
     consecutive snapshots = the stage's cost.
 
+    INCREMENTAL FLUSH (M4 Phase C 2026-05-10 fix): when
+    `flush_each_snapshot=True` (default), each snapshot() call
+    immediately rewrites the JSON sidecar. This means an OOM mid-
+    forward still leaves attribution data on disk — without this,
+    the v4 1M OOM produced no JSON at all because write() was only
+    called at end of generate(), never reached. The cost is ~1 ms
+    per snapshot for a small JSON write; negligible vs the
+    ~100ms-100s computation between snapshots.
+
     Cheap: each snapshot is 4 calls to torch.cuda; no synchronisation.
     Adds ~10us per snapshot. Safe to call dozens of times during a
     run.
@@ -56,6 +65,7 @@ class MemoryTracer:
         out_dir: str | os.PathLike,
         device: torch.device | int = 0,
         reset_max_at_start: bool = True,
+        flush_each_snapshot: bool = True,
     ):
         self.rank = rank
         self.run_id = run_id
@@ -64,6 +74,7 @@ class MemoryTracer:
             torch.device(device) if not isinstance(device, torch.device)
             else device
         )
+        self.flush_each_snapshot = flush_each_snapshot
         self._snapshots: List[Dict] = []
         if reset_max_at_start and torch.cuda.is_available():
             # torch.cuda.reset_peak_memory_stats can raise on some
@@ -77,7 +88,12 @@ class MemoryTracer:
 
     def snapshot(self, label: str, **extra) -> None:
         """Record a labelled memory point. `extra` is merged in for
-        run-specific tags (layer_idx, round_idx, etc)."""
+        run-specific tags (layer_idx, round_idx, etc).
+
+        If self.flush_each_snapshot is True (default), immediately
+        rewrites the JSON sidecar so an OOM after this snapshot still
+        leaves attribution data on disk.
+        """
         if not torch.cuda.is_available():
             return
         rec = {
@@ -89,6 +105,13 @@ class MemoryTracer:
         }
         rec.update(extra)
         self._snapshots.append(rec)
+        if self.flush_each_snapshot:
+            # Best-effort incremental flush. Wrap in try/except so a
+            # filesystem hiccup doesn't kill the run.
+            try:
+                self.write()
+            except Exception:
+                pass
 
     def write(self) -> Optional[Path]:
         """Dump all snapshots to a JSON sidecar.

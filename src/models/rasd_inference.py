@@ -777,6 +777,34 @@ class RASDInference:
             # at 512k it's 4 GB. LlamaForCausalLM gained this kwarg in
             # transformers 4.45+; we bumped requirements-lock.txt from
             # 4.44.2 to 4.46.3 specifically to enable this.
+            # Per-layer memory snapshots during prefill (paper Figure 3
+            # + OOM attribution). Register forward hooks ONLY when
+            # mem_tracer is active so M3 byte-identical replay isn't
+            # affected. Hooks fire after each LlamaDecoderLayer's
+            # forward and emit a labelled snapshot with layer_idx.
+            # Removed before any decode/verify forward so verify-loop
+            # forwards aren't spammed with hooks.
+            prefill_hook_handles = []
+            if mem_tracer is not None:
+                try:
+                    layers = self.target_model.model.layers
+                    for layer_idx, layer in enumerate(layers):
+                        def _make_hook(idx):
+                            def _hook(module, inputs, output):
+                                mem_tracer.snapshot(
+                                    f"prefill_after_layer_{idx:02d}",
+                                    layer_idx=idx,
+                                )
+                            return _hook
+                        prefill_hook_handles.append(
+                            layer.register_forward_hook(_make_hook(layer_idx))
+                        )
+                except Exception:
+                    # Best-effort. If the model doesn't expose .model.layers
+                    # in the expected shape, just skip per-layer snapshots —
+                    # the post_target_prefill snapshot still fires.
+                    prefill_hook_handles = []
+
             with torch.cuda.stream(self.stream_compute):
                 target_out = self.target_model(
                     local_ids,
@@ -789,6 +817,15 @@ class RASDInference:
                 past_kv          = target_out.past_key_values
                 local_last_logit = target_out.logits[:, -1, :]
             self.stream_compute.synchronize()
+
+            # Always remove the per-layer hooks before decode. Otherwise
+            # every verify round would re-fire 32 hook callbacks, each
+            # writing JSON — measurable overhead and noise.
+            for h in prefill_hook_handles:
+                try:
+                    h.remove()
+                except Exception:
+                    pass
 
             # Freeze the prefill boundary on every patched attention module so
             # subsequent decode forwards know where the sharded prefill ends and
