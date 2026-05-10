@@ -93,10 +93,10 @@ defaults:
   kv_block_size:     512
   prefetch_depth:    1
   max_new_tokens:    256
-  context_length:    8192         # 8k — conservative start; scale to 64k once stable
+  context_length:    65536        # 64k — matches M3 R6.5 re-ablation (Lambda 40GB SXM4)
   dtype:             "bfloat16"
   quantize_draft:    true
-  quantize_target:   true     # 4-bit NF4 — required to fit both models on 80GB A100s
+  quantize_target:   true     # 4-bit NF4 — required to fit Llama-2-7B + 64k KV ring-sharded on 40GB SXM4 per R6.5
   temperature:       1.0
   top_p:             1.0
   seeds:             [42, 123, 456]
