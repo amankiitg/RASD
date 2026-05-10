@@ -265,8 +265,10 @@ stage "p35_final_matrix" final_matrix
 # deferred to follow-up iteration (documented in M4_PLAN.md).
 # ------------------------------------------------------------------
 perplexity_sanity() {
-    # Preprocess PG-19 if not already done
-    if [ ! -f data/processed/pg19_validation_metadata.json ]; then
+    # Preprocess PG-19 if not already done. preprocess_pg19.py writes
+    # metadata to {out}/pg19_{split}_metadata.json — default out is
+    # data/processed/pg19, so meta lands at the subdir path below.
+    if [ ! -f data/processed/pg19/pg19_validation_metadata.json ]; then
         python scripts/preprocess_pg19.py \
             --split validation \
             --limit 8 \
@@ -279,7 +281,7 @@ perplexity_sanity() {
         --contexts 4096 8192 16384 32768 \
         --seeds 42 123 456 \
         --quantize-target \
-        --pg19-meta data/processed/pg19_validation_metadata.json \
+        --pg19-meta data/processed/pg19/pg19_validation_metadata.json \
         --out results/perplexity/m4_ppl.csv
 }
 stage "p35c_perplexity_sanity" perplexity_sanity
