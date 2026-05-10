@@ -23,7 +23,15 @@ cd "$(dirname "$0")/.."
 
 SMOKE_CSV="results/ablations/m3_replay_smoke.csv"
 GOLDEN="results/ablations/ablations_r65.csv"  # M3 R6.5 (Lambda 40GB) — the latest, validated M3
-TOLERANCE=0.15  # 15% throughput tolerance
+# 2026-05-10: switched from throughput_tps (15%) to acceptance_rate (±0.05).
+# R6.5 ran on Lambda's default image which had no flash-attn → SDPA
+# fallback. M4 pods install flash-attn explicitly (~2-3× speedup at
+# long ctx) so throughput legitimately differs by 100%+ between R6.5
+# and current runs. Acceptance rate is the semantic guardrail —
+# hardware-independent, deterministic given same seed + config — so
+# regressions in the verify-loop math (Option B / Fix2 / Fix3 / Fix4)
+# would still be caught here.
+ACC_TOLERANCE=0.05  # absolute tolerance on acceptance_rate
 
 echo "==> Replaying M3 smoke rows to $SMOKE_CSV"
 python run_experiment.py \
@@ -34,7 +42,8 @@ python run_experiment.py \
     --groups A1 A2 A3 A4 A5
 
 echo ""
-echo "==> Comparing against $GOLDEN (tolerance ${TOLERANCE})"
+echo "==> Comparing acceptance_rate against $GOLDEN (±${ACC_TOLERANCE} absolute)"
+echo "    (throughput_tps NOT compared — varies with flash-attn / hardware)"
 python - <<PY
 import csv, sys
 golden = {r['run_id']: r for r in csv.DictReader(open('$GOLDEN'))}
@@ -48,11 +57,16 @@ for rid, s in smoke.items():
     if not g:
         print(f"  SKIP {rid}: not in golden")
         continue
+    ga, sa = float(g['acceptance_rate']), float(s['acceptance_rate'])
+    abs_delta = abs(ga - sa)
+    # Throughput shown as informational only (NOT a pass/fail signal)
     gt, st = float(g['throughput_tps']), float(s['throughput_tps'])
-    delta = abs(gt - st) / max(gt, 1e-6)
-    tag = "OK" if delta <= $TOLERANCE else "REGRESSION"
-    if delta > $TOLERANCE:
+    tag = "OK" if abs_delta <= $ACC_TOLERANCE else "REGRESSION"
+    if abs_delta > $ACC_TOLERANCE:
         fail += 1
-    print(f"  {tag:10s} {rid:26s}  golden={gt:7.2f}  smoke={st:7.2f}  delta={delta*100:.1f}%")
+    print(
+        f"  {tag:10s} {rid:26s}  α: golden={ga:.3f}  smoke={sa:.3f}  Δ={abs_delta:.3f}"
+        f"   |   tps (info only): golden={gt:.2f}  smoke={st:.2f}"
+    )
 sys.exit(1 if fail else 0)
 PY

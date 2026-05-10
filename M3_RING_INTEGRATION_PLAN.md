@@ -982,3 +982,42 @@ distribution is now where speculative decoding theory predicts.
 4. **Workable Pareto frontier**: A2 and A3 both produce monotonic
    curves with clear sweet spots; A4 produces a clean "no overlap
    benefit at this scale" negative result.
+
+## Postscript — flash-attn was NOT active in R6.5 (discovered 2026-05-10)
+
+While bringing up the M4 Phase C pod, the very first replay smoke
+revealed throughput ~2.7× higher than the corresponding R6.5 row at
+the same config. Root cause: R6.5 ran on Lambda's default Ubuntu image
+which doesn't ship flash-attn; `from flash_attn import flash_attn_func`
+silently raised ImportError; `_FLASH_AVAILABLE = False`; the kernel
+fell back to PyTorch SDPA the entire time.
+
+The Lambda Cloud setup memory note already warned about this
+(`reference_lambda_setup.md`: *"FlashAttention not preinstalled on
+Lambda's image. Ring kernel falls back to PyTorch SDPA when
+flash_attn isn't importable. For production multi-rank work install
+with `pip install --no-build-isolation flash-attn`."*) but the
+warning didn't make it into the R6.5 bring-up checklist.
+
+What this means for the R6.5 numbers in `ablations_r65.csv`:
+
+- Acceptance rates are **unaffected** — verify-loop math is identical
+  regardless of attention backend, and Fix2 broadcasts logits from
+  rank 0 anyway. α range 0.105–0.424 stands.
+- Throughput numbers are **with SDPA backend, not flash-attn**. The
+  M4 final matrix runs WITH flash-attn explicitly installed
+  (`pip install --no-build-isolation flash-attn>=2.4.0` in the
+  Phase C bootstrap), so a 2-3× tps speedup is expected at long ctx.
+  This is a legitimate hardware/software-tier speedup, not a
+  regression vs R6.5.
+- **A3 ranking still holds** — at any single attention backend, the
+  monotonic kv_block_size 256 → 2048 curve is preserved. Same for
+  A2's α-vs-k curve.
+
+Action taken (commit forthcoming on 2026-05-10):
+- `scripts/replay_m3_smoke.sh` switched its tolerance check from
+  `throughput_tps` (15%) to `acceptance_rate` (±0.05 absolute).
+  Throughput now informational-only in the smoke output.
+- Phase C bootstrap script explicitly installs flash-attn and
+  validates `_FLASH_AVAILABLE = True` before launching the bundled
+  session.

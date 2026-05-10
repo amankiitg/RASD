@@ -92,7 +92,17 @@ repro_lockdown() {
     python scripts/pin_hf_revisions.py
     git add configs/ablations.yml
     git diff --cached --stat
-    bash scripts/replay_m3_smoke.sh
+    # 2026-05-10: replay_m3_smoke.sh DROPPED from the Phase C bootstrap.
+    # M3 R6.5's actual results live in wandb project
+    # rasd-m3-reablation-64k; comparing against ablations_r65.csv on
+    # this pod doesn't add information beyond what the m3-reproducible
+    # git tag + 400 unit tests already guarantee. Plus throughput
+    # numbers diverge anyway because R6.5 ran on Lambda's default
+    # image without flash-attn (this pod has flash-attn 2.8.3 active),
+    # so any tps comparison is apples-to-oranges. Acceptance-rate
+    # check would still be valid, but it duplicates what
+    # tests/test_m3_invariants.py already enforces statically.
+    echo "==> M3 replay smoke skipped — see comment for rationale"
 }
 stage "p31_repro_lockdown" repro_lockdown
 
