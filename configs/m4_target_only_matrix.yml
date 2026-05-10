@@ -1,0 +1,72 @@
+# M4 Phase C — Target-only baseline matrix (spec_steps=0)
+#
+# 12-run RASD matrix: 4 contexts × 3 seeds. The matching Ring + Sliding
+# baseline rows come from scripts/benchmark_baselines.py (P3.4 stage),
+# not this YAML. Phase D merges the two for Figure 1.
+#
+# Used by:
+#   scripts/phase_c_pod_session.sh -> p35_final_matrix
+#
+# All knobs are M3-locked at the R6.5 winners (see M4_PLAN.md
+# "M3 → M4 configuration inheritance"):
+#   * draft  = Sheared-LLaMA-1.3B  (A1 winner)
+#   * target = Llama-2-7B          (A5 winner)
+#   * spec_steps = 4               (A2 sweet spot)
+#   * kv_block_size = 2048         (A3 winner)
+#   * prefetch_depth = 1           (A4 winner)
+#
+# C13 per-position acceptance trace is enabled via --log-per-token
+# at run_experiment.py CLI; sidecar .jsonl files land at
+# results/final/per_token/<run_id>.jsonl. Source for Figure 4.
+#
+# Expected runtime: ~6 hr total at $15.92/hr ≈ $95.
+
+canary:
+  id:   "matrix_target_only_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        0
+  kv_block_size:     2048           # M3 A3 winner
+  prefetch_depth:    1
+  rope_type:         "yarn"         # M4 C2b — linear fails past factor=16
+  kv_quant:          true           # NF4 KV with outlier-keep + block=32 (see long-smoke header)
+  max_new_tokens:    64             # M4_PLAN P3.5 spec
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# M4 — RASD across contexts (mentor M4 spec Figure 1 source)
+# Factor: context_length
+# All other params: defaults
+# ---------------------------------------------------------------------------
+M4:
+  name:   "target_only_long_context_matrix"
+  factor: "context_length"
+  levels:
+    - id: "TARGET_ctx128k"
+      context_length: 131072
+      notes: "128k — bottom of mentor's Figure 1 x-axis range"
+
+    - id: "TARGET_ctx256k"
+      context_length: 262144
+      notes: "256k — mid-range (factor=64)"
+
+    - id: "TARGET_ctx512k"
+      context_length: 524288
+      checkpoint_every: 4    # ~50-min run; recover from crash (Phase C blocker #2)
+      notes: "512k — three-quarter point (factor=128)"
+
+    - id: "TARGET_ctx1M"
+      context_length: 1048576
+      checkpoint_every: 4    # ~120-min run; without this every crash loses the cell
+      notes: "1M — paper headline (factor=256, NF4 KV + outlier-keep on 80GB)"

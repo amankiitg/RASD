@@ -123,6 +123,86 @@ If 80GB capacity never hits, paper headline is "768k stable" with
 contribution either way; it was responsible for going from
 "OOM at 1M on 80GB" to "fit at 768k on 40GB."
 
+### Phase C v5 — 1M PASSED on 80GB (2026-05-10 PM)
+
+After ~14 hours and 5 attempts, **1M context speculative decoding
+landed cleanly on 80GB SXM4** at 19:48 UTC:
+
+| Metric | Value | Notes |
+|---|---|---|
+| `gpu_peak_mem_mb` | **40,283 MB / 80,000 MB cap** | 50% utilization, 40 GB headroom |
+| `acceptance_rate` | **0.2014** | Highest acceptance band of all our context tests |
+| `time_sec` | 1472.0 | 24.5 min wall-clock for 64 generated tokens |
+| `throughput_tps` | 0.04 | Slow per-token but matches expected single-rank target throughput at 1M |
+| `tokens_generated` | 66 | One bonus + 64 spec'd + 1 final |
+| `n_rounds` | 36 | Average ~1.8 tokens accepted per spec round |
+
+This is committed in commit `1f4cc26` (smoke csv) and validates the
+load-bearing lever stack (chunked NF4 + outlier-keep + expandable_segments
++ 1-hr NCCL timeout + transformers 4.46 + num_logits_to_keep=1).
+
+### Baseline strategy revision (codex review 2026-05-10)
+
+Original p34 plan: bare attention microbenchmarks (`Ring`,
+`SlidingWindow` modules) reporting `forward_tps`. Codex review caught
+that this is **not apples-to-apples** with RASD's `throughput_tps`:
+- Microbenchmarks measure *input-processing* throughput at one
+  attention forward pass.
+- RASD measures *generation* throughput end-to-end.
+- Plotting both on Figure 1 misleads reviewers.
+
+We also considered "vanilla HF + FA-2 generate()" as a baseline.
+Codex correctly noted this OOMs by 128k single-rank (Llama-2-7B full
+bf16 KV at 128k = 64 GB before weights). It's only useful as an OOM
+ceiling test, not a 4-context comparison.
+
+**Revised baseline structure (4 stages):**
+
+| Stage | What | Compares against |
+|---|---|---|
+| **p34** (existing) | Naive Ring + SlidingWindow attention microbenchmarks | Scaling envelope; truncates at the ceilings (Ring: 128k; Sliding: 256k) |
+| **p35** (existing) | Full RASD final matrix: 4 ctx × 3 seeds × spec_steps=4 | Headline data |
+| **p35b** (new) | Target-only matrix: same code path with `cfg.spec_steps=0` | Apples-to-apples isolating speculation contribution |
+| **p35c** (new) | PG-19 PPL at 4k/8k/16k/32k single-rank | Quality sanity (NF4 weights + ring infra don't degrade NLL) |
+| **p37** (new) | Vanilla HF + FA-2 + generate(), single-rank, 5 contexts | OOM ceiling demonstrating "vanilla HF cannot reach long context" |
+
+**Long-context quality (NIAH / LongBench) deferred to follow-up
+paper.** M4 establishes feasibility + speedup; quality at 1M is a
+separate axis with its own methodological complications (haystack
+construction, depth sampling, filler text source) that warrant a
+dedicated quality-focused paper.
+
+### Target-only baseline (cfg.spec_steps=0)
+
+Implementation in commit `f377f51`. When `cfg.spec_steps == 0`:
+- `_load_models()` skips draft model load (`self.draft_model = None`)
+- `generate()` skips draft prefill block; runs autoregressive
+  single-token decode through the target with the same NF4 cache,
+  ring attention, and outlier-keep
+- Metrics record `acceptance_rate=0.0`, `spec_steps=0` so plots are
+  unambiguous
+- Same memory_trace + checkpoint hooks fire for direct attribution
+
+The metric we'll plot is `(target-only) / (RASD) wall_time` per
+cell — this is the clean "speedup from speculation" number with
+every other variable held identical.
+
+### Five M4 metrics (mentor brief)
+
+The mentor brief lists 5 metrics; here's where each lives:
+
+| Metric | Source | Status |
+|---|---|---|
+| Throughput (tok/s) | `throughput_tps` in p35 csv | ✅ p35 producing |
+| Latency per token (ms) | `mean_latency_ms` in p35 csv | ✅ p35 producing |
+| Acceptance Rate (%) | `acceptance_rate` × 100 in p35 csv | ✅ p35 producing |
+| Time to First Token (TTFT) | `ttft_ms` in p35 csv | ✅ p35 producing |
+| Perplexity (PPL) | `m4_ppl.csv` from p35c | ⏳ pending p35c run |
+
+All 5 metrics will land in commit chain through the auto-commit
+watcher. PPL is single-rank ≤32k for methodological cleanliness;
+long-context quality (NIAH) deferred.
+
 **Phase B local commits (in order):**
 - `28d4517` C3 — PG-19 preprocess refactor + smoke tests (12 tests)
 - `75b7ff8` C5 — TTFT + per-position trace wired into launcher (16 tests)

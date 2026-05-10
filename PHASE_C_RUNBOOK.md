@@ -288,6 +288,67 @@ RESTART:     iteration=<N> elapsed=<seconds>
 
 Run with `LAMBDA_API_KEY=<key> SKUS=gpu_8x_a100_80gb_sxm4 bash scripts/poll_lambda_capacity.sh`.
 
+### New Phase C stages (2026-05-10 PM, after 1M passed on 80GB)
+
+After 1M landed cleanly at 40.3 GB / 80 GB (commit `1f4cc26`), three
+new stages were added to address baseline correctness gaps that
+codex review surfaced (existing p34 microbenchmarks were not
+apples-to-apples with RASD's generation throughput metric).
+
+| Stage | Script | What it produces | Time | Cost |
+|---|---|---|---|---|
+| **p35b** | `run_experiment.py` + `m4_target_only_matrix.yml` | Target-only matrix (12 cells × 3 seeds with `cfg.spec_steps=0`) — apples-to-apples isolating speculation contribution | ~3-4 hr | ~$80 |
+| **p35c** | `eval_perplexity_matrix.py` (new) | PG-19 PPL at 4k/8k/16k/32k × 3 seeds (single-rank quality sanity check) | ~10-15 min | ~$5 |
+| **p37** | `benchmark_hf_baseline.py` (new) | Vanilla HF FA-2 + generate() at 5 contexts × 1 seed (OOM ceiling test) | ~5-10 min | ~$3 |
+
+Total addition: ~3.5-4.5 hr, ~$90.
+
+These run automatically after p35 completes if the orchestrator
+session is still alive. Pull the latest code on the pod (`git pull`
+in `~/RASD/`) before the orchestrator reaches them.
+
+#### p35b target-only — what's different from p35
+
+- Uses `configs/m4_target_only_matrix.yml` (a clone of the final
+  matrix YAML with `spec_steps: 0`)
+- `RASDInference._load_models` skips draft model load entirely when
+  `cfg.spec_steps == 0` (saves ~3-4 GB rank memory + skips ~30 sec of
+  load time)
+- `generate()` runs single-token autoregressive decode through the
+  target with the same NF4 cache + ring attention + outlier-keep
+- Metrics record `acceptance_rate=0.0, spec_steps=0` so the contrast
+  vs p35 is unambiguous
+
+The headline number from p35b is `time_sec(target_only) / time_sec(RASD)`
+per matched (ctx, seed) pair — that's the speedup from speculation
+with every other variable identical.
+
+#### p35c PPL — single-rank quality gate
+
+Vanilla HF Llama-2-7B + bf16 KV at >32k OOMs single-rank on 40 GB
+hardware (and barely fits at 128k on 80 GB). To sidestep the
+methodological complications of long-context PPL (concatenated books,
+sliding-window choices), p35c runs PPL at 4k-32k where standard
+methodology applies cleanly. Long-context quality (NIAH/LongBench) is
+explicitly deferred to a follow-up paper.
+
+PG-19 preprocessing is gated on the metadata file existing — if not
+present, the stage runs `preprocess_pg19.py` first to download +
+chunk a small validation subset.
+
+#### p37 HF ceiling — what the OOM evidence shows
+
+Vanilla HF on 80 GB single-rank is expected to:
+- 32k pass (~30 GB peak)
+- 128k borderline (78 GB; may pass or OOM)
+- 256k OOM (KV alone 128 GB)
+- 512k / 1M definite OOM
+
+The 32k row is the only context where vanilla HF is apples-to-apples
+with RASD on `tok/s`. At 256k+ the OOM rows are the visual contrast
+that makes the paper's claim "RASD is the only architecture that
+scales to 1M on commodity hardware" defensible.
+
 ### Post-OOM playbook (if 1M fails on 80GB despite the lever stack)
 
 1. **Don't panic.** Save the memory_trace JSONs:

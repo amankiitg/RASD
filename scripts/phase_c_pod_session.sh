@@ -251,6 +251,55 @@ final_matrix() {
 stage "p35_final_matrix" final_matrix
 
 # ------------------------------------------------------------------
+# P3.5b — Target-only baseline matrix (M4 Phase C 2026-05-10)
+# Apples-to-apples baseline: same RASD distributed infrastructure
+# (NF4 cache + ring SP + outlier-keep + chunked update) but with
+# cfg.spec_steps=0 → no draft model loaded, single-token autoregressive
+# decode through the target. Isolates the contribution of speculative
+# decoding by keeping every other variable identical to p35.
+# Same 4 ctx × 3 seeds grid for direct cell-by-cell comparison.
+# ------------------------------------------------------------------
+target_only_matrix() {
+    python run_experiment.py \
+        --wandb-project rasd-m4-phase-c \
+        --config configs/m4_target_only_matrix.yml \
+        --output results/final/target_only_matrix.csv \
+        --resume \
+        --nproc 8 \
+        --timeout-per-run-s 14400 \
+        --log-per-token \
+        --memory-trace
+}
+stage "p35b_target_only_matrix" target_only_matrix
+
+# ------------------------------------------------------------------
+# P3.5c — PG-19 perplexity sanity check (single-rank, ≤32k contexts)
+# Quality metric to confirm NF4 weights + ring attention infra
+# don't degrade language modelling quality at moderate contexts.
+# Long-context PPL (128k+) requires sequence-parallel forward,
+# deferred to follow-up iteration (documented in M4_PLAN.md).
+# ------------------------------------------------------------------
+perplexity_sanity() {
+    # Preprocess PG-19 if not already done
+    if [ ! -f data/processed/pg19_validation_metadata.json ]; then
+        python scripts/preprocess_pg19.py \
+            --split validation \
+            --limit 8 \
+            --tokenizer meta-llama/Llama-2-7b-hf \
+            --chunk-size 65536
+    fi
+    # Run PPL eval at moderate contexts (NF4 weights, single-rank)
+    python scripts/eval_perplexity_matrix.py \
+        --target meta-llama/Llama-2-7b-hf \
+        --contexts 4096 8192 16384 32768 \
+        --seeds 42 123 456 \
+        --quantize-target \
+        --pg19-meta data/processed/pg19_validation_metadata.json \
+        --out results/perplexity/m4_ppl.csv
+}
+stage "p35c_perplexity_sanity" perplexity_sanity
+
+# ------------------------------------------------------------------
 # P3.6 — profiler sidecar pass: 1 seed × 4 ctx × {RASD, Ring}
 # (Fig 3 source data)
 # ------------------------------------------------------------------
@@ -273,6 +322,28 @@ profiler_sidecar_pass() {
         --profile
 }
 stage "p36_profiler_pass" profiler_sidecar_pass
+
+# ------------------------------------------------------------------
+# P3.7 — Vanilla HF FA-2 generate() ceiling baseline
+# Single-rank, single-seed OOM ceiling test. Documents that vanilla HF
+# generate() cannot reach long context on commodity hardware without
+# sequence parallelism or KV quantization. Expected:
+#   * 32k passes (~30 GB peak)
+#   * 128k borderline / OOMs
+#   * 256k/512k/1M definite OOMs
+# The 32k row is apples-to-apples vs RASD; OOM rows are the contrast
+# that makes RASD's scaling claim defensible.
+# ------------------------------------------------------------------
+hf_ceiling_baseline() {
+    python scripts/benchmark_hf_baseline.py \
+        --target meta-llama/Llama-2-7b-hf \
+        --contexts 32768 131072 262144 524288 1048576 \
+        --max-new-tokens 64 \
+        --seed 42 \
+        --attn-impl flash_attention_2 \
+        --out results/baselines/hf_ceiling.csv
+}
+stage "p37_hf_ceiling_baseline" hf_ceiling_baseline
 
 echo ""
 echo "============================================================"
