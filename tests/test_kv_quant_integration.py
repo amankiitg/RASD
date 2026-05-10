@@ -264,12 +264,26 @@ class TestRunExperimentPlumbing:
             "_run_single_worker"
         )
 
-    def test_m4_yamls_set_kv_quant_true(self):
-        """The M4 phase-C YAMLs must enable kv_quant (Phase C validation
-        of the codec on real activations)."""
+    def test_m4_yamls_set_kv_quant_false(self):
+        """The M4 phase-C YAMLs must set kv_quant: false.
+
+        Background (2026-05-10): the original M4 plan ran kv_quant=True
+        (NF4 KV-cache) as a 40GB-class memory lever. After moving to the
+        80GB SXM4 instance for the 1M-context headline run, NF4 is no
+        longer needed (per-rank budget at 1M is ~30-35 GB / 80 GB with
+        bf16 KV) and the simple absmax NF4 codec was costing ~5-10 pts
+        of acceptance vs the bf16 baseline (real K/V rel_err ~11% vs
+        KIVI's 3-5% — KIVI requires double-quant which we don't ship).
+
+        So the production setting is kv_quant: false; the codec itself
+        is still validated end-to-end by scripts/c11_validation.py
+        (which builds an NF4DynamicCache directly), but the
+        long-context smoke + final matrix YAMLs run bf16 KV.
+        """
         for cfg_file in ("configs/m4_phase_c_long_smoke.yml",
                          "configs/m4_final_matrix.yml"):
             text = (REPO_ROOT / cfg_file).read_text()
-            assert re.search(r"kv_quant:\s*true", text), (
-                f"{cfg_file} should set kv_quant: true under defaults"
+            assert re.search(r"kv_quant:\s*false", text), (
+                f"{cfg_file} should set kv_quant: false under defaults "
+                "(see test docstring for rationale)"
             )
