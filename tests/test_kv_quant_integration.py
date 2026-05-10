@@ -284,6 +284,73 @@ class TestLoadModelsPlumbing:
 # Layer 6: run_experiment.py reads kv_quant from run dict
 # ---------------------------------------------------------------------------
 
+class TestTargetOnlyBaseline:
+    """The cfg.spec_steps == 0 path: target-only autoregressive decode.
+
+    Apples-to-apples baseline that isolates the contribution of
+    speculation while keeping every other variable identical to RASD
+    (model, sequence parallelism, NF4 cache, outlier-keep, ring attn).
+    """
+
+    def test_load_models_skips_draft_when_spec_steps_zero(self):
+        """RASDInference._load_models must not load draft model when
+        cfg.spec_steps == 0. Verify via source inspection (full model
+        loading requires CUDA + Llama-2-7B weights, out of scope for
+        unit tests)."""
+        assert re.search(
+            r"if cfg\.spec_steps == 0:[\s\S]{0,400}target-only",
+            RASD_INF_SRC,
+        ), (
+            "_load_models should early-return when cfg.spec_steps == 0 "
+            "and avoid loading the draft model"
+        )
+
+    def test_generate_skips_draft_prefill_when_spec_steps_zero(self):
+        """generate() must skip draft prefill block when spec_steps=0."""
+        assert re.search(
+            r"if cfg\.spec_steps > 0:[\s\S]{0,1500}draft_out\s*=\s*self\.draft_model",
+            RASD_INF_SRC,
+        ), (
+            "Draft prefill block in generate() should be gated on "
+            "cfg.spec_steps > 0"
+        )
+
+    def test_generate_has_target_only_loop(self):
+        """generate() must contain a target-only autoregressive decode
+        loop (the apples-to-apples baseline path)."""
+        assert "Target-only autoregressive baseline" in RASD_INF_SRC, (
+            "Target-only baseline branch missing"
+        )
+        # The branch must early-return so the spec-decoding while loop
+        # below it is bypassed cleanly.
+        assert re.search(
+            r"if cfg\.spec_steps == 0:[\s\S]{0,4000}return generated_ids, metrics",
+            RASD_INF_SRC,
+        ), (
+            "Target-only branch must early-return generated_ids+metrics "
+            "before reaching the spec-decoding loop"
+        )
+
+    def test_target_only_metrics_record_zero_acceptance_and_zero_spec(self):
+        """The metrics dict in the target-only branch must record
+        acceptance_rate=0.0 and spec_steps=0 (not cfg.spec_steps,
+        though that's also 0). Reviewers will sanity-check these."""
+        # Find the target-only metrics dict
+        m = re.search(
+            r"if cfg\.spec_steps == 0:[\s\S]{0,2500}metrics\s*=\s*\{([\s\S]{0,1000}?)\}",
+            RASD_INF_SRC,
+        )
+        assert m is not None, "Couldn't locate target-only metrics dict"
+        body = m.group(1)
+        assert '"acceptance_rate":   0.0' in body or "'acceptance_rate':   0.0" in body or \
+               re.search(r'"acceptance_rate"\s*:\s*0\.0', body), (
+            "Target-only metrics must set acceptance_rate=0.0 explicitly"
+        )
+        assert re.search(r'"spec_steps"\s*:\s*0', body), (
+            "Target-only metrics must set spec_steps=0 explicitly"
+        )
+
+
 class TestRunExperimentPlumbing:
     def test_run_experiment_passes_kv_quant_to_rasd_config(self):
         """run_experiment._run_single_worker pulls kv_quant from the

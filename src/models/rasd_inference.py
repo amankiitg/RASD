@@ -519,6 +519,29 @@ class RASDInference:
             kv_quant=cfg.kv_quant,
         )
 
+        # M4 Phase C 2026-05-10: target-only baseline mode. When
+        # cfg.spec_steps == 0, we skip loading the draft model entirely
+        # and generate() runs autoregressive single-token decode through
+        # the target — same prefill, same NF4 cache, same ring attention,
+        # but no speculation. This is the apples-to-apples baseline that
+        # isolates the contribution of speculative decoding while keeping
+        # every other variable (model, sequence parallelism, KV cache
+        # format, outlier-keep) identical to RASD.
+        self.draft_model = None
+        self.draft_tokenizer = None
+        self.draft_max_len = 0
+
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name, revision=cfg.target_revision)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        if cfg.spec_steps == 0:
+            logger.info(
+                "[target-only] cfg.spec_steps=0 — skipping draft model load. "
+                "Forward pass will run autoregressive decode via target only."
+            )
+            return
+
         # Don't RoPE-scale the draft: keeping it at its native context cap
         # (Sheared-LLaMA-1.3B = 4096) saves ~11 GB/rank of replicated draft
         # KV at ctx=64k. The `self.draft_max_len` truncation below already
@@ -549,10 +572,6 @@ class RASDInference:
         if self._caps.device_type in ("mps", "cpu") and draft_bnb is None:
             self.draft_model = self.draft_model.to(self._device)
         self.draft_model.eval()
-
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name, revision=cfg.target_revision)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.draft_tokenizer = AutoTokenizer.from_pretrained(cfg.draft_model_name, revision=cfg.draft_revision)
         if self.draft_tokenizer.pad_token is None:
@@ -860,19 +879,26 @@ class RASDInference:
             if cfg.debug:
                 logger.debug("[RASD] prefill done, S=%d", S)
 
-            # Prefill draft model — same tokenizer/vocab as target (LLaMA-2 SentencePiece, vocab=32000).
-            # Truncate to draft model's max sequence length if prompt is very long
-            # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens for recency.
-            raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
-            draft_ids = raw_draft_ids[:, -self.draft_max_len:]
-            print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
-            with torch.cuda.stream(self.stream_draft):
-                draft_out = self.draft_model(draft_ids, use_cache=True)
-                draft_past_kv = draft_out.past_key_values
-            self.stream_draft.synchronize()
-            print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
-            if mem_tracer is not None:
-                mem_tracer.snapshot("post_draft_prefill")
+            # Draft prefill (skipped in target-only baseline mode).
+            draft_past_kv = None
+            if cfg.spec_steps > 0:
+                # Prefill draft model — same tokenizer/vocab as target
+                # (LLaMA-2 SentencePiece, vocab=32000). Truncate to draft
+                # model's max sequence length if prompt is very long
+                # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens
+                # for recency.
+                raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
+                draft_ids = raw_draft_ids[:, -self.draft_max_len:]
+                print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
+                with torch.cuda.stream(self.stream_draft):
+                    draft_out = self.draft_model(draft_ids, use_cache=True)
+                    draft_past_kv = draft_out.past_key_values
+                self.stream_draft.synchronize()
+                print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
+                if mem_tracer is not None:
+                    mem_tracer.snapshot("post_draft_prefill")
+            else:
+                print(f"[TRACE rank={self._rank}] target-only mode — skipping draft prefill", flush=True)
 
             if cfg.debug:
                 pass
@@ -964,6 +990,93 @@ class RASDInference:
                 "[checkpoint] rank=%d resumed n_rounds=%d global_seqlen=%d "
                 "(skipped prefill)", self._rank, n_rounds, global_seqlen,
             )
+
+        # ---- Target-only autoregressive baseline (M4 Phase C 2026-05-10) ----
+        # When cfg.spec_steps == 0, skip the whole speculative decoding
+        # loop and run plain single-token autoregressive decode through
+        # the target model. Same prefill, same NF4 cache, same ring
+        # attention, same outlier-keep — only spec decoding is removed.
+        # This is the apples-to-apples baseline that isolates the
+        # contribution of the speculation loop while keeping every
+        # other variable identical to RASD.
+        if cfg.spec_steps == 0:
+            while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
+                # Single-token forward through target. Position is the
+                # next global position past everything already generated.
+                t_input = cur_token  # (B, 1)
+                t_pos = torch.arange(
+                    global_seqlen, global_seqlen + 1, device=device
+                ).unsqueeze(0).expand(B, -1)
+                with torch.cuda.stream(self.stream_compute):
+                    t_out = self.target_model(
+                        t_input,
+                        past_key_values=past_kv,
+                        position_ids=t_pos,
+                        use_cache=True,
+                    )
+                    target_logit = t_out.logits[:, -1, :]
+                    past_kv = t_out.past_key_values
+                self.stream_compute.synchronize()
+
+                # Broadcast logit so all ranks sample identically (same
+                # invariant as the verify-loop's broadcast).
+                if self._world_size > 1:
+                    dist.broadcast(target_logit, src=0)
+
+                cur_token = _sample(
+                    target_logit, cfg.temperature, cfg.top_p,
+                ).unsqueeze(-1)  # (B, 1)
+                generated.append(cur_token)
+                global_seqlen += 1
+                n_rounds += 1
+
+                # Periodic checkpoint (same C6 contract as the spec path)
+                self._maybe_save_checkpoint(
+                    n_rounds=n_rounds, global_seqlen=global_seqlen,
+                    total_accepted=0, total_draft_toks=0,
+                    cur_token=cur_token, generated=generated,
+                    past_kv=past_kv, draft_past_kv=None,
+                    per_token_trace=per_token_trace, prefill_len=prefill_len,
+                )
+
+                if (cur_token == self.tokenizer.eos_token_id).all():
+                    break
+
+            # Skip the spec-decoding loop entirely.
+            torch.cuda.synchronize()
+            t_end = time.perf_counter()
+
+            generated_ids = torch.cat([input_ids] + generated, dim=1)
+            tokens_gen    = generated_ids.shape[1] - S
+            elapsed       = t_end - t_start
+
+            metrics = {
+                "tokens_generated":  tokens_gen,
+                "time_sec":          elapsed,
+                "throughput_tps":    tokens_gen / elapsed if elapsed > 0 else 0.0,
+                "acceptance_rate":   0.0,  # no spec decoding
+                "mean_latency_ms":   elapsed * 1000 / max(tokens_gen, 1),
+                "ttft_ms":           (t_first_token - t_start) * 1000,
+                "gpu_peak_mem_mb":   torch.cuda.max_memory_allocated(device) / 1024 ** 2,
+                "n_rounds":          n_rounds,
+                "spec_steps":        0,
+                "prefetch_depth":    cfg.prefetch_depth,
+                "kv_block_size":     cfg.kv_block_size,
+                "draft_model":       "",  # target-only — no draft loaded
+                "target_model":      cfg.target_model_name,
+                "seed":              cfg.seed,
+            }
+            if cfg.log_per_token:
+                metrics["per_token_trace"] = (
+                    per_token_trace if self._rank == 0 else None
+                )
+            if mem_tracer is not None:
+                mem_tracer.snapshot("end", n_rounds=n_rounds)
+                sidecar_path = mem_tracer.write()
+                if self._rank == 0 and sidecar_path is not None:
+                    logger.info("[memory_trace] wrote %s", sidecar_path)
+                    metrics["memory_attribution_mb"] = mem_tracer.attribution_summary()
+            return generated_ids, metrics
 
         # ---- Main speculative decoding loop ----
         while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
