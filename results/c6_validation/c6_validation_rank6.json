@@ -6,7 +6,7 @@
   "checkpoint_every": 4,
   "baseline": {
     "tokens_generated": 17,
-    "throughput_tps": 1.4150011345108628,
+    "throughput_tps": 1.2337426711002926,
     "acceptance_rate": 0.75,
     "first_8_tokens": [
       30342,
@@ -21,7 +21,7 @@
   },
   "save_side": {
     "tokens_generated": 17,
-    "throughput_tps": 1.1500108823838555,
+    "throughput_tps": 1.2742790387558909,
     "first_8_tokens": [
       30342,
       4429,
