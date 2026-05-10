@@ -768,6 +768,13 @@ class RASDInference:
                     bf16_prefix_size=prefix_size,
                 )
 
+            # M4 Phase C 2026-05-10: only the LAST position's logits are
+            # used downstream (`local_last_logit = ...[:, -1, :]`). Pass
+            # num_logits_to_keep=1 so HF only materializes the final
+            # token's logits row instead of the full (B, S_local, vocab)
+            # tensor. At 1M S_local=128k that's
+            # 128k * 32000 * 2 = 8.2 GB saved per rank; at 512k it's 4 GB.
+            # Available since transformers 4.38; pod has 4.44.2.
             with torch.cuda.stream(self.stream_compute):
                 target_out = self.target_model(
                     local_ids,
@@ -775,6 +782,7 @@ class RASDInference:
                     position_ids=local_pos,
                     use_cache=True,
                     past_key_values=initial_cache,
+                    num_logits_to_keep=1,
                 )
                 past_kv          = target_out.past_key_values
                 local_last_logit = target_out.logits[:, -1, :]
