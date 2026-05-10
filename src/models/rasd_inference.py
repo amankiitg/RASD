@@ -156,6 +156,23 @@ class RASDConfig:
     # M4 Phase C work; the codec behavior is validated here on every
     # cell of the matrix.
     kv_quant: bool = False
+    # M4 Phase C 2026-05-10: outlier-keep mitigation for NF4 acceptance drop.
+    # When kv_quant=True, the rank that holds global position 0 (rank 0
+    # under sequence-parallel sharding) keeps the first
+    # `kv_outlier_prefix_size` tokens in bf16 instead of NF4. These
+    # "attention sinks" (StreamingLLM, Xiao et al. 2024) are dispropor-
+    # tionately attended to throughout the model and are the largest
+    # source of acceptance loss when quantized.
+    # 0 = no outlier-keep (pure NF4 on every rank);
+    # 128 = StreamingLLM default (8 MB / rank, negligible memory cost).
+    kv_outlier_prefix_size: int = 128
+    # Block size for the NF4 codec. Smaller block_size = more scales =
+    # better per-block dynamic-range fit at the cost of slightly more
+    # memory. block=32 lands at ~7% rel_err on real Llama K/V vs ~11%
+    # for block=64; ~12% extra storage (0.625 vs 0.5625 bytes/elem).
+    # The trade is worth it for acceptance — see Phase C blocker
+    # 2026-05-10 NF4 acceptance drop.
+    kv_block_size_nf4: int = 32
 
     @property
     def torch_dtype(self) -> torch.dtype:
@@ -710,8 +727,19 @@ class RASDInference:
             initial_cache = None
             if cfg.kv_quant:
                 from src.models.nf4_dynamic_cache import NF4DynamicCache
+                # Outlier-keep: only the rank holding global position 0
+                # (rank 0 under sequence-parallel sharding) gets a bf16
+                # prefix. Other ranks' caches are pure NF4. The prefix
+                # protects the first ~128 tokens (attention sinks per
+                # StreamingLLM) which are disproportionately attended to
+                # and account for most of the NF4 acceptance loss.
+                prefix_size = (
+                    cfg.kv_outlier_prefix_size if self._rank == 0 else 0
+                )
                 initial_cache = NF4DynamicCache(
-                    block_size=64, dtype=cfg.torch_dtype,
+                    block_size=cfg.kv_block_size_nf4,
+                    dtype=cfg.torch_dtype,
+                    bf16_prefix_size=prefix_size,
                 )
 
             with torch.cuda.stream(self.stream_compute):

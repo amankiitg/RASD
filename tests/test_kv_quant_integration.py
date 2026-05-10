@@ -193,9 +193,10 @@ class TestNF4DynamicCacheWired:
         from pathlib import Path
         rasd_inf = (Path(__file__).resolve().parent.parent
                     / "src" / "models" / "rasd_inference.py").read_text()
-        # Look for the gated construction
+        # Look for the gated construction (allow generous whitespace
+        # for the outlier-keep comment block added 2026-05-10).
         assert re.search(
-            r"if cfg\.kv_quant:[\s\S]{0,200}NF4DynamicCache\(",
+            r"if cfg\.kv_quant:[\s\S]{0,800}NF4DynamicCache\(",
             rasd_inf,
         ), (
             "C11 (b) regression: NF4DynamicCache construction not gated "
@@ -264,26 +265,224 @@ class TestRunExperimentPlumbing:
             "_run_single_worker"
         )
 
-    def test_m4_yamls_set_kv_quant_false(self):
-        """The M4 phase-C YAMLs must set kv_quant: false.
+    def test_run_experiment_propagates_outlier_keep_knobs(self):
+        """run_experiment._run_single_worker must explicitly pass the
+        2026-05-10 NF4 mitigation knobs to RASDConfig so they take
+        effect on the pod. Without this, the RASDConfig defaults
+        would still apply, but a YAML override (for A/B testing) would
+        be silently dropped."""
+        assert re.search(
+            r"kv_outlier_prefix_size\s*=\s*int\(run\.get\([\"\']kv_outlier_prefix_size[\"\']",
+            RUN_EXP_SRC,
+        ), (
+            "kv_outlier_prefix_size not propagated from run dict to "
+            "RASDConfig in run_experiment.py — YAML override would be ignored"
+        )
+        assert re.search(
+            r"kv_block_size_nf4\s*=\s*int\(run\.get\([\"\']kv_block_size_nf4[\"\']",
+            RUN_EXP_SRC,
+        ), (
+            "kv_block_size_nf4 not propagated from run dict to "
+            "RASDConfig in run_experiment.py — YAML override would be ignored"
+        )
 
-        Background (2026-05-10): the original M4 plan ran kv_quant=True
-        (NF4 KV-cache) as a 40GB-class memory lever. After moving to the
-        80GB SXM4 instance for the 1M-context headline run, NF4 is no
-        longer needed (per-rank budget at 1M is ~30-35 GB / 80 GB with
-        bf16 KV) and the simple absmax NF4 codec was costing ~5-10 pts
-        of acceptance vs the bf16 baseline (real K/V rel_err ~11% vs
-        KIVI's 3-5% — KIVI requires double-quant which we don't ship).
+    def test_m4_yamls_set_kv_quant_true(self):
+        """The M4 phase-C YAMLs must set kv_quant: true.
 
-        So the production setting is kv_quant: false; the codec itself
-        is still validated end-to-end by scripts/c11_validation.py
-        (which builds an NF4DynamicCache directly), but the
-        long-context smoke + final matrix YAMLs run bf16 KV.
+        History (2026-05-10):
+          1. Original plan: kv_quant=true on 40GB SXM4 (memory lever)
+          2. After moving to 80GB SXM4, briefly flipped to kv_quant=false
+             reasoning that bf16 KV would fit. THIS WAS WRONG: per-rank
+             memory at 512k bf16 hit ~80 GB (hardware cap) and OOMed.
+             Ring attention IS sharded but per-rank intermediates scale
+             super-linearly with S_local, so even bf16 doesn't fit at 1M.
+          3. Final: kv_quant=true with two acceptance-recovery levers:
+             (a) block_size=32 (better codec rel_err: ~7% vs ~11%)
+             (b) StreamingLLM-style outlier-keep on rank 0 (first 128
+                 global tokens stored in bf16; the rest in NF4).
+
+        So the production setting is kv_quant: true. The mitigation
+        levers are wired through RASDConfig (kv_block_size_nf4=32,
+        kv_outlier_prefix_size=128) and applied at NF4DynamicCache
+        construction time in rasd_inference.py:generate(). The codec
+        round-trip is still gated by scripts/c11_validation.py.
         """
         for cfg_file in ("configs/m4_phase_c_long_smoke.yml",
                          "configs/m4_final_matrix.yml"):
             text = (REPO_ROOT / cfg_file).read_text()
-            assert re.search(r"kv_quant:\s*false", text), (
-                f"{cfg_file} should set kv_quant: false under defaults "
-                "(see test docstring for rationale)"
+            assert re.search(r"kv_quant:\s*true", text), (
+                f"{cfg_file} should set kv_quant: true under defaults "
+                "(see test docstring for the journey)"
             )
+
+
+# ---------------------------------------------------------------------------
+# Layer 7: outlier-keep behavior in NF4DynamicCache (M4 Phase C 2026-05-10)
+# ---------------------------------------------------------------------------
+
+class TestNF4OutlierKeep:
+    """The bf16-prefix store inside NF4DynamicCache: first N tokens
+    bypass NF4 quantization. Used for StreamingLLM-style attention-sink
+    preservation on the rank that holds global position 0."""
+
+    def _make_kv(self, S, B=1, H=8, D=128, seed=0):
+        torch.manual_seed(seed)
+        k = torch.randn(B, H, S, D, dtype=torch.bfloat16)
+        v = torch.randn(B, H, S, D, dtype=torch.bfloat16)
+        return k, v
+
+    def test_default_prefix_size_is_zero(self):
+        """Default constructor (no bf16_prefix_size kwarg) is pure NF4."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache()
+        assert cache.bf16_prefix_size == 0
+
+    def test_negative_prefix_size_rejected(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        with pytest.raises(ValueError):
+            NF4DynamicCache(bf16_prefix_size=-1)
+
+    def test_bf16_prefix_stores_first_n_exactly(self):
+        """First `bf16_prefix_size` tokens must round-trip BIT-EXACT
+        (not lossy) since they go through bf16 path, not NF4."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=64)
+        k, v = self._make_kv(S=200)
+        # update returns the dequantized full (k, v) for the kernel
+        k_out, v_out = cache.update(k, v, layer_idx=0)
+        assert k_out.shape == k.shape
+        # The first 64 tokens must be EXACTLY equal (bf16 prefix path).
+        assert torch.equal(k_out[:, :, :64, :], k[:, :, :64, :]), (
+            "First 64 tokens should be bit-exact — they bypass NF4"
+        )
+        assert torch.equal(v_out[:, :, :64, :], v[:, :, :64, :])
+        # Tokens past prefix must be close-but-not-equal (NF4 lossy)
+        nf4_diff = (k_out[:, :, 64:, :] - k[:, :, 64:, :]).abs().mean().item()
+        assert nf4_diff > 0, "NF4 portion should be lossy (got bit-exact)"
+        assert nf4_diff < 0.5, f"NF4 rel_err too high: {nf4_diff:.3f}"
+
+    def test_prefix_smaller_than_first_chunk(self):
+        """When the first update() exceeds the prefix capacity, only
+        the first `bf16_prefix_size` tokens are bf16 — the rest land
+        in NF4."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=8)
+        k, v = self._make_kv(S=64)
+        cache.update(k, v, layer_idx=0)
+        assert cache._k_bf16_prefix[0].shape[2] == 8
+        # NF4 codes shape is (B, H, S_chunk, D//2), so axis 2 = remaining
+        assert cache._k_codes[0][0].shape[2] == 64 - 8
+
+    def test_prefix_fills_across_multiple_updates(self):
+        """If prefill is broken into chunks (decode-style), the prefix
+        fills until full, then subsequent updates go to NF4."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=128)
+        k1, v1 = self._make_kv(S=32, seed=1)
+        k2, v2 = self._make_kv(S=32, seed=2)
+        k3, v3 = self._make_kv(S=128, seed=3)
+        cache.update(k1, v1, layer_idx=0)
+        cache.update(k2, v2, layer_idx=0)
+        cache.update(k3, v3, layer_idx=0)
+        # Prefix should hold first 128 tokens (32 + 32 + 64 from chunk 3)
+        assert cache._k_bf16_prefix[0].shape[2] == 128
+        # NF4 holds the trailing 64 tokens of chunk 3
+        nf4_total = sum(c.shape[2] for c in cache._k_codes[0])
+        assert nf4_total == 64
+
+    def test_seq_length_includes_prefix(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=16)
+        k, v = self._make_kv(S=128)
+        cache.update(k, v, layer_idx=0)
+        assert cache.get_seq_length(0) == 128
+
+    def test_truncate_into_prefix(self):
+        """Truncating below the prefix length should keep only the
+        first new_seqlen prefix tokens and drop ALL NF4."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=64)
+        k, v = self._make_kv(S=256)
+        cache.update(k, v, layer_idx=0)
+        cache.truncate(32)
+        assert cache.get_seq_length(0) == 32
+        assert cache._k_bf16_prefix[0].shape[2] == 32
+        assert cache._k_codes[0] == [], "NF4 chunks must be dropped"
+
+    def test_truncate_into_nf4(self):
+        """Truncating above the prefix length keeps the full prefix and
+        trims the NF4 portion."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=64)
+        k, v = self._make_kv(S=256)
+        cache.update(k, v, layer_idx=0)
+        cache.truncate(100)
+        assert cache.get_seq_length(0) == 100
+        assert cache._k_bf16_prefix[0].shape[2] == 64
+        assert sum(c.shape[2] for c in cache._k_codes[0]) == 36
+
+    def test_truncate_to_zero(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=64)
+        k, v = self._make_kv(S=128)
+        cache.update(k, v, layer_idx=0)
+        cache.truncate(0)
+        assert cache.get_seq_length(0) == 0
+        assert cache._k_bf16_prefix[0] is None
+
+    def test_serialize_round_trip_preserves_prefix(self):
+        """Save+load must preserve both NF4 storage AND bf16 prefix."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32, bf16_prefix_size=32)
+        k, v = self._make_kv(S=128)
+        cache.update(k, v, layer_idx=0)
+        d = cache.to_serializable()
+        new_cache = NF4DynamicCache.from_serializable(d)
+        assert new_cache.bf16_prefix_size == 32
+        assert new_cache.get_seq_length(0) == 128
+        assert new_cache._k_bf16_prefix[0].shape[2] == 32
+        # Dequantized full output must match
+        k1, _ = cache._dequantize_layer(0)
+        k2, _ = new_cache._dequantize_layer(0)
+        assert torch.equal(k1, k2)
+
+    def test_legacy_serialized_payload_loads_as_pure_nf4(self):
+        """Backwards compat: a payload from before outlier-keep was
+        added (no bf16_prefix_size key) must still load and behave as
+        a pure-NF4 cache."""
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache = NF4DynamicCache(block_size=32)  # bf16_prefix_size=0 default
+        k, v = self._make_kv(S=64)
+        cache.update(k, v, layer_idx=0)
+        d = cache.to_serializable()
+        # Strip the new keys to simulate legacy payload
+        d.pop("bf16_prefix_size", None)
+        d.pop("k_bf16_prefix", None)
+        d.pop("v_bf16_prefix", None)
+        new_cache = NF4DynamicCache.from_serializable(d)
+        assert new_cache.bf16_prefix_size == 0
+        assert all(p is None for p in new_cache._k_bf16_prefix)
+        assert new_cache.get_seq_length(0) == 64
+
+    def test_memory_bytes_includes_prefix(self):
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        cache_no_prefix = NF4DynamicCache(block_size=32, bf16_prefix_size=0)
+        cache_w_prefix  = NF4DynamicCache(block_size=32, bf16_prefix_size=64)
+        k, v = self._make_kv(S=128)
+        cache_no_prefix.update(k, v, layer_idx=0)
+        cache_w_prefix.update(k, v, layer_idx=0)
+        # The prefix variant must be larger (64 tokens × 8 H × 128 D ×
+        # 2 (K+V) × 2 bytes = 256 KB more, minus the savings from
+        # NOT NF4-quantizing those 64 tokens).
+        assert cache_w_prefix.memory_bytes() > cache_no_prefix.memory_bytes()
+
+    def test_rank0_only_construction_in_generate(self):
+        """generate() must construct outlier-keep ONLY for rank 0; other
+        ranks get pure NF4 (since they don't hold global position 0)."""
+        assert re.search(
+            r"prefix_size\s*=\s*\(\s*cfg\.kv_outlier_prefix_size\s+if\s+self\._rank\s*==\s*0\s+else\s+0",
+            RASD_INF_SRC,
+        ), (
+            "rasd_inference.generate() should set bf16_prefix_size only "
+            "on rank 0; other ranks should pass 0 (pure NF4)"
+        )

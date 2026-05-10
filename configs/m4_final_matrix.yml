@@ -35,7 +35,7 @@ defaults:
   kv_block_size:     2048           # M3 A3 winner
   prefetch_depth:    1
   rope_type:         "yarn"         # M4 C2b — linear fails past factor=16
-  kv_quant:          false          # bf16 KV — exact (no acceptance drop), fits 80GB at 1M
+  kv_quant:          true           # NF4 KV with outlier-keep + block=32 (see long-smoke header)
   max_new_tokens:    64             # M4_PLAN P3.5 spec
   dtype:             "bfloat16"
   quantize_draft:    true
@@ -69,4 +69,4 @@ M4:
     - id: "M4_ctx1M"
       context_length: 1048576
       checkpoint_every: 4    # ~120-min run; without this every crash loses the cell
-      notes: "1M — paper headline number (factor=256, bf16 KV on 80GB SXM4)"
+      notes: "1M — paper headline (factor=256, NF4 KV + outlier-keep on 80GB)"

@@ -365,6 +365,13 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C11 NF4 KV-cache. Default False -> M3 byte-identical.
             # Phase C P3.5 final matrix uses kv_quant=true at all contexts.
             kv_quant          = bool(run.get("kv_quant", False)),
+            # M4 Phase C 2026-05-10 NF4 acceptance-recovery levers. The
+            # YAMLs don't override these by default; we let the RASDConfig
+            # defaults apply (kv_outlier_prefix_size=128, kv_block_size_nf4=32).
+            # Wired through here so an experiment can A/B test by setting
+            # them in the YAML if needed.
+            kv_outlier_prefix_size = int(run.get("kv_outlier_prefix_size", 128)),
+            kv_block_size_nf4      = int(run.get("kv_block_size_nf4", 32)),
             seed              = int(run["seed"]),
             debug             = bool(run.get("debug", False)),
             # C13 per-position trace (M4 Phase A2). Default off so M3
