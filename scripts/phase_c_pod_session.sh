@@ -163,6 +163,7 @@ long_ctx_smokes() {
     # Reviewer's recommended pod-gate order is C11 → C6 → 32k → 128k →
     # only then 512k/1M; this enforces that progression.
     python run_experiment.py \
+        --wandb-project rasd-m4-phase-c \
         --config configs/m4_phase_c_long_smoke.yml \
         --output results/m4_smoke/long_smoke.csv \
         --resume \
@@ -203,6 +204,7 @@ final_matrix() {
     # 4-hour per-run timeout for long-context cells (see long_ctx_smokes
     # comment + finding #3, 2026-05-10).
     python run_experiment.py \
+        --wandb-project rasd-m4-phase-c \
         --config configs/m4_final_matrix.yml \
         --output results/final/final_matrix.csv \
         --resume \
@@ -225,6 +227,7 @@ profiler_sidecar_pass() {
     # 4-hr per-run timeout (finding #3) since profiler adds ~10% overhead
     # on top of the 120-min 1M baseline.
     python run_experiment.py \
+        --wandb-project rasd-m4-phase-c \
         --config configs/m4_final_matrix.yml \
         --output results/final/profiler_pass/profiler_pass.csv \
         --resume \

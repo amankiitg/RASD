@@ -37,7 +37,11 @@ dependencies:
     - accelerate==0.33.0         # >=1.0 breaks bitsandbytes .to() on quantized models
     - bitsandbytes>=0.49.0       # <0.45 missing CUDA 12.9 .so; 0.44 triton import error
     - wandb>=0.16.0
-    - flash-attn>=2.4.0
+    # flash-attn is intentionally NOT here — its setup.py imports torch,
+    # which conda's pip subcall doesn't see (no --no-build-isolation).
+    # The pod bootstrap installs it explicitly via:
+    #   pip install --no-build-isolation flash-attn>=2.4.0
+    # See scripts/auto_execute_phase_c.sh.
     - deepspeed>=0.12.0
     - ninja
     - packaging

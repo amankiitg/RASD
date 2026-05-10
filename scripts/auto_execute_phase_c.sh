@@ -227,8 +227,26 @@ echo "\$!" > /tmp/phase_c_pid
 EOF
 
 if [ $? -ne 0 ]; then
-    echo "FAIL: SSH setup or launch failed"
-    cleanup_terminate
+    # Per 2026-05-10 user instruction: don't auto-terminate on
+    # bootstrap failures. Keep the pod alive so the operator can
+    # SSH in, fix the issue (e.g., conda yaml, pip install snag),
+    # and re-run scripts/phase_c_pod_session.sh manually. Avoids
+    # re-burning ~14 min of bootstrap on every iteration.
+    echo "FAIL: SSH setup or bootstrap failed"
+    echo ""
+    echo "POD KEPT ALIVE for manual debug. To fix:"
+    echo "  ssh -i $LOCAL_SSH_KEY ubuntu@$IP"
+    echo "  # ... apply fix on the pod, then re-run:"
+    echo "  cd RASD && nohup bash scripts/phase_c_pod_session.sh \\"
+    echo "    > results/phase_c/session.log 2>&1 &"
+    echo ""
+    echo "When done (success or abandon), terminate manually:"
+    echo "  curl -sS -u \"\$LAMBDA_API_KEY:\" \\"
+    echo "    -X POST https://cloud.lambda.ai/api/v1/instance-operations/terminate \\"
+    echo "    -H 'Content-Type: application/json' \\"
+    echo "    -d '{\"instance_ids\": [\"$INST_ID\"]}'"
+    echo ""
+    echo "Instance: $INST_ID  IP: $IP"
     exit 1
 fi
 echo "Session running on pod under nohup"
