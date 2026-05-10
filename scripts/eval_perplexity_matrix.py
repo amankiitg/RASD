@@ -97,9 +97,12 @@ def _load_pg19_chunk(meta_path: Path, target_len: int, seed: int) -> torch.Tenso
     # back to the longest chunk and concatenate as needed.
     suitable = [c for c in chunks if c["length"] >= target_len]
     rng = np.random.default_rng(seed)
+    # preprocess_pg19.py writes chunks as {"file": <path>, "length": N}.
+    # The path is already complete (str of the Path used at write time),
+    # so we use it directly rather than joining with meta_path.parent.
     if suitable:
         c = suitable[rng.integers(0, len(suitable))]
-        arr = np.memmap(meta_path.parent / c["path"], dtype="int32", mode="r")
+        arr = np.memmap(c["file"], dtype="int32", mode="r")
         # Pick a random start within the chunk
         start = int(rng.integers(0, c["length"] - target_len + 1))
         ids = np.array(arr[start:start + target_len], dtype=np.int64)
@@ -107,7 +110,7 @@ def _load_pg19_chunk(meta_path: Path, target_len: int, seed: int) -> torch.Tenso
         # Concatenate chunks until target_len reached
         joined = []
         for c in chunks:
-            arr = np.memmap(meta_path.parent / c["path"], dtype="int32", mode="r")
+            arr = np.memmap(c["file"], dtype="int32", mode="r")
             joined.append(np.array(arr, dtype=np.int64))
             if sum(len(x) for x in joined) >= target_len:
                 break
