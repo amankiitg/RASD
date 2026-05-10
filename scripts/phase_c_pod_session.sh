@@ -250,27 +250,12 @@ final_matrix() {
 }
 stage "p35_final_matrix" final_matrix
 
-# ------------------------------------------------------------------
-# P3.5b — Target-only baseline matrix (M4 Phase C 2026-05-10)
-# Apples-to-apples baseline: same RASD distributed infrastructure
-# (NF4 cache + ring SP + outlier-keep + chunked update) but with
-# cfg.spec_steps=0 → no draft model loaded, single-token autoregressive
-# decode through the target. Isolates the contribution of speculative
-# decoding by keeping every other variable identical to p35.
-# Same 4 ctx × 3 seeds grid for direct cell-by-cell comparison.
-# ------------------------------------------------------------------
-target_only_matrix() {
-    python run_experiment.py \
-        --wandb-project rasd-m4-phase-c \
-        --config configs/m4_target_only_matrix.yml \
-        --output results/final/target_only_matrix.csv \
-        --resume \
-        --nproc 8 \
-        --timeout-per-run-s 14400 \
-        --log-per-token \
-        --memory-trace
-}
-stage "p35b_target_only_matrix" target_only_matrix
+# Stage ordering note (2026-05-10 PM): p35b (target-only matrix) is the
+# longest remaining stage (~3-4 hr). To preserve the most data in the
+# event of any mid-stage failure, the cheap stages — p35c (~10 min PPL),
+# p36 (~50 min profiler), p37 (~10 min HF ceiling) — run FIRST, with
+# p35b last. Stage numbers preserve their semantic order but execution
+# order is: p35 → p35c → p36 → p37 → p35b.
 
 # ------------------------------------------------------------------
 # P3.5c — PG-19 perplexity sanity check (single-rank, ≤32k contexts)
@@ -360,6 +345,30 @@ hf_ceiling_baseline() {
         --out results/baselines/hf_ceiling.csv
 }
 stage "p37_hf_ceiling_baseline" hf_ceiling_baseline
+
+# ------------------------------------------------------------------
+# P3.5b — Target-only baseline matrix (run LAST per 2026-05-10 PM
+# reorder — see "Stage ordering note" comment above).
+# Apples-to-apples baseline: same RASD distributed infrastructure
+# (NF4 cache + ring SP + outlier-keep + chunked update) but with
+# cfg.spec_steps=0 → no draft model loaded, single-token autoregressive
+# decode through the target. Isolates the contribution of speculative
+# decoding by keeping every other variable identical to p35.
+# Same 4 ctx × 3 seeds grid for direct cell-by-cell comparison.
+# ~3-4 hr runtime; placed last so quick stages above complete first.
+# ------------------------------------------------------------------
+target_only_matrix() {
+    python run_experiment.py \
+        --wandb-project rasd-m4-phase-c \
+        --config configs/m4_target_only_matrix.yml \
+        --output results/final/target_only_matrix.csv \
+        --resume \
+        --nproc 8 \
+        --timeout-per-run-s 14400 \
+        --log-per-token \
+        --memory-trace
+}
+stage "p35b_target_only_matrix" target_only_matrix
 
 echo ""
 echo "============================================================"
