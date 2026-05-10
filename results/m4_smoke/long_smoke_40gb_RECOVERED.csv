@@ -1,0 +1,6 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error
+smoke_canary_s42,canary,smoke_canary_s42,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,,bfloat16,17,28.3484,0.6,0.0833,1667.553,3094.118,9495.2,12,ok,
+SMOKE_ctx32k_s42,SMOKE,SMOKE_ctx32k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,32768,bfloat16,67,169.3988,0.40,0.1337,1281.118,4273.317,8916.2,43,ok,
+SMOKE_ctx128k_s42,SMOKE,SMOKE_ctx128k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,131072,bfloat16,20,72.6968,0.28,0.1154,3633.484,16067.161,10723.0,13,ok,
+SMOKE_ctx512k_s42,SMOKE,SMOKE_ctx512k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,524288,bfloat16,65,713.6139,0.09,0.1944,10979.029,93080.187,22605.2,36,ok,
+SMOKE_ctx768k_s42,SMOKE,SMOKE_ctx768k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,786432,bfloat16,71,934.0863,0.076,0.275,13156.145,160000.000,31444.2,52,ok,
