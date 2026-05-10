@@ -10,3 +10,16 @@ dist/
 build/
 .DS_Store
 *.log
+
+# Phase C results bloat (added 2026-05-10 PM):
+# - .pt checkpoint files: 1+ GB each, 8 ranks × N rounds = tens of GB
+# - wandb/ local sync dirs are auto-managed, don't commit
+# - per_token .jsonl files can be 100+ MB at long ctx
+# - lever_validation/ holds A/B experiment data we don't need in main
+# Keep CSVs (small, human-readable) and memory_trace JSONs (small, paper-grade).
+results/**/checkpoints/
+results/**/wandb/
+results/**/per_token/
+results/lever_validation/
+results/m4_smoke/long_smoke.v4_oom.csv
+*.pt

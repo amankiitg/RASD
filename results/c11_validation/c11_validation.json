@@ -1,0 +1,95 @@
+{
+  "target": "meta-llama/Llama-2-7b-hf",
+  "revision": null,
+  "contexts": [
+    1024,
+    4096
+  ],
+  "blocks": [
+    64
+  ],
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "rel_err_bound": 0.15,
+  "compression_min": 3.0,
+  "runs": [
+    {
+      "ctx": 1024,
+      "seed": 42,
+      "block_size": 64,
+      "rel_err_mean": 0.11368204560130835,
+      "rel_err_max": 0.14484360814094543,
+      "compression": 3.5555555555555554,
+      "bf16_mb": 512.0,
+      "nf4_mb": 144.0,
+      "pass": true
+    },
+    {
+      "ctx": 1024,
+      "seed": 123,
+      "block_size": 64,
+      "rel_err_mean": 0.11334047699347138,
+      "rel_err_max": 0.1445215791463852,
+      "compression": 3.5555555555555554,
+      "bf16_mb": 512.0,
+      "nf4_mb": 144.0,
+      "pass": true
+    },
+    {
+      "ctx": 1024,
+      "seed": 456,
+      "block_size": 64,
+      "rel_err_mean": 0.11343872267752886,
+      "rel_err_max": 0.1445574164390564,
+      "compression": 3.5555555555555554,
+      "bf16_mb": 512.0,
+      "nf4_mb": 144.0,
+      "pass": true
+    },
+    {
+      "ctx": 4096,
+      "seed": 42,
+      "block_size": 64,
+      "rel_err_mean": 0.11284636508207768,
+      "rel_err_max": 0.14320069551467896,
+      "compression": 3.5555555555555554,
+      "bf16_mb": 2048.0,
+      "nf4_mb": 576.0,
+      "pass": true
+    },
+    {
+      "ctx": 4096,
+      "seed": 123,
+      "block_size": 64,
+      "rel_err_mean": 0.11194161220919341,
+      "rel_err_max": 0.14206664264202118,
+      "compression": 3.5555555555555554,
+      "bf16_mb": 2048.0,
+      "nf4_mb": 576.0,
+      "pass": true
+    },
+    {
+      "ctx": 4096,
+      "seed": 456,
+      "block_size": 64,
+      "rel_err_mean": 0.11232925299555063,
+      "rel_err_max": 0.14269277453422546,
+      "compression": 3.5555555555555554,
+      "bf16_mb": 2048.0,
+      "nf4_mb": 576.0,
+      "pass": true
+    }
+  ],
+  "production_integration": {
+    "is_nf4_after_prefill": true,
+    "is_nf4_after_truncate": true,
+    "nf4_bytes": 75497472,
+    "bf16_equivalent_bytes": 536870912,
+    "compression": 7.111111111111111,
+    "n_layers": 32
+  },
+  "overall_pass": true
+}
