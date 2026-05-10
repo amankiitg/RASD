@@ -219,10 +219,14 @@ conda activate rasd-gpu
 # Use the captured pod lock — pinned versions known to work end-to-end
 # on this exact CUDA-driver / Lambda image combination.
 pip install -r requirements-lock.txt
-# flash-attn is in the lock but its wheel-build needs --no-build-isolation
-# at first install. If the wheel was already built by `pip install -r`
-# above, this is a no-op; if not, --no-build-isolation lets it find torch.
-pip install --no-build-isolation "flash-attn==$(grep '^flash-attn' requirements-lock.txt | cut -d= -f3)" || true
+# flash-attn is intentionally NOT in requirements-lock.txt: its setup.py
+# imports torch at build time, but pip's resolver builds wheels in an
+# isolated env without runtime deps, so a bulk `pip install -r` errors
+# with "ModuleNotFoundError: No module named 'torch'". Install it
+# separately AFTER torch lands, with --no-build-isolation so the build
+# env can see torch.
+# Pinned to the version validated on 40GB pod (see lock file comment).
+pip install --no-build-isolation "flash-attn==2.8.3"
 pip install -e .
 
 # Sanity: full test suite

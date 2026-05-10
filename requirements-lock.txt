@@ -24,7 +24,11 @@ dill==0.4.1
 einops==0.8.2
 exceptiongroup==1.3.1
 filelock==3.29.0
-flash_attn==2.8.3
+# flash_attn==2.8.3 — installed separately with --no-build-isolation;
+# its setup.py imports torch at build time, but pip's resolver builds
+# wheels in an isolated env without runtime deps. The bootstrap script
+# (auto_execute_phase_c.sh) installs flash-attn==2.8.3 explicitly after
+# the bulk pip install lands torch.
 fonttools
 frozenlist==1.8.0
 fsspec==2026.4.0
