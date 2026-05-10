@@ -330,9 +330,19 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # communicator to a specific device. Without it, NCCL initialises
         # lazily on the first collective, which has caused subtle ordering
         # bugs (SeqNum mismatch deadlock) in the kv_block_size=1024/2048 runs.
+        #
+        # timeout=1 hour: the default NCCL watchdog timeout is 10 minutes,
+        # but at 1M context the prefill itself takes ~20-25 min and a
+        # single ring-attention coalesced op can block long enough for
+        # the slowest rank to trip the watchdog. Bumping to 1 hr is
+        # plenty even at 1M and still fails fast on real deadlocks.
+        # (Phase C 2026-05-10 first 1M attempt died at SeqNum=36 after
+        # 600s with rank 7's ring rotation hung waiting for rank 2.)
+        from datetime import timedelta
         dist.init_process_group(
             backend="nccl",
             device_id=torch.device(f"cuda:{local_rank}"),
+            timeout=timedelta(hours=1),
         )
     else:
         torch.cuda.set_device(0)

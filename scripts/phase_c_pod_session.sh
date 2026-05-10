@@ -40,6 +40,17 @@ cd "$(dirname "$0")/.."
 
 PHASE_C_DIR=results/phase_c
 mkdir -p $PHASE_C_DIR
+
+# Safety net: NCCL watchdog timeout. At 1M context, ring-attention
+# coalesced ops can block long enough for the default 10-min watchdog
+# to fire (observed 2026-05-10 first 1M attempt: rank 7 hung at
+# SeqNum=36 after 600s waiting for rank 2). The code-side fix is
+# timedelta(hours=1) on dist.init_process_group, but env-var override
+# is the most reliable path since some torch versions ignore the
+# kwarg. Pinning to 1 hour matches the code-side timeout.
+export NCCL_TIMEOUT=3600
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
+export TORCH_NCCL_BLOCKING_WAIT=1
 LOG_DIR=$PHASE_C_DIR/logs
 mkdir -p $LOG_DIR
 
