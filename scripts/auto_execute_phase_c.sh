@@ -202,15 +202,27 @@ source ~/miniconda3/etc/profile.d/conda.sh
 
 if ! conda env list | grep -q rasd-gpu; then
     # Accept Anaconda TOS — required since 2024 policy change for the
-    # default pkgs/main + pkgs/r channels. Without this, conda env
-    # create exits with CondaToSNonInteractiveError. (Hit on
-    # 2026-05-10 first auto-execute attempt; cost ~\$6.50 to discover.)
+    # default pkgs/main + pkgs/r channels. (Hit on 2026-05-10 first
+    # auto-execute attempt.)
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
-    conda env create -f environment_gpu.yml
+    # Bare conda env: just python, then pip the rest from lock file.
+    # Replaces the M3 environment_gpu.yml flow because (a) conda's pip
+    # subcall doesn't pass --no-build-isolation (flash-attn fails),
+    # (b) conda's pytorch=2.1.0 gets re-upgraded by pip transitive
+    # deps to torch 2.11+cu130 which doesn't run on driver 12.8,
+    # (c) bitsandbytes 0.49.2 needs torch>=2.4. (All discovered on
+    # 2026-05-10 attempts 2-3; cost ~\$10 of pod-time.)
+    conda create -n rasd-gpu python=3.10 -y
 fi
 conda activate rasd-gpu
-pip install --no-build-isolation flash-attn>=2.4.0 || true
+# Use the captured pod lock — pinned versions known to work end-to-end
+# on this exact CUDA-driver / Lambda image combination.
+pip install -r requirements-lock.txt
+# flash-attn is in the lock but its wheel-build needs --no-build-isolation
+# at first install. If the wheel was already built by `pip install -r`
+# above, this is a no-op; if not, --no-build-isolation lets it find torch.
+pip install --no-build-isolation "flash-attn==$(grep '^flash-attn' requirements-lock.txt | cut -d= -f3)" || true
 pip install -e .
 
 # Sanity: full test suite
