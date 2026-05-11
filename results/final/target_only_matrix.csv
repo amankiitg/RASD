@@ -1,0 +1,14 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error
+matrix_target_only_canary_s42,canary,matrix_target_only_canary_s42,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,,bfloat16,16,58.0764,0.28,0.0,3629.776,8507.459,6355.8,15,ok,
+TARGET_ctx128k_s42,M4,TARGET_ctx128k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,131072,bfloat16,64,310.2133,0.21,0.0,4847.082,14604.053,8447.6,63,ok,
+TARGET_ctx128k_s123,M4,TARGET_ctx128k,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,131072,bfloat16,64,337.7521,0.19,0.0,5277.376,9828.909,8447.6,63,ok,
+TARGET_ctx128k_s456,M4,TARGET_ctx128k,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,131072,bfloat16,22,91.5668,0.24,0.0,4162.127,9682.092,8447.6,21,ok,
+TARGET_ctx256k_s42,M4,TARGET_ctx256k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,262144,bfloat16,64,487.5637,0.13,0.0,7618.183,29875.67,12868.1,63,ok,
+TARGET_ctx256k_s123,M4,TARGET_ctx256k,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,262144,bfloat16,64,463.4729,0.14,0.0,7241.764,27641.996,12868.1,63,ok,
+TARGET_ctx256k_s456,M4,TARGET_ctx256k,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,262144,bfloat16,64,478.0936,0.13,0.0,7470.212,31634.644,12868.1,63,ok,
+TARGET_ctx512k_s42,M4,TARGET_ctx512k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
+TARGET_ctx512k_s123,M4,TARGET_ctx512k,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
+TARGET_ctx512k_s456,M4,TARGET_ctx512k,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
+TARGET_ctx1M_s42,M4,TARGET_ctx1M,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
+TARGET_ctx1M_s123,M4,TARGET_ctx1M,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
+TARGET_ctx1M_s456,M4,TARGET_ctx1M,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
