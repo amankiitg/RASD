@@ -286,3 +286,162 @@ class TestProfileFlag:
         ), (
             "Canary regression: --memory-trace not propagated to canary_run."
         )
+
+
+# ---------------------------------------------------------------------------
+# p35d prompt-source flag (PG-19 vs synthetic)
+# ---------------------------------------------------------------------------
+
+class TestPromptSource:
+    """p35d 2026-05-11: --prompt-source pg19 lets RASD use real narrative
+    text instead of the repeated synthetic paragraph. Acceptance ablation
+    that addresses the 1M low-acceptance finding from p35b."""
+
+    def test_build_prompt_default_synthetic(self):
+        """Default source stays 'synthetic' so M3 + earlier p35/p35b
+        runs are byte-identical."""
+        from run_experiment import build_prompt
+        import inspect
+        sig = inspect.signature(build_prompt)
+        assert sig.parameters["source"].default == "synthetic"
+
+    def test_build_prompt_synthetic_unchanged(self):
+        """Synthetic path produces the same repeated-paragraph prompt
+        regardless of seed/source kwargs."""
+        from run_experiment import build_prompt
+
+        class _StubTok:
+            def encode(self, s):
+                return list(range(len(s.split())))
+            def decode(self, ids):
+                return " ".join(f"tok{i}" for i in ids)
+
+        tok = _StubTok()
+        p1 = build_prompt(64, tok)
+        p2 = build_prompt(64, tok, source="synthetic", seed=42)
+        p3 = build_prompt(64, tok, source="synthetic", seed=999)
+        assert p1 == p2 == p3, "synthetic prompt must be seed-independent"
+
+    def test_build_prompt_pg19_requires_meta(self):
+        """source='pg19' without a meta_path must raise — silently
+        falling back to synthetic would corrupt the acceptance ablation."""
+        from run_experiment import build_prompt
+        try:
+            build_prompt(64, tokenizer=None, source="pg19", pg19_meta=None)
+        except ValueError as e:
+            assert "pg19" in str(e).lower() or "meta" in str(e).lower()
+            return
+        raise AssertionError("build_prompt(source='pg19', meta=None) should ValueError")
+
+    def test_build_prompt_pg19_loads_chunk(self, tmp_path):
+        """source='pg19' reads from a preprocess_pg19.py metadata.json
+        and slices to the requested context_length."""
+        import json, numpy as np
+        from run_experiment import build_prompt
+
+        # Build a synthetic PG-19 chunk on disk
+        chunk_path = tmp_path / "pg19_test_chunk_0.dat"
+        ids = np.arange(2048, dtype=np.int32)
+        mm = np.memmap(chunk_path, dtype="int32", mode="w+", shape=(2048,))
+        mm[:] = ids; mm.flush()
+        meta_path = tmp_path / "pg19_test_metadata.json"
+        meta_path.write_text(json.dumps({
+            "chunks": [{"file": str(chunk_path), "length": 2048}]
+        }))
+
+        class _StubTok:
+            def decode(self, ids):
+                # Return a deterministic string from the slice so we can
+                # assert build_prompt produced *something* from these ids.
+                return f"PG19[{ids[0]}..{ids[-1]}]"
+
+        out = build_prompt(64, _StubTok(), source="pg19",
+                           pg19_meta=str(meta_path), seed=42)
+        assert out.startswith("PG19[")
+        # Must have produced 64 tokens from the chunk
+        assert ".." in out
+
+    def test_build_prompt_pg19_seed_reproducible(self, tmp_path):
+        """Same seed → same PG-19 chunk slice. Required so a run_id can
+        be reproduced byte-identical across re-runs."""
+        import json, numpy as np
+        from run_experiment import build_prompt
+
+        chunk_path = tmp_path / "pg19_test_chunk_0.dat"
+        mm = np.memmap(chunk_path, dtype="int32", mode="w+", shape=(2048,))
+        mm[:] = np.arange(2048, dtype=np.int32); mm.flush()
+        meta_path = tmp_path / "pg19_test_metadata.json"
+        meta_path.write_text(json.dumps({
+            "chunks": [{"file": str(chunk_path), "length": 2048}]
+        }))
+
+        class _StubTok:
+            def decode(self, ids):
+                return ",".join(str(i) for i in ids)
+
+        a = build_prompt(64, _StubTok(), source="pg19",
+                         pg19_meta=str(meta_path), seed=42)
+        b = build_prompt(64, _StubTok(), source="pg19",
+                         pg19_meta=str(meta_path), seed=42)
+        assert a == b, "PG-19 chunk pick must be seed-deterministic"
+        # Different seed → different slice (high probability with 2048 - 64 + 1
+        # = 1985 possible start positions)
+        c = build_prompt(64, _StubTok(), source="pg19",
+                         pg19_meta=str(meta_path), seed=999)
+        assert a != c, "different seed should pick a different slice"
+
+    def test_cli_prompt_source_flag_present(self):
+        """--prompt-source flag must exist and accept {synthetic,pg19}."""
+        assert "--prompt-source" in RUN_EXP_SRC
+        assert re.search(
+            r"--prompt-source[\s\S]{0,200}choices=\[[\"\']synthetic[\"\'],\s*[\"\']pg19[\"\']",
+            RUN_EXP_SRC,
+        ), "--prompt-source must constrain choices to synthetic/pg19"
+
+    def test_cli_prompt_source_propagates_to_run_dict(self):
+        """Like --profile/--log-per-token, the flag must land on each
+        run dict so the worker subprocess sees it through the --_worker
+        JSON payload."""
+        assert re.search(
+            r"if args\.prompt_source\s*!=\s*[\"\']synthetic[\"\'][\s\S]{0,400}"
+            r"r\[[\"\']prompt_source[\"\']\]\s*=\s*args\.prompt_source",
+            RUN_EXP_SRC,
+        ), (
+            "p35d regression: --prompt-source not propagated to all_runs; "
+            "worker subprocesses will fall back to synthetic prompts."
+        )
+
+    def test_cli_prompt_source_propagates_to_canary(self):
+        """Same canary-inheritance pattern as profile/log_per_token/memory_trace."""
+        assert re.search(
+            r"if args\.prompt_source\s*!=\s*[\"\']synthetic[\"\'][\s\S]{0,400}"
+            r"canary_run\[[\"\']prompt_source[\"\']\]\s*=\s*args\.prompt_source",
+            RUN_EXP_SRC,
+        ), (
+            "p35d canary regression: --prompt-source not propagated to canary_run; "
+            "canary will run on synthetic prompts and mismatch the matrix."
+        )
+
+    def test_cli_pg19_requires_meta_flag(self):
+        """--prompt-source=pg19 without --prompt-pg19-meta must SystemExit
+        at CLI-parse time, not silently fall back to synthetic."""
+        assert re.search(
+            r"prompt_source\s*==\s*[\"\']pg19[\"\'][\s\S]{0,200}"
+            r"args\.prompt_pg19_meta",
+            RUN_EXP_SRC,
+        ), (
+            "p35d safety: --prompt-source=pg19 without --prompt-pg19-meta "
+            "must error at CLI parse, not corrupt the run."
+        )
+
+    def test_worker_reads_prompt_source_from_run_dict(self):
+        """The worker (_run_single_worker) must read prompt_source from
+        the run dict and pass it to build_prompt — the missing link
+        between CLI flag and the actual prompt content."""
+        assert re.search(
+            r"build_prompt\([\s\S]{0,400}source=run\.get\([\"\']prompt_source[\"\']",
+            RUN_EXP_SRC,
+        ), (
+            "p35d wiring gap: worker doesn't pass run['prompt_source'] "
+            "into build_prompt(); CLI flag has no effect on actual run."
+        )
