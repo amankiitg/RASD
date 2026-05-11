@@ -124,7 +124,12 @@ def main():
         raise SystemExit("No matching per-token files found "
                          f"(prefer={args.prefer}).")
 
-    fig, ax = plt.subplots(figsize=(7.0, 4.2), dpi=140)
+    # Two-panel layout: per-round trace (left) + distribution histogram (right)
+    fig, (ax, ax_hist) = plt.subplots(
+        1, 2, figsize=(11.0, 4.4), dpi=140,
+        gridspec_kw={"width_ratios": [2.4, 1.0]},
+    )
+
     for ctx in sorted(series):
         alphas = series[ctx]
         smoothed = _rolling_mean(alphas, k=args.smooth)
@@ -137,12 +142,47 @@ def main():
 
     ax.set_xlabel("Verify round")
     ax.set_ylabel(r"Acceptance rate $\alpha = n_{\mathrm{acc}}/k$")
-    ax.set_title("Per-round acceptance rate across contexts "
-                 "(RASD, spec_steps=4, k=3-round smoothing)")
+    ax.set_title("Per-round acceptance trace (smoothing window k="
+                 f"{args.smooth})")
     ax.set_ylim(-0.02, 1.02)
     ax.grid(True, alpha=0.3, linewidth=0.5)
     ax.legend(title="Context", loc="upper right", frameon=True,
               framealpha=0.95)
+
+    # ---- Right panel: distribution + median/IQR table ----
+    # Stacked bar showing α=0 vs α>0 share per ctx — surfaces the
+    # bimodality finding (many rounds reject the entire draft).
+    ctxs_sorted = sorted(series)
+    labels   = [CTX_LABEL[c] for c in ctxs_sorted]
+    zero_pct = []
+    pos_pct  = []
+    medians  = []
+    means    = []
+    for c in ctxs_sorted:
+        a = series[c]
+        zero = sum(1 for v in a if v == 0) / len(a) * 100
+        zero_pct.append(zero); pos_pct.append(100 - zero)
+        medians.append(float(np.median(a)))
+        means.append(float(np.mean(a)))
+
+    x = list(range(len(labels)))
+    ax_hist.bar(x, zero_pct, color="#d62728", alpha=0.85, label=r"$\alpha = 0$")
+    ax_hist.bar(x, pos_pct, bottom=zero_pct, color="#2ca02c",
+                alpha=0.85, label=r"$\alpha > 0$")
+    for xi, (z, m, med) in enumerate(zip(zero_pct, means, medians)):
+        ax_hist.text(xi, 50, f"mean {m:.2f}\nmed {med:.2f}",
+                     ha="center", va="center", color="white",
+                     fontsize=8, fontweight="bold")
+    ax_hist.set_xticks(x); ax_hist.set_xticklabels(labels)
+    ax_hist.set_ylabel("Share of rounds (%)")
+    ax_hist.set_title("α=0 vs α>0 (bimodality)")
+    ax_hist.set_ylim(0, 100)
+    ax_hist.legend(loc="lower right", frameon=True, framealpha=0.95,
+                   fontsize=8)
+    ax_hist.grid(True, axis="y", alpha=0.3, linewidth=0.5)
+
+    fig.suptitle("Per-round acceptance rate across contexts "
+                 "(RASD, spec_steps=4)", fontsize=12, y=1.02)
     plt.tight_layout()
 
     out_pdf = REPO_ROOT / args.out_pdf

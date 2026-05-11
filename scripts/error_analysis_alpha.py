@@ -86,9 +86,35 @@ def main():
     sections: list[str] = []
     sections.append("# Phase D F8 — Error Analysis on Low-α Sequences")
     sections.append("")
-    sections.append("Per-context distribution of acceptance rate α plus the "
-                    "K lowest-α rounds with a coarse failure-mode tag. Read "
-                    "alongside Fig 4 (α vs position).")
+    sections.append("## Headline finding: per-round acceptance is bimodal")
+    sections.append("")
+    sections.append(
+        "Across all four contexts, roughly **half of verify rounds fully "
+        "reject the draft (α=0)** while the remaining half accept 1–2 of "
+        "the 4 draft tokens. The 3-seed mean acceptance (~12–21%) reported "
+        "in the main matrix HIDES this bimodality — the median α at "
+        "ctx128k and ctx512k is exactly **0**. Reviewers reading "
+        "`acceptance_rate=0.115` should know the underlying distribution "
+        "is not unimodal-around-0.115 but two-mode (≈50% at α=0, ≈50% "
+        "at α≈0.25–0.5).")
+    sections.append("")
+    sections.append(
+        "**Mechanistic interpretation:** the target model (Llama-2-7B + "
+        "YaRN factor=256 + synthetic repetitive prompt) produces "
+        "near-uniform logits in much of the long-context regime — the "
+        "Llama-2 base model is out-of-distribution beyond its 4k native "
+        "training context. When the target's logits are highly entropic, "
+        "the much-smaller Sheared-LLaMA-1.3B draft cannot reduce that "
+        "uncertainty: every draft token has ~0.001–0.01 probability under "
+        "the target's true distribution, so verify rejects them all. When "
+        "the target happens to commit to a high-probability continuation "
+        "(rare positions), the draft tracks well and 1–4 tokens are "
+        "accepted. See `tables/main_ppl.tex` (PPL=814 at ctx32k under YaRN) "
+        "and `analysis/error_analysis.md` short-ctx PG-19 rows for the "
+        "control comparison.")
+    sections.append("")
+    sections.append("Per-context distribution of α plus the K lowest-α rounds "
+                    "with a coarse failure-mode tag follows.")
     sections.append("")
 
     for ctx_key, ctx_len in CTX_FROM_NAME.items():
