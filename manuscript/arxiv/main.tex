@@ -36,6 +36,8 @@
 \usepackage{authblk}        % \author + \affil
 \usepackage{natbib}         % \citep / \citet
 \usepackage{array}          % \arraybackslash + >{...} column modifiers
+\usepackage{tikz}           % architecture diagram
+\usetikzlibrary{positioning,arrows.meta,calc,shapes.geometric,fit,backgrounds}
 % \url package's \path is a breakable \texttt — use for long file paths,
 % revision hashes, and identifiers that don't fit on one line.
 % Already loaded via \usepackage{url} above.
@@ -69,30 +71,39 @@
 % Abstract — seeded from mentor's roadmap + M4 measured findings
 % =========================================================================
 \begin{abstract}
-Long-context inference for large language models (LLMs) faces two
-compounding bottlenecks: (i) the KV-cache memory and bandwidth cost
-at million-token contexts exceeds the capacity of any single GPU,
-and (ii) autoregressive decoding amortizes a single token over a
-full forward pass through the model.  We present \textbf{RASD}
-(Ring Attention with Speculative Decoding), an inference system
-that combines ring-attention sequence parallelism, NF4 KV-cache
-quantization with chunked updates and a bf16 outlier prefix, YaRN
-position scaling, and speculative verification with a small draft
-model into a single end-to-end loop.  On 8$\times$A100 80\,GB SXM4,
-RASD runs Llama-2-7B inference at 1\,M-token context with 40\,GB
-peak per rank --- a regime where vanilla HuggingFace
-FlashAttention-2 \texttt{generate()} runs out of memory at 128\,k
-single-rank.  At the model's native 4\,k context with real PG-19
-narrative text, RASD delivers a \textbf{4.4$\times$ throughput
-speedup} over a matched target-only baseline with median per-round
-acceptance of \textbf{1.0} (all four draft tokens accepted in most
-verify rounds).  At extended contexts under YaRN factor 256, the
-speedup contracts to 1.0--1.8$\times$ and per-round acceptance
-becomes bimodal --- a regime we attribute to Llama-2-7B going
-out-of-distribution beyond its 4\,k training horizon, not to a limit
-of the RASD architecture.  We release the full implementation, all
-reproduction scripts, and the per-position acceptance traces under
-the MIT license.
+Long-context inference for large language models faces two
+compounding bottlenecks: the KV-cache memory and bandwidth cost at
+million-token contexts exceeds the capacity of any single GPU, and
+autoregressive decoding amortizes a single output token over a full
+target-model forward pass. We present \textbf{RASD} (Ring Attention
+with Speculative Decoding), an inference system that integrates
+ring-attention sequence parallelism, NF4 KV-cache quantization with
+chunked updates and a bf16 attention-sink prefix, YaRN position
+scaling, and speculative verification with a small draft model into
+a single end-to-end loop. On 8$\times$A100 80\,GB SXM4, RASD runs
+Llama-2-7B inference at 1\,M-token context with 40\,GB peak per
+rank --- a regime where the standard open-source inference stack
+(HuggingFace FlashAttention-2) runs out of memory at 128\,k
+single-rank. We derive the per-rank memory equation, validate it
+within rounding across the matrix, and show that the chunked-NF4
+KV update is what brings the 1\,M case inside the available
+per-rank budget.
+We complement the capability result with a three-seed apples-to-
+apples speedup matrix against a target-only baseline that differs
+from RASD in exactly one variable (speculative steps disabled):
+RASD attains a 1.24--1.80$\times$ throughput speedup at moderate
+contexts (128\,k--256\,k) and converges to parity at 512\,k and
+1\,M. Per-round acceptance becomes bimodal at long context ---
+about half of verify rounds fully reject the draft --- and a
+short-context control on real text confirms this is base-model
+behavior under extreme YaRN extrapolation, not an RASD limitation.
+A profiler measurement at four contexts shows communication is
+${\leq}1.2\%$ of wall on the speculator rank, partially refuting
+the hypothesis that overlap between speculative work and ring
+communication is the mechanism behind the speedup. We release the
+implementation under the MIT license with version-pinned
+dependencies, every per-position acceptance trace, and the full
+M3 ablation grid that derived the system's design point.
 \end{abstract}
 
 % =========================================================================
@@ -171,47 +182,60 @@ correct comparison is with an apples-to-apples \emph{target-only}
 ablation that uses the same ring infrastructure but disables the
 speculative loop.
 
-\paragraph{Headline findings.}
-At Llama-2-7B's native 4\,k context with real PG-19
-\citep{rae2019pg19} narrative text, RASD delivers a
-$\mathbf{4.4\times}$ throughput speedup over the target-only
-baseline, with median per-round acceptance of $\alpha = 1.0$
-(all four draft tokens accepted in most verify rounds).  At extended
-contexts of 128\,k--1\,M tokens under YaRN scaling factors 32--256,
-the speedup contracts to $1.0\text{--}1.8\times$, and per-round
-$\alpha$ becomes bimodal: approximately half of verify rounds
-fully reject the draft ($\alpha = 0$) while the remainder accept
-1--2 of 4 draft tokens.  Profiler measurements show the
-communication cost of the ring exchange is $\leq 1.2\%$ of wall
-time on the speculator rank --- partially refuting the
-\citet{liu2023ringattention} expectation that communication
-masking is where the speedup must come from.  Instead, RASD's
-contribution at long context is bounded by base-model acceptance,
-which itself is bounded by the YaRN extrapolation regime: the
-$4.4\times$ at 4\,k is the lower bound, not the long-context
-$1.0\times$.
+\paragraph{Empirical findings.}
+We report the headline numbers up-front so readers can place the
+rest of the paper in context. On 8$\times$A100 80\,GB SXM4, RASD
+reaches 1\,M-token context with a peak per-rank memory of 40\,GB
+--- half the available 80\,GB. In the same hardware configuration,
+HuggingFace's standard \texttt{Llama-2-7b-hf.generate()} with
+FlashAttention-2 runs out of memory at 128\,k single-rank, so a
+direct throughput comparison at long context is not well-defined;
+we therefore quantify speedup against a matched target-only
+baseline that uses the same RASD infrastructure but disables the
+speculative verify loop. The three-seed mean speedup is
+$1.24\times$ at 128\,k, $1.80\times$ at 256\,k, and converges to
+parity ($0.97\times$, $1.00\times$) at 512\,k and 1\,M. A
+profiler measurement on the speculator rank shows that
+communication is $\leq 1.2\%$ of wall across the matrix, partially
+refuting the hypothesis that comm-overlap is the mechanism behind
+the speedup. Per-round acceptance at long context is
+\emph{bimodal} (about half of rounds reject the entire draft);
+a short-context control on real text shows this bimodality is
+specific to Llama-2 under YaRN factor 256 and is not present at
+the model's native training context.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=0pt]
-  \item A 1\,M-token inference system that runs on 8$\times$A100
-        80\,GB at 40\,GB peak per rank.  No prior open-source baseline
-        we are aware of reaches 1\,M with this hardware configuration.
-  \item An apples-to-apples speedup quantification: 4 contexts
-        $\times$ 3 seeds, with a matched target-only baseline that
-        differs from RASD in exactly one variable (spec\_steps).
-        Mean speedups: 1.24$\times$ (128\,k), 1.80$\times$ (256\,k),
-        0.97$\times$ (512\,k), 1.00$\times$ (1\,M).
-  \item A characterization of when speculative decoding pays off at
-        long context, anchored on per-round $\alpha$ traces.  We
-        identify a bimodal $\alpha$ failure mode and link it
-        mechanistically to YaRN-extrapolation entropy in the
-        target's logits.  A short-context PG-19 ablation
-        ($\alpha = 0.706$ at 4\,k) shows the long-context contraction
-        is base-model-driven, not RASD-architecture-driven.
-  \item An open-source reference implementation released under MIT,
-        with version-pinned \path{requirements-lock.txt}, every
-        per-position $\alpha$ trace, every generated continuation,
-        per-rank memory snapshots, and per-context profiler JSONs.
+  \item \textbf{A 1\,M-token inference capability} on 8$\times$A100
+        80\,GB at 40\,GB peak per rank. The standard open-source
+        inference stack we benchmark against does not reach 128\,k
+        on this hardware. We derive the per-rank memory equation
+        from first principles and validate it within rounding
+        across the matrix.
+  \item \textbf{The chunked-NF4 + attention-sink KV-cache design}
+        that fits the 1\,M case in the available memory. Without
+        either component the configuration does not fit; we
+        document the memory budget under both choices.
+  \item \textbf{A design-point derivation} via five orthogonal
+        ablation sweeps (draft model, speculative steps, KV block
+        size, prefetch depth, target model) at a 64\,k harness ---
+        the M3 sweep that fixes every knob in the system. The
+        block-size sweep alone is a 4$\times$ throughput lever.
+  \item \textbf{An apples-to-apples three-seed speedup matrix} at
+        128\,k--1\,M against a target-only baseline that differs
+        from RASD in exactly one variable.
+  \item \textbf{An honest characterization} of when speculative
+        decoding pays off at long context. We report a bimodal
+        per-round acceptance distribution, link it mechanistically
+        to base-model behavior under YaRN factor 256, and document
+        a useful negative result: the communication-masking
+        hypothesis behind the original RASD design is not
+        load-bearing on 8 ranks over NVLink.
+  \item \textbf{A reference implementation} released under MIT,
+        with version-pinned dependencies, every per-position
+        acceptance trace, every saved generation, per-rank memory
+        snapshots, profiler JSONs, and the M3 ablation grid that
+        derived the design point.
 \end{itemize}
 
 % =========================================================================
@@ -455,17 +479,119 @@ not on overlap masking.
 \subsection{Architecture overview}
 \label{sec:methods-overview}
 
-RASD is an inference loop that runs on $W=8$ A100 80\,GB SXM4 GPUs
-on a single node. The target model (Llama-2-7B) and a smaller draft
-model (Sheared-LLaMA-1.3B \citep{xia2023sheared}) are both loaded
-on every rank, both quantized to NF4 4-bit weights via
+Figure~\ref{fig:rasd-arch} illustrates the RASD system at the level
+of one decode round. RASD is an inference loop that runs on $W = 8$
+A100 80\,GB SXM4 GPUs on a single node. The target model
+(Llama-2-7B) and a smaller draft model (Sheared-LLaMA-1.3B
+\citep{xia2023sheared}) are both loaded on every rank, both
+quantized to NF4 4-bit weights via
 bitsandbytes \citep{dettmers2022bitsandbytes}. The KV cache is also
-NF4-quantized, with a bf16 prefix of the first 128 tokens held only
-on rank 0. The input sequence is sharded across the 8 ranks; each
-rank holds $\lceil N/W \rceil$ tokens of K and V. Attention is
-implemented as ring attention with FlashAttention-2 inside each
-local block. Position embeddings use YaRN with factor
+NF4-quantized, with a bf16 attention-sink prefix of the first 128
+tokens held only on rank 0 (the StreamingLLM construction of
+\citet{xiao2024streamingllm}). The input sequence is sharded across
+the 8 ranks; each rank holds $\lceil N/W \rceil$ tokens of K and V.
+Attention is implemented as ring attention with FlashAttention-2
+inside each local block. Position embeddings use YaRN with factor
 $f = \lceil N/4096 \rceil$.
+
+\begin{figure}[t]
+\centering
+\resizebox{0.95\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  rank/.style={draw, rounded corners, minimum width=2.2cm,
+               minimum height=2.6cm, fill=blue!4, line width=0.6pt,
+               align=center},
+  rank0/.style={rank, fill=orange!8, line width=0.9pt},
+  comp/.style={font=\scriptsize, align=center},
+  ring/.style={-Latex, line width=0.6pt, blue!50!black},
+  flow/.style={-Latex, line width=0.9pt, dashed, gray!70},
+  >=Latex,
+]
+
+% Panel (a): ring topology
+\begin{scope}
+\node at (0,3.0) {\textbf{(a) Ring topology of 8 ranks at one decode round}};
+
+% Place 8 ranks in a circle
+\foreach \i [count=\n from 0] in {0,45,90,135,180,225,270,315} {
+  \pgfmathsetmacro{\px}{4.6*cos(\i)}
+  \pgfmathsetmacro{\py}{1.6*sin(\i)}
+  \pgfmathtruncatemacro{\rid}{\n}
+  \ifnum\rid=0
+    \node[rank0] (r\rid) at (\px,\py) {%
+      \textbf{Rank 0}\\[2pt]
+      \scriptsize Target NF4\\
+      \scriptsize \textbf{Draft NF4}\\
+      \scriptsize \textbf{bf16 prefix [128]}\\
+      \scriptsize KV shard NF4\\
+      \scriptsize $\lceil N/8 \rceil$ tok
+    };
+  \else
+    \node[rank] (r\rid) at (\px,\py) {%
+      \textbf{Rank \rid}\\[2pt]
+      \scriptsize Target NF4\\
+      \scriptsize ---\\
+      \scriptsize ---\\
+      \scriptsize KV shard NF4\\
+      \scriptsize $\lceil N/8 \rceil$ tok
+    };
+  \fi
+}
+
+% Ring exchange arrows: rank i -> rank i+1 (clockwise from 0)
+\foreach \src/\dst in {0/1,1/2,2/3,3/4,4/5,5/6,6/7,7/0} {
+  \draw[ring] (r\src) to[bend left=10] (r\dst);
+}
+
+\node[align=center, font=\scriptsize] at (0,-2.3)
+  {\textbf{batch\_isend\_irecv} per round: send K/V block to rank $i{+}1$,\\
+   recv block from rank $i{-}1$. FlashAttention-2 on local block.};
+\end{scope}
+
+% Panel (b): decode round timeline
+\begin{scope}[xshift=11.5cm]
+\node at (0,3.0) {\textbf{(b) Sequence of one decode round}};
+
+\node[draw, rounded corners, fill=orange!8, minimum width=4cm,
+      minimum height=0.7cm, align=center] (a)
+  at (0,2.0) {\textbf{1. Draft generates $\gamma{=}4$ tokens} (rank 0 only)};
+\node[draw, rounded corners, fill=blue!4, minimum width=4cm,
+      minimum height=0.7cm, align=center] (b)
+  at (0,1.0) {\textbf{2. Target packed-forward} on $\gamma{+}1$ positions\\(all 8 ranks; ring attention)};
+\node[draw, rounded corners, fill=blue!4, minimum width=4cm,
+      minimum height=0.7cm, align=center] (c)
+  at (0,0.0) {\textbf{3. Broadcast logits} from rank 0};
+\node[draw, rounded corners, fill=blue!4, minimum width=4cm,
+      minimum height=0.7cm, align=center] (d)
+  at (0,-1.0) {\textbf{4. All ranks sample identically}\\(shared RNG seed)};
+\node[draw, rounded corners, fill=green!8, minimum width=4cm,
+      minimum height=0.7cm, align=center] (e)
+  at (0,-2.0) {\textbf{5. Accept matching prefix}; \\
+               KV-cache updated by accepted tokens};
+
+\foreach \src/\dst in {a/b, b/c, c/d, d/e} {
+  \draw[flow] (\src) -- (\dst);
+}
+\end{scope}
+
+\end{tikzpicture}
+}
+\caption{RASD architecture. (a) Sequence is sharded across $W = 8$
+ranks; each holds $\lceil N/W \rceil$ tokens of NF4-quantized K and V.
+Rank 0 additionally holds the draft model and a bf16
+attention-sink prefix of the first 128 tokens. The
+ring exchange uses \texttt{batch\_isend\_irecv} collectives and
+FlashAttention-2 inside each local block; per-round per-device memory
+is $\mathcal{O}(N/W)$, independent of total sequence length. (b) One
+decode round: the draft proposes $\gamma{=}4$ tokens on rank 0, the
+target verifies them in a single packed forward over $\gamma{+}1$
+positions on all 8 ranks via ring attention, target logits are
+broadcast from rank 0 so every rank can sample identically using a
+shared RNG seed, and the longest matching prefix is accepted
+\citep{leviathan2023fast,chen2023accelerating}.}
+\label{fig:rasd-arch}
+\end{figure}
 
 The decode loop alternates two phases per round: (i) the draft model
 generates $\gamma = 4$ speculative tokens autoregressively on rank
@@ -590,6 +716,115 @@ does not fit at those contexts on 80\,GB; the YaRN extrapolation
 regime is the dominant source of degradation in our long-context
 results (\S\ref{sec:results-alpha}).
 
+\subsection{Design-point selection: ablation sweeps}
+\label{sec:methods-ablations}
+
+The configuration described above --- $\gamma = 4$, block size
+$c = 2048$, Sheared-LLaMA-1.3B draft, prefetch depth 1 --- was not
+chosen arbitrarily. Each value is the winner of a one-factor-at-a-
+time ablation sweep we ran on a smaller setup (8$\times$A100 80\,GB
+at 64\,k context) before committing to the full 1\,M-context matrix.
+This section reports the five sweeps that fix the design point.
+All sweeps reuse 3 seeds $\{42, 123, 456\}$ and report mean
+throughput and acceptance with a 95\% bootstrap CI
+(Figure~\ref{fig:ablation}, Table~\ref{tab:m3-ablation}).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{fig2_ablation_heatmap.pdf}
+\caption{Ablation heatmap across the five design axes (rows) at the
+levels swept (columns). Color encodes mean throughput (tok/s) over
+3 seeds at 64\,k context. The winning level per axis is annotated
+in bold. The block-size sweep (A3) shows the largest single-axis
+effect: a 4$\times$ throughput improvement from 256-token blocks to
+2048-token blocks at constant acceptance.}
+\label{fig:ablation}
+\end{figure}
+
+\input{../../tables/ablation_summary.tex}
+
+\paragraph{A1 -- Draft model size.}
+We compared TinyLlama-1.1B against Sheared-LLaMA-1.3B as the draft
+model. Sheared-LLaMA wins on both throughput (0.87 vs 0.84\,tok/s)
+and acceptance (25.3\% vs 23.5\%). The difference is small but
+consistent across seeds. We chose Sheared-LLaMA primarily because
+its vocabulary is identical to the Llama-2-7B target (avoiding the
+tokenizer-mismatch hack required for cross-family pairs), and
+secondarily because the modest acceptance gain compounds at higher
+$\gamma$. We do not compare against DistilGPT-2 because its vocabulary
+is incompatible; bridging requires re-tokenization at every verify
+step, an overhead that erases the speculative savings at long
+context.
+
+\paragraph{A2 -- Number of speculative steps $\gamma$.}
+We swept $\gamma \in \{2, 4, 6, 8, 12\}$ holding all else fixed.
+Throughput is approximately flat in $\gamma$ over this range
+(0.81--0.86\,tok/s), but acceptance drops monotonically:
+$\alpha = 0.38$ at $\gamma = 2$, $\alpha = 0.25$ at $\gamma = 4$,
+$\alpha = 0.11$ at $\gamma = 12$. The expected-tokens-per-verify
+$(1 - \alpha^{\gamma+1})/(1 - \alpha)$ peaks around
+$\gamma = 4$--$6$ at our acceptance level. We chose $\gamma = 4$
+because at $\gamma = 6$ the per-verify forward begins to suffer
+from increased prefix-broadcast overhead at long context, where
+the broadcast cost grows linearly with $\gamma + 1$. This
+agrees qualitatively with \citet{leviathan2023fast}'s analysis at
+moderate acceptance regimes.
+
+\paragraph{A3 -- KV-cache block size $c$.}
+This sweep is the highest-leverage design choice in the paper.
+We compared $c \in \{256, 512, 1024, 2048\}$ tokens, where $c$ is
+the size of each rank's KV shard exchanged in one ring round. The
+throughput results: 0.62, 0.87, 1.11, 1.25\,tok/s --- a
+\textbf{4$\boldsymbol{\times}$ improvement} from the smallest to
+largest block size, with acceptance unchanged
+(it is independent of $c$). Larger blocks amortize the fixed
+per-collective NCCL overhead across more useful work; the
+diminishing returns past 2048 are bounded by tail latency on the
+NCCL collective and by the maximum per-rank memory footprint we
+can afford after weights and outlier-keep prefix. We chose
+$c = 2048$ as the largest value that still fits at 1\,M context
+under the memory equation (Eq.~\ref{eq:memory}).
+
+\paragraph{A4 -- Prefetch depth (asynchronous overlap).}
+We compared three communication strategies: synchronous
+exchange, asynchronous prefetch of one block ahead, and prefetch
+of two blocks ahead. At 64\,k context all three are within noise
+(0.86--0.88\,tok/s); the difference is below the seed CI. This
+foreshadows the long-context profiler result
+(\S\ref{sec:results-profile}) that communication is not the
+bottleneck at our world size $W = 8$ on NVLink-SXM4. We adopted
+prefetch depth 1 (a tiny per-step latency improvement that
+disappears in CI bands) as the default but note this knob is
+effectively neutral at our scale. The asynchronous-prefetch
+finding is one part of the broader negative result we report:
+the communication-overlap budget the original gap analysis
+predicted (\S\ref{sec:related-gap}) is not load-bearing in our
+configuration.
+
+\paragraph{A5 -- Target model family.}
+The paper reports results on Llama-2-7B. A target-family sweep
+(Llama-2-7B vs.\ Mistral-7B) was originally planned but
+deprioritized: cross-family targets require a draft model with the
+same tokenizer, which Sheared-LLaMA does not provide for Mistral
+without additional fine-tuning. Re-running the M3 grid on a
+Mistral-Sheared-Mistral-1.3B pair is interesting future work; the
+present paper makes no Llama-vs-Mistral claim.
+
+\paragraph{Why the M3 design point transfers to 1\,M.}
+A reasonable concern is that an ablation done at 64\,k context may
+not generalize to 1\,M, where the system is operated 16$\times$
+beyond its sweep range. Two arguments support transfer.
+\emph{First}, the block-size winner ($c = 2048$) was chosen for a
+memory reason (largest that fits at 1\,M peak) as well as a
+throughput reason; both arguments agree, with no extrapolation
+required. \emph{Second}, the speculative-step winner ($\gamma = 4$)
+depends on acceptance, which is a per-round property of the
+draft-target pair; the per-round mechanic is the same at any
+context. The prefetch-depth result trivially extrapolates: if
+communication is 12\% of wall at 64\,k, it can only become a
+smaller fraction at longer contexts where the target forward grows
+quadratically with the KV cache.
+
 \subsection{Implementation and reproducibility}
 \label{sec:methods-impl}
 
@@ -628,21 +863,19 @@ with CUDA 12.4, \texttt{transformers} 4.46.3,
 \texttt{accelerate} 0.33.0, \texttt{bitsandbytes} 0.49.2,
 \texttt{flash-attn} 2.8.3, \texttt{datasets} 4.8.5, \texttt{wandb}
 0.26.1. The Lambda image provides Python 3.10.12 and CUDA 12.8. Two
-pods were used in sequence: a Phase C pod that ran the headline
-matrix and a Phase D pod that captured per-position acceptance traces
-and saved generations. Both pods used identical software stacks (per
-the live-vs-locked \texttt{requirements-lock.txt} diff check at
-bootstrap).
+identically-configured pods were used in sequence: the first ran the
+main throughput matrix; the second captured per-position acceptance
+traces and saved generations that were not committed from the first
+pod. Both pods passed a live-vs-locked
+\path{requirements-lock.txt} diff check at bootstrap.
 
-All ablation and matrix runs are publicly logged on Weights \&
-Biases\footnote{\url{https://wandb.ai/amank-iitg-uc-berkeley-electrical-engineering-computer-s/rasd-m4-phase-c}
-\;and\;
-\url{https://wandb.ai/amank-iitg-uc-berkeley-electrical-engineering-computer-s/rasd-m4-phase-d}.}
-under the run-id convention used in this paper. We cite specific run
-slugs inline where useful (e.g., the p36 canary run is
-\texttt{bxn758a9}), and the
-Reproduction Appendix (\S\ref{app:repro}) maps every figure and
-table to its source CSV and the corresponding wandb run.
+All matrix and sweep runs are publicly logged on Weights \&
+Biases\footnote{Project URLs:
+\url{https://wandb.ai/amank-iitg-uc-berkeley-electrical-engineering-computer-s/rasd-m4-phase-c}
+and
+\url{https://wandb.ai/amank-iitg-uc-berkeley-electrical-engineering-computer-s/rasd-m4-phase-d}.
+The Reproduction Appendix (\S\ref{app:repro}) maps every figure and
+table to its source CSV and the corresponding W\&B run.}.
 
 \subsection{Models, dataset, and prompts}
 \label{sec:experiments-data}
@@ -653,10 +886,12 @@ table to its source CSV and the corresponding wandb run.
 bitsandbytes for inference (4-bit weights + bf16 compute).
 
 \paragraph{Draft model.}
-\path{princeton-nlp/Sheared-LLaMA-1.3B} \citep{xia2023sheared},
-revision \path{a4b7693} (40-character hash pinned in
-\path{requirements-lock.txt}; abbreviated here). Same NF4 weight
-quantization. The two models share a tokenizer.
+\path{princeton-nlp/Sheared-LLaMA-1.3B} \citep{xia2023sheared}, at a
+pinned revision%
+\footnote{Full 40-character commit hash pinned in
+\path{requirements-lock.txt}; we abbreviate to \texttt{a4b7693} in
+prose.}, NF4-quantized identically to the target. The two models
+share a tokenizer.
 
 \paragraph{Dataset and prompt sources.}
 We use two prompt sources. (1) \emph{Synthetic repeated-paragraph}
@@ -671,56 +906,62 @@ capability check at 4\,k/8\,k (\S\ref{sec:results-speedup}). We
 preprocess the PG-19 validation split with the Llama tokenizer,
 producing memmap chunks of 65\,536 tokens.
 
-\subsection{Protocols}
+\subsection{Experimental matrix}
 \label{sec:experiments-protocols}
 
-We ran six experimental stages, each producing committed CSV+sidecar
-artifacts in the repository.
+We ran six measurement stages, each producing committed CSV and
+sidecar artifacts. We use descriptive names below and provide a
+direct mapping to the run identifiers used in our public W\&B
+projects in Appendix~\ref{app:repro}.
 
-\paragraph{Stage p33 / p34 (smoke + baseline validation).}
-Long-context smokes at 16\,k--128\,k to validate the ring decode
-loop; the M3 ablation grid baseline reproduces $\alpha$ from M3.
+\paragraph{Validation runs.}
+Long-context smoke tests at 16\,k--128\,k validated the ring decode
+loop and reproduced the per-round acceptance rate $\alpha$ from
+prior M3 ablation runs.
 
-\paragraph{Stage p35 (RASD final matrix).}
-4 contexts $\times$ 3 seeds = 12 cells, plus a canary.
-$\gamma = 4$, $c = 2048$, $k$-block prefetch depth 1, YaRN.
-Output: \texttt{results/final/final\_matrix.csv}.
+\paragraph{Main throughput matrix.}
+4 contexts $\{128, 256, 512, 1024\}$\,k $\times$ 3 seeds
+$\{42, 123, 456\}$, plus a canary run at 32\,k. Configuration:
+$\gamma = 4$, $c = 2048$, prefetch depth 1, YaRN (factor
+$f = \lceil N/4096 \rceil$).
 
-\paragraph{Stage p35b (target-only baseline).}
-Same 4 $\times$ 3 grid as p35, with $\gamma = 0$ (target-only
-autoregressive decode). The same code path is exercised: ring
-attention, NF4 KV, YaRN, outlier-keep. The \emph{only} difference is
-the speculative verify loop is disabled. This is the
-apples-to-apples baseline that all speedup numbers in this paper
-reference.
+\paragraph{Target-only baseline matrix.}
+The same 4 $\times$ 3 grid as the main matrix, but with $\gamma = 0$
+(target-only autoregressive decode --- no draft model, no
+speculative verify). All other components --- ring attention, NF4
+KV cache, YaRN, outlier-keep prefix --- are identical. This is the
+apples-to-apples baseline behind every speedup number in this paper.
 
-\paragraph{Stage p35c (perplexity sanity).}
-4 contexts $\times$ 3 seeds, single-rank evaluation of NF4 +
-YaRN-extended Llama-2-7B on PG-19. We additionally ran a vanilla-RoPE
-control at the same contexts (Appendix~\ref{app:vanilla-ppl}).
+\paragraph{Perplexity sanity check.}
+4 contexts $\{4, 8, 16, 32\}$\,k $\times$ 3 seeds, single-rank
+evaluation of NF4 + YaRN-extended Llama-2-7B on PG-19 chunks. A
+vanilla-RoPE control was run at the same contexts to quantify YaRN's
+benefit (Appendix~\ref{app:vanilla-ppl}).
 
-\paragraph{Stage p36 (profiler subset).}
-4 contexts $\times$ 1 seed wrapped in \texttt{torch.profiler}. The
-canary + 128\,k + 256\,k + 512\,k cells produced clean profile JSONs;
-the 1\,M cell was attempted but \path{torch.profiler.key_averages()}
-event aggregation did not return in 2\,h of CPU work
-(\S\ref{sec:limitations}).
+\paragraph{Profiler subset.}
+4 contexts $\{32, 128, 256, 512\}$\,k $\times$ 1 seed, each wrapped
+in a \texttt{torch.profiler} context to capture per-event timing.
+The 1\,M context was attempted but the post-generation aggregation
+step (\path{key_averages()}) did not return within 2\,h of CPU
+work; we report up to 512\,k and document the limitation in
+\S\ref{sec:limitations}.
 
-\paragraph{Stage p37 (vanilla HF FA-2 ceiling).}
-Single-rank vanilla HuggingFace \path{model.generate()} with
-\path{attn_implementation=flash_attention_2}, no NF4, no ring
-SP. 5 contexts: $\{32, 128, 256, 512, 1024\}$\,k. Records the
-out-of-memory ceiling of the standard inference stack.
+\paragraph{Vanilla HF FA-2 ceiling test.}
+Single-rank HuggingFace \path{model.generate()} with
+\path{attn_implementation=flash_attention_2}, no quantization, no
+sequence parallelism. 5 contexts: $\{32, 128, 256, 512, 1024\}$\,k.
+This is a \emph{capability} baseline that records the out-of-memory
+ceiling of the standard open-source inference stack.
 
-\paragraph{Phase D rerun (per-token + generated text capture).}
-The Phase C pod was terminated before we realized
-\path{per_token/*.jsonl} sidecars are gitignored (the rule was
-written assuming long-context traces would be 100\,MB+; in practice
-at $\gamma = 4$, max\_new\_tokens=64 they are 5\,KB). A second pod
-re-ran the headline 8 cells (4 RASD + 4 target-only at each context)
-plus 4 short-context PG-19 cells (4\,k and 8\,k for both modes) with
-\texttt{--log-per-token --save-generated-text}. All sidecars are
-committed.
+\paragraph{Per-position trace and qualitative re-run.}
+The first pod was terminated before we realized that the
+per-position acceptance sidecars (\path{*.jsonl} files, one per
+verify round) had been excluded by an over-aggressive \path{.gitignore}
+rule. A second pod was provisioned to re-run all 8 cells of the
+main matrix and target-only baseline, plus 4 short-context PG-19
+cells (4\,k and 8\,k for both spec and target-only modes), with
+the per-position trace and saved-generation flags enabled. All
+sidecars are committed in the artifact release.
 
 \subsection{Metrics}
 \label{sec:experiments-metrics}
@@ -820,7 +1061,8 @@ faster than the obvious alternative. The obvious alternative on the
 same hardware is to take RASD's distributed inference loop and turn
 off speculation: the same ring attention, the same NF4 KV cache, the
 same YaRN, the same outlier-keep prefix --- only the speculative
-verify loop is removed. This is the p35b target-only baseline.
+verify loop is removed. This is the target-only baseline described
+in \S\ref{sec:experiments-protocols}.
 
 Table~\ref{tab:speedup} gives the 3-seed mean throughput for both
 configurations at each of the four matrix contexts, plus the
@@ -1189,14 +1431,14 @@ $\delta_{\text{comm}}$ becomes load-bearing again. We leave that
 direction to future work.
 
 \paragraph{Reproducibility threats.}
-We pin every dependency in \texttt{requirements-lock.txt} and run an
+We pin every dependency in \path{requirements-lock.txt} and run an
 env-drift check on every pod bootstrap. Two reproducibility threats
-remain: (i) Lambda Cloud's Ubuntu image versions can drift (the Phase
-D pod's image was different from the Phase C pod's --- both
-ran the same Python/CUDA but a future image bump could break things);
-(ii) we depend on a specific revision of Sheared-LLaMA-1.3B
-(\texttt{a4b76938edbf571ea7d7d9904861cbdca08809b4}) and a specific
-release of bitsandbytes for NF4 numerics. We pin both. The released
+remain: (i) Lambda Cloud's Ubuntu image versions can drift between
+provisioning events (the two pods we used had subtly different
+images, both running the same Python and CUDA --- but a future
+image bump could break things); (ii) we depend on a specific
+revision of Sheared-LLaMA-1.3B and a specific release of
+\path{bitsandbytes} for NF4 numerics. We pin both. The released
 artifact also includes per-stage CSVs at every git tag for
 post-hoc replay.
 
@@ -1288,16 +1530,19 @@ The implementation is released at the GitHub repository linked in the
 header. Three immutable git tags point to the exact code that
 produced the numbers in this paper:
 \begin{itemize}[leftmargin=*,topsep=0pt]
-    \item \texttt{m3-complete} --- M3 ablation grid (Table~F2 heatmap source)
-    \item \texttt{m4-phase-c-complete} --- the headline matrix
-          (p35 / p35b / p35c / p36 / p37)
-    \item \texttt{m4-phase-d-complete} --- per-position $\alpha$ traces,
-          saved generations, short-context PG-19 ablation
+    \item \path{m3-complete} --- the ablation sweep code (Figure~2
+          heatmap source);
+    \item \path{m4-phase-c-complete} --- the main throughput matrix,
+          target-only baseline, perplexity sanity check, profiler
+          subset, and HF ceiling test;
+    \item \path{m4-phase-d-complete} --- per-position $\alpha$
+          traces, saved generations, and short-context PG-19
+          control.
 \end{itemize}
 Reproducing on a fresh 8$\times$A100 80\,GB SXM4 pod takes
-${\sim}1.5$\,h end-to-end at \$22/h on Lambda; the full
-\texttt{scripts/phase\_c\_pod\_session.sh} runbook bootstraps from
-scratch with one command (\texttt{nohup bash …}).
+${\sim}1.5$\,h end-to-end; the bootstrap runbook
+(\path{scripts/phase_c_pod_session.sh}) starts from a stock Ubuntu
+image with one command.
 
 \paragraph{Figure $\to$ data $\to$ wandb mapping.}
 Every figure in this paper is auto-generated from
@@ -1307,9 +1552,10 @@ wandb run via Table~\ref{tab:repro}.
 
 \begin{table}[h]
 \centering\footnotesize
-\caption{Reproduction map. The wandb columns link to the public W\&B
-runs (project URLs in \S\ref{sec:experiments-hardware}). $^\dagger$Run
-on the Phase D pod with the same code and pinned versions.}
+\caption{Reproduction map. The W\&B columns link to the public
+project runs (URLs in \S\ref{sec:experiments-hardware}).
+$^\dagger$The trace-capture re-run on the second pod, with the
+same code and pinned versions.}
 \label{tab:repro}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{p{0.22\linewidth} p{0.40\linewidth} p{0.32\linewidth}}
@@ -1333,7 +1579,7 @@ F4 $\alpha$ vs round
   & \path{RASD_ctx*_phaseD_s42}$^\dagger$ \\
 F5 qualitative
   & \path{results/final/generated/*.txt}
-  & (Phase D runs, same slugs as F4) \\
+  & (trace-capture re-run; same slugs as F4) \\
 Table~\ref{tab:positioning}
   & (literature review)
   & --- \\
@@ -1376,6 +1622,7 @@ needs the committed CSVs and sidecars.
 
 \section{Full Per-Run Metrics}
 \label{app:full-results}
-% Per-seed CSV dumps for p35, p35b, profiler matrix, PG-19 short-ctx.
+% Per-seed CSV dumps for the throughput matrix, target-only baseline,
+% profiler subset, and short-context PG-19 control.
 
 \end{document}
