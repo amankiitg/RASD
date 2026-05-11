@@ -1,0 +1,6 @@
+timestamp,context_length,seed,attn_impl,quantize_target,status,time_sec,throughput_tps,tokens_generated,gpu_peak_mem_mb,error
+2026-05-10T23:36:54.975557+00:00,32768,42,flash_attention_2,False,ok,8.8319,7.2465,64,30795.78,
+2026-05-10T23:37:20.674652+00:00,131072,42,flash_attention_2,False,oom,-1.0,-1.0,0,-1.0,"CUDA out of memory. Tried to allocate 2.47 GiB. GPU 0 has a total capacity of 79.25 GiB of which 2.14 GiB is free. Including non-PyTorch memory, this process ha"
+2026-05-10T23:37:57.479476+00:00,262144,42,flash_attention_2,False,oom,-1.0,-1.0,0,-1.0,"CUDA out of memory. Tried to allocate 4.95 GiB. GPU 0 has a total capacity of 79.25 GiB of which 4.50 GiB is free. Including non-PyTorch memory, this process ha"
+2026-05-10T23:38:32.824293+00:00,524288,42,flash_attention_2,False,oom,-1.0,-1.0,0,-1.0,"CUDA out of memory. Tried to allocate 9.89 GiB. GPU 0 has a total capacity of 79.25 GiB of which 9.23 GiB is free. Including non-PyTorch memory, this process ha"
+2026-05-10T23:38:37.834050+00:00,1048576,42,flash_attention_2,False,oom,-1.0,-1.0,0,-1.0,"CUDA out of memory. Tried to allocate 7.36 GiB. GPU 0 has a total capacity of 79.25 GiB of which 6.73 GiB is free. Including non-PyTorch memory, this process ha"
