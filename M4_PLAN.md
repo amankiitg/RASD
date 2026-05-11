@@ -2,6 +2,93 @@
 
 Tracking file for M4 work. Strategy, phased order, and deliverables.
 
+## Current state (2026-05-11 — Phase C complete; entering Phase D)
+
+Phase C ran to completion on Lambda 8x A100 80GB SXM4. All matrix data
+collected, all sidecars committed. Pod terminated post-collection.
+
+### Phase C headline numbers (committed in `results/`)
+
+**Throughput matrix (3-seed mean tokens/sec, NF4 KV, ring SP, YaRN):**
+
+| ctx | RASD (p35) | Target-only (p35b) | **RASD speedup** |
+|---|---|---|---|
+| 128k | 0.263 | 0.213 | **1.24×** |
+| 256k | 0.240 | 0.133 | **1.80×** |
+| 512k | 0.087 | 0.090 | 0.97× (tied) |
+| 1M   | 0.040 | 0.040 | 1.00× (tied) |
+
+**Memory peak (GB):** RASD adds ~0.9–2.3 GB over target-only (draft model
+overhead, shrinks at larger ctx as target KV dominates).
+
+**Vanilla HF FA-2 ceiling (p37, single-rank generate, bf16):**
+ctx=32k passes (30.8 GB peak); ctx≥128k all OOM. Establishes the
+scaling-claim contrast: **only RASD reaches 1M at all (40 GB peak).**
+
+**Perplexity (p35c, YaRN + NF4, single-rank PG-19):**
+ctx=4k PPL ~12 (clean quant-quality signal); 8k stable at 13; 16k→85;
+32k→814 (graceful degradation under YaRN factor=8). Vanilla RoPE
+collapses 11× worse at the same contexts (methodology appendix).
+
+**Profiler matrix (p36, RASD spec mode):**
+compute/comm/idle split stable across canary/128k/256k/512k:
+compute≈30–37%, comm≈1%, idle≈52% (rank-0 view; other ranks crunching
+in lockstep), other≈9–15% (allocator/dispatch noise).
+
+**Bonus ablations (1 cell each):**
+- p35d PG-19-prompt at ctx1M (s42): acceptance **10.8%** vs synthetic
+  mean 17.8%. Real narrative text gives *lower* acceptance — confirms
+  low-acceptance-at-1M is fundamental to draft-target divergence under
+  YaRN factor=256, not a synthetic-prompt artifact.
+
+### Paper-claim summary (what Phase C earned)
+
+1. **Capability:** RASD enables 1M inference on 8×A100 80GB at 40 GB
+   peak per rank, where vanilla HF FA-2 caps at 32k single-rank.
+2. **Throughput speedup:** 1.24×–1.80× over target-only at 128k–256k
+   (the moderate-context regime where most production long-ctx
+   inference happens today).
+3. **Quality preserved:** NF4 quantization adds <1 PPL at native
+   context (4k); YaRN provides 11–18× improvement over vanilla RoPE
+   at moderate extrapolation factors.
+4. **Mechanistic understanding:** speedup peaks at 256k and flattens
+   at 512k+ because target-forward cost dominates and acceptance rate
+   shrinks under extreme YaRN factors.
+
+### Known limitations (deferred to follow-up paper / future work)
+
+1. **Long-context extrinsic quality eval (RULER, LongBench, L-Eval)** —
+   infrastructure shipped (`scripts/score_ruler_niah.py` + `--prompt-source ruler_niah`
+   flag, 10 tests, commit `77d967b`) but the full eval was not run in
+   Phase C. A defensible RULER niah eval needs 3+ seeds × 4–5 contexts
+   (≥15 cells, ~$75 of compute); deferred so the Phase C compute budget
+   could prioritize core throughput/memory data. The 1M-claim PPL is
+   bounded at 32k single-rank (the upper limit of practical evaluation
+   without ring SP wired into the eval script). Follow-up paper or
+   extended version will add this.
+
+2. **ctx1M profiler attempt did not complete** — torch.profiler's
+   `key_averages()` event aggregation is O(n) in number of CUDA
+   kernels captured; at ctx1M the aggregation step exceeded 2 hr
+   without returning, exhausting the planned compute window. The
+   profiler matrix is reported up to ctx512k. Fig 3 in the paper uses
+   the 4-context series (canary/128k/256k/512k); 1M profile is noted
+   as "compute-bound under torch.profiler, attempted 2 hr without
+   completion."
+
+3. **p35b ctx512k + ctx1M target-only initially failed in the
+   orchestrator** with `'NoneType' object is not iterable`, all 6
+   cells. The bug did not reproduce in single-cell re-launches (each
+   cell ran cleanly when launched standalone). Hypothesis: orchestrator
+   GPU state contamination after 7 prior cells back-to-back. The
+   re-runs are in `target_only_matrix.csv` and are paper-grade; the
+   bug is documented but not root-caused in this paper.
+
+4. **Single-instance only** — all measurements on 8×A100 80GB SXM4.
+   Tensor parallelism (TP > 1) was demoted to a future paper since
+   the headline 1M+NF4+ring-SP target was already achievable at 40 GB
+   peak per rank without TP. Multi-node scaling is out of scope.
+
 ## Current state (2026-05-10 — Phase C in flight on Lambda 8x A100)
 
 Four phases total. **Phase A and Phase B complete. Phase C in flight

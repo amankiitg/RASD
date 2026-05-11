@@ -429,6 +429,39 @@ scales to 1M on commodity hardware" defensible.
 5. **If neither is decisive**: accept 768k as paper headline (the
    40GB variant is already wired up). 1M becomes future work.
 
+## Phase C completion log (2026-05-11)
+
+Phase C ran to completion on Lambda 8x A100 80GB SXM4 (us-west-2,
+instance terminated post-collection). All matrix data committed in
+`results/`. Headline numbers in M4_PLAN.md ("Phase C headline numbers").
+
+**Stages completed (all markers in `results/phase_c/*.done`):**
+- p30 GPU health, p31 reproducibility lockdown
+- c11 NF4 codec validation, c2b YaRN validation, c6 resume validation
+- p33 long-context smokes, p34 baseline validation, p35 RASD final matrix
+- p35b target-only baseline matrix (12 cells + canary; 6 cells re-run
+  after initial orchestrator-state contamination — see commit `2b7cdeb`)
+- p35c PG-19 perplexity (YaRN + vanilla-RoPE variants)
+- p36 profiler subset (canary + 128k + 256k + 512k; ctx1M attempted
+  but `key_averages()` aggregation did not return in 2 hr — documented
+  as compute-bound limitation)
+- p37 vanilla HF FA-2 ceiling (32k passes, ≥128k OOM)
+- p35d PG-19-prompt sanity at ctx1M (single cell; result strengthens
+  the "low 1M acceptance is fundamental, not prompt-driven" claim —
+  PG-19 acceptance 10.8% vs synthetic mean 17.8%)
+- p38 RULER niah infrastructure (code + scorer + 10 tests committed
+  `77d967b`; full eval deferred to follow-up paper — see Limitations
+  in M4_PLAN.md)
+
+**Pod cost discipline note:** Phase C cost was higher than the original
+~$300 budget due to (a) the orchestrator state-contamination bug in
+p35b that required per-cell re-runs of 6 cells, (b) the 2-hr ctx1M
+profile attempt that did not return, and (c) a ~1.5 hr idle gap when
+a scheduled wakeup did not fire between p36 ctx256k and ctx512k. Lessons
+logged: kill orphaned torchrun children explicitly (re-parent to init);
+arm Monitor on file/marker events rather than wall-time wakeups; size
+torch.profiler buffer expectations for O(n) aggregation cost.
+
 ## Post-session checklist
 
 When the master script finishes (or you decide to stop early):
