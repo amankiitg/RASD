@@ -53,7 +53,7 @@ A3/A4 redefined in R3.5 (post-prefetcher-removal): A3 is now the per-step
 batch_isend_irecv chunk size inside the ring (smaller = more launch
 overhead, larger = better bandwidth amortization). A4 is the ring-step
 prefetch depth (whether rotation s+1 is issued before computing step s).
-See M3_RING_INTEGRATION_PLAN.md open-question 1a for rationale.
+See docs/dev/M3_RING_INTEGRATION_PLAN.md open-question 1a for rationale.
 
 Debug mode
 ----------

@@ -2,7 +2,7 @@
 Ring attention free function — layout-agnostic kernel for sequence-parallel
 attention with FlashAttention-2 intra-rank kernels and online-softmax merge.
 
-Extracted from src/models/ring_attention_flash.py (R1 of M3_RING_INTEGRATION_PLAN.md)
+Extracted from src/models/ring_attention_flash.py (R1 of docs/dev/M3_RING_INTEGRATION_PLAN.md)
 so that both the standalone RingAttentionFlash module and the future
 LlamaAttention patch can call the same kernel.
 
@@ -334,7 +334,7 @@ def _ring_against_sharded(
     self-step diagonal) because Q's absolute positions are strictly past
     all prefill positions during decode.
 
-    Ablation knobs (A3/A4 — see M3_RING_INTEGRATION_PLAN.md, R3.5):
+    Ablation knobs (A3/A4 — see docs/dev/M3_RING_INTEGRATION_PLAN.md, R3.5):
         chunk_size      A3. Per-step batch_isend_irecv transmission chunk
                         size in tokens. None / 0 / >= S_local = single chunk
                         (no chunking).

@@ -262,7 +262,7 @@ stage "p35_final_matrix" final_matrix
 # Quality metric to confirm NF4 weights + ring attention infra
 # don't degrade language modelling quality at moderate contexts.
 # Long-context PPL (128k+) requires sequence-parallel forward,
-# deferred to follow-up iteration (documented in M4_PLAN.md).
+# deferred to follow-up iteration (documented in docs/dev/M4_PLAN.md).
 # ------------------------------------------------------------------
 perplexity_sanity() {
     # Preprocess PG-19 if not already done. preprocess_pg19.py writes

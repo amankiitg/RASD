@@ -1,156 +1,201 @@
 # RASD — Ring Attention with Speculative Decoding
 
-Distributed long-context LLM inference that combines FlashAttention-blocked
-**ring attention** (KV cache partitioned across ranks, rotated via ring P2P)
-with **self-speculative decoding** (small draft model proposes tokens, target
-model verifies in parallel). The result: single-GPU-budget memory at
-long-context scale, with the wall-clock speedup of speculation.
+A reference implementation of **RASD**, an inference system that
+integrates ring-attention sequence parallelism, NF4 KV-cache
+quantization with chunked updates and a bf16 attention-sink prefix,
+YaRN position scaling, and speculative verification into a single
+end-to-end loop.
+
+On 8×A100 80 GB SXM4, RASD runs Llama-2-7B inference at
+**1M-token context with 40 GB peak per rank** — a regime where the
+standard HuggingFace FlashAttention-2 inference path runs out of
+memory at 128k single-rank.
+
+**Paper:** [`manuscript/arxiv/main.pdf`](manuscript/arxiv/main.pdf)
+(arXiv ID pending). **License:** [MIT](LICENSE).
+
+---
+
+## Headline numbers
+
+| Claim | Number |
+|---|---|
+| Max context reached on 8×A100 80 GB | **1,048,576 tokens (1 M)** |
+| Per-rank peak memory at 1 M | **40.3 GB** |
+| Vanilla HF FA-2 `generate()` ceiling, single-rank | **32 k** (OOMs at 128 k) |
+| Throughput speedup vs target-only baseline, 128 k (3-seed mean) | **1.24×** |
+| Throughput speedup vs target-only baseline, 256 k (3-seed mean) | **1.80×** |
+| Communication cost on speculator rank | **≤ 1.2 %** of wall |
+| Per-round acceptance distribution at long context | **bimodal** (≈50 % α=0, ≈50 % α∈[0.25, 0.5]) |
+
+The full matrix and the M3 ablation sweeps that derived each design
+knob are reported in the paper.
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/amankiitg/RASD.git
+cd RASD
+
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip wheel
+pip install -r requirements-lock.txt
+
+# flash-attn must be installed separately (uses --no-build-isolation):
+pip install --no-build-isolation "flash-attn>=2.4.0,<3"
+
+# Editable install of the RASD package
+pip install -e .
+
+# Sanity checks
+python check_env.py
+pytest tests/ -q --ignore=tests/test_long_context_smoke.py
+```
+
+The full set of pinned versions is in
+[`requirements-lock.txt`](requirements-lock.txt). Three immutable
+git tags point to the exact code that produced each milestone:
+
+* `m3-complete` — the M3 ablation grid (Figure 2 source).
+* `m4-phase-c-complete` — the headline matrix (throughput, baseline,
+  PPL, profiler, ceiling tests).
+* `m4-phase-d-complete` — per-position acceptance traces, saved
+  generations, and the short-context PG-19 control.
+
+---
+
+## Reproducing the paper figures and tables
+
+Every figure and every LaTeX table in the manuscript regenerates
+**from committed artifacts**, with no GPU required:
+
+```bash
+python scripts/aggregate_final_results.py     # results/final/final_results.json
+python scripts/plot_figure1.py --show-hf      # F1 — throughput vs context
+python scripts/plot_figure3.py                # F3 — time-breakdown bars
+python scripts/plot_figure4.py                # F4 — α vs round + bimodality
+python scripts/emit_figure5_qualitative.py    # F5 — qualitative comparison
+python scripts/emit_main_tables.py            # tables/main_*.tex
+python scripts/error_analysis_alpha.py        # analysis/error_analysis.md (F8)
+```
+
+To recompile the PDF after editing the source:
+
+```bash
+cd manuscript/arxiv && tectonic main.tex
+```
+
+(Install [tectonic](https://tectonic-typesetting.github.io/) via
+`brew install tectonic` or your distribution's package manager.)
+
+### Reproducing the GPU experiments
+
+Re-running the full Phase C matrix on a fresh 8×A100 80 GB SXM4 pod
+takes ~1.5 hours end-to-end. The bootstrap is one command:
+
+```bash
+WANDB_API_KEY=... HF_TOKEN=... HF_HOME=/home/ubuntu/hf_cache \
+  bash scripts/phase_c_pod_session.sh
+```
+
+See [`REPRODUCE.md`](REPRODUCE.md) for the operator walkthrough and
+[`docs/dev/PHASE_C_RUNBOOK.md`](docs/dev/PHASE_C_RUNBOOK.md) for the
+detailed runbook.
+
+---
 
 ## Repository layout
 
 ```
-configs/           YAML ablation + experiment specs (see ablations.yml header
-                   for the full RunPod operational guide)
-src/
-├── models/        RASDInference engine, FA-2-blocked ring attention
-├── baselines/     Vanilla ring-attention + sliding-window baselines
-├── analysis/      (M4) metrics, bootstrap CIs, figures, tables
-└── utils/         device selection, helpers
-scripts/           standalone benchmarks (baselines, flash-memory validation,
-                   PG-19 preprocessing)
-run_experiment.py  top-level orchestrator: expands ablation grid, launches
-                   per-run torchrun subprocesses, appends rows to CSV
-results/
-├── ablations/     ablations.csv — 49 rows from M3 ablation grid
-├── baselines/     baselines.csv, flash_memory_validation.csv
-└── final/         (M4) final_results.json, per-seed final runs
-tests/             unit tests for RASD components + ring protocol
-figures/, tables/, manuscript/  (M4) paper deliverables
-environment_gpu.yml  pinned conda env (transformers==4.44.2,
-                     accelerate==0.33.0, bitsandbytes>=0.49.0, flash-attn>=2.4)
+LICENSE                    MIT.
+README.md                  This file.
+REPRODUCE.md               Operator-grade reproduction walkthrough.
+requirements-lock.txt      Pinned package versions used in the paper.
+pyproject.toml             Editable install descriptor.
+
+src/                       The RASD inference engine.
+├── models/                Engine, ring-attention layers, NF4 cache,
+│                          speculative verify loop, YaRN scaling.
+├── baselines/             Reference ring-attention + sliding-window forwards.
+├── analysis/              Metrics: throughput, acceptance, profiler aggregation.
+└── utils/                 Device selection, helpers.
+
+scripts/                   CLI entry points.
+├── phase_c_pod_session.sh           Phase C orchestration on a fresh pod.
+├── phase_d_rerun_session.sh         Per-token + qualitative re-run.
+├── aggregate_final_results.py       Build results/final/final_results.json.
+├── plot_figure{1,3,4}.py            Figure regeneration.
+├── emit_figure5_qualitative.py      F5 qualitative table.
+├── emit_main_tables.py              LaTeX tables for the manuscript.
+├── error_analysis_alpha.py          F8 bimodality analysis.
+├── score_ruler_niah.py              RULER niah post-hoc scorer (future-work infra).
+└── (others) preprocess_pg19.py, benchmark_baselines.py, ...
+
+configs/                   YAML experiment specs.
+data/                      Memmap caches (gitignored; populated at run time).
+results/                   Committed CSVs, sidecars, profiler JSONs, generated text.
+figures/                   Vector PDFs + PNGs of every paper figure.
+tables/                    LaTeX-input-ready table fragments.
+analysis/                  Analysis reports (F8 error analysis, etc.).
+manuscript/                arXiv preprint LaTeX source + bibliography.
+literature_review/         Mentor roadmap, lit-review memo, paper-tracking sheet.
+tests/                     470-test pytest suite.
+docs/                      Public-facing docs.
+docs/dev/                  Working-tree planning docs (M3/M4/M5 plans, runbooks).
 ```
 
-## Current status
+---
 
-- **Milestone 1** — literature review (`literature_review/`)
-- **Milestone 2** — baselines (ring attention, sliding window) + data pipeline
-- **Milestone 3** — ablation study **complete (after re-ablation)**.
-  Original M3 results invalidated 2026-04-16 by post-analysis audit;
-  architecture rebuilt R0–R3.5 + R5 (May 2026), 4 fixes landed, R6.5
-  re-ablation produced 46/49 valid rows at **ctx=64k × 8× A100-SXM4-40GB**
-  in `results/ablations/ablations_r65.csv`. Tagged
-  [`m3-reablation`](../../tree/m3-reablation).
-- **Milestone 4** — evaluation & analysis at 1M context (in progress)
+## What this codebase does *not* claim
 
-### Key findings from M3 (R6.5 re-ablation, see [`results/ablations/r65_audit.md`](results/ablations/r65_audit.md))
+* **It is not a long-context capability benchmark.** The paper
+  reports systems metrics (throughput, memory, acceptance). The
+  long-context-capability evaluation (LongBench, RULER, ∞Bench) is
+  explicitly out of scope; we ship the RULER niah-scoring
+  infrastructure so follow-up work can build on it directly.
+* **It does not claim a modeling contribution.** Llama-2-7B is a
+  fixed substrate; substituting a long-context-trained base model
+  (Llama-3.1-128k, Qwen-2.5-1M) is straightforward and is documented
+  as the highest-leverage future-work direction.
+* **It is single-instance only.** All measurements are on 8×A100
+  80 GB SXM4 on one node. Tensor parallelism (TP > 1) and multi-node
+  ring attention are future work.
 
-| axis | finding | note |
-|---|---|---|
-| **A2** spec_steps k | α decreases monotonically with k | k=2: α=0.38; k=12: α=0.11. tps roughly flat (more tokens/round offset lower α/token). Sweet spot k∈{4,8}. |
-| **A3** chunk_size (ring P2P) | larger chunks = higher tps, monotonic | 256 → 2048 yields tps 0.63 → 1.23 (~94% gain). α invariant. Default 512 too conservative; production should use 1024-2048. |
-| **A4** prefetch_depth | sync == async-1 == async-2 | **identical to logged precision at every seed.** Modern NCCL (v2.26+) handles compute/comm overlap on its internal stream — explicit Python prefetch adds zero benefit at this scale. Useful negative result. |
-| **A1** draft size | TinyLlama-1.1B ≈ Sheared-LLaMA-1.3B | both within seed variance; 18% extra draft params don't decisively help α. |
-| **A5** target | Llama-2-7B works (α=0.253, tps=0.87); 13B OOMs at ctx=64k×W=8 NF4 on 40 GB | motivates M4 NF4 KV-cache work to push 13B and 1M context. |
+---
 
-α range across 46 successful rows: **0.105 (A2 k=12 floor) to 0.424 (A2 k=2 best)** — 3-7× higher than the original M3 baseline (0.06-0.11) at floor and ceiling. Memory rock-stable at ~25 GB/rank across all rows, identical across all 8 ranks every row.
+## Acknowledgments
 
-Wandb project: [`rasd-m3-reablation-64k`](https://wandb.ai/amank-iitg-uc-berkeley-electrical-engineering-computer-s/rasd-m3-reablation-64k)
+This work was done as Aman Kesarwani's research project, advised by
+Dr. Raj Dandekar. Compute was provided by Lambda Cloud research
+credits. Implementation builds on PyTorch, the HuggingFace
+`transformers` library, `bitsandbytes` (NF4), and `flash-attn`
+(FlashAttention-2).
 
-### Critical engineering fixes (R6 session 2026-05-06)
+## Citation
 
-The four fixes that took the architecture from "structurally broken" to "produces clean, deterministic, paper-grade ablation data":
+Citation BibTeX will be added once the arXiv ID is assigned. For
+now, please cite the GitHub repository.
 
-| Fix | Commit | What it does |
-|---|---|---|
-| **Option B** | [`eb9297a`](../../commit/eb9297a) | Don't RoPE-scale the draft model — caps draft at native 4k context. Saves ~11 GB/rank at ctx=64k by shrinking replicated draft KV from ~12 GB → ~770 MB. |
-| **Fix2** | [`e875f6d`](../../commit/e875f6d) | Broadcast `target_logits_v` and `draft_logits` from rank 0 before accept/reject. Eliminates cross-rank divergence from bf16-noise drift in ring online-softmax (root cause of NCCL coalesced-op timeouts at high iteration counts). |
-| **Fix3** | [`45b2b40`](../../commit/45b2b40) | Auto-truncate prompt to multiple of `world_size` in `_prefill`. Tokenizers regularly return off-by-a-few token counts; the divisibility assertion was crashing rank 0. |
-| **Fix4** | [`ad2bf5e`](../../commit/ad2bf5e) | Remove legacy `_ring_peer_loop` master/slave pattern from `run_experiment.py`. After R3 deleted the prefetcher, all ranks must run the full pipeline in lockstep. |
-
-Full chronicle in [`M3_RING_INTEGRATION_PLAN.md`](M3_RING_INTEGRATION_PLAN.md) (fix log + live R6.5 findings at the bottom). Mentor summary: [`docs/M3_mentor_summary.md`](docs/M3_mentor_summary.md).
-
-## Reproducing results
-
-For a cold-start walkthrough — hardware → environment setup → exact
-commands → expected outputs — see **[REPRODUCE.md](REPRODUCE.md)**. It
-covers both reproducing the M3 ablation on Lambda 8×A100 and
-regenerating figures + tables locally with no GPU.
-
-The repo uses **two environments** intentionally:
-
-| Goal | File | Hardware | Pinned |
-|---|---|---|---|
-| Re-run experiments | [`environment_gpu.yml`](environment_gpu.yml) | 8× A100-SXM4-40 GB | `transformers==4.44.2` + `accelerate==0.33.0` + `bitsandbytes>=0.49.0` (canonical for results) |
-| Tests, figures, analysis | [`requirements.txt`](requirements.txt) | any CPU (≥Python 3.10) | newer libs appropriate for analysis only |
-
-`m3-reablation` git tag points at the exact commit that produced
-[`results/ablations/ablations_r65.csv`](results/ablations/ablations_r65.csv).
-
-## Quick start
-
-### Local smoke test (1 GPU or CPU)
-
-```bash
-conda env create -f environment_gpu.yml
-conda activate rasd-gpu
-pip install -e .                 # makes `from src.models...` importable
-pytest tests/                    # 91 tests, ~40s
-python run_experiment.py --config configs/ablations.yml --dry-run
+```bibtex
+@misc{kesarwani2026rasd,
+  author = {Aman Kesarwani and Raj Dandekar},
+  title  = {{RASD}: Ring Attention with Speculative Decoding for
+            Million-Token Language Model Inference},
+  year   = {2026},
+  url    = {https://github.com/amankiitg/RASD},
+  note   = {arXiv ID pending}
+}
 ```
 
-For local-only analysis without CUDA, use [`requirements.txt`](requirements.txt) instead — see [REPRODUCE.md](REPRODUCE.md) §2.
+## Companion documents
 
-### Full ablation grid (8×A100 node)
-
-See the **"RunPod Operational Guide"** header in
-[`configs/ablations.yml`](configs/ablations.yml) — it has the full
-required sequence:
-
-1. GPU leak check (`nvidia-smi` must show 0 MiB on all 8 GPUs)
-2. Dependency install (pinned versions)
-3. Subprocess timeout patch (`sed` in `run_experiment.py`)
-4. Inline env-var launch (`WANDB_API_KEY`, `HF_TOKEN`, `HF_HOME`)
-5. Clean-kill procedure (SIGTERM only — never `pkill -9` CUDA procs, it
-   orphans driver-level VRAM that can't be reclaimed without pod restart)
-
-```bash
-python run_experiment.py \
-  --config configs/ablations.yml \
-  --output results/ablations/ablations.csv \
-  --resume --nproc 8
-```
-
-`--resume` skips any row with `status=ok` already in the CSV.
-
-## Experiment artifacts
-
-- **CSV rows** go to the per-group subdirectory under `results/`
-- **wandb logs** under project `rasd-ablations` (free tier OK)
-- **Models cached** on `/workspace/hf_cache` (persistent volume, *not* `/root`)
-
-## Hardware notes
-
-- **R6.5 re-ablation (May 2026)** ran on **Lambda 8× A100-SXM4-40GB**
-  (`gpu_8x_a100`, $15.92/hr) in europe-central-1. Per-rank memory at
-  ctx=64k×W=8 NF4 stays at ~25 GB / 40 GB stably across all 46
-  successful ablation rows. Lambda operational guide in
-  [`runpod_creds.md`](runpod_creds.md) (gitignored — contains creds).
-- **Original M3 (April 2026)** ran on RunPod 8× A100-SXM 80GB. Pre-audit
-  results in `results/ablations/ablations.csv` (invalidated; superseded
-  by `ablations_r65.csv`).
-- 4-bit NF4 quantization (via `bitsandbytes`) on both draft and target.
-- Empirical 40 GB SXM4 ceiling at **ctx≈64k for the 7B target**.
-  ctx=128k OOMs at ~38 GB/rank even with `expandable_segments`.
-  Pushing past 64k on 40 GB hardware needs NF4 KV-cache quantization
-  (queued for M4 as `C11`).
-
-## Acknowledgements
-
-This work uses **Lambda Labs research compute credits ($2,000)** for the
-post-audit R6 verification + R6.5 re-ablation runs (May 2026). Earlier
-M3 ablation runs (April 2026) used RunPod credits.
-
-## License & attribution
-
-Research code for a course-project scope. See `literature_review/` for
-prior work this builds on.
+* [`REPRODUCE.md`](REPRODUCE.md) — operator-grade reproduction walkthrough.
+* [`docs/dev/README.md`](docs/dev/README.md) — index of dev-internal
+  planning docs (M3 ring-integration plan, M4 1M-context plan, M5
+  manuscript plan, Phase C runbook, publication strategy). These are
+  the working-tree chronicles kept for full reproducibility audit.
+* [`docs/M3_mentor_summary.md`](docs/M3_mentor_summary.md) — mentor
+  summary at the end of M3 (kept for context).

@@ -1,5 +1,5 @@
 """
-Ring attention patch for Llama target model (R2 of M3_RING_INTEGRATION_PLAN.md).
+Ring attention patch for Llama target model (R2 of docs/dev/M3_RING_INTEGRATION_PLAN.md).
 
 Replaces each `LlamaAttention.forward` with a ring-aware version that:
   - Splits K/V across `world_size` ranks (contiguous slices, R0.1)

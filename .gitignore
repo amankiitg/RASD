@@ -23,3 +23,11 @@ results/**/per_token/
 results/lever_validation/
 results/m4_smoke/long_smoke.v4_oom.csv
 *.pt
+
+# LaTeX build artifacts
+manuscript/**/main.aux
+manuscript/**/main.blg
+manuscript/**/main.bbl
+manuscript/**/main.log
+manuscript/**/main.out
+manuscript/**/main.toc

@@ -179,7 +179,7 @@ def main():
         "logits become harder to predict as position embeddings are stretched "
         "further beyond their training range, increasing draft-target "
         "divergence regardless of local content. "
-        "See `M4_PLAN.md` Limitations §1 for the full discussion."
+        "See `docs/dev/M4_PLAN.md` Limitations §1 for the full discussion."
     )
     sections.append("")
 

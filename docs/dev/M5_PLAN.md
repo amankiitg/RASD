@@ -202,88 +202,115 @@ The arXiv preprint is the **first** output. Workshop is a 4-page
 extract built AFTER the arXiv version is solid. Internal target:
 arXiv submission by Fri 2026-05-16 (3 days into W9).
 
-- [ ] **9.1 [H]** Send mentor: abstract (above) + three RQs (above)
-      + 1-page bullet outline. **BLOCKS prose work** (wait for
-      sign-off before drafting). Goal: catch story-weak risk early.
-- [ ] **9.2 [H]** Create `manuscript/arxiv/` LaTeX scaffold (NeurIPS
-      preprint style with `\usepackage[preprint]{neurips_2026}`).
-      Section stubs, `\input{...}` shims for all `tables/*.tex`,
-      `\includegraphics` for `figures/*.pdf`, `references.bib` set up.
-- [ ] **9.3 [H]** Add `LICENSE` (MIT) to repo root.
-- [ ] **9.4 [F]** Draft **§Methods**: architecture stack (ring
-      attention + chunked NF4 cache + speculative verify loop +
-      YaRN + outlier-keep). One figure: the architecture diagram
-      (Mermaid → TikZ). Source: `M3_RING_INTEGRATION_PLAN.md` +
-      `M4_PLAN.md` "Long-context memory equation".
-- [ ] **9.5 [F]** Draft **§Experiments + §Results**: pod hardware
-      (8×A100 80GB SXM4), model + tokenizer, protocols for p33–p37,
-      headline tables (`\input` from `tables/`), F1+F3+F4 figures.
-      Source: `M4_PLAN.md` "Phase C headline numbers".
-- [ ] **9.6 [H]** Self-contained captions for F1–F5.
-- [ ] **9.7 [H]** **Mentor sign-off** on prose draft (response from
-      9.1). Address comments inline.
+- [~] **9.1 [H]** ~~Send mentor: abstract (above) + three RQs (above)~~
+      **SKIPPED** — mentor unavailable to bless prose; user proceeding
+      solo per 2026-05-11 directive ("let's do option C"). Story risk
+      mitigated by self-review of v1 → v3 rewrite addressing missing
+      architecture figure, demoted M3 results, pXX jargon, and 4.4×
+      framing.
+- [x] **9.2 [H]** ~~Create `manuscript/arxiv/` LaTeX scaffold~~ **DONE
+      2026-05-11.** Switched from NeurIPS preprint to a vanilla
+      `article` class with NeurIPS-like geometry for arXiv (workshop
+      template will be applied at extraction time). `\input` shims
+      and `\includegraphics` calls wired to `tables/*.tex` and
+      `figures/*.pdf`. Built locally with `tectonic`.
+- [x] **9.3 [H]** ~~Add `LICENSE` (MIT) to repo root.~~ **DONE
+      2026-05-11.** MIT, © 2026 Aman Kesarwani.
+- [x] **9.4 [F]** ~~Draft **§Methods**~~ **DONE 2026-05-11.** §3 covers
+      ring attention, NF4 chunked KV cache + bf16 attention-sink prefix,
+      YaRN factor=256, and the speculative verify loop. Two-panel TikZ
+      architecture diagram is Figure 1 (ring topology + decode round
+      timeline). §3.7 documents the M3 design-point ablation sweeps
+      (A1 draft size, A2 spec steps k, A3 KV block size, A4 prefetch
+      depth, A5 target model) and identifies block size as the 4×
+      throughput lever.
+- [x] **9.5 [F]** ~~Draft **§Experiments + §Results**~~ **DONE
+      2026-05-11.** §4 + §5 with pod hardware, model + tokenizer,
+      protocol descriptions using descriptive names (no internal pXX
+      jargon), main throughput matrix, baseline comparison, PPL sanity
+      check, profiler breakdown, HF FA-2 ceiling, and short-context
+      PG-19 control. All headline tables `\input`ed from `tables/`,
+      F1+F3+F4 included.
+- [x] **9.6 [H]** ~~Self-contained captions for F1–F5.~~ **DONE
+      2026-05-11.** Every caption reads standalone (claim + context +
+      where the data lives) so a reviewer can skim figures without the
+      prose.
+- [~] **9.7 [H]** ~~Mentor sign-off on prose draft.~~ **SKIPPED** — see
+      9.1 above. User self-reviewed v1, identified four sloppiness
+      issues, and v3 manuscript addresses each.
 
 ### Week 10 (2026-05-19 → 2026-05-25) — arXiv submit, then workshop extract
 
-- [ ] **10.1 [F]** Draft **§Related Work** — cite ~20 papers:
-      - Speculative decoding: Leviathan, Chen, SpecInfer, Medusa, EAGLE
-      - Long-context inference: Ring Attention (Liu et al.), Tree
-        Attention, BurstAttention, Striped Attention
-      - RoPE extension: YaRN, Linear, NTK, LongRoPE, PoSE
-      - KV quantization: KIVI, KVQuant, NF4 (bitsandbytes)
-      - Long-context evaluation: LongBench, L-Eval, RULER, ∞Bench
-      - StreamingLLM (outlier-keep)
-      - vLLM, FlashAttention-2 (Dao et al.)
-- [ ] **10.2 [H]** Draft **§Limitations** + **§Future Work**.
-      Source: `M4_PLAN.md` "Known limitations" + Phase D bimodality
-      findings + long-context-trained base-model future work.
-- [ ] **10.3 [H]** Draft **§Introduction** — motivation, claim, four
-      contributions (RASD system + 4.4× headline + bimodal-α finding +
-      open-source release).
-- [ ] **10.4 [H]** Draft **§Conclusion** + tighten **abstract** to ≤200 words.
-- [ ] **10.5 [F]** **Make THIS repo public (in-place clean-up — do
-      NOT fork a new repo):** Reviewers don't read commit history;
-      tags and the debugging chronicle are *valuable* reproducibility
-      evidence; less ongoing maintenance.
+- [x] **10.1 [F]** ~~Draft **§Related Work**~~ **DONE 2026-05-11.** §2
+      covers speculative decoding (Leviathan, Chen, SpecInfer, Medusa,
+      EAGLE), long-context inference (Ring Attention, Tree/Burst/Striped
+      Attention), RoPE extension (YaRN, NTK, LongRoPE, PoSE), KV
+      quantization (KIVI, KVQuant, NF4), long-context evaluation
+      (LongBench, L-Eval, RULER, ∞Bench), StreamingLLM, and FA-2/vLLM.
+- [x] **10.2 [H]** ~~Draft **§Limitations** + **§Future Work**.~~ **DONE
+      2026-05-11.** §6 covers single-instance scope, Llama-2 OOD
+      regime, synthetic-prompt artefact, and points to long-context-
+      trained base model (Llama-3.1-128k, Qwen-2.5-1M) as the highest-
+      leverage follow-up. RULER niah scoring infra shipped for
+      follow-up evaluation work.
+- [x] **10.3 [H]** ~~Draft **§Introduction**~~ **DONE 2026-05-11.** §1
+      states motivation, the four contributions (RASD system + 1M
+      capability + bimodal-α finding + open-source release), and
+      honestly demotes the 4.4× number from headline to control
+      experiment.
+- [x] **10.4 [H]** ~~Draft **§Conclusion** + tighten **abstract**~~
+      **DONE 2026-05-11.** Abstract reframed to lead with capability +
+      memory + design-point + honest characterization (rather than the
+      now-demoted 4.4×).
+- [~] **10.5 [F]** **Make THIS repo public — IN PROGRESS 2026-05-11.**
+      Sub-steps:
 
-      1. **CRITICAL — purge credentials from history:**
-         `git filter-repo --path runpod_creds.md --invert-paths`
-         then `git push --force origin main` and force-push the tags.
+      1. ~~**CRITICAL — purge credentials from history**~~ **NO-OP
+         2026-05-11.** Audit confirmed `runpod_creds.md` was NEVER
+         tracked in git (gitignored from day 1). No destructive
+         history rewrite required. Keys still need rotation (step 2).
       2. **ROTATE the three credentials** at wandb / HuggingFace /
-         Lambda — assume they leaked the moment they were ever in
-         any git history.
-      3. Audit commit messages:
+         Lambda. **PENDING — USER ACTION.**
+      3. ~~Audit commit messages for leaked keys~~ **DONE 2026-05-11.**
          `git log -p --all | grep -E "wandb_v1_|^hf_|secret_rasd"`
-         must return empty.
-      4. Audit code: `grep -rE "wandb_v1_|hf_[a-z]|secret_rasd" src/ scripts/ tests/`
-         must return empty.
-      5. **Trim working tree** (commit deletions):
-         - delete `wandb/`, `*.log`, `data/processed*/`,
-           `results/m4_smoke/`, `results/phase_c/logs/`,
-           `results/final/memory_trace_80gb/`
-         - delete `checkpoint.md` (internal notes)
-      6. **Move dev notes under `docs/dev/`** so the root stays
-         focused (README + LICENSE + paper):
-         - `M3_RING_INTEGRATION_PLAN.md`
-         - `M4_PLAN.md`, `M5_PLAN.md`
-         - `PHASE_C_RUNBOOK.md`, `PUBLICATION_STRATEGY.md`
-         - `experiments.md`
-      7. **Update root `README.md`** to paper-first format (10.6).
-      8. **Make repo public** on GitHub.
-- [ ] **10.6 [H]** Write new repo `README.md`: quick start, 1-page
-      architecture overview, how to reproduce headline results
-      (single command), citation BibTeX (arXiv ID once we have it).
-- [ ] **10.7 [H]** Build `manuscript/supplementary.pdf`: vanilla-RoPE
-      PPL appendix, bimodality discussion, hardware/cost notes, full
-      profiler tables, RULER niah infra description.
-- [ ] **10.8 [F]** **Final read-through with mentor.** Address comments.
-- [ ] **10.9 [H]** **Submit to arXiv.** Capture arXiv ID. Update README.
-- [ ] **10.10 [F]** **Build workshop submission** — extract 4 pages
-      from the arXiv version (NeurIPS workshop template). Drop
-      §Related Work to a 1-paragraph, §Methods to 1.5 pages, keep
-      §Results central, move all tables/figures to supplementary
-      except F1 + F3.
-- [ ] **10.11 [H]** **Submit to workshop.** Capture submission ID.
+         returned empty.
+      4. ~~Audit code for hardcoded secrets~~ **DONE 2026-05-11.**
+         `grep -rE "wandb_v1_|hf_[a-z]|secret_rasd" src/ scripts/ tests/`
+         returned empty.
+      5. ~~**Trim working tree**~~ **DONE 2026-05-11.** Removed 9.2 GB
+         of gitignored artifacts (results/m4_smoke/checkpoints,
+         results/c6_validation/checkpoints, memory_trace_80gb,
+         checkpoint.md). All deletions were already-gitignored content;
+         no `git rm` needed. Final tree: 23 MB.
+      6. ~~**Move dev notes under `docs/dev/`**~~ **DONE 2026-05-11.**
+         Via `git mv` (history preserved): M3_RING_INTEGRATION_PLAN,
+         M4_PLAN, M5_PLAN, PHASE_C_RUNBOOK, PUBLICATION_STRATEGY,
+         experiments. Cross-refs in REPRODUCE.md, source files, and
+         scripts updated. Broken test `test_m4_plan_documents_metric_difference`
+         fixed; all 470 tests pass.
+      7. ~~**Update root `README.md`** to paper-first format~~ **DONE
+         2026-05-11.** New ~205-line README with headline numbers
+         table, quick start, reproduction commands, repo layout,
+         "what this codebase does NOT claim" disclaimer, citation
+         placeholder. See task 10.6.
+      8. **Make repo public** on GitHub. **PENDING — USER ACTION.**
+- [x] **10.6 [H]** ~~Write new repo `README.md`~~ **DONE 2026-05-11.**
+      Headline numbers table, quick start, reproduction (single
+      command for figures, one bootstrap command for GPU re-run), repo
+      layout, citation BibTeX with arXiv-ID-pending placeholder, links
+      to `docs/dev/README.md` for working-tree planning docs.
+- [ ] **10.7 [H]** ~~Build `manuscript/supplementary.pdf`~~ **PAUSED
+      per 2026-05-11 user directive** (arXiv submission and
+      supplementary deferred for review).
+- [~] **10.8 [F]** ~~**Final read-through with mentor.**~~ **SKIPPED**
+      — see 9.1; user proceeding solo.
+- [ ] **10.9 [H]** ~~**Submit to arXiv.**~~ **PAUSED per 2026-05-11 user
+      directive** ("in the last step you said submit to arxiv, let's
+      pause that and do everything else").
+- [ ] **10.10 [F]** ~~**Build workshop submission**~~ **PAUSED** — gated
+      on arXiv submission.
+- [ ] **10.11 [H]** ~~**Submit to workshop.**~~ **PAUSED** — gated on
+      10.10.
 
 ### Internal deadlines (3-day buffer per brief)
 
@@ -328,3 +355,6 @@ arXiv submission by Fri 2026-05-16 (3 days into W9).
 | Date | Change |
 |---|---|
 | 2026-05-11 | Initial draft post-M4 completion. Three-RQ arc locked. |
+| 2026-05-11 | v2: arXiv-first multi-track strategy, mentor-aligned abstract + 3 RQs. |
+| 2026-05-11 | v3: manuscript v3 rewrite (TikZ architecture figure, M3 ablation §3.7, demoted 4.4× from headline, descriptive section names). Mentor sign-off (9.1, 9.7, 10.8) skipped per user — proceeding solo. |
+| 2026-05-11 | Task 10.5 (repo public-prep): runpod_creds.md audit confirmed never tracked (step 1 no-op); secret-grep clean (steps 3-4); 9.2 GB working-tree trim (step 5); dev .md moved to `docs/dev/` (step 6); paper-first README (steps 7 + 10.6); LICENSE added (9.3); docs/dev/README.md index added. Pending USER ACTIONS: rotate keys (step 2), make-public via GitHub UI (step 8). Tasks 10.7, 10.9, 10.10, 10.11 paused. |

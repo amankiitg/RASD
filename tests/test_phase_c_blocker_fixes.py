@@ -703,9 +703,15 @@ class TestThirdPassBlocker6BaselineMetricSemantics:
 
     def test_m4_plan_documents_metric_difference(self):
         """M4_PLAN's Figure 1 spec must explicitly call out the metric
-        difference so Phase D figure code doesn't silently overlay."""
+        difference so Phase D figure code doesn't silently overlay.
+        M4_PLAN.md was moved to docs/dev/ on 2026-05-11."""
         from pathlib import Path
-        plan = (Path(__file__).resolve().parent.parent / "M4_PLAN.md").read_text()
+        repo_root = Path(__file__).resolve().parent.parent
+        m4_plan_path = repo_root / "docs" / "dev" / "M4_PLAN.md"
+        if not m4_plan_path.exists():
+            # Backward-compat: fall back to root location for old checkouts.
+            m4_plan_path = repo_root / "M4_PLAN.md"
+        plan = m4_plan_path.read_text()
         # Look for the F1 entry with the caveat language
         f1_pattern = re.search(
             r"F1\.[\s\S]{0,2000}?forward_tps[\s\S]{0,400}",

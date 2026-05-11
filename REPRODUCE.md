@@ -161,9 +161,9 @@ Outputs land in `figures/` and `tables/`.
 | [run_experiment.py](run_experiment.py) | Top-level orchestrator: expands ablation grid → torchrun subprocess per row → CSV append |
 | [tests/](tests/) | 91 unit tests including [tests/test_m3_invariants.py](tests/test_m3_invariants.py) (locks in M3 fixes) |
 | [configs/ablations.yml](configs/ablations.yml) | Ablation grid + RunPod operational guide |
-| [M3_RING_INTEGRATION_PLAN.md](M3_RING_INTEGRATION_PLAN.md) | M3 redesign chronicle (audit findings → R6.5 results) |
+| [M3_RING_INTEGRATION_PLAN.md](docs/dev/M3_RING_INTEGRATION_PLAN.md) | M3 redesign chronicle (audit findings → R6.5 results) |
 | [docs/M3_mentor_summary.md](docs/M3_mentor_summary.md) | One-page M3 closure summary |
-| [M4_PLAN.md](M4_PLAN.md) | M4 plan (1M context, NF4 KV, 36-run final matrix) |
+| [M4_PLAN.md](docs/dev/M4_PLAN.md) | M4 plan (1M context, NF4 KV, 36-run final matrix) |
 
 ## 4. Known gotchas
 
