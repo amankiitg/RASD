@@ -1,14 +1,96 @@
-# Milestone 5 — Manuscript Writing & Workshop Submission
+# Milestone 5 — Manuscript Writing & Multi-Track Submission
 
 **Weeks 9–10 (2026-05-12 → 2026-05-25).**
-Target venue: **NeurIPS 2026 workshop** (ML for Systems / ENLSP /
-Efficient Foundation Models — whichever has the next live deadline
-in the May–August window).
-8-page manuscript, MIT-licensed code release.
+
+Multi-track submission strategy (per `PUBLICATION_STRATEGY.md` and the
+mentor's roadmap):
+
+| Track | When | Page limit | Output |
+|---|---|---|---|
+| **1. arXiv preprint** | **First — Week 9** | unlimited | Establishes priority; cited from everywhere else |
+| **2. NeurIPS 2026 workshop** | Week 10 | 4 + refs (typ.) | ML for Systems / ENLSP / Efficient Foundation Models (whichever deadline lands first) |
+| **3. MLSys 2027** | Oct 30, 2026 | 8 + refs | Primary archival target — extended version of the workshop paper |
+| 4. NeurIPS 2027 backup | May 2027 | 8 + refs | Only if MLSys rejects |
+
+**arXiv goes first** because it (a) establishes priority on the RASD
+name + 1M finding, (b) gives mentor + the field a citable reference
+for the workshop submission, and (c) the workshop submission can
+literally be a 4-page extraction of the arXiv version.
 
 This is the **tactical** plan for M5. The long-range venue strategy
 lives in `PUBLICATION_STRATEGY.md`; the upstream data work is in
 `M4_PLAN.md`.
+
+## Abstract (working draft, mentor-aligned)
+
+Seeded from the mentor's roadmap abstract (March 2026); updated with
+M4 measured findings.
+
+> Long-context inference for large language models (LLMs) faces two
+> compounding bottlenecks: (i) the KV-cache memory and bandwidth cost
+> at million-token contexts exceeds the capacity of any single GPU,
+> and (ii) autoregressive decoding amortizes a single token over a
+> full forward pass through the model.  We present **RASD**
+> (Ring Attention with Speculative Decoding), an inference system
+> that combines ring-attention sequence parallelism, NF4 KV-cache
+> quantization with chunked updates and a bf16 outlier prefix, YaRN
+> position-scaling, and speculative verification with a small draft
+> model into a single end-to-end loop.  On 8×A100 80GB SXM4, RASD
+> runs Llama-2-7B inference at 1M context with 40 GB peak per rank,
+> a regime where vanilla HuggingFace FlashAttention-2 + `generate()`
+> goes out-of-memory at 128k single-rank.  At the model's native 4k
+> context with real PG-19 narrative text, RASD delivers a **4.4×
+> throughput speedup** over a target-only baseline with median
+> per-round acceptance of **1.0** (all four draft tokens accepted in
+> most rounds).  At extended contexts under YaRN factor=256, the
+> speedup contracts to 1.0–1.8× and per-round acceptance becomes
+> bimodal — a regime we attribute to Llama-2-7B going out-of-
+> distribution beyond its 4k training horizon, not to a limit of
+> the RASD architecture.  We release the full implementation, all
+> reproduction scripts, and the per-position acceptance traces under
+> the MIT license.
+
+(Word count: ~210; trim to ≤200 before submission. The 4.4× number
+is the F4/F5 short-ctx-PG-19 finding committed in `27badaf`.)
+
+## Three Research Questions (mentor-aligned)
+
+Mentor's exact wording from `literature_review/roadmap_…pdf` page 3,
+with our M4 findings annotated against each:
+
+**RQ1: How does RASD compare against a baseline Ring-Attention
+implementation in wall-clock latency and throughput at 256k–1M
+contexts on an 8-node A100 cluster?**
+→ Our answer: p35 vs p35b matrix.  Throughput speedup of 1.24×, 1.80×,
+0.97×, 1.00× at 128k/256k/512k/1M (3-seed mean, synthetic prompts);
+at 4k PG-19 the speedup is 4.4×.  See `tables/main_speedup.tex` +
+F1 + F5.
+
+**RQ2: What is the optimal draft-model-size vs k trade-off?**
+Mentor's hypothesis was 1.3B draft + k∈[4,8].
+→ M3 ablation grid swept (A1) DistilGPT-2 124M vs Sheared-LLaMA-1.3B
+and (A2) k∈{2,4,6,8,12}.  The 1.3B draft + k=4 combination won.
+See `figures/fig2_ablation_heatmap.pdf` and `tables/ablation_summary.tex`.
+**The M3 ablation result confirms the mentor's hypothesis.**
+
+**RQ3: To what extent can the communication latency of inter-GPU
+KV-cache transfer in Ring Attention be masked by the computational
+work of the speculative decoding phase?**
+→ Our F3 profiler measurement (4 contexts) shows **comm = 1.0–1.2%
+of wall on rank 0** across canary/128k/256k/512k.  Compute is
+28–37%; **idle dominates at 51–57%**, with `other` (allocator /
+launch overhead) at 9–15%.  Mechanistically, comm at our scale isn't
+the bottleneck the roadmap hypothesized — the actual rate-limiter is
+target-forward compute, with rank-0 waiting on the sharded ring
+collective.  This finding *partially refutes* the RQ3 hypothesis (the
+overlap isn't load-bearing because there's not much comm to hide),
+and the paper should treat this as a useful **negative result**:
+ring-attention's collective layout is already comm-efficient at 8
+ranks, so spec-decoding's contribution at long ctx is bounded by
+acceptance, not by overlap.
+
+**Action 9.1 below: send these three RQs + the abstract to the mentor
+BEFORE writing prose**, per the brief's risk-mitigation note.
 
 ---
 
@@ -67,7 +149,7 @@ All paper inputs are committed in `main` and pointed to by the tag.
 
 ---
 
-## Headline findings to frame around
+## Headline findings to frame around (M4 measured, recoded for paper voice)
 
 Three claims the paper makes, ranked by paper-value:
 
@@ -94,31 +176,18 @@ Three claims the paper makes, ranked by paper-value:
 
 ---
 
-## Three research questions (for risk-mitigation per the mentor brief)
+## Outputs (mapped from the M5 brief + multi-track strategy)
 
-1. **RQ1 (capability):** Can speculative decoding be combined with
-   ring-attention sequence parallelism and NF4 KV quantization to
-   enable 1M-context inference on commodity hardware (8×A100 80GB)?
-2. **RQ2 (performance):** Does the spec-decoding speedup transfer
-   to the long-context regime, and what limits it?
-3. **RQ3 (characterization):** What are the failure modes of the
-   speedup at extreme context lengths, and how do they decompose
-   into architecture vs base-model contributions?
-
-**Action 9.1 below: send these three RQs to the mentor BEFORE
-writing prose**, per the brief's risk-mitigation note.
-
----
-
-## Outputs (mapped from the M5 brief)
-
-- `manuscript/main.pdf` — final camera-ready PDF
-- `manuscript/supplementary.pdf` — extra plots (vanilla-RoPE PPL,
-  memory traces, RULER-niah infra description as future work)
+- **`manuscript/arxiv/main.pdf`** — unlimited-page arXiv preprint
+  (FIRST priority, no page limit means we ship everything)
+- **`manuscript/workshop/main.pdf`** — 4-page workshop submission
+  extracted from the arXiv version
+- `manuscript/supplementary.pdf` — vanilla-RoPE PPL, memory traces,
+  RULER-niah infra description as future work, full profiler tables
 - Public GitHub repo (separate clean fork — not the working repo)
   under **MIT license**
 - `README.md` with reproduction instructions
-- Submission portal confirmation + ID
+- arXiv submission ID + workshop submission ID
 
 ---
 
@@ -127,32 +196,36 @@ writing prose**, per the brief's risk-mitigation note.
 Each task tagged with `[ID effort]` for estimation. `H` = ~half-day,
 `F` = ~full day. Order is dependency-aware.
 
-### Week 9 (2026-05-12 → 2026-05-18) — drafting
+### Week 9 (2026-05-12 → 2026-05-18) — arXiv preprint
 
-- [ ] **9.1 [H]** Write three RQs (above) + 1-page bullet outline of
-      the paper. Email mentor for sign-off. **BLOCKS prose work.**
-- [ ] **9.2 [H]** Create Overleaf project, paste NeurIPS 2026 template,
-      set up `\input{}` shims for all `tables/*.tex` files. Verify
-      build.
-- [ ] **9.3 [H]** Add `LICENSE` file (MIT) to repo root.
-- [ ] **9.4 [F]** Draft **Methods** section (Architecture):
-      ring attention + chunked NF4 cache + speculative verify loop +
-      YaRN. Source: §M3_RING_INTEGRATION_PLAN.md + §M4_PLAN.md
-      "Long-context memory equation". Include 1 architecture
-      diagram (Mermaid → TikZ or Inkscape export).
-- [ ] **9.5 [F]** Draft **Experiments** section (Setup + Results):
-      pod hardware, model + tokenizer, p35/p35b/p36/p37 protocol,
-      headline tables. Mostly rewrite from `M4_PLAN.md` "Phase C
-      headline numbers" with paper voice.
-- [ ] **9.6 [H]** Write figure + table captions for F1–F8. Captions
-      must be **self-contained** (reviewer can read a figure without
-      reading the text).
-- [ ] **9.7 [H]** Mentor sign-off on the outline (response from 9.1).
-      Adjust prose if needed.
+The arXiv preprint is the **first** output. Workshop is a 4-page
+extract built AFTER the arXiv version is solid. Internal target:
+arXiv submission by Fri 2026-05-16 (3 days into W9).
 
-### Week 10 (2026-05-19 → 2026-05-25) — finishing
+- [ ] **9.1 [H]** Send mentor: abstract (above) + three RQs (above)
+      + 1-page bullet outline. **BLOCKS prose work** (wait for
+      sign-off before drafting). Goal: catch story-weak risk early.
+- [ ] **9.2 [H]** Create `manuscript/arxiv/` LaTeX scaffold (NeurIPS
+      preprint style with `\usepackage[preprint]{neurips_2026}`).
+      Section stubs, `\input{...}` shims for all `tables/*.tex`,
+      `\includegraphics` for `figures/*.pdf`, `references.bib` set up.
+- [ ] **9.3 [H]** Add `LICENSE` (MIT) to repo root.
+- [ ] **9.4 [F]** Draft **§Methods**: architecture stack (ring
+      attention + chunked NF4 cache + speculative verify loop +
+      YaRN + outlier-keep). One figure: the architecture diagram
+      (Mermaid → TikZ). Source: `M3_RING_INTEGRATION_PLAN.md` +
+      `M4_PLAN.md` "Long-context memory equation".
+- [ ] **9.5 [F]** Draft **§Experiments + §Results**: pod hardware
+      (8×A100 80GB SXM4), model + tokenizer, protocols for p33–p37,
+      headline tables (`\input` from `tables/`), F1+F3+F4 figures.
+      Source: `M4_PLAN.md` "Phase C headline numbers".
+- [ ] **9.6 [H]** Self-contained captions for F1–F5.
+- [ ] **9.7 [H]** **Mentor sign-off** on prose draft (response from
+      9.1). Address comments inline.
 
-- [ ] **10.1 [F]** Draft **Related Work** — cite ~20 papers:
+### Week 10 (2026-05-19 → 2026-05-25) — arXiv submit, then workshop extract
+
+- [ ] **10.1 [F]** Draft **§Related Work** — cite ~20 papers:
       - Speculative decoding: Leviathan, Chen, SpecInfer, Medusa, EAGLE
       - Long-context inference: Ring Attention (Liu et al.), Tree
         Attention, BurstAttention, Striped Attention
@@ -160,57 +233,52 @@ Each task tagged with `[ID effort]` for estimation. `H` = ~half-day,
       - KV quantization: KIVI, KVQuant, NF4 (bitsandbytes)
       - Long-context evaluation: LongBench, L-Eval, RULER, ∞Bench
       - StreamingLLM (outlier-keep)
-      - Compare positioning against each (table or prose).
-- [ ] **10.2 [H]** Draft **Limitations** subsection. Source: §M4_PLAN.md
-      "Known limitations" (4 items: RULER deferred, 1M profile compute-
-      bound, p35b orchestrator NoneType, single-instance only).
-- [ ] **10.3 [H]** Draft **Abstract** (≤200 words) — 3 claims +
-      headline number (4.4× at 4k, 1.0× scaling at 1M).
-- [ ] **10.4 [H]** Draft **Introduction** — motivation, claim, three
-      contributions matching the three RQs.
-- [ ] **10.5 [H]** Draft **Conclusion** — restate the three claims +
-      one paragraph on future work (long-context-fine-tuned base
-      model + RULER/LongBench eval + multi-node TP).
-- [ ] **10.6 [F]** **Public GitHub repo prep:**
-      - New repo `rasd-paper-2026` (or similar)
-      - `git filter-repo` or fresh history to drop wandb logs, runpod
-        creds, internal debug chronicles
-      - Copy `LICENSE`, `README.md`, `requirements-lock.txt`, src/,
-        scripts/, tests/, configs/, results/final/*.csv, results/final/
-        per_token/, results/final/generated/, figures/, tables/,
-        analysis/error_analysis.md, M4_PLAN.md (trimmed)
+      - vLLM, FlashAttention-2 (Dao et al.)
+- [ ] **10.2 [H]** Draft **§Limitations** + **§Future Work**.
+      Source: `M4_PLAN.md` "Known limitations" + Phase D bimodality
+      findings + long-context-trained base-model future work.
+- [ ] **10.3 [H]** Draft **§Introduction** — motivation, claim, four
+      contributions (RASD system + 4.4× headline + bimodal-α finding +
+      open-source release).
+- [ ] **10.4 [H]** Draft **§Conclusion** + tighten **abstract** to ≤200 words.
+- [ ] **10.5 [F]** **Public GitHub repo prep:**
+      - New repo `rasd-paper-2026` (separate from working tree)
+      - `git filter-repo` to drop credentials, wandb, debug chronicles
+      - Copy: `LICENSE`, `README.md`, `requirements-lock.txt`, src/,
+        scripts/, tests/, configs/, all of `results/final/`, figures/,
+        tables/, analysis/, M4_PLAN.md (trimmed)
       - **EXCLUDE**: `runpod_creds.md`, `checkpoint.md`, `*.log`,
         `wandb/`, `data/processed*/`, `results/m4_smoke/`,
-        `results/phase_c/logs/`, `results/final/memory_trace_80gb/`
-        (Phase B leftovers)
-      - Push to GitHub, make public.
-- [ ] **10.7 [H]** Write the new repo's **`README.md`** (M5 deliverable):
-      Quick start (clone + venv + pip install), 1-page architecture
-      overview with link to the paper, how to reproduce headline
-      results (script + expected output), citation BibTeX placeholder.
-- [ ] **10.8 [H]** Supplementary PDF: vanilla-RoPE PPL appendix,
-      bimodality longer discussion, hardware/cost notes, full
-      profiler tables.
-- [ ] **10.9 [F]** **Full read-through revision cycle with mentor.**
-      Mentor reads the assembled draft. Address comments. Repeat
-      once if needed.
-- [ ] **10.10 [H]** Final polish pass: grammar, citation formatting,
-      figure positioning, page-budget check.
-- [ ] **10.11 [H]** **Submit.** Upload `main.pdf` + `supplementary.pdf`
-      to the venue portal. Capture submission ID. Email mentor
-      confirmation.
+        `results/phase_c/logs/`
+      - Push public.
+- [ ] **10.6 [H]** Write new repo `README.md`: quick start, 1-page
+      architecture overview, how to reproduce headline results
+      (single command), citation BibTeX (arXiv ID once we have it).
+- [ ] **10.7 [H]** Build `manuscript/supplementary.pdf`: vanilla-RoPE
+      PPL appendix, bimodality discussion, hardware/cost notes, full
+      profiler tables, RULER niah infra description.
+- [ ] **10.8 [F]** **Final read-through with mentor.** Address comments.
+- [ ] **10.9 [H]** **Submit to arXiv.** Capture arXiv ID. Update README.
+- [ ] **10.10 [F]** **Build workshop submission** — extract 4 pages
+      from the arXiv version (NeurIPS workshop template). Drop
+      §Related Work to a 1-paragraph, §Methods to 1.5 pages, keep
+      §Results central, move all tables/figures to supplementary
+      except F1 + F3.
+- [ ] **10.11 [H]** **Submit to workshop.** Capture submission ID.
 
 ### Internal deadlines (3-day buffer per brief)
 
 | Milestone | Internal target | Real deadline |
 |---|---|---|
-| Outline + 3 RQs sent to mentor | 2026-05-13 (W9-D2) | — |
-| Methods + Experiments drafted | 2026-05-15 (W9-D4) | — |
-| Related Work + Abstract done | 2026-05-21 (W10-D3) | — |
-| Repo public + README done | 2026-05-22 (W10-D4) | — |
+| Abstract + RQs sent to mentor | 2026-05-12 (W9-D1) | — |
+| arXiv scaffold + LICENSE + Methods drafted | 2026-05-14 (W9-D3) | — |
+| Experiments + Results drafted | 2026-05-15 (W9-D4) | — |
+| Mentor sign-off prose | 2026-05-16 (W9-D5) | — |
+| **arXiv submit (internal target)** | **2026-05-19 (W10-D1)** | — |
+| Workshop extract done | 2026-05-22 (W10-D4) | — |
 | Mentor revision cycle done | 2026-05-23 (W10-D5) | — |
-| **Internal submission target** | **2026-05-23** | — |
-| **Workshop deadline** | (venue-dependent) | TBD |
+| **Workshop submit** | **2026-05-24 (W10-D6)** | venue-dependent |
+| Buffer | 2026-05-25 (W10-D7) | — |
 
 ---
 
