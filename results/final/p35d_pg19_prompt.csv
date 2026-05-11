@@ -1,0 +1,2 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error
+P35D_ctx1M_pg19_s42,M4,P35D_ctx1M_pg19,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,1048576,bfloat16,64,1167.2135,0.05,0.108,18237.71,360851.823,41890.2,44,ok,
