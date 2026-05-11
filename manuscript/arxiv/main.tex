@@ -56,8 +56,8 @@
 \graphicspath{{../../figures/}{./}}
 
 % --- Title block ----------------------------------------------------------
-\title{RASD: Ring Attention with Speculative Decoding for\\
-       Million-Token Language Model Inference}
+\title{When Speculative Decoding Stops Paying Off at Long Context:\\
+       A Diagnostic Study with RASD}
 
 \author[1]{Aman Kesarwani\thanks{\texttt{amankesarwani@berkeley.edu}}}
 \author[2]{Raj Dandekar\thanks{Advisor.}}
@@ -71,39 +71,39 @@
 % Abstract — seeded from mentor's roadmap + M4 measured findings
 % =========================================================================
 \begin{abstract}
-Long-context inference for large language models faces two
-compounding bottlenecks: the KV-cache memory and bandwidth cost at
-million-token contexts exceeds the capacity of any single GPU, and
-autoregressive decoding amortizes a single output token over a full
-target-model forward pass. We present \textbf{RASD} (Ring Attention
-with Speculative Decoding), an inference system that integrates
-ring-attention sequence parallelism, NF4 KV-cache quantization with
-chunked updates and a bf16 attention-sink prefix, YaRN position
-scaling, and speculative verification with a small draft model into
-a single end-to-end loop. On 8$\times$A100 80\,GB SXM4, RASD runs
-Llama-2-7B inference at 1\,M-token context with 40\,GB peak per
-rank --- a regime where the standard open-source inference stack
-(HuggingFace FlashAttention-2) runs out of memory at 128\,k
-single-rank. We derive the per-rank memory equation, validate it
-within rounding across the matrix, and show that the chunked-NF4
-KV update is what brings the 1\,M case inside the available
-per-rank budget.
-We complement the capability result with a three-seed apples-to-
-apples speedup matrix against a target-only baseline that differs
-from RASD in exactly one variable (speculative steps disabled):
-RASD attains a 1.24--1.80$\times$ throughput speedup at moderate
-contexts (128\,k--256\,k) and converges to parity at 512\,k and
-1\,M. Per-round acceptance becomes bimodal at long context ---
-about half of verify rounds fully reject the draft --- and a
-short-context control on real text confirms this is base-model
-behavior under extreme YaRN extrapolation, not an RASD limitation.
-A profiler measurement at four contexts shows communication is
-${\leq}1.2\%$ of wall on the speculator rank, partially refuting
-the hypothesis that overlap between speculative work and ring
-communication is the mechanism behind the speedup. We release the
-implementation under the MIT license with version-pinned
-dependencies, every per-position acceptance trace, and the full
-M3 ablation grid that derived the system's design point.
+Speculative decoding amortizes a target-model forward pass into
+$\gamma+1$ tokens when a small draft model agrees with the
+target, yielding 2--3$\times$ speedups at short context. We ask
+whether this speedup transfers to million-token inference and
+find it does not. Per-round acceptance becomes bimodal at long
+context on Llama-2-7B with YaRN factor 256: about half of verify
+rounds fully reject the draft, and the cumulative speedup against
+a matched target-only baseline regresses to $0.96\times$ at
+512\,k and reaches parity ($1.00\times$) at 1\,M. A
+short-context control on real text confirms the bimodality is
+base-model behavior under YaRN extrapolation, not an RASD
+limitation. A profiler measurement shows communication is
+${\leq}1.2\%$ of wall on the speculator rank, ruling out overlap
+between speculative work and ring communication as the mechanism
+behind the moderate-context speedup. Arriving at these findings
+required a system that can actually run a target-model forward at
+1\,M context. To that end we built \textbf{RASD} (Ring Attention
+with Speculative Decoding), which combines ring-attention
+sequence parallelism, NF4 KV-cache quantization (chunked, with a
+bf16 attention-sink prefix), YaRN position scaling, and
+speculative verification with a small draft model. On
+8$\times$A100 80\,GB SXM4, RASD runs Llama-2-7B inference at
+1\,M-token context with 40\,GB peak per rank, while vanilla
+HuggingFace FlashAttention-2 runs out of memory at 128\,k
+single-rank. We derive the dominant terms of the per-rank memory
+equation, and show the chunked-NF4 KV update is what brings the
+1\,M case inside the per-rank budget. The same three-seed
+apples-to-apples matrix that yields parity at 1\,M shows a
+1.24--1.80$\times$ speedup at moderate contexts (128\,k--256\,k).
+We release the implementation under the MIT license with
+version-pinned dependencies, every per-position acceptance
+trace, and the full M3 ablation grid that derived the system's
+design point.
 \end{abstract}
 
 % =========================================================================
@@ -151,20 +151,23 @@ target agree often (high \emph{acceptance rate} $\alpha$), the
 target pays one forward to generate $1 + k\alpha$ tokens.  At
 short context, this routinely yields $2\text{--}4\times$ speedups.
 
-\paragraph{The gap our work fills.}
-These two techniques have not been combined into a published
-million-token inference system on commodity hardware.  Both Ring
-Attention and speculative decoding exist as independent components,
-each with mature open-source implementations.  But running them
-together at 1\,M context surfaces practical questions that neither
-literature alone answers: how does NF4 KV quantization interact with
-the YaRN \citep{peng2023yarn} position-scaling required to push
-Llama-2-7B past its 4\,k training horizon; how does the speculative
-verify loop's broadcast-and-resample pattern compose with the ring
-attention's existing collective; and most importantly, \emph{does the
-speculative speedup that exists at 4\,k transfer to 1\,M}, or do
+\paragraph{The question this paper asks.}
+At short context, speculative decoding yields 2--3$\times$
+speedups on standard inference benchmarks. We ask whether this
+speedup transfers to million-token inference. Answering the
+question requires a system that can run a target-model forward at
+1\,M context on commodity hardware. Both ring attention and
+speculative decoding exist as mature open-source components, but
+they have not been combined into a published million-token
+inference system. Doing so surfaces practical questions: how does
+NF4 KV quantization interact with the YaRN \citep{peng2023yarn}
+position scaling required to push Llama-2-7B past its 4\,k
+training horizon; how does the speculative verify loop's
+broadcast-and-resample pattern compose with the ring attention's
+existing collective; and most importantly, \emph{does the
+speculative speedup that exists at 4\,k transfer to 1\,M, or do
 acceptance rates collapse out of the regime where the technique
-is useful?
+is useful?}
 
 \paragraph{The RASD system.}
 We present \textbf{RASD} (Ring Attention with Speculative Decoding),
@@ -183,26 +186,28 @@ ablation that uses the same ring infrastructure but disables the
 speculative loop.
 
 \paragraph{Empirical findings.}
-We report the headline numbers up-front so readers can place the
-rest of the paper in context. On 8$\times$A100 80\,GB SXM4, RASD
-reaches 1\,M-token context with a peak per-rank memory of 40\,GB
---- half the available 80\,GB. In the same hardware configuration,
-HuggingFace's standard \texttt{Llama-2-7b-hf.generate()} with
-FlashAttention-2 runs out of memory at 128\,k single-rank, so a
-direct throughput comparison at long context is not well-defined;
-we therefore quantify speedup against a matched target-only
-baseline that uses the same RASD infrastructure but disables the
-speculative verify loop. The three-seed mean speedup is
-$1.24\times$ at 128\,k, $1.80\times$ at 256\,k, and converges to
-parity ($0.97\times$, $1.00\times$) at 512\,k and 1\,M. A
-profiler measurement on the speculator rank shows that
-communication is $\leq 1.2\%$ of wall across the matrix, partially
-refuting the hypothesis that comm-overlap is the mechanism behind
-the speedup. Per-round acceptance at long context is
-\emph{bimodal} (about half of rounds reject the entire draft);
-a short-context control on real text shows this bimodality is
-specific to Llama-2 under YaRN factor 256 and is not present at
-the model's native training context.
+We report the findings up-front so readers can place the rest of
+the paper in context. \emph{First}, the answer to the central
+question: the speculative speedup at 4\,k does not transfer to
+1\,M. The three-seed mean speedup of RASD against a matched
+target-only baseline (same RASD infrastructure with the
+speculative verify loop disabled) is $1.24\times$ at 128\,k,
+$1.80\times$ at 256\,k, regresses to $0.96\times$ at 512\,k, and
+reaches parity ($1.00\times$) at 1\,M. \emph{Second}, per-round
+acceptance at long context is \emph{bimodal} (about half of
+rounds reject the entire draft); a short-context control on real
+text shows this bimodality is specific to Llama-2 under YaRN
+factor 256 and is not present at the model's native training
+context. \emph{Third}, a profiler measurement on the speculator
+rank shows that communication is $\leq 1.2\%$ of wall across the
+matrix, ruling out comm-overlap as the mechanism behind the
+moderate-context speedup. \emph{Fourth}, as a capability result:
+on 8$\times$A100 80\,GB SXM4, RASD reaches 1\,M-token context
+with a peak per-rank memory of 40\,GB, half the available 80\,GB,
+while HuggingFace's standard
+\texttt{Llama-2-7b-hf.generate()} with FlashAttention-2 runs out
+of memory at 128\,k single-rank, making a direct throughput
+comparison at long context not well-defined.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=0pt]
@@ -1448,25 +1453,35 @@ post-hoc replay.
 \section{Conclusion and Future Work}
 \label{sec:conclusion}
 
-We presented RASD, an inference system that combines ring-attention
-sequence parallelism, NF4 KV-cache quantization with chunked updates
-and a bf16 outlier-keep prefix, YaRN position scaling, and
-speculative verification with a small draft model. On
-8$\times$A100 80\,GB SXM4 the system runs Llama-2-7B inference at
-1\,M-token context at 40\,GB peak per rank --- a regime where the
-standard HuggingFace inference stack runs out of memory at 128\,k
-single-rank. Against a matched target-only baseline we measure a
-$4.4\times$ throughput speedup at the model's native 4\,k context
-with real PG-19 text, contracting to $1.0\text{--}1.8\times$ at
-extended contexts. We trace the contraction mechanistically to
-Llama-2's out-of-distribution behavior under YaRN factor=256, not to
-an architectural limit of RASD itself: short-context PG-19 ablations
-and per-round acceptance analysis localize the rate-limiter to
-target-logit entropy in the YaRN-extrapolated regime. We also
-report a useful negative result: at $W = 8$ on NVLink, communication
-cost is only 1.2\% of wall, so the comm-overlap budget the original
-gap analysis predicted is not load-bearing; RASD's speedup at long
-context is driven entirely by speculative amortization.
+We asked whether speculative decoding's $2$--$3\times$
+short-context speedup transfers to million-token inference. The
+answer, on Llama-2-7B under YaRN factor 256, is no. Against a
+matched target-only baseline (same RASD infrastructure with the
+speculative verify loop disabled), the three-seed mean speedup is
+$1.24\times$ at 128\,k and $1.80\times$ at 256\,k, regresses to
+$0.96\times$ at 512\,k, and reaches parity ($1.00\times$) at
+1\,M. Per-round acceptance at long context becomes bimodal:
+about half of verify rounds fully reject the draft. A
+short-context PG-19 control localizes the rate-limiter to
+target-logit entropy in the YaRN-extrapolated regime, not to an
+architectural limit of RASD: at the model's native 4\,k context
+with real text, the same system attains a $4.4\times$ speedup.
+We additionally report a useful negative result: at $W = 8$ on
+NVLink-SXM4, communication cost is only 1.2\% of wall, so the
+comm-overlap budget the original gap analysis predicted is not
+load-bearing; the moderate-context speedup is driven entirely by
+speculative amortization.
+
+Arriving at these findings required a system that can actually
+run a target-model forward at 1\,M context on commodity hardware.
+To that end we built RASD, an inference system that combines
+ring-attention sequence parallelism, NF4 KV-cache quantization
+with chunked updates and a bf16 outlier-keep prefix, YaRN
+position scaling, and speculative verification with a small
+draft model. On 8$\times$A100 80\,GB SXM4 the system runs
+Llama-2-7B inference at 1\,M-token context at 40\,GB peak per
+rank, while the standard HuggingFace inference stack runs out of
+memory at 128\,k single-rank.
 
 \paragraph{Future work.}
 Three directions follow directly from the limitations above:
