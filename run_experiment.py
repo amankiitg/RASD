@@ -225,9 +225,27 @@ def append_csv(csv_path: Path, row: dict):
 # Prompt builder (synthetic long-context prompt)
 # ---------------------------------------------------------------------------
 
-def build_prompt(context_length: int, tokenizer) -> str:
-    """Build a synthetic prompt of approximately `context_length` tokens."""
-    # Repeat a paragraph until we hit the target token count
+def build_prompt(context_length: int, tokenizer,
+                 source: str = "synthetic",
+                 pg19_meta: str | None = None,
+                 seed: int = 42) -> str:
+    """Build a prompt of approximately `context_length` tokens.
+
+    source="synthetic" (default): repeated technical-English paragraph.
+      Conservative baseline — highly repetitive, which historically
+      gives lower draft-target acceptance because the model is
+      uncertain about whether to continue the pattern.
+
+    source="pg19": real PG-19 narrative chunk picked by `seed`. Used
+      by p35d to test whether acceptance recovers under natural text.
+      Requires --prompt-pg19-meta to point at a preprocess_pg19.py
+      metadata.json.
+    """
+    if source == "pg19":
+        if pg19_meta is None:
+            raise ValueError("source='pg19' requires pg19_meta path")
+        return _build_pg19_prompt(context_length, tokenizer, pg19_meta, seed)
+    # Default: synthetic repeated-paragraph
     base = (
         "The following is a detailed technical analysis of distributed machine learning systems. "
         "Ring attention enables long-context inference by sharding the sequence across GPUs. "
@@ -239,6 +257,38 @@ def build_prompt(context_length: int, tokenizer) -> str:
     # Trim to exactly context_length tokens
     full_tokens = tokenizer.encode(full_text)[:context_length]
     return tokenizer.decode(full_tokens)
+
+
+def _build_pg19_prompt(context_length: int, tokenizer,
+                       meta_path: str, seed: int) -> str:
+    """Load a PG-19 chunk slice of context_length tokens and decode it.
+
+    Picks a chunk pseudorandomly seeded from `seed` (same logic as
+    eval_perplexity_matrix._load_pg19_chunk), then decodes back to
+    text so the existing prompt-as-string flow stays unchanged.
+    """
+    import numpy as np
+    meta = json.loads(Path(meta_path).read_text())
+    chunks = meta["chunks"]
+    if not chunks:
+        raise RuntimeError(f"{meta_path}: no chunks in metadata")
+    suitable = [c for c in chunks if c["length"] >= context_length]
+    rng = np.random.default_rng(seed)
+    if suitable:
+        c = suitable[rng.integers(0, len(suitable))]
+        arr = np.memmap(c["file"], dtype="int32", mode="r")
+        start = int(rng.integers(0, c["length"] - context_length + 1))
+        ids = list(arr[start:start + context_length].astype(int))
+    else:
+        # Concatenate chunks if no single chunk is long enough
+        joined = []
+        for c in chunks:
+            arr = np.memmap(c["file"], dtype="int32", mode="r")
+            joined.extend(arr.astype(int).tolist())
+            if len(joined) >= context_length:
+                break
+        ids = joined[:context_length]
+    return tokenizer.decode(ids)
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +457,13 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             run_id            = run["run_id"],
         )
         engine = RASDInference(cfg)
-        prompt = build_prompt(int(run.get("context_length", 65536)), engine.tokenizer)
+        prompt = build_prompt(
+            int(run.get("context_length", 65536)),
+            engine.tokenizer,
+            source=run.get("prompt_source", "synthetic"),
+            pg19_meta=run.get("prompt_pg19_meta"),
+            seed=int(run.get("seed", 42)),
+        )
 
         # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
         # run["profile"] = True (set from --profile CLI flag below).
@@ -658,6 +714,15 @@ def main():
                              "Negligible overhead. Source for paper memory "
                              "attribution figure. Off by default so M3 replay "
                              "stays byte-identical.")
+    parser.add_argument("--prompt-source", default="synthetic",
+                        choices=["synthetic", "pg19"],
+                        help="Prompt source for build_prompt(). 'synthetic' "
+                             "(default) = repeated technical-English paragraph "
+                             "(M3+M4 default). 'pg19' = real narrative text "
+                             "from PG-19 chunks (p35d acceptance ablation).")
+    parser.add_argument("--prompt-pg19-meta", default=None,
+                        help="Path to pg19_<split>_metadata.json — required "
+                             "when --prompt-source=pg19.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -679,6 +744,13 @@ def main():
     if args.profile:
         for r in all_runs:
             r["profile"] = True
+    if args.prompt_source != "synthetic":
+        if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
+            raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
+        for r in all_runs:
+            r["prompt_source"] = args.prompt_source
+            if args.prompt_pg19_meta:
+                r["prompt_pg19_meta"] = args.prompt_pg19_meta
     if args.memory_trace:
         for r in all_runs:
             r["memory_trace"] = True
@@ -745,6 +817,10 @@ def main():
                     "memory_trace_dir",
                     str(Path(args.output).parent / "memory_trace"),
                 )
+            if args.prompt_source != "synthetic":
+                canary_run["prompt_source"] = args.prompt_source
+                if args.prompt_pg19_meta:
+                    canary_run["prompt_pg19_meta"] = args.prompt_pg19_meta
             canary_row = execute_run(canary_run, args.wandb_project, str(output_csv),
                                      nproc=args.nproc, timeout_s=args.timeout_per_run_s)
             append_csv(output_csv, canary_row)
