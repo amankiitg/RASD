@@ -223,10 +223,15 @@ class TestProfileFlag:
 
     def test_profile_disabled_path_uses_existing_call(self):
         """When --profile is off, the existing un-wrapped generate_text
-        path must still be hit — no overhead, no behavior change."""
-        # Look for the else branch with the bare generate_text call
+        path must still be hit — no overhead, no behavior change.
+        Pattern updated 2026-05-11 (p38): worker now captures
+        generated_text instead of discarding with `_` so RULER niah can
+        score model output."""
+        # Look for the else branch with a bare generate_text call (no
+        # RoundProfiler wrapping). The variable name is now
+        # generated_text (was `_`).
         assert re.search(
-            r"else:\s*\n\s+_, metrics = engine\.generate_text\(prompt\)",
+            r"else:\s*\n\s+\w+,\s*metrics\s*=\s*engine\.generate_text\(prompt\)",
             RUN_EXP_SRC,
         ), (
             "C7 regression: profile-disabled path is missing or wrapped"
@@ -445,3 +450,207 @@ class TestPromptSource:
             "p35d wiring gap: worker doesn't pass run['prompt_source'] "
             "into build_prompt(); CLI flag has no effect on actual run."
         )
+
+
+# ---------------------------------------------------------------------------
+# p38 RULER niah prompt source + sidecar + scorer
+# ---------------------------------------------------------------------------
+
+class TestRulerNiahPrompt:
+    """p38 2026-05-11: --prompt-source ruler_niah builds a needle-in-
+    haystack prompt with a seed-derived magic number, writes needle
+    metadata to a sidecar, and the scorer marks accuracy by string
+    match in the generated text."""
+
+    def _stub_tokenizer(self):
+        """Minimal tokenizer: encode by char count (cheap, reproducible)."""
+        class _T:
+            def encode(self, s, add_special_tokens=True):
+                return list(range(len(s)))  # 1 token per char
+            def decode(self, ids):
+                # Encode the id list back to a marker we can inspect
+                return f"PROMPT[{ids[0]}..{ids[-1]}|len={len(ids)}]"
+        return _T()
+
+    def test_ruler_choice_in_cli_flag(self):
+        assert re.search(
+            r"--prompt-source[\s\S]{0,400}choices=\[[\"\']synthetic[\"\'],"
+            r"\s*[\"\']pg19[\"\'],\s*[\"\']ruler_niah[\"\']",
+            RUN_EXP_SRC,
+        ), "ruler_niah must be in --prompt-source choices"
+
+    def test_ruler_sidecar_dir_cli_flag_present(self):
+        assert "--ruler-sidecar-dir" in RUN_EXP_SRC, (
+            "--ruler-sidecar-dir flag must exist so the post-hoc scorer "
+            "can find the needle metadata."
+        )
+
+    def test_build_prompt_ruler_writes_sidecar(self, tmp_path):
+        from run_experiment import build_prompt
+        out = build_prompt(
+            128, self._stub_tokenizer(), source="ruler_niah",
+            seed=42, ruler_sidecar_dir=str(tmp_path), run_id="TEST_run",
+        )
+        sidecar = tmp_path / "TEST_run.ruler_niah.json"
+        assert sidecar.exists(), "ruler_niah must write a sidecar JSON"
+        import json
+        meta = json.loads(sidecar.read_text())
+        for k in ("run_id", "seed", "context_length", "magic_number",
+                  "needle_position_frac", "needle_text"):
+            assert k in meta, f"sidecar missing key: {k}"
+        assert meta["run_id"] == "TEST_run"
+        assert meta["seed"] == 42
+        assert 10_000 <= meta["magic_number"] <= 99_999
+        assert 0.05 <= meta["needle_position_frac"] <= 0.95
+
+    def test_build_prompt_ruler_seed_reproducible(self, tmp_path):
+        """Same seed -> same magic number + same position. Required so
+        the scorer can verify by seed alone if needed."""
+        from run_experiment import build_prompt
+        import json
+        d1 = tmp_path / "a"
+        d2 = tmp_path / "b"
+        build_prompt(256, self._stub_tokenizer(), source="ruler_niah",
+                     seed=42, ruler_sidecar_dir=str(d1), run_id="R1")
+        build_prompt(256, self._stub_tokenizer(), source="ruler_niah",
+                     seed=42, ruler_sidecar_dir=str(d2), run_id="R2")
+        m1 = json.loads((d1 / "R1.ruler_niah.json").read_text())
+        m2 = json.loads((d2 / "R2.ruler_niah.json").read_text())
+        assert m1["magic_number"] == m2["magic_number"]
+        assert m1["needle_position_frac"] == m2["needle_position_frac"]
+
+    def test_build_prompt_ruler_distinct_seeds(self, tmp_path):
+        """Different seeds -> different magic numbers (very high probability
+        across 90000 candidates)."""
+        from run_experiment import build_prompt
+        import json
+        d = tmp_path
+        build_prompt(256, self._stub_tokenizer(), source="ruler_niah",
+                     seed=42, ruler_sidecar_dir=str(d), run_id="A")
+        build_prompt(256, self._stub_tokenizer(), source="ruler_niah",
+                     seed=999, ruler_sidecar_dir=str(d), run_id="B")
+        m1 = json.loads((d / "A.ruler_niah.json").read_text())
+        m2 = json.loads((d / "B.ruler_niah.json").read_text())
+        assert m1["magic_number"] != m2["magic_number"]
+
+    def test_worker_captures_generated_text_for_ruler(self):
+        """When prompt_source=ruler_niah, worker must capture
+        generated_text from generate_text() and write to
+        <ruler_sidecar_dir>/<run_id>.generated.txt — NOT discard with `_`."""
+        assert re.search(
+            r"generated_text,\s*metrics\s*=\s*engine\.generate_text",
+            RUN_EXP_SRC,
+        ), "Worker must capture generated_text from generate_text(), not discard"
+        assert re.search(
+            r"run\.get\([\"\']prompt_source[\"\']\)\s*==\s*[\"\']ruler_niah[\"\'][\s\S]{0,400}"
+            r"\.generated\.txt",
+            RUN_EXP_SRC,
+        ), "Worker must write generated.txt sidecar for ruler_niah runs"
+
+
+class TestRulerScorer:
+    """The post-hoc scorer reads paired sidecars and emits accuracy."""
+
+    def test_score_one_found(self, tmp_path):
+        import json, sys
+        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        # Use importlib because filename starts with a digit-free word but is a script
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "score_ruler_niah",
+            Path(__file__).parent.parent / "scripts" / "score_ruler_niah.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        # Build paired sidecars: needle metadata + generated text
+        needle_meta = {
+            "run_id": "TEST_r1",
+            "seed": 42,
+            "context_length": 4096,
+            "magic_number": 12345,
+            "needle_position_frac": 0.5,
+            "needle_position_tokens": 2048,
+            "needle_text": "The magic number is 12345.",
+            "question_text": "What is the magic number?",
+        }
+        (tmp_path / "TEST_r1.ruler_niah.json").write_text(json.dumps(needle_meta))
+        (tmp_path / "TEST_r1.generated.txt").write_text(
+            "The magic number is 12345 according to the prompt."
+        )
+
+        result = mod.score_one(tmp_path / "TEST_r1.ruler_niah.json")
+        assert result["found"] == 1
+        assert result["magic_number"] == "12345"
+
+    def test_score_one_not_found(self, tmp_path):
+        import json, importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "score_ruler_niah",
+            Path(__file__).parent.parent / "scripts" / "score_ruler_niah.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        needle_meta = {
+            "run_id": "TEST_r2",
+            "seed": 42,
+            "context_length": 4096,
+            "magic_number": 12345,
+            "needle_position_frac": 0.5,
+            "needle_position_tokens": 2048,
+            "needle_text": "The magic number is 12345.",
+            "question_text": "What is the magic number?",
+        }
+        (tmp_path / "TEST_r2.ruler_niah.json").write_text(json.dumps(needle_meta))
+        (tmp_path / "TEST_r2.generated.txt").write_text(
+            "The model said something unrelated."
+        )
+        result = mod.score_one(tmp_path / "TEST_r2.ruler_niah.json")
+        assert result["found"] == 0
+
+    def test_score_one_substring_safety(self, tmp_path):
+        """'42' must NOT match '420' or '142' — needs whole-number boundary."""
+        import json, importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "score_ruler_niah",
+            Path(__file__).parent.parent / "scripts" / "score_ruler_niah.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        needle_meta = {
+            "run_id": "TEST_r3",
+            "seed": 42,
+            "context_length": 4096,
+            "magic_number": 42,
+            "needle_position_frac": 0.5,
+            "needle_position_tokens": 2048,
+            "needle_text": "The magic number is 42.",
+            "question_text": "What is the magic number?",
+        }
+        (tmp_path / "TEST_r3.ruler_niah.json").write_text(json.dumps(needle_meta))
+        (tmp_path / "TEST_r3.generated.txt").write_text(
+            "The number is 420 or maybe 142."  # contains '42' as substring
+        )
+        result = mod.score_one(tmp_path / "TEST_r3.ruler_niah.json")
+        assert result["found"] == 0, "'42' must not match inside '420' or '142'"
+
+    def test_score_one_missing_generated(self, tmp_path):
+        """When generated.txt is missing (run crashed), score = -1 not 0."""
+        import json, importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "score_ruler_niah",
+            Path(__file__).parent.parent / "scripts" / "score_ruler_niah.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        needle_meta = {
+            "run_id": "TEST_r4",
+            "seed": 42, "context_length": 4096, "magic_number": 99999,
+            "needle_position_frac": 0.5, "needle_position_tokens": 2048,
+            "needle_text": "n", "question_text": "q",
+        }
+        (tmp_path / "TEST_r4.ruler_niah.json").write_text(json.dumps(needle_meta))
+        result = mod.score_one(tmp_path / "TEST_r4.ruler_niah.json")
+        assert result["found"] == -1

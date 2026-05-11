@@ -228,7 +228,9 @@ def append_csv(csv_path: Path, row: dict):
 def build_prompt(context_length: int, tokenizer,
                  source: str = "synthetic",
                  pg19_meta: str | None = None,
-                 seed: int = 42) -> str:
+                 seed: int = 42,
+                 ruler_sidecar_dir: str | None = None,
+                 run_id: str | None = None) -> str:
     """Build a prompt of approximately `context_length` tokens.
 
     source="synthetic" (default): repeated technical-English paragraph.
@@ -240,11 +242,21 @@ def build_prompt(context_length: int, tokenizer,
       by p35d to test whether acceptance recovers under natural text.
       Requires --prompt-pg19-meta to point at a preprocess_pg19.py
       metadata.json.
+
+    source="ruler_niah": RULER-style needle-in-haystack — filler text
+      with a seed-derived magic number embedded at a seeded position
+      and a question appended at the end. Writes the expected answer +
+      needle position to a sidecar JSON for post-hoc scoring (p38).
     """
     if source == "pg19":
         if pg19_meta is None:
             raise ValueError("source='pg19' requires pg19_meta path")
         return _build_pg19_prompt(context_length, tokenizer, pg19_meta, seed)
+    if source == "ruler_niah":
+        return _build_ruler_niah_prompt(
+            context_length, tokenizer, seed,
+            sidecar_dir=ruler_sidecar_dir, run_id=run_id,
+        )
     # Default: synthetic repeated-paragraph
     base = (
         "The following is a detailed technical analysis of distributed machine learning systems. "
@@ -257,6 +269,78 @@ def build_prompt(context_length: int, tokenizer,
     # Trim to exactly context_length tokens
     full_tokens = tokenizer.encode(full_text)[:context_length]
     return tokenizer.decode(full_tokens)
+
+
+def _build_ruler_niah_prompt(context_length: int, tokenizer, seed: int,
+                              sidecar_dir: str | None = None,
+                              run_id: str | None = None) -> str:
+    """RULER-style needle-in-haystack at the given context length.
+
+    Structure (token-budget aware):
+        [filler]   The magic number is <N>. Remember this number.   [more filler]
+        What is the magic number? The magic number is
+
+    The needle's magic number and position are derived from `seed` so
+    re-running with the same seed produces an identical prompt. Both
+    values are written to a sidecar JSON (one per run_id) so the
+    post-hoc scorer (scripts/score_ruler_niah.py) can mark accuracy
+    without re-deriving them.
+
+    Returns the decoded prompt string.
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    magic_number = int(rng.integers(10_000, 99_999))
+    needle_text = f" The magic number is {magic_number}. Remember this number well. "
+    question_text = " What is the magic number? The magic number is"
+    filler_base = (
+        "The river flowed steadily through the valley. Many farmers tended the land. "
+        "The sun rose each morning over the hills. People worked through the day. "
+        "Trade routes connected distant villages. Goods moved across the countryside. "
+    )
+    needle_ids = tokenizer.encode(needle_text, add_special_tokens=False)
+    question_ids = tokenizer.encode(question_text, add_special_tokens=False)
+    filler_ids = tokenizer.encode(filler_base, add_special_tokens=False)
+
+    # Total budget for filler around the needle. Reserve a bit at the end
+    # for the question so the model sees it last.
+    filler_budget = max(
+        0,
+        context_length - len(needle_ids) - len(question_ids),
+    )
+    # Position needle at a seeded fraction of the filler region. We bound
+    # it away from the extreme ends (5%-95%) so the test isn't dominated
+    # by recency or primacy effects.
+    needle_frac = float(rng.uniform(0.05, 0.95))
+    pre_len = int(filler_budget * needle_frac)
+    post_len = filler_budget - pre_len
+
+    def _stretch(target_len: int) -> list:
+        if target_len <= 0:
+            return []
+        reps = (target_len // len(filler_ids)) + 1
+        return (filler_ids * reps)[:target_len]
+
+    full_ids = (
+        _stretch(pre_len) + needle_ids + _stretch(post_len) + question_ids
+    )
+    full_ids = full_ids[:context_length]
+
+    if sidecar_dir is not None and run_id is not None:
+        sidecar_path = Path(sidecar_dir) / f"{run_id}.ruler_niah.json"
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps({
+            "run_id": run_id,
+            "seed": seed,
+            "context_length": context_length,
+            "magic_number": magic_number,
+            "needle_position_frac": needle_frac,
+            "needle_position_tokens": pre_len,
+            "needle_text": needle_text.strip(),
+            "question_text": question_text.strip(),
+        }, indent=2))
+
+    return tokenizer.decode(full_ids)
 
 
 def _build_pg19_prompt(context_length: int, tokenizer,
@@ -463,6 +547,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             source=run.get("prompt_source", "synthetic"),
             pg19_meta=run.get("prompt_pg19_meta"),
             seed=int(run.get("seed", 42)),
+            ruler_sidecar_dir=run.get("ruler_sidecar_dir"),
+            run_id=run["run_id"],
         )
 
         # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
@@ -471,10 +557,21 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         if profile_enabled:
             from src.analysis.profiler import RoundProfiler
             with RoundProfiler(enabled=True) as _prof:
-                _, metrics = engine.generate_text(prompt)
+                generated_text, metrics = engine.generate_text(prompt)
             metrics["_profiler_summary"] = _prof.summary
         else:
-            _, metrics = engine.generate_text(prompt)
+            generated_text, metrics = engine.generate_text(prompt)
+
+        # RULER niah: write generated text to the sidecar dir so the
+        # post-hoc scorer can mark accuracy without having to re-run.
+        if (local_rank == 0
+                and run.get("prompt_source") == "ruler_niah"
+                and run.get("ruler_sidecar_dir")):
+            ruler_dir = Path(run["ruler_sidecar_dir"])
+            ruler_dir.mkdir(parents=True, exist_ok=True)
+            (ruler_dir / f"{run['run_id']}.generated.txt").write_text(
+                generated_text or ""
+            )
 
         # Pull the per-position trace out of the metrics dict before
         # wandb logging — it's a list-of-dicts, not a wandb-loggable
@@ -715,14 +812,20 @@ def main():
                              "attribution figure. Off by default so M3 replay "
                              "stays byte-identical.")
     parser.add_argument("--prompt-source", default="synthetic",
-                        choices=["synthetic", "pg19"],
+                        choices=["synthetic", "pg19", "ruler_niah"],
                         help="Prompt source for build_prompt(). 'synthetic' "
                              "(default) = repeated technical-English paragraph "
                              "(M3+M4 default). 'pg19' = real narrative text "
-                             "from PG-19 chunks (p35d acceptance ablation).")
+                             "from PG-19 chunks (p35d acceptance ablation). "
+                             "'ruler_niah' = needle-in-haystack stress test "
+                             "(p38 long-context capability eval).")
     parser.add_argument("--prompt-pg19-meta", default=None,
                         help="Path to pg19_<split>_metadata.json — required "
                              "when --prompt-source=pg19.")
+    parser.add_argument("--ruler-sidecar-dir", default=None,
+                        help="Directory to write per-run RULER needle metadata "
+                             "JSONs (used by scripts/score_ruler_niah.py). "
+                             "Defaults to <output_csv_dir>/ruler/.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -747,10 +850,15 @@ def main():
     if args.prompt_source != "synthetic":
         if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
             raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
+        # Default RULER sidecar dir is <output_csv_dir>/ruler/
+        ruler_dir = (args.ruler_sidecar_dir
+                     or str(Path(args.output).resolve().parent / "ruler"))
         for r in all_runs:
             r["prompt_source"] = args.prompt_source
             if args.prompt_pg19_meta:
                 r["prompt_pg19_meta"] = args.prompt_pg19_meta
+            if args.prompt_source == "ruler_niah":
+                r["ruler_sidecar_dir"] = ruler_dir
     if args.memory_trace:
         for r in all_runs:
             r["memory_trace"] = True
@@ -821,6 +929,11 @@ def main():
                 canary_run["prompt_source"] = args.prompt_source
                 if args.prompt_pg19_meta:
                     canary_run["prompt_pg19_meta"] = args.prompt_pg19_meta
+                if args.prompt_source == "ruler_niah":
+                    canary_run["ruler_sidecar_dir"] = (
+                        args.ruler_sidecar_dir
+                        or str(Path(args.output).resolve().parent / "ruler")
+                    )
             canary_row = execute_run(canary_run, args.wandb_project, str(output_csv),
                                      nproc=args.nproc, timeout_s=args.timeout_per_run_s)
             append_csv(output_csv, canary_row)
