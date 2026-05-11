@@ -109,8 +109,14 @@ def main():
         )
 
     # --- LaTeX table ---
+    # p{} columns with \raggedright let long word-runs (e.g., YaRN-
+    # degraded near-random tokens with no spaces) leave whitespace on
+    # the right rather than overflowing the column. The
+    # \arraybackslash redefines \\ so it still works as a row terminator.
     tex_lines = [
-        r"\begin{tabular}{p{0.12\textwidth}p{0.40\textwidth}p{0.40\textwidth}}",
+        r"\begin{tabular}{p{0.12\textwidth}"
+        r">{\raggedright\arraybackslash}p{0.40\textwidth}"
+        r">{\raggedright\arraybackslash}p{0.40\textwidth}}",
         r"\toprule",
         r"Context & RASD generation (spec\_steps=4) & "
         r"Target-only generation (spec\_steps=0) \\",

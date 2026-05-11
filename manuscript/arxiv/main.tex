@@ -35,6 +35,17 @@
 \usepackage{enumitem}
 \usepackage{authblk}        % \author + \affil
 \usepackage{natbib}         % \citep / \citet
+\usepackage{array}          % \arraybackslash + >{...} column modifiers
+% \url package's \path is a breakable \texttt — use for long file paths,
+% revision hashes, and identifiers that don't fit on one line.
+% Already loaded via \usepackage{url} above.
+\urlstyle{tt}               % \url / \path render in typewriter font
+\Urlmuskip=0mu plus 1mu     % allow breaks at any char (not just /)
+% Softer than \sloppy: lets TeX stretch up to 3em as a last resort
+% to avoid Overfull \hbox warnings on paragraphs that contain long
+% unbreakable \path / \texttt tokens. Avoids the ugly large gaps
+% \sloppy produces in normal paragraphs.
+\emergencystretch=3em
 % Cyrillic characters appear in one qualitative-table excerpt
 % (rendered garbage from YaRN-degraded generation); guard against
 % compile errors:
@@ -198,7 +209,7 @@ $1.0\times$.
         ($\alpha = 0.706$ at 4\,k) shows the long-context contraction
         is base-model-driven, not RASD-architecture-driven.
   \item An open-source reference implementation released under MIT,
-        with version-pinned \texttt{requirements-lock.txt}, every
+        with version-pinned \path{requirements-lock.txt}, every
         per-position $\alpha$ trace, every generated continuation,
         per-rank memory snapshots, and per-context profiler JSONs.
 \end{itemize}
@@ -399,18 +410,23 @@ space relative to the closest prior work.
 ``Long Ctx'' = supports $\geq$128k inference; ``Distributed'' =
 multi-device sequence parallelism; ``Spec Decoding'' = small-model
 verification loop; ``Decode Overlap'' = exploits idle communication
-windows during the decode phase.}
+windows during the decode phase. References:
+FlashAttention \citep{dao2022flashattention},
+Ring Attention \citep{liu2023ringattention},
+Speculative Decoding \citep{leviathan2023fast},
+Medusa \citep{cai2024medusa},
+vLLM \citep{kwon2023vllm}.}
 \label{tab:positioning}
 \begin{tabular}{lcccc}
 \toprule
 Work & Long Ctx & Distributed & Spec Decoding & Decode Overlap \\
 \midrule
-FlashAttention \citep{dao2022flashattention}   & --- & ---  & ---  & --- \\
-Ring Attention \citep{liu2023ringattention}    & \checkmark & \checkmark & --- & --- \\
-Speculative Decoding \citep{leviathan2023fast} & --- & ---  & \checkmark & --- \\
-Medusa \citep{cai2024medusa}                   & --- & ---  & \checkmark & --- \\
-vLLM \citep{kwon2023vllm}                      & \checkmark & \checkmark & --- & --- \\
-\textbf{RASD (this work)} & \checkmark & \checkmark & \checkmark & \checkmark \\
+FlashAttention             & --- & ---  & ---  & --- \\
+Ring Attention             & \checkmark & \checkmark & --- & --- \\
+Speculative Decoding       & --- & ---  & \checkmark & --- \\
+Medusa                     & --- & ---  & \checkmark & --- \\
+vLLM                       & \checkmark & \checkmark & --- & --- \\
+\textbf{RASD (this work)}  & \checkmark & \checkmark & \checkmark & \checkmark \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -466,7 +482,7 @@ $\max(0, p - q)/Z$.
 
 We patch the Llama attention layer at every layer of the target
 model. The local-block kernel is FlashAttention-2; the per-round
-ring exchange uses \texttt{torch.distributed.batch\_isend\_irecv}
+ring exchange uses \path{torch.distributed.batch_isend_irecv}
 for the K and V blocks. Concretely, at decode round $r$:
 \begin{enumerate}[leftmargin=*,topsep=0pt]
     \item Each rank $i$ launches an asynchronous P2P send to rank
@@ -547,7 +563,7 @@ is load-bearing: the acceptance test
 \end{equation}
 must yield the same answer on every rank so that the KV cache
 update is consistent. We verified this invariant with a unit test
-(\texttt{tests/test\_verification\_math.py}) that runs the verify
+(\path{tests/test_verification_math.py}) that runs the verify
 loop with two different seeds and confirms byte-identical KV state.
 
 We use $\gamma = 4$ throughout. The M3 ablation grid swept
@@ -579,15 +595,15 @@ results (\S\ref{sec:results-alpha}).
 
 The full system is implemented in PyTorch
 2.5.1+cu124 \citep{paszke2019pytorch} on top of the HuggingFace
-\texttt{transformers} library (v4.46.3). We use
+\path{transformers} library (v4.46.3). We use
 bitsandbytes 0.49.2 for NF4 quantization,
-\texttt{flash-attn} 2.8.3 for the local-block kernel, and
-\texttt{wandb} for run logging. All package versions are pinned in
-\texttt{requirements-lock.txt} (frozen at the
-\texttt{m4-phase-c-complete} git tag).
+\path{flash-attn} 2.8.3 for the local-block kernel, and
+\path{wandb} for run logging. All package versions are pinned in
+\path{requirements-lock.txt} (frozen at the
+\path{m4-phase-c-complete} git tag).
 
 The repository ships the canonical aggregator
-\texttt{scripts/aggregate\_final\_results.py} that builds
+\path{scripts/aggregate_final_results.py} that builds
 \texttt{results/final/final\_results.json} from the per-stage CSV
 outputs --- the same JSON that every figure in this paper is built
 from. We provide reproduction scripts for each experimental stage
@@ -637,9 +653,10 @@ table to its source CSV and the corresponding wandb run.
 bitsandbytes for inference (4-bit weights + bf16 compute).
 
 \paragraph{Draft model.}
-\texttt{princeton-nlp/Sheared-LLaMA-1.3B} \citep{xia2023sheared},
-revision \texttt{a4b76938edbf571ea7d7d9904861cbdca08809b4} (pinned).
-Same NF4 weight quantization. The two models share a tokenizer.
+\path{princeton-nlp/Sheared-LLaMA-1.3B} \citep{xia2023sheared},
+revision \path{a4b7693} (40-character hash pinned in
+\path{requirements-lock.txt}; abbreviated here). Same NF4 weight
+quantization. The two models share a tokenizer.
 
 \paragraph{Dataset and prompt sources.}
 We use two prompt sources. (1) \emph{Synthetic repeated-paragraph}
@@ -685,19 +702,19 @@ control at the same contexts (Appendix~\ref{app:vanilla-ppl}).
 \paragraph{Stage p36 (profiler subset).}
 4 contexts $\times$ 1 seed wrapped in \texttt{torch.profiler}. The
 canary + 128\,k + 256\,k + 512\,k cells produced clean profile JSONs;
-the 1\,M cell was attempted but \texttt{torch.profiler.key\_averages()}
+the 1\,M cell was attempted but \path{torch.profiler.key_averages()}
 event aggregation did not return in 2\,h of CPU work
 (\S\ref{sec:limitations}).
 
 \paragraph{Stage p37 (vanilla HF FA-2 ceiling).}
-Single-rank vanilla HuggingFace \texttt{model.generate()} with
-\texttt{attn\_implementation=flash\_attention\_2}, no NF4, no ring
+Single-rank vanilla HuggingFace \path{model.generate()} with
+\path{attn_implementation=flash_attention_2}, no NF4, no ring
 SP. 5 contexts: $\{32, 128, 256, 512, 1024\}$\,k. Records the
 out-of-memory ceiling of the standard inference stack.
 
 \paragraph{Phase D rerun (per-token + generated text capture).}
 The Phase C pod was terminated before we realized
-\texttt{per\_token/*.jsonl} sidecars are gitignored (the rule was
+\path{per_token/*.jsonl} sidecars are gitignored (the rule was
 written assuming long-context traces would be 100\,MB+; in practice
 at $\gamma = 4$, max\_new\_tokens=64 they are 5\,KB). A second pod
 re-ran the headline 8 cells (4 RASD + 4 target-only at each context)
@@ -725,7 +742,8 @@ Appendix~B of the project roadmap:
           peak across the run, maximum over the 8 ranks.
     \item \textbf{Speedup}: $S = T_{\text{RASD}} / T_{\text{target-only}}$ at matched context.
     \item \textbf{Compute / comm / idle / other (\%)}: rank-0
-          time-share buckets from \texttt{torch.profiler.key\_averages()}.
+          time-share buckets from
+          \path{torch.profiler.key_averages()}.
 \end{itemize}
 
 % =========================================================================
@@ -936,9 +954,9 @@ mechanism --- the speculative-decoding amortization itself is.
 The aggregate mean acceptance rates in Table~\ref{tab:speedup}
 (11--21\% at long contexts) mask a more informative per-round
 structure. We logged the sidecar trace of every verify round
-(\texttt{results/final/per\_token/<run\_id>.jsonl}, one record per
-round with \texttt{n\_acc}, \texttt{global\_pos\_start},
-\texttt{spec\_steps}, \texttt{draft\_tokens}). Figure~\ref{fig:alpha}
+(\path{results/final/per_token/<run_id>.jsonl}, one record per
+round with \path{n_acc}, \path{global_pos_start},
+\path{spec_steps}, \path{draft_tokens}). Figure~\ref{fig:alpha}
 shows two views.
 
 \begin{figure}[t]
@@ -1151,7 +1169,7 @@ exercise it directly. See Appendix~\ref{app:ruler}.
 \paragraph{1\,M-context profiler attempt did not complete.}
 We attempted to capture a profiler JSON at ctx=1\,M to extend
 Figure~\ref{fig:breakdown} to the full matrix.
-\texttt{torch.profiler.key\_averages()} aggregation became
+\path{torch.profiler.key_averages()} aggregation became
 compute-bound: the per-rank event count at 1\,M scales sub-linearly
 with context, but the aggregation step is $\mathcal{O}(n \log n)$ in
 the number of unique kernel keys, and the aggregation did not return
@@ -1288,35 +1306,44 @@ Reviewers can navigate from any number to the source CSV and to the
 wandb run via Table~\ref{tab:repro}.
 
 \begin{table}[h]
-\centering\small
+\centering\footnotesize
 \caption{Reproduction map. The wandb columns link to the public W\&B
 runs (project URLs in \S\ref{sec:experiments-hardware}). $^\dagger$Run
 on the Phase D pod with the same code and pinned versions.}
 \label{tab:repro}
-\begin{tabular}{lll}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.22\linewidth} p{0.40\linewidth} p{0.32\linewidth}}
 \toprule
 Paper artifact & Source CSV / sidecar & wandb run-id \\
 \midrule
-F1 throughput & \texttt{results/final/final\_matrix.csv} +
-              & \texttt{M4\_ctx\{128k,256k,512k,1M\}\_s\{42,123,456\}} \\
-              & \texttt{target\_only\_matrix.csv}
-              & + \texttt{TARGET\_ctx*} \\
-F1 HF ceiling rows & \texttt{results/baselines/hf\_ceiling.csv} & (no wandb; CSV-only) \\
-F3 time breakdown & \texttt{results/final/profiler\_pass/profiler/*.json}
-                  & \texttt{matrix\_profiled\_canary\_s42}\,(\texttt{bxn758a9}), \\
-                  & & \texttt{PROFILED\_ctx\{128k,256k,512k\}\_s42} \\
-F4 $\alpha$ vs round & \texttt{results/final/per\_token/*.jsonl}
-                     & \texttt{RASD\_ctx*\_phaseD\_s42}$^\dagger$ \\
-F5 qualitative & \texttt{results/final/generated/*.txt}
-               & (Phase D runs, same slugs as F4) \\
-Table~\ref{tab:positioning} & (literature review)
-               & --- \\
-Speedup table  & \texttt{results/final/final\_results.json}
-               & (aggregated from above) \\
-PPL table     & \texttt{results/perplexity/m4\_ppl.csv} (YaRN)
-              & (no wandb; PG-19 eval is single-rank, no run log) \\
-              & \texttt{m4\_ppl\_vanilla\_rope.csv} (control)
-              & (no wandb) \\
+F1 throughput
+  & \path{results/final/final_matrix.csv} +
+    \path{target_only_matrix.csv}
+  & \path{M4_ctx{128k,256k,512k,1M}_s{42,123,456}} +
+    \path{TARGET_ctx*} \\
+F1 HF ceiling rows
+  & \path{results/baselines/hf_ceiling.csv}
+  & (no wandb; CSV-only) \\
+F3 time breakdown
+  & \path{results/final/profiler_pass/profiler/*.json}
+  & \path{matrix_profiled_canary_s42} (\path{bxn758a9}),
+    \path{PROFILED_ctx{128k,256k,512k}_s42} \\
+F4 $\alpha$ vs round
+  & \path{results/final/per_token/*.jsonl}
+  & \path{RASD_ctx*_phaseD_s42}$^\dagger$ \\
+F5 qualitative
+  & \path{results/final/generated/*.txt}
+  & (Phase D runs, same slugs as F4) \\
+Table~\ref{tab:positioning}
+  & (literature review)
+  & --- \\
+Speedup table
+  & \path{results/final/final_results.json}
+  & (aggregated from above) \\
+PPL table
+  & \path{results/perplexity/m4_ppl.csv} (YaRN);
+    \path{m4_ppl_vanilla_rope.csv} (control)
+  & (no wandb; PG-19 eval is single-rank, no run log) \\
 \bottomrule
 \end{tabular}
 \end{table}
