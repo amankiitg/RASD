@@ -1,0 +1,4 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error
+matrix_profiled_canary_s42,canary,matrix_profiled_canary_s42,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,,bfloat16,17,28.1954,0.6,0.0833,1658.55,3979.657,9495.2,12,ok,
+PROFILED_ctx128k_s42,M4,PROFILED_ctx128k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,131072,bfloat16,20,45.9936,0.43,0.1154,2299.678,11480.518,10723.0,13,ok,
+PROFILED_ctx256k_s42,M4,PROFILED_ctx256k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,262144,bfloat16,64,217.0282,0.29,0.2132,3391.065,31454.124,14874.1,34,ok,
