@@ -573,6 +573,17 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                 generated_text or ""
             )
 
+        # M4 Phase D 2026-05-11 (F5 qualitative table source): when
+        # --save-generated-text is on, write the decoded generation to
+        # <output_csv_dir>/generated/<run_id>.txt for every run. Used
+        # by the side-by-side qualitative comparison table.
+        if (local_rank == 0
+                and run.get("save_generated_text", False)
+                and generated_text is not None):
+            gen_dir = Path(output_csv).resolve().parent / "generated"
+            gen_dir.mkdir(parents=True, exist_ok=True)
+            (gen_dir / f"{run['run_id']}.txt").write_text(generated_text)
+
         # Pull the per-position trace out of the metrics dict before
         # wandb logging — it's a list-of-dicts, not a wandb-loggable
         # scalar. Only rank 0 receives a non-None trace (others get
@@ -826,6 +837,12 @@ def main():
                         help="Directory to write per-run RULER needle metadata "
                              "JSONs (used by scripts/score_ruler_niah.py). "
                              "Defaults to <output_csv_dir>/ruler/.")
+    parser.add_argument("--save-generated-text", action="store_true",
+                        help="Write the decoded generated text from each run "
+                             "to <output_csv_dir>/generated/<run_id>.txt. "
+                             "Used by F5 (qualitative comparison table) and "
+                             "F8 (low-acceptance error analysis). Default off "
+                             "so M3 replay stays byte-identical.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -847,6 +864,9 @@ def main():
     if args.profile:
         for r in all_runs:
             r["profile"] = True
+    if args.save_generated_text:
+        for r in all_runs:
+            r["save_generated_text"] = True
     if args.prompt_source != "synthetic":
         if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
             raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
@@ -919,6 +939,8 @@ def main():
                 canary_run["profile"] = True
             if args.log_per_token:
                 canary_run["log_per_token"] = True
+            if args.save_generated_text:
+                canary_run["save_generated_text"] = True
             if args.memory_trace:
                 canary_run["memory_trace"] = True
                 canary_run.setdefault(

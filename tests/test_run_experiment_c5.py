@@ -636,6 +636,38 @@ class TestRulerScorer:
         result = mod.score_one(tmp_path / "TEST_r3.ruler_niah.json")
         assert result["found"] == 0, "'42' must not match inside '420' or '142'"
 
+    def test_save_generated_text_cli_flag_present(self):
+        """--save-generated-text must exist for F5 qualitative table."""
+        assert "--save-generated-text" in RUN_EXP_SRC
+
+    def test_save_generated_text_propagates_to_all_runs(self):
+        """Flag must propagate to all_runs (same pattern as --profile)."""
+        import re as _re
+        assert _re.search(
+            r"if args\.save_generated_text:[\s\S]{0,200}"
+            r"r\[[\"\']save_generated_text[\"\']\]\s*=\s*True",
+            RUN_EXP_SRC,
+        )
+
+    def test_save_generated_text_propagates_to_canary(self):
+        """Canary must inherit the flag (canary-inheritance pattern)."""
+        import re as _re
+        assert _re.search(
+            r"if args\.save_generated_text:[\s\S]{0,200}"
+            r"canary_run\[[\"\']save_generated_text[\"\']\]\s*=\s*True",
+            RUN_EXP_SRC,
+        )
+
+    def test_worker_writes_generated_text_sidecar(self):
+        """Worker on rank 0 must write to <csv_dir>/generated/<run_id>.txt
+        when save_generated_text is set."""
+        import re as _re
+        assert _re.search(
+            r"run\.get\([\"\']save_generated_text[\"\'],\s*False\)[\s\S]{0,400}"
+            r"generated[\s\S]{0,200}\.txt",
+            RUN_EXP_SRC,
+        )
+
     def test_score_one_missing_generated(self, tmp_path):
         """When generated.txt is missing (run crashed), score = -1 not 0."""
         import json, importlib.util
