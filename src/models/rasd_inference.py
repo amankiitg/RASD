@@ -668,7 +668,16 @@ class RASDInference:
             serialized_past_kv = tuple(
                 tuple(t.detach().cpu() for t in layer) for layer in past_kv
             )
-        if hasattr(draft_past_kv, "to_serializable"):
+        if draft_past_kv is None:
+            # Target-only mode (spec_steps=0) doesn't load a draft model,
+            # so draft_past_kv is None. Don't try to iterate it — that
+            # was the 'NoneType is not iterable' bug from p35b ctx512k+
+            # cells in Phase C; the bug only triggered when
+            # checkpoint_every was set (e.g., ctx512k YAML override),
+            # masking it from single-cell debug runs. Fix: serialize as
+            # None and let _resume_from_checkpoint pass it through.
+            serialized_draft_past_kv = None
+        elif hasattr(draft_past_kv, "to_serializable"):
             serialized_draft_past_kv = draft_past_kv.to_serializable()
         else:
             serialized_draft_past_kv = tuple(

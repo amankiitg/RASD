@@ -779,3 +779,30 @@ class TestSecondPassFix4BaselinesCoverage:
             "2nd-pass #4 regression: benchmark_module not using total_len "
             "for throughput; would underreport in distributed mode"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase D 2026-05-11: target-only checkpoint None-handling
+# ---------------------------------------------------------------------------
+
+class TestTargetOnlyCheckpointNone:
+    """In target-only mode (spec_steps=0), draft_past_kv is None because
+    no draft model is loaded. _maybe_save_checkpoint must not call
+    tuple(None) — the 'NoneType is not iterable' bug from Phase C p35b
+    ctx512k+ cells only triggered when checkpoint_every was set, which
+    masked it from single-cell debug runs. Phase D's ctx512k YAML reset
+    it (checkpoint_every: 4) and re-surfaced the same bug."""
+
+    def test_save_checkpoint_handles_none_draft_kv(self):
+        """The else branch for non-NF4 caches must guard against
+        draft_past_kv=None before iterating it as `for layer in ...`."""
+        assert re.search(
+            r"if\s+draft_past_kv\s+is\s+None:[\s\S]{0,1000}"
+            r"serialized_draft_past_kv\s*=\s*None",
+            RASD_INF_SRC,
+        ), (
+            "Phase D regression: _maybe_save_checkpoint must explicitly "
+            "handle draft_past_kv=None before tuple() iteration. "
+            "Without the guard, target-only cells with checkpoint_every "
+            "set crash with 'NoneType is not iterable'."
+        )
