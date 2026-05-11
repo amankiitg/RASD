@@ -241,16 +241,35 @@ arXiv submission by Fri 2026-05-16 (3 days into W9).
       contributions (RASD system + 4.4× headline + bimodal-α finding +
       open-source release).
 - [ ] **10.4 [H]** Draft **§Conclusion** + tighten **abstract** to ≤200 words.
-- [ ] **10.5 [F]** **Public GitHub repo prep:**
-      - New repo `rasd-paper-2026` (separate from working tree)
-      - `git filter-repo` to drop credentials, wandb, debug chronicles
-      - Copy: `LICENSE`, `README.md`, `requirements-lock.txt`, src/,
-        scripts/, tests/, configs/, all of `results/final/`, figures/,
-        tables/, analysis/, M4_PLAN.md (trimmed)
-      - **EXCLUDE**: `runpod_creds.md`, `checkpoint.md`, `*.log`,
-        `wandb/`, `data/processed*/`, `results/m4_smoke/`,
-        `results/phase_c/logs/`
-      - Push public.
+- [ ] **10.5 [F]** **Make THIS repo public (in-place clean-up — do
+      NOT fork a new repo):** Reviewers don't read commit history;
+      tags and the debugging chronicle are *valuable* reproducibility
+      evidence; less ongoing maintenance.
+
+      1. **CRITICAL — purge credentials from history:**
+         `git filter-repo --path runpod_creds.md --invert-paths`
+         then `git push --force origin main` and force-push the tags.
+      2. **ROTATE the three credentials** at wandb / HuggingFace /
+         Lambda — assume they leaked the moment they were ever in
+         any git history.
+      3. Audit commit messages:
+         `git log -p --all | grep -E "wandb_v1_|^hf_|secret_rasd"`
+         must return empty.
+      4. Audit code: `grep -rE "wandb_v1_|hf_[a-z]|secret_rasd" src/ scripts/ tests/`
+         must return empty.
+      5. **Trim working tree** (commit deletions):
+         - delete `wandb/`, `*.log`, `data/processed*/`,
+           `results/m4_smoke/`, `results/phase_c/logs/`,
+           `results/final/memory_trace_80gb/`
+         - delete `checkpoint.md` (internal notes)
+      6. **Move dev notes under `docs/dev/`** so the root stays
+         focused (README + LICENSE + paper):
+         - `M3_RING_INTEGRATION_PLAN.md`
+         - `M4_PLAN.md`, `M5_PLAN.md`
+         - `PHASE_C_RUNBOOK.md`, `PUBLICATION_STRATEGY.md`
+         - `experiments.md`
+      7. **Update root `README.md`** to paper-first format (10.6).
+      8. **Make repo public** on GitHub.
 - [ ] **10.6 [H]** Write new repo `README.md`: quick start, 1-page
       architecture overview, how to reproduce headline results
       (single command), citation BibTeX (arXiv ID once we have it).

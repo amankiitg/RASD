@@ -43,19 +43,30 @@ def _excerpt(text: str, max_chars: int) -> str:
     is in the trailing generation. We snap the start to the last
     sentence boundary so the snippet starts mid-thought rather than
     in the middle of a word.
+
+    The output is ASCII-safe: non-ASCII chars (e.g., Cyrillic from
+    YaRN-degraded continuations) are replaced with '?' so the LaTeX
+    \\input{} doesn't choke on missing font glyphs.
     """
     text = text.strip().replace("\n", " ").replace("  ", " ")
     if len(text) <= max_chars:
-        return text
-    tail = text[-max_chars:]
-    # Snap to the start of the last sentence-fragment so we don't
-    # truncate mid-word. Period/!/? in the FIRST half of the tail.
-    for boundary in (". ", "! ", "? "):
-        idx = tail.find(boundary, 0, max_chars // 2)
-        if idx > 0:
-            tail = tail[idx + len(boundary):]
-            break
-    return "[…] " + tail.lstrip()
+        out = text
+    else:
+        tail = text[-max_chars:]
+        for boundary in (". ", "! ", "? "):
+            idx = tail.find(boundary, 0, max_chars // 2)
+            if idx > 0:
+                tail = tail[idx + len(boundary):]
+                break
+        out = "[...] " + tail.lstrip()
+    # ASCII-safe: replace any non-ASCII char (Cyrillic, em-dash, etc.)
+    # with a single '?' so pdflatex (default fonts) doesn't error.
+    out = out.encode("ascii", errors="replace").decode("ascii")
+    # Also strip control characters (0x00-0x1F + 0x7F) — the model
+    # sometimes generates literal NUL bytes at YaRN-extrapolated
+    # contexts, which LaTeX rejects as "invalid character".
+    out = "".join(c if 0x20 <= ord(c) < 0x7F else "?" for c in out)
+    return out
 
 
 def main():
@@ -123,7 +134,11 @@ def main():
                      .replace("_",  r"\_")
                      .replace("%",  r"\%")
                      .replace("#",  r"\#")
-                     .replace("$",  r"\$"))
+                     .replace("$",  r"\$")
+                     .replace("{",  r"\{")
+                     .replace("}",  r"\}")
+                     .replace("~",  r"\textasciitilde{}")
+                     .replace("^",  r"\textasciicircum{}"))
 
         tex_lines.append(
             f"{CTX_LABEL[ctx_key]} & {_esc(rasd_ex)} & {_esc(tgt_ex)} \\\\"
