@@ -454,7 +454,20 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         if wb_run is not None:
             log_wandb(wb_run, metrics)
     except Exception as exc:
-        row["error"] = str(exc)
+        # Capture the full traceback (not just str(exc)) so error rows in
+        # the CSV are actionable. Without this, the parent only saw the
+        # exception message — the ctx512k/ctx1M target-only failures on
+        # 2026-05-10 lost all stack-trace context to a wandb buffer drop.
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        # Single-line for CSV-friendliness; still includes file:line markers.
+        row["error"] = f"{type(exc).__name__}: {exc} | {tb_str.replace(chr(10), ' || ')}"
+        # Also dump the full multi-line traceback to a per-run sidecar so
+        # the next debugger doesn't have to un-mangle the CSV escaping.
+        if local_rank == 0:
+            err_dir = Path(output_csv).resolve().parent / "errors"
+            err_dir.mkdir(parents=True, exist_ok=True)
+            (err_dir / f"{run['run_id']}.traceback.txt").write_text(tb_str)
         if wb_run is not None:
             import wandb; wb_run.finish(exit_code=1)
 
