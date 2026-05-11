@@ -6,9 +6,9 @@ TARGET_ctx128k_s456,M4,TARGET_ctx128k,456,meta-llama/Llama-2-7b-hf,princeton-nlp
 TARGET_ctx256k_s42,M4,TARGET_ctx256k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,262144,bfloat16,64,487.5637,0.13,0.0,7618.183,29875.67,12868.1,63,ok,
 TARGET_ctx256k_s123,M4,TARGET_ctx256k,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,262144,bfloat16,64,463.4729,0.14,0.0,7241.764,27641.996,12868.1,63,ok,
 TARGET_ctx256k_s456,M4,TARGET_ctx256k,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,262144,bfloat16,64,478.0936,0.13,0.0,7470.212,31634.644,12868.1,63,ok,
-TARGET_ctx512k_s42,M4,TARGET_ctx512k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
-TARGET_ctx512k_s123,M4,TARGET_ctx512k,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
-TARGET_ctx512k_s456,M4,TARGET_ctx512k,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
-TARGET_ctx1M_s42,M4,TARGET_ctx1M,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
-TARGET_ctx1M_s123,M4,TARGET_ctx1M,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
-TARGET_ctx1M_s456,M4,TARGET_ctx1M,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,,,,,,,,,error,'NoneType' object is not iterable
+TARGET_ctx512k_s42,M4,TARGET_ctx512k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,64,696.0717,0.09,0.0,10876.12,90960.865,21711.2,63,ok,
+TARGET_ctx512k_s123,M4,TARGET_ctx512k,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,64,698.0463,0.09,0.0,10906.974,90581.89,21711.2,63,ok,
+TARGET_ctx512k_s456,M4,TARGET_ctx512k,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,524288,bfloat16,64,704.3524,0.09,0.0,11005.507,97376.648,21711.2,63,ok,
+TARGET_ctx1M_s42,M4,TARGET_ctx1M,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,64,1442.2992,0.04,0.0,22535.925,334562.503,39397.0,63,ok,
+TARGET_ctx1M_s123,M4,TARGET_ctx1M,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,64,1457.5306,0.04,0.0,22773.916,340036.204,39397.0,63,ok,
+TARGET_ctx1M_s456,M4,TARGET_ctx1M,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,1048576,bfloat16,64,1448.2756,0.04,0.0,22629.306,331911.817,39397.0,63,ok,
