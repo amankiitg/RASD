@@ -1,8 +1,8 @@
 {
   "meta": {
     "phase": "C",
-    "commit_sha": "20c72c6602d3fc993cc3c1bb70949800e1930c2b",
-    "generated": "2026-05-11T11:04:06.866866+00:00",
+    "commit_sha": "fab328d738768c0ce2049d3429d92f66f0293563",
+    "generated": "2026-05-11T13:26:47.618981+00:00",
     "version": "1.0"
   },
   "matrix": {
@@ -850,7 +850,1071 @@
       "gpu_peak_mem_mb": 41890.2
     }
   },
-  "per_position_accept": {},
+  "per_position_accept": {
+    "RASD_ctx128k_phaseD_s42": [
+      {
+        "round": 0,
+        "global_pos_start": 125360,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 1,
+        "global_pos_start": 125361,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 2,
+        "global_pos_start": 125362,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 3,
+        "global_pos_start": 125364,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 4,
+        "global_pos_start": 125365,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 5,
+        "global_pos_start": 125366,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 6,
+        "global_pos_start": 125368,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 7,
+        "global_pos_start": 125370,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 8,
+        "global_pos_start": 125372,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 9,
+        "global_pos_start": 125373,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 10,
+        "global_pos_start": 125375,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 11,
+        "global_pos_start": 125376,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 12,
+        "global_pos_start": 125377,
+        "spec_steps": 4,
+        "n_accepted": 1
+      }
+    ],
+    "RASD_ctx1M_phaseD_s42": [
+      {
+        "round": 0,
+        "global_pos_start": 1002984,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 1,
+        "global_pos_start": 1002985,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 2,
+        "global_pos_start": 1002986,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 3,
+        "global_pos_start": 1002987,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 4,
+        "global_pos_start": 1002989,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 5,
+        "global_pos_start": 1002991,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 6,
+        "global_pos_start": 1002992,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 7,
+        "global_pos_start": 1002995,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 8,
+        "global_pos_start": 1002997,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 9,
+        "global_pos_start": 1002999,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 10,
+        "global_pos_start": 1003001,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 11,
+        "global_pos_start": 1003002,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 12,
+        "global_pos_start": 1003003,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 13,
+        "global_pos_start": 1003005,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 14,
+        "global_pos_start": 1003007,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 15,
+        "global_pos_start": 1003008,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 16,
+        "global_pos_start": 1003011,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 17,
+        "global_pos_start": 1003012,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 18,
+        "global_pos_start": 1003013,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 19,
+        "global_pos_start": 1003014,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 20,
+        "global_pos_start": 1003015,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 21,
+        "global_pos_start": 1003016,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 22,
+        "global_pos_start": 1003018,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 23,
+        "global_pos_start": 1003021,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 24,
+        "global_pos_start": 1003023,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 25,
+        "global_pos_start": 1003024,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 26,
+        "global_pos_start": 1003027,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 27,
+        "global_pos_start": 1003028,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 28,
+        "global_pos_start": 1003030,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 29,
+        "global_pos_start": 1003032,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 30,
+        "global_pos_start": 1003035,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 31,
+        "global_pos_start": 1003038,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 32,
+        "global_pos_start": 1003039,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 33,
+        "global_pos_start": 1003042,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 34,
+        "global_pos_start": 1003044,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 35,
+        "global_pos_start": 1003046,
+        "spec_steps": 4,
+        "n_accepted": 2
+      }
+    ],
+    "RASD_ctx256k_phaseD_s42": [
+      {
+        "round": 0,
+        "global_pos_start": 250712,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 1,
+        "global_pos_start": 250713,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 2,
+        "global_pos_start": 250714,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 3,
+        "global_pos_start": 250715,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 4,
+        "global_pos_start": 250717,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 5,
+        "global_pos_start": 250719,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 6,
+        "global_pos_start": 250720,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 7,
+        "global_pos_start": 250723,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 8,
+        "global_pos_start": 250728,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 9,
+        "global_pos_start": 250733,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 10,
+        "global_pos_start": 250734,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 11,
+        "global_pos_start": 250735,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 12,
+        "global_pos_start": 250737,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 13,
+        "global_pos_start": 250739,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 14,
+        "global_pos_start": 250740,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 15,
+        "global_pos_start": 250741,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 16,
+        "global_pos_start": 250744,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 17,
+        "global_pos_start": 250745,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 18,
+        "global_pos_start": 250746,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 19,
+        "global_pos_start": 250747,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 20,
+        "global_pos_start": 250749,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 21,
+        "global_pos_start": 250750,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 22,
+        "global_pos_start": 250751,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 23,
+        "global_pos_start": 250756,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 24,
+        "global_pos_start": 250758,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 25,
+        "global_pos_start": 250759,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 26,
+        "global_pos_start": 250761,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 27,
+        "global_pos_start": 250762,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 28,
+        "global_pos_start": 250764,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 29,
+        "global_pos_start": 250766,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 30,
+        "global_pos_start": 250768,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 31,
+        "global_pos_start": 250770,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 32,
+        "global_pos_start": 250771,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 33,
+        "global_pos_start": 250773,
+        "spec_steps": 4,
+        "n_accepted": 1
+      }
+    ],
+    "RASD_ctx4k_pg19_phaseD_s42": [
+      {
+        "round": 0,
+        "global_pos_start": 4096,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 1,
+        "global_pos_start": 4101,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 2,
+        "global_pos_start": 4102,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 3,
+        "global_pos_start": 4107,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 4,
+        "global_pos_start": 4109,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 5,
+        "global_pos_start": 4114,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 6,
+        "global_pos_start": 4119,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 7,
+        "global_pos_start": 4124,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 8,
+        "global_pos_start": 4129,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 9,
+        "global_pos_start": 4134,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 10,
+        "global_pos_start": 4136,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 11,
+        "global_pos_start": 4137,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 12,
+        "global_pos_start": 4139,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 13,
+        "global_pos_start": 4144,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 14,
+        "global_pos_start": 4149,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 15,
+        "global_pos_start": 4154,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 16,
+        "global_pos_start": 4156,
+        "spec_steps": 4,
+        "n_accepted": 4
+      }
+    ],
+    "RASD_ctx512k_phaseD_s42": [
+      {
+        "round": 0,
+        "global_pos_start": 501472,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 1,
+        "global_pos_start": 501473,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 2,
+        "global_pos_start": 501474,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 3,
+        "global_pos_start": 501475,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 4,
+        "global_pos_start": 501478,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 5,
+        "global_pos_start": 501479,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 6,
+        "global_pos_start": 501480,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 7,
+        "global_pos_start": 501483,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 8,
+        "global_pos_start": 501484,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 9,
+        "global_pos_start": 501485,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 10,
+        "global_pos_start": 501487,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 11,
+        "global_pos_start": 501488,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 12,
+        "global_pos_start": 501489,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 13,
+        "global_pos_start": 501492,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 14,
+        "global_pos_start": 501494,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 15,
+        "global_pos_start": 501495,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 16,
+        "global_pos_start": 501498,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 17,
+        "global_pos_start": 501499,
+        "spec_steps": 4,
+        "n_accepted": 3
+      },
+      {
+        "round": 18,
+        "global_pos_start": 501503,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 19,
+        "global_pos_start": 501504,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 20,
+        "global_pos_start": 501505,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 21,
+        "global_pos_start": 501508,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 22,
+        "global_pos_start": 501511,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 23,
+        "global_pos_start": 501514,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 24,
+        "global_pos_start": 501515,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 25,
+        "global_pos_start": 501516,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 26,
+        "global_pos_start": 501517,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 27,
+        "global_pos_start": 501518,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 28,
+        "global_pos_start": 501521,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 29,
+        "global_pos_start": 501523,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 30,
+        "global_pos_start": 501526,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 31,
+        "global_pos_start": 501528,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 32,
+        "global_pos_start": 501529,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 33,
+        "global_pos_start": 501530,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 34,
+        "global_pos_start": 501532,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 35,
+        "global_pos_start": 501534,
+        "spec_steps": 4,
+        "n_accepted": 1
+      }
+    ],
+    "RASD_ctx8k_pg19_phaseD_s42": [
+      {
+        "round": 0,
+        "global_pos_start": 8192,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 1,
+        "global_pos_start": 8193,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 2,
+        "global_pos_start": 8195,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 3,
+        "global_pos_start": 8196,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 4,
+        "global_pos_start": 8197,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 5,
+        "global_pos_start": 8200,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 6,
+        "global_pos_start": 8203,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 7,
+        "global_pos_start": 8206,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 8,
+        "global_pos_start": 8209,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 9,
+        "global_pos_start": 8211,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 10,
+        "global_pos_start": 8213,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 11,
+        "global_pos_start": 8214,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 12,
+        "global_pos_start": 8215,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 13,
+        "global_pos_start": 8218,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 14,
+        "global_pos_start": 8219,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 15,
+        "global_pos_start": 8220,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 16,
+        "global_pos_start": 8223,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 17,
+        "global_pos_start": 8225,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 18,
+        "global_pos_start": 8227,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 19,
+        "global_pos_start": 8228,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 20,
+        "global_pos_start": 8229,
+        "spec_steps": 4,
+        "n_accepted": 1
+      },
+      {
+        "round": 21,
+        "global_pos_start": 8231,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 22,
+        "global_pos_start": 8236,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 23,
+        "global_pos_start": 8237,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 24,
+        "global_pos_start": 8238,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 25,
+        "global_pos_start": 8239,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 26,
+        "global_pos_start": 8240,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 27,
+        "global_pos_start": 8241,
+        "spec_steps": 4,
+        "n_accepted": 4
+      },
+      {
+        "round": 28,
+        "global_pos_start": 8246,
+        "spec_steps": 4,
+        "n_accepted": 2
+      },
+      {
+        "round": 29,
+        "global_pos_start": 8249,
+        "spec_steps": 4,
+        "n_accepted": 0
+      },
+      {
+        "round": 30,
+        "global_pos_start": 8250,
+        "spec_steps": 4,
+        "n_accepted": 4
+      }
+    ]
+  },
   "_per_position_note": "Populated only when per_token/*.jsonl sidecars are present (produced by run_experiment.py --log-per-token). Phase D F4 plot script reads from here.",
-  "generated_text": {}
+  "generated_text": {
+    "RASD_ctx128k_phaseD_s42": {
+      "path": "results/final/generated/RASD_ctx128k_phaseD_s42.txt",
+      "bytes": 706590
+    },
+    "RASD_ctx1M_phaseD_s42": {
+      "path": "results/final/generated/RASD_ctx1M_phaseD_s42.txt",
+      "bytes": 5653320
+    },
+    "RASD_ctx256k_phaseD_s42": {
+      "path": "results/final/generated/RASD_ctx256k_phaseD_s42.txt",
+      "bytes": 1413226
+    },
+    "RASD_ctx4k_pg19_phaseD_s42": {
+      "path": "results/final/generated/RASD_ctx4k_pg19_phaseD_s42.txt",
+      "bytes": 15340
+    },
+    "RASD_ctx512k_phaseD_s42": {
+      "path": "results/final/generated/RASD_ctx512k_phaseD_s42.txt",
+      "bytes": 2826604
+    },
+    "RASD_ctx8k_pg19_phaseD_s42": {
+      "path": "results/final/generated/RASD_ctx8k_pg19_phaseD_s42.txt",
+      "bytes": 30150
+    },
+    "TARGET_ctx128k_phaseD_s42": {
+      "path": "results/final/generated/TARGET_ctx128k_phaseD_s42.txt",
+      "bytes": 706751
+    },
+    "TARGET_ctx1M_phaseD_s42": {
+      "path": "results/final/generated/TARGET_ctx1M_phaseD_s42.txt",
+      "bytes": 5653317
+    },
+    "TARGET_ctx256k_phaseD_s42": {
+      "path": "results/final/generated/TARGET_ctx256k_phaseD_s42.txt",
+      "bytes": 1413247
+    },
+    "TARGET_ctx4k_pg19_phaseD_s42": {
+      "path": "results/final/generated/TARGET_ctx4k_pg19_phaseD_s42.txt",
+      "bytes": 15334
+    },
+    "TARGET_ctx512k_phaseD_s42": {
+      "path": "results/final/generated/TARGET_ctx512k_phaseD_s42.txt",
+      "bytes": 2826633
+    },
+    "TARGET_ctx8k_pg19_phaseD_s42": {
+      "path": "results/final/generated/TARGET_ctx8k_pg19_phaseD_s42.txt",
+      "bytes": 30197
+    }
+  }
 }

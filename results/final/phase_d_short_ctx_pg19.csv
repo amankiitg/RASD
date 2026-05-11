@@ -1,0 +1,5 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error
+RASD_ctx4k_pg19_phaseD_s42,M4,RASD_ctx4k_pg19_phaseD,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,4096,bfloat16,66,27.4301,2.41,0.7059,415.608,8007.725,9230.1,17,ok,
+RASD_ctx8k_pg19_phaseD_s42,M4,RASD_ctx8k_pg19_phaseD,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,8192,bfloat16,64,50.1392,1.28,0.2581,783.425,5868.234,9324.7,31,ok,
+TARGET_ctx4k_pg19_phaseD_s42,M4,TARGET_ctx4k_pg19_phaseD,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,4096,bfloat16,64,116.5948,0.55,0.0,1821.793,1345.113,4298.2,63,ok,
+TARGET_ctx8k_pg19_phaseD_s42,M4,TARGET_ctx8k_pg19_phaseD,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,0,2048,1,8192,bfloat16,64,112.8861,0.57,0.0,1763.846,1433.615,4565.4,63,ok,

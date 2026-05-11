@@ -31,12 +31,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 CTX_LABEL = {
+    4096:     "4k (PG-19)",
+    8192:     "8k (PG-19)",
     131072:   "128k",
     262144:   "256k",
     524288:   "512k",
     1048576:  "1M",
 }
 CTX_COLOR = {
+    4096:     "#9467bd",  # purple — short-ctx PG-19 reference
+    8192:     "#8c564b",  # brown
     131072:   "#1f77b4",
     262144:   "#ff7f0e",
     524288:   "#2ca02c",
@@ -97,7 +101,15 @@ def main():
             f"Run with --log-per-token to generate them."
         )
 
-    # Group files by ctx
+    # Group files by ctx. Map filename ctx-shortname → integer ctx_length.
+    CTX_FROM_NAME = {
+        "ctx4k":    4096,
+        "ctx8k":    8192,
+        "ctx128k":  131072,
+        "ctx256k":  262144,
+        "ctx512k":  524288,
+        "ctx1M":    1048576,
+    }
     series: dict[int, list[float]] = {}
     for jf in sorted(pt_dir.glob("*.jsonl")):
         name = jf.stem
@@ -107,11 +119,14 @@ def main():
             continue
         if args.prefer == "M4" and not name.startswith("M4_"):
             continue
-        # Pull ctx from CTX_LABEL keys by name substring match
+        # Pull ctx from the filename's ctx-shortname substring
         ctx_found: int | None = None
-        for ctx, lab in CTX_LABEL.items():
-            if lab in name:
-                ctx_found = ctx; break
+        for short, length in CTX_FROM_NAME.items():
+            # Match the canonical short name as a substring, but use word
+            # boundaries to avoid "ctx1M" matching inside "ctx128k_1M" etc.
+            # The phaseD filenames are "{prefix}_{ctxshort}[_pg19]_phaseD_s..."
+            if f"_{short}_" in name or f"_{short}." in name:
+                ctx_found = length; break
         if ctx_found is None:
             continue
         recs = _read_jsonl(jf)

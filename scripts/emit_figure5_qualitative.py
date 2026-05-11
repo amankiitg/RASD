@@ -26,6 +26,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CTX_LABEL = {
+    "ctx4k":    "4k (PG-19)",
+    "ctx8k":    "8k (PG-19)",
     "ctx128k":  "128k",
     "ctx256k":  "256k",
     "ctx512k":  "512k",
@@ -34,10 +36,26 @@ CTX_LABEL = {
 
 
 def _excerpt(text: str, max_chars: int) -> str:
+    """Return the LAST max_chars of `text`, after the last sentence boundary.
+
+    The generated.txt file holds [prompt + continuation]; since both
+    RASD and target share the same prompt, the qualitative difference
+    is in the trailing generation. We snap the start to the last
+    sentence boundary so the snippet starts mid-thought rather than
+    in the middle of a word.
+    """
     text = text.strip().replace("\n", " ").replace("  ", " ")
-    if len(text) > max_chars:
-        text = text[:max_chars].rstrip() + " […]"
-    return text
+    if len(text) <= max_chars:
+        return text
+    tail = text[-max_chars:]
+    # Snap to the start of the last sentence-fragment so we don't
+    # truncate mid-word. Period/!/? in the FIRST half of the tail.
+    for boundary in (". ", "! ", "? "):
+        idx = tail.find(boundary, 0, max_chars // 2)
+        if idx > 0:
+            tail = tail[idx + len(boundary):]
+            break
+    return "[…] " + tail.lstrip()
 
 
 def main():
@@ -58,12 +76,13 @@ def main():
 
     # Pair RASD and TARGET runs by ctx label
     pairs: dict[str, dict[str, Path]] = {}
+    ctx_pattern = r"ctx4k|ctx8k|ctx128k|ctx256k|ctx512k|ctx1M"
     for tf in sorted(gen_dir.glob("*.txt")):
         name = tf.stem
-        m = re.match(r"^(RASD|TARGET)_(ctx128k|ctx256k|ctx512k|ctx1M)_phaseD_s\d+", name)
+        m = re.match(rf"^(RASD|TARGET)_({ctx_pattern})(?:_pg19)?_phaseD_s\d+", name)
         if not m:
             # Also accept Phase C / older run-ids if they exist
-            m = re.match(r"^(M4|TARGET)_(ctx128k|ctx256k|ctx512k|ctx1M)_s\d+", name)
+            m = re.match(rf"^(M4|TARGET)_({ctx_pattern})_s\d+", name)
             if not m:
                 continue
             kind = "RASD" if m.group(1) == "M4" else "TARGET"
@@ -88,7 +107,7 @@ def main():
     ]
     txt_lines: list[str] = ["Phase D F5 — qualitative comparison\n",
                             "=" * 78, ""]
-    for ctx_key in ["ctx128k", "ctx256k", "ctx512k", "ctx1M"]:
+    for ctx_key in ["ctx4k", "ctx8k", "ctx128k", "ctx256k", "ctx512k", "ctx1M"]:
         if ctx_key not in pairs:
             continue
         pair = pairs[ctx_key]

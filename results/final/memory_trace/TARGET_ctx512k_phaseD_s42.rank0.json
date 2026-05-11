@@ -1,0 +1,287 @@
+{
+  "run_id": "TARGET_ctx512k_phaseD_s42",
+  "rank": 0,
+  "device": "cuda:0",
+  "snapshots": [
+    {
+      "label": "post_load",
+      "allocated_mb": 3989.93798828125,
+      "reserved_mb": 4130.0,
+      "max_alloc_mb": 3989.93798828125,
+      "max_reserved_mb": 4130.0,
+      "S": 501472,
+      "S_local": 62684
+    },
+    {
+      "label": "prefill_after_layer_00",
+      "allocated_mb": 5316.51416015625,
+      "reserved_mb": 22476.0,
+      "max_alloc_mb": 11690.509765625,
+      "max_reserved_mb": 22476.0,
+      "layer_idx": 0
+    },
+    {
+      "label": "prefill_after_layer_01",
+      "allocated_mb": 6113.68212890625,
+      "reserved_mb": 26558.0,
+      "max_alloc_mb": 12487.677734375,
+      "max_reserved_mb": 26558.0,
+      "layer_idx": 1
+    },
+    {
+      "label": "prefill_after_layer_02",
+      "allocated_mb": 6421.13134765625,
+      "reserved_mb": 28182.0,
+      "max_alloc_mb": 12795.126953125,
+      "max_reserved_mb": 28182.0,
+      "layer_idx": 2
+    },
+    {
+      "label": "prefill_after_layer_03",
+      "allocated_mb": 6728.58056640625,
+      "reserved_mb": 28244.0,
+      "max_alloc_mb": 13102.576171875,
+      "max_reserved_mb": 28244.0,
+      "layer_idx": 3
+    },
+    {
+      "label": "prefill_after_layer_04",
+      "allocated_mb": 7036.02978515625,
+      "reserved_mb": 28308.0,
+      "max_alloc_mb": 13410.025390625,
+      "max_reserved_mb": 28308.0,
+      "layer_idx": 4
+    },
+    {
+      "label": "prefill_after_layer_05",
+      "allocated_mb": 7343.47900390625,
+      "reserved_mb": 28370.0,
+      "max_alloc_mb": 13717.474609375,
+      "max_reserved_mb": 28370.0,
+      "layer_idx": 5
+    },
+    {
+      "label": "prefill_after_layer_06",
+      "allocated_mb": 7650.92822265625,
+      "reserved_mb": 29454.0,
+      "max_alloc_mb": 14024.923828125,
+      "max_reserved_mb": 29454.0,
+      "layer_idx": 6
+    },
+    {
+      "label": "prefill_after_layer_07",
+      "allocated_mb": 7958.37744140625,
+      "reserved_mb": 29776.0,
+      "max_alloc_mb": 14332.373046875,
+      "max_reserved_mb": 29776.0,
+      "layer_idx": 7
+    },
+    {
+      "label": "prefill_after_layer_08",
+      "allocated_mb": 8265.82666015625,
+      "reserved_mb": 29840.0,
+      "max_alloc_mb": 14639.822265625,
+      "max_reserved_mb": 29840.0,
+      "layer_idx": 8
+    },
+    {
+      "label": "prefill_after_layer_09",
+      "allocated_mb": 8573.27587890625,
+      "reserved_mb": 29904.0,
+      "max_alloc_mb": 14947.271484375,
+      "max_reserved_mb": 29904.0,
+      "layer_idx": 9
+    },
+    {
+      "label": "prefill_after_layer_10",
+      "allocated_mb": 8880.72509765625,
+      "reserved_mb": 29966.0,
+      "max_alloc_mb": 15254.720703125,
+      "max_reserved_mb": 29966.0,
+      "layer_idx": 10
+    },
+    {
+      "label": "prefill_after_layer_11",
+      "allocated_mb": 9188.17431640625,
+      "reserved_mb": 30970.0,
+      "max_alloc_mb": 15562.169921875,
+      "max_reserved_mb": 30970.0,
+      "layer_idx": 11
+    },
+    {
+      "label": "prefill_after_layer_12",
+      "allocated_mb": 9495.62353515625,
+      "reserved_mb": 31292.0,
+      "max_alloc_mb": 15869.619140625,
+      "max_reserved_mb": 31292.0,
+      "layer_idx": 12
+    },
+    {
+      "label": "prefill_after_layer_13",
+      "allocated_mb": 9803.07275390625,
+      "reserved_mb": 31616.0,
+      "max_alloc_mb": 16177.068359375,
+      "max_reserved_mb": 31616.0,
+      "layer_idx": 13
+    },
+    {
+      "label": "prefill_after_layer_14",
+      "allocated_mb": 10110.52197265625,
+      "reserved_mb": 31918.0,
+      "max_alloc_mb": 16484.517578125,
+      "max_reserved_mb": 31918.0,
+      "layer_idx": 14
+    },
+    {
+      "label": "prefill_after_layer_15",
+      "allocated_mb": 10417.97119140625,
+      "reserved_mb": 31982.0,
+      "max_alloc_mb": 16791.966796875,
+      "max_reserved_mb": 31982.0,
+      "layer_idx": 15
+    },
+    {
+      "label": "prefill_after_layer_16",
+      "allocated_mb": 10725.42041015625,
+      "reserved_mb": 32044.0,
+      "max_alloc_mb": 17099.416015625,
+      "max_reserved_mb": 32044.0,
+      "layer_idx": 16
+    },
+    {
+      "label": "prefill_after_layer_17",
+      "allocated_mb": 11032.86962890625,
+      "reserved_mb": 32108.0,
+      "max_alloc_mb": 17406.865234375,
+      "max_reserved_mb": 32108.0,
+      "layer_idx": 17
+    },
+    {
+      "label": "prefill_after_layer_18",
+      "allocated_mb": 11340.31884765625,
+      "reserved_mb": 32170.0,
+      "max_alloc_mb": 17714.314453125,
+      "max_reserved_mb": 32170.0,
+      "layer_idx": 18
+    },
+    {
+      "label": "prefill_after_layer_19",
+      "allocated_mb": 11647.76806640625,
+      "reserved_mb": 33474.0,
+      "max_alloc_mb": 18021.763671875,
+      "max_reserved_mb": 33474.0,
+      "layer_idx": 19
+    },
+    {
+      "label": "prefill_after_layer_20",
+      "allocated_mb": 11955.21728515625,
+      "reserved_mb": 33778.0,
+      "max_alloc_mb": 18329.212890625,
+      "max_reserved_mb": 33778.0,
+      "layer_idx": 20
+    },
+    {
+      "label": "prefill_after_layer_21",
+      "allocated_mb": 12262.66650390625,
+      "reserved_mb": 34100.0,
+      "max_alloc_mb": 18636.662109375,
+      "max_reserved_mb": 34100.0,
+      "layer_idx": 21
+    },
+    {
+      "label": "prefill_after_layer_22",
+      "allocated_mb": 12570.11572265625,
+      "reserved_mb": 34424.0,
+      "max_alloc_mb": 18944.111328125,
+      "max_reserved_mb": 34424.0,
+      "layer_idx": 22
+    },
+    {
+      "label": "prefill_after_layer_23",
+      "allocated_mb": 12877.56494140625,
+      "reserved_mb": 34706.0,
+      "max_alloc_mb": 19251.560546875,
+      "max_reserved_mb": 34706.0,
+      "layer_idx": 23
+    },
+    {
+      "label": "prefill_after_layer_24",
+      "allocated_mb": 13185.01416015625,
+      "reserved_mb": 35030.0,
+      "max_alloc_mb": 19559.009765625,
+      "max_reserved_mb": 35030.0,
+      "layer_idx": 24
+    },
+    {
+      "label": "prefill_after_layer_25",
+      "allocated_mb": 13492.46337890625,
+      "reserved_mb": 35332.0,
+      "max_alloc_mb": 19866.458984375,
+      "max_reserved_mb": 35332.0,
+      "layer_idx": 25
+    },
+    {
+      "label": "prefill_after_layer_26",
+      "allocated_mb": 13799.91259765625,
+      "reserved_mb": 35396.0,
+      "max_alloc_mb": 20173.908203125,
+      "max_reserved_mb": 35396.0,
+      "layer_idx": 26
+    },
+    {
+      "label": "prefill_after_layer_27",
+      "allocated_mb": 14107.36181640625,
+      "reserved_mb": 35458.0,
+      "max_alloc_mb": 20481.357421875,
+      "max_reserved_mb": 35458.0,
+      "layer_idx": 27
+    },
+    {
+      "label": "prefill_after_layer_28",
+      "allocated_mb": 14414.81103515625,
+      "reserved_mb": 35522.0,
+      "max_alloc_mb": 20788.806640625,
+      "max_reserved_mb": 35522.0,
+      "layer_idx": 28
+    },
+    {
+      "label": "prefill_after_layer_29",
+      "allocated_mb": 14722.26025390625,
+      "reserved_mb": 36584.0,
+      "max_alloc_mb": 21096.255859375,
+      "max_reserved_mb": 36584.0,
+      "layer_idx": 29
+    },
+    {
+      "label": "prefill_after_layer_30",
+      "allocated_mb": 15029.70947265625,
+      "reserved_mb": 36888.0,
+      "max_alloc_mb": 21403.705078125,
+      "max_reserved_mb": 36888.0,
+      "layer_idx": 30
+    },
+    {
+      "label": "prefill_after_layer_31",
+      "allocated_mb": 15337.15869140625,
+      "reserved_mb": 36952.0,
+      "max_alloc_mb": 21711.154296875,
+      "max_reserved_mb": 36952.0,
+      "layer_idx": 31
+    },
+    {
+      "label": "post_target_prefill",
+      "allocated_mb": 13836.9775390625,
+      "reserved_mb": 36952.0,
+      "max_alloc_mb": 21711.154296875,
+      "max_reserved_mb": 36952.0
+    },
+    {
+      "label": "end",
+      "allocated_mb": 13850.74072265625,
+      "reserved_mb": 36960.0,
+      "max_alloc_mb": 21711.154296875,
+      "max_reserved_mb": 36960.0,
+      "n_rounds": 63
+    }
+  ]
+}
