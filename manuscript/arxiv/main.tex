@@ -870,15 +870,6 @@ the communication-overlap budget the original gap analysis
 predicted (\S\ref{sec:related-gap}) is not load-bearing in our
 configuration.
 
-\paragraph{A5 -- Target model family.}
-The paper reports results on Llama-2-7B. A target-family sweep
-(Llama-2-7B vs.\ Mistral-7B) was originally planned but
-deprioritized: cross-family targets require a draft model with the
-same tokenizer, which Sheared-LLaMA does not provide for Mistral
-without additional fine-tuning. Re-running the M3 grid on a
-Mistral-Sheared-Mistral-1.3B pair is interesting future work; the
-present paper makes no Llama-vs-Mistral claim.
-
 \paragraph{Why the M3 design point transfers to 1\,M.}
 A reasonable concern is that an ablation done at 64\,k context may
 not generalize to 1\,M, where the system is operated 16$\times$
@@ -893,6 +884,15 @@ context. The prefetch-depth result trivially extrapolates: if
 communication is 12\% of wall at 64\,k, it can only become a
 smaller fraction at longer contexts where the target forward grows
 quadratically with the KV cache.
+
+\paragraph{Design choices we did not sweep.}
+The paper reports results on Llama-2-7B. A target-family sweep
+(Llama-2-7B vs.\ Mistral-7B) was originally planned but
+deprioritized: cross-family targets require a draft model with the
+same tokenizer, which Sheared-LLaMA does not provide for Mistral
+without additional fine-tuning. Re-running the M3 grid on a
+Mistral-Sheared-Mistral-1.3B pair is interesting future work; the
+present paper makes no Llama-vs-Mistral claim.
 
 \subsection{Implementation and reproducibility}
 \label{sec:methods-impl}
@@ -1348,7 +1348,7 @@ removed by a long-context-trained substitute (\S\ref{sec:conclusion}
 future work).
 
 % --- 5.6 Quality preservation ----------------------------------
-\subsection{Perplexity sanity (NF4 quant + YaRN does not break quality)}
+\subsection{Perplexity sanity (NF4 quant + YaRN preserves quality at native context with a small YaRN cost)}
 \label{sec:results-ppl}
 
 A quality reviewer's first question on a system paper using NF4
@@ -1374,8 +1374,12 @@ Two readings from this table.
 
 \paragraph{NF4 does not destroy the model.}
 At Llama-2's native 4\,k context, PPL = 12.1 under YaRN and 10.7
-under vanilla RoPE. Published bf16 Llama-2-7B PPL on natural
-narrative text is in the 7--12 range
+under vanilla RoPE. The gap between these two NF4 configurations
+is small but real: YaRN imposes roughly a 13\% PPL penalty at
+the model's native 4\,k context relative to the vanilla-RoPE NF4
+baseline, a cost that is separate from the NF4 quantization cost
+(which both rows pay equally). Published bf16 Llama-2-7B PPL on
+natural narrative text is in the 7--12 range
 \citep{touvron2023llama2}. The NF4 + YaRN configuration sits at the
 high end of this band but is not pathologically degraded. The
 throughput numbers in this paper are produced on a model that has
