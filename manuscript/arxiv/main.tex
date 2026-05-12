@@ -288,6 +288,16 @@ $N \sim 10^6$, even $\mathcal{O}(N)$ memory at the per-layer level
 ($\sim$1\,MB/token for a 13B model in bf16) exceeds single-device
 capacity. \emph{A fundamentally multi-device approach is required.}
 
+\paragraph{Architectural alternatives to attention.}
+A separate line of work replaces attention with sub-quadratic
+primitives. StripedHyena \citep{poli2023stripedhyena} interleaves
+state-space convolution layers with attention layers, achieving
+sub-quadratic compute at long context without the IO constraints
+of attention. This direction is out of scope here because RASD is
+architecture-agnostic: it runs the standard transformer and asks
+how far inference engineering alone can push context length on
+commodity hardware.
+
 \subsection{Distributed inference}
 \label{sec:related-distributed}
 
@@ -320,6 +330,20 @@ under 4\% and enabling 2--4$\times$ throughput improvements.
 \citet{shoeybi2019megatron} introduced tensor parallelism for
 training; \citet{liu2024deepspeedulysses} extended sequence
 parallelism to even longer training sequences.
+
+\paragraph{Long-context inference optimization.}
+FlashDecoding \citep{dao2023flashdecoding} parallelizes
+single-query attention across the KV sequence dimension at decode
+time, yielding wall-clock speedups at long context. It is
+complementary to RASD: FlashDecoding optimizes the intra-rank
+attention kernel while RASD contributes the cross-rank
+ring-decode pattern, and the two compose. MInference
+\citep{jiang2024minference} accelerates million-token prefill via
+dynamic sparse attention patterns identified per attention head.
+It is a directly comparable single-device approach to the
+million-token capability claim, but targets prefill only and does
+not address the autoregressive decode loop that is this paper's
+primary subject.
 
 \paragraph{KV quantization.}
 KIVI \citep{liu2024kivi} introduced asymmetric per-channel
@@ -380,6 +404,18 @@ eliminating the separate draft model. \citet{li2024eagle} reframed
 draft generation as feature-uncertainty modeling. All of these
 extensions assume short-to-moderate context regimes; their behavior
 at million-token context is not measured in the original papers.
+
+\paragraph{Recent speculative decoding extensions.}
+EAGLE-2 \citep{li2024eagle2} introduced dynamic draft trees whose
+shape adapts per position based on draft-model confidence, and
+EAGLE-3 \citep{li2025eagle3} further improved acceptance through
+training-data scaling for the draft head. Both build on the
+feature-level drafting of \citet{li2024eagle} and report
+wall-clock speedups at short-to-moderate context. These
+extensions are directly comparable to RASD's speculative
+component and complementary to its central question: this paper
+asks what happens to any speculative speedup at million-token
+context, which is orthogonal to the choice of draft architecture.
 
 \subsection{Long-context evaluation}
 \label{sec:related-eval}
