@@ -675,9 +675,14 @@ M_{\text{rank}}(N) \;\approx\;
 \underbrace{M_{\text{transient}}}_{\le 4\,\text{GB}}
 \end{equation}
 where $L = 32$ layers, $d_h = 4096$ head dim, and the $\tfrac{1}{2}$
-factor is the NF4 4-bit compression ratio relative to bf16. At
-$N = 10^6, W = 8$ this gives $M_{\text{rank}} \approx 4.0 + 32 + 4
-= 40$\,GB, which we measure within rounding (\S\ref{sec:results-memory}).
+factor is the NF4 4-bit compression ratio relative to bf16. We
+use Eq.~\ref{eq:memory} to sketch the dominant terms only: it
+does not model transient or scratch contributions that grow with
+context --- prefill activations, the FA-2 NF4-dequant scratch, and
+the NCCL workspace --- so the measured peak runs ${\sim}15$\,GB
+higher at $N = 10^6$ than these dominant terms account for in
+isolation, while still landing inside the per-rank budget
+(\S\ref{sec:results-memory}).
 
 \subsection{Speculative verify loop}
 \label{sec:methods-spec}
@@ -1117,9 +1122,12 @@ Sheared-LLaMA-1.3B draft model plus its own KV cache at the same
 context. At 128\,k the overhead is 2.3\,GB; at 1\,M it shrinks to
 0.9\,GB because the target's KV cache dominates and the draft cache
 remains fixed (1.3B parameters with NF4 weights are
-${\approx} 0.7$\,GB). The peak per-rank memory at 1\,M (40.3\,GB)
-agrees with the memory equation in Eq.~\ref{eq:memory} within
-rounding.
+${\approx} 0.7$\,GB). The peak per-rank memory at 1\,M (40.3\,GB) runs
+${\sim}15$\,GB above what the dominant terms of
+Eq.~\ref{eq:memory} predict on their own; the gap is attributable
+to the transient and scratch buffers we do not model in
+\S\ref{sec:methods-nf4} (prefill activations, FA-2 NF4-dequant
+scratch, NCCL workspace), and it grows monotonically with context.
 
 \begin{table}[t]
 \centering
