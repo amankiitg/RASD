@@ -198,10 +198,13 @@ acceptance at long context is \emph{bimodal} (about half of
 rounds reject the entire draft); a short-context control on real
 text shows this bimodality is specific to Llama-2 under YaRN
 factor 256 and is not present at the model's native training
-context. \emph{Third}, a profiler measurement on the speculator
-rank shows that communication is $\leq 1.2\%$ of wall across the
-matrix, ruling out comm-overlap as the mechanism behind the
-moderate-context speedup. \emph{Fourth}, as a capability result:
+context. \emph{Third}, we identify two candidate mechanisms for the
+moderate-context speedup: communication-overlap masking (the
+original RASD design hypothesis) and draft-phase amortization
+of target-model compute. A torch.profiler measurement on the
+speculator rank shows communication is $\leq 1.2\%$ of wall
+across the matrix; \S\ref{sec:results-profile} interprets this
+result in light of both mechanisms. \emph{Fourth}, as a capability result:
 on 8$\times$A100 80\,GB SXM4, RASD reaches 1\,M-token context
 with a peak per-rank memory of 40\,GB, half the available 80\,GB,
 while HuggingFace's standard
@@ -210,6 +213,10 @@ of memory at 128\,k single-rank, making a direct throughput
 comparison at long context not well-defined.
 
 \paragraph{Contributions.}
+RASD's central contribution is to amortize the target-model
+forward via speculation in a distributed-KV setting; we
+characterize when and why this amortization pays off, and when
+it does not. Concretely:
 \begin{itemize}[leftmargin=*,topsep=0pt]
   \item \textbf{A 1\,M-token inference capability} on 8$\times$A100
         80\,GB at 40\,GB peak per rank. The standard open-source
@@ -232,10 +239,12 @@ comparison at long context not well-defined.
   \item \textbf{An honest characterization} of when speculative
         decoding pays off at long context. We report a bimodal
         per-round acceptance distribution, link it mechanistically
-        to base-model behavior under YaRN factor 256, and document
-        a useful negative result: the communication-masking
-        hypothesis behind the original RASD design is not
-        load-bearing on 8 ranks over NVLink.
+        to base-model behavior under YaRN factor 256, and
+        empirically test two candidate mechanisms for the
+        moderate-context speedup (communication-overlap masking
+        on 8 ranks over NVLink, and draft-phase amortization of
+        target compute) via the profiler measurement reported in
+        \S\ref{sec:results-profile}.
   \item \textbf{A reference implementation} released under MIT,
         with version-pinned dependencies, every per-position
         acceptance trace, every saved generation, per-rank memory
@@ -1185,6 +1194,27 @@ softmax, FlashAttention, layer-norm, etc.), \emph{comm}
 as wall minus the sum of the other three), and \emph{other}
 (allocator, kernel-launch overhead, dispatch). Per-context shares
 are shown in Figure~\ref{fig:breakdown} and Table~\ref{tab:profile}.
+
+\paragraph{Profiler configuration and comm definition.}
+The torch.profiler context wraps the full \texttt{generate} region
+in a single continuous capture (no \texttt{schedule}, no warmup
+discard; \texttt{activities=[CPU, CUDA]},
+\texttt{record\_shapes=False}, \texttt{with\_stack=False};
+\path{src/analysis/profiler.py}). The reported \emph{comm} share
+is the sum of CPU+CUDA self-time for events matching
+\texttt{nccl}, \texttt{c10d}, \texttt{batch\_isend\_irecv},
+\texttt{::send}, \texttt{::recv}, and broadcast/all-reduce
+patterns, expressed as a fraction of profiler wall. This is the
+\emph{issued} comm cost (total NCCL kernel time), not the
+critical-path \emph{exposed} portion that resists overlap with
+compute on another stream. Because issued comm upper-bounds
+exposed comm, the $\leq 1.2\%$ figure below rules out overlap
+masking as a load-bearing mechanism regardless of which
+definition is used. The tick-gate barrier (rank-0
+\texttt{dist.send} ticks introduced in commit \texttt{dc14915}
+to prevent NCCL sequence divergence at block size 2048) goes
+through \texttt{::send} and is therefore \emph{included} in the
+comm bucket.
 
 \begin{figure}[t]
 \centering
