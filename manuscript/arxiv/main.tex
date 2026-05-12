@@ -529,8 +529,9 @@ not on overlap masking.
 \subsection{Architecture overview}
 \label{sec:methods-overview}
 
-Figure~\ref{fig:rasd-arch} illustrates the RASD system at the level
-of one decode round. RASD is an inference loop that runs on $W = 8$
+Figure~\ref{fig:rasd-topology} shows the ring topology and per-rank
+state of RASD on 8 GPUs. Figure~\ref{fig:rasd-decode} shows the
+sequence of operations within a single decode round. RASD is an inference loop that runs on $W = 8$
 A100 80\,GB SXM4 GPUs on a single node. The target model
 (Llama-2-7B) and a smaller draft model (Sheared-LLaMA-1.3B
 \citep{xia2023sheared}) are both loaded on every rank, both
@@ -546,22 +547,18 @@ $f = \lceil N/4096 \rceil$.
 
 \begin{figure}[t]
 \centering
-\resizebox{0.95\linewidth}{!}{%
+\resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
   rank/.style={draw, rounded corners, minimum width=2.2cm,
                minimum height=2.6cm, fill=blue!4, line width=0.6pt,
                align=center},
   rank0/.style={rank, fill=orange!8, line width=0.9pt},
-  comp/.style={font=\scriptsize, align=center},
   ring/.style={-Latex, line width=0.6pt, blue!50!black},
-  flow/.style={-Latex, line width=0.9pt, dashed, gray!70},
   >=Latex,
 ]
 
-% Panel (a): ring topology
-\begin{scope}
-\node at (0,3.0) {\textbf{(a) Ring topology of 8 ranks at one decode round}};
+\node at (0,3.0) {\textbf{Ring topology of 8 ranks at one decode round}};
 
 % Place 8 ranks in a circle
 \foreach \i [count=\n from 0] in {0,45,90,135,180,225,270,315} {
@@ -571,20 +568,20 @@ $f = \lceil N/4096 \rceil$.
   \ifnum\rid=0
     \node[rank0] (r\rid) at (\px,\py) {%
       \textbf{Rank 0}\\[2pt]
-      \scriptsize Target NF4\\
-      \scriptsize \textbf{Draft NF4}\\
-      \scriptsize \textbf{bf16 prefix [128]}\\
-      \scriptsize KV shard NF4\\
-      \scriptsize $\lceil N/8 \rceil$ tok
+      \footnotesize Target NF4\\
+      \footnotesize \textbf{Draft NF4}\\
+      \footnotesize \textbf{bf16 prefix [128]}\\
+      \footnotesize KV shard NF4\\
+      \footnotesize $\lceil N/8 \rceil$ tok
     };
   \else
     \node[rank] (r\rid) at (\px,\py) {%
       \textbf{Rank \rid}\\[2pt]
-      \scriptsize Target NF4\\
-      \scriptsize ---\\
-      \scriptsize ---\\
-      \scriptsize KV shard NF4\\
-      \scriptsize $\lceil N/8 \rceil$ tok
+      \footnotesize Target NF4\\
+      \footnotesize ---\\
+      \footnotesize ---\\
+      \footnotesize KV shard NF4\\
+      \footnotesize $\lceil N/8 \rceil$ tok
     };
   \fi
 }
@@ -594,14 +591,36 @@ $f = \lceil N/4096 \rceil$.
   \draw[ring] (r\src) to[bend left=10] (r\dst);
 }
 
-\node[align=center, font=\scriptsize] at (0,-2.3)
+\node[align=center, font=\footnotesize] at (0,-2.3)
   {\textbf{batch\_isend\_irecv} per round: send K/V block to rank $i{+}1$,\\
    recv block from rank $i{-}1$. FlashAttention-2 on local block.};
-\end{scope}
 
-% Panel (b): decode round timeline
-\begin{scope}[xshift=11.5cm]
-\node at (0,3.0) {\textbf{(b) Sequence of one decode round}};
+\end{tikzpicture}
+}
+\caption{Ring topology and per-rank state in RASD. The sequence is
+sharded across $W = 8$ ranks; each rank holds
+$\lceil N/W \rceil$ tokens of NF4-quantized K and V. Every rank
+loads the target model (Llama-2-7B, NF4); only rank 0 additionally
+runs the draft model (Sheared-LLaMA-1.3B, NF4) in the decode loop
+and only rank 0 retains a bf16 attention-sink prefix of the first
+128 tokens. KV blocks rotate clockwise via
+\texttt{batch\_isend\_irecv} collectives with FlashAttention-2
+inside each local block; per-round per-device memory is
+$\mathcal{O}(N/W)$, independent of total sequence length. The
+decode-round sequence using this topology is shown in
+Fig.~\ref{fig:rasd-decode}.}
+\label{fig:rasd-topology}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  flow/.style={-Latex, line width=0.9pt, dashed, gray!70},
+  >=Latex,
+]
+
+\node at (0,3.0) {\textbf{Sequence of one decode round}};
 
 \node[draw, rounded corners, fill=orange!8, minimum width=4cm,
       minimum height=0.7cm, align=center] (a)
@@ -623,24 +642,19 @@ $f = \lceil N/4096 \rceil$.
 \foreach \src/\dst in {a/b, b/c, c/d, d/e} {
   \draw[flow] (\src) -- (\dst);
 }
-\end{scope}
 
 \end{tikzpicture}
-}
-\caption{RASD architecture. (a) Sequence is sharded across $W = 8$
-ranks; each holds $\lceil N/W \rceil$ tokens of NF4-quantized K and V.
-Rank 0 additionally holds the draft model and a bf16
-attention-sink prefix of the first 128 tokens. The
-ring exchange uses \texttt{batch\_isend\_irecv} collectives and
-FlashAttention-2 inside each local block; per-round per-device memory
-is $\mathcal{O}(N/W)$, independent of total sequence length. (b) One
-decode round: the draft proposes $\gamma{=}4$ tokens on rank 0, the
-target verifies them in a single packed forward over $\gamma{+}1$
-positions on all 8 ranks via ring attention, target logits are
-broadcast from rank 0 so every rank can sample identically using a
-shared RNG seed, and the longest matching prefix is accepted
-\citep{leviathan2023fast,chen2023accelerating}.}
-\label{fig:rasd-arch}
+\caption{Sequence of one RASD decode round. The draft proposes
+$\gamma{=}4$ tokens on rank 0 (step 1); the target verifies them
+in a single packed forward over $\gamma{+}1$ positions on all 8
+ranks via ring attention (step 2); target logits are broadcast
+from rank 0 (step 3) and every rank samples identically using a
+shared RNG seed (step 4); the longest matching prefix is accepted
+and the KV cache is updated by the accepted tokens (step 5)
+\citep{leviathan2023fast,chen2023accelerating}. The 8-rank
+topology these steps execute on is shown in
+Fig.~\ref{fig:rasd-topology}.}
+\label{fig:rasd-decode}
 \end{figure}
 
 The decode loop alternates two phases per round: (i) the draft model
