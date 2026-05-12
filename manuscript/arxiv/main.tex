@@ -55,6 +55,13 @@
 
 \graphicspath{{../../figures/}{./}}
 
+% Inline keywords block. The article class doesn't ship a \keywords
+% macro; \providecommand lets a venue template (e.g. acmart, neurips)
+% supply its own \keywords{} that takes precedence on a future build.
+\providecommand{\keywords}[1]{%
+  \vspace{0.6em}\noindent\textbf{Keywords:} #1\par\vspace{0.4em}%
+}
+
 % --- Title block ----------------------------------------------------------
 \title{When Speculative Decoding Stops Paying Off at Long Context:\\
        A Diagnostic Study with RASD}
@@ -98,6 +105,10 @@ per-rank memory equation. We release the implementation under
 the MIT license with version-pinned dependencies, every
 per-position acceptance trace, and the full M3 ablation grid.
 \end{abstract}
+
+\keywords{speculative decoding, ring attention, long-context LLM
+inference, KV cache quantization, NF4 quantization, YaRN position
+scaling, distributed inference}
 
 % =========================================================================
 % Section 1 — Introduction
