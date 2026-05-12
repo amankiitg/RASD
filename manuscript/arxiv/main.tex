@@ -56,8 +56,8 @@
 \graphicspath{{../../figures/}{./}}
 
 % --- Title block ----------------------------------------------------------
-\title{Ring Attention + Speculative Decoding\\
-       for Million-Token Inference}
+\title{When Speculative Decoding Stops Paying Off at Long Context:\\
+       A Diagnostic Study with RASD}
 
 \author[1]{Aman Kesarwani\thanks{\texttt{amankesarwani@berkeley.edu}}}
 \author[2]{Raj Dandekar\thanks{Advisor. \texttt{raj@vizuara.com}}}
@@ -71,31 +71,32 @@
 % Abstract — seeded from mentor's roadmap + M4 measured findings
 % =========================================================================
 \begin{abstract}
-We present \textbf{RASD} (Ring Attention with Speculative
-Decoding), an inference system that runs Llama-2-7B at
-1\,M-token context on 8$\times$A100 80\,GB SXM4 with 40\,GB peak
-per rank, in a regime where vanilla HuggingFace
-FlashAttention-2 OOMs at 128\,k single-rank. RASD integrates
-ring-attention sequence parallelism, NF4 KV-cache quantization
-with chunked updates and a bf16 attention-sink prefix, YaRN
-position scaling, and speculative verification with a small
-draft model into a single end-to-end loop. We derive the
-dominant terms of the per-rank memory equation and show the
-chunked-NF4 KV update is what brings the 1\,M case inside the
-per-rank budget.
+Speculative decoding's 2--3$\times$ short-context speedups do
+not transfer to million-token inference. Per-round acceptance
+on Llama-2-7B with YaRN factor 256 becomes bimodal: roughly
+half of verify rounds fully reject the draft, and cumulative
+speedup against a matched target-only baseline regresses from
+1.24--1.80$\times$ at moderate contexts (128\,k--256\,k) to
+$0.96\times$ at 512\,k and parity ($1.00\times$) at 1\,M.
+A short-context PG-19 control attributes the bimodality to
+base-model YaRN extrapolation, not an RASD limitation.
+A profiler measurement shows communication is ${\leq}1.2\%$ of
+wall on the speculator rank, ruling out overlap between
+speculative work and ring communication as the speedup
+mechanism.
 
-A three-seed apples-to-apples matrix against a matched
-target-only baseline yields a 1.24--1.80$\times$ throughput
-speedup at moderate contexts (128\,k--256\,k); the speedup
-regresses to $0.96\times$ at 512\,k and reaches parity
-($1.00\times$) at 1\,M, where per-round acceptance becomes
-bimodal and roughly half of verify rounds fully reject the
-draft. A profiler measurement shows communication is
-${\leq}1.2\%$ of wall on the speculator rank, ruling out
-overlap between speculative work and ring communication as the
-speedup mechanism. We release the implementation under the MIT
-license with version-pinned dependencies, every per-position
-acceptance trace, and the full M3 ablation grid.
+These findings required a system that can run a target-model
+forward at 1\,M context. We built \textbf{RASD} (Ring Attention
+with Speculative Decoding), integrating ring-attention sequence
+parallelism, NF4 KV-cache quantization (chunked, with a bf16
+attention-sink prefix), YaRN position scaling, and speculative
+verification with a small draft model. On 8$\times$A100 80\,GB
+SXM4, RASD runs Llama-2-7B at 1\,M-token context with 40\,GB
+peak per rank, where vanilla HuggingFace FlashAttention-2 OOMs
+at 128\,k single-rank. We derive the dominant terms of the
+per-rank memory equation. We release the implementation under
+the MIT license with version-pinned dependencies, every
+per-position acceptance trace, and the full M3 ablation grid.
 \end{abstract}
 
 % =========================================================================
