@@ -547,56 +547,58 @@ $f = \lceil N/4096 \rceil$.
 
 \begin{figure}[t]
 \centering
-\resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
   font=\small,
-  rank/.style={draw, rounded corners, minimum width=2.2cm,
-               minimum height=2.6cm, fill=blue!4, line width=0.6pt,
-               align=center},
-  rank0/.style={rank, fill=orange!8, line width=0.9pt},
-  ring/.style={-Latex, line width=0.6pt, blue!50!black},
+  rank/.style={draw, circle, minimum size=1.05cm, fill=blue!8,
+               line width=0.6pt, inner sep=0pt, align=center,
+               font=\small\bfseries},
+  rank0/.style={rank, fill=orange!25, line width=1.1pt,
+                draw=orange!70!black},
+  ring/.style={-Latex, line width=0.8pt, blue!55!black},
+  legend/.style={draw=gray!45, rounded corners, fill=gray!4,
+                 inner sep=6pt, align=center, font=\footnotesize,
+                 text width=4.4cm},
   >=Latex,
 ]
 
-\node at (0,3.0) {\textbf{Ring topology of 8 ranks at one decode round}};
+\def\ringR{3.0}
 
-% Place 8 ranks in a circle
-\foreach \i [count=\n from 0] in {0,45,90,135,180,225,270,315} {
-  \pgfmathsetmacro{\px}{4.6*cos(\i)}
-  \pgfmathsetmacro{\py}{1.6*sin(\i)}
-  \pgfmathtruncatemacro{\rid}{\n}
-  \ifnum\rid=0
-    \node[rank0] (r\rid) at (\px,\py) {%
-      \textbf{Rank 0}\\[2pt]
-      \footnotesize Target NF4\\
-      \footnotesize \textbf{Draft NF4}\\
-      \footnotesize \textbf{bf16 prefix [128]}\\
-      \footnotesize KV shard NF4\\
-      \footnotesize $\lceil N/8 \rceil$ tok
-    };
+\node[font=\small\bfseries] at (0, \ringR + 1.0)
+  {Ring topology of 8 ranks at one decode round};
+
+% 8 rank circles placed clockwise starting from top (R0 at 12 o'clock)
+\foreach \angle [count=\n from 0] in {90,45,0,-45,-90,-135,180,135} {
+  \pgfmathsetmacro{\px}{\ringR*cos(\angle)}
+  \pgfmathsetmacro{\py}{\ringR*sin(\angle)}
+  \ifnum\n=0
+    \node[rank0] (r\n) at (\px,\py) {R\n};
   \else
-    \node[rank] (r\rid) at (\px,\py) {%
-      \textbf{Rank \rid}\\[2pt]
-      \footnotesize Target NF4\\
-      \footnotesize ---\\
-      \footnotesize ---\\
-      \footnotesize KV shard NF4\\
-      \footnotesize $\lceil N/8 \rceil$ tok
-    };
+    \node[rank] (r\n) at (\px,\py) {R\n};
   \fi
 }
 
-% Ring exchange arrows: rank i -> rank i+1 (clockwise from 0)
+% Ring exchange arrows clockwise around the ring
 \foreach \src/\dst in {0/1,1/2,2/3,3/4,4/5,5/6,6/7,7/0} {
-  \draw[ring] (r\src) to[bend left=10] (r\dst);
+  \draw[ring] (r\src) to[bend left=18] (r\dst);
 }
 
-\node[align=center, font=\footnotesize] at (0,-2.3)
-  {\textbf{batch\_isend\_irecv} per round: send K/V block to rank $i{+}1$,\\
-   recv block from rank $i{-}1$. FlashAttention-2 on local block.};
+% Single center legend describing per-rank state
+\node[legend] at (0, 0) {%
+  \textbf{All 8 ranks hold}\\[1pt]
+  Target Llama-2-7B (NF4)\\
+  KV shard (NF4): $\lceil N/W \rceil$ tok\\[4pt]
+  \textcolor{orange!70!black}{\textbf{R0 (highlighted) also holds}}\\[1pt]
+  Draft Sheared-LLaMA-1.3B (NF4)\\
+  bf16 attention-sink prefix [128]
+};
+
+\node[align=center, font=\footnotesize, text width=12cm]
+  at (0, -\ringR - 1.0)
+  {Ring exchange per round (\texttt{batch\_isend\_irecv}): rank $i$
+   sends its K/V block to rank $i{+}1$ and receives from $i{-}1$.
+   FlashAttention-2 runs on each local block.};
 
 \end{tikzpicture}
-}
 \caption{Ring topology and per-rank state in RASD. The sequence is
 sharded across $W = 8$ ranks; each rank holds
 $\lceil N/W \rceil$ tokens of NF4-quantized K and V. Every rank
@@ -616,31 +618,40 @@ Fig.~\ref{fig:rasd-decode}.}
 \centering
 \begin{tikzpicture}[
   font=\small,
-  flow/.style={-Latex, line width=0.9pt, dashed, gray!70},
+  roundbox/.style={draw, rounded corners, minimum width=9cm,
+               minimum height=1.05cm, align=center, line width=0.6pt,
+               inner sep=4pt},
+  draftstep/.style={roundbox, fill=orange!12, draw=orange!55!black},
+  targetstep/.style={roundbox, fill=blue!8, draw=blue!50!black},
+  acceptstep/.style={roundbox, fill=green!14, draw=green!45!black},
+  flow/.style={-Latex, line width=1.0pt, gray!55, shorten >=1pt,
+               shorten <=1pt},
   >=Latex,
+  node distance=1.1cm,
 ]
 
-\node at (0,3.0) {\textbf{Sequence of one decode round}};
+\node[font=\small\bfseries] at (0, 4.0)
+  {Sequence of one RASD decode round};
 
-\node[draw, rounded corners, fill=orange!8, minimum width=4cm,
-      minimum height=0.7cm, align=center] (a)
-  at (0,2.0) {\textbf{1. Draft generates $\gamma{=}4$ tokens} (rank 0 only)};
-\node[draw, rounded corners, fill=blue!4, minimum width=4cm,
-      minimum height=0.7cm, align=center] (b)
-  at (0,1.0) {\textbf{2. Target packed-forward} on $\gamma{+}1$ positions\\(all 8 ranks; ring attention)};
-\node[draw, rounded corners, fill=blue!4, minimum width=4cm,
-      minimum height=0.7cm, align=center] (c)
-  at (0,0.0) {\textbf{3. Broadcast logits} from rank 0};
-\node[draw, rounded corners, fill=blue!4, minimum width=4cm,
-      minimum height=0.7cm, align=center] (d)
-  at (0,-1.0) {\textbf{4. All ranks sample identically}\\(shared RNG seed)};
-\node[draw, rounded corners, fill=green!8, minimum width=4cm,
-      minimum height=0.7cm, align=center] (e)
-  at (0,-2.0) {\textbf{5. Accept matching prefix}; \\
-               KV-cache updated by accepted tokens};
+\node[draftstep] (a) at (0, 2.6)
+  {\textbf{1.\,Draft generates $\gamma{=}4$ tokens} \, (rank 0 only)};
+
+\node[targetstep, below=of a] (b)
+  {\textbf{2.\,Target packed-forward} on $\gamma{+}1$ positions \\
+   (all 8 ranks; ring attention)};
+
+\node[targetstep, below=of b] (c)
+  {\textbf{3.\,Broadcast logits} from rank 0 \, (NCCL broadcast)};
+
+\node[targetstep, below=of c] (d)
+  {\textbf{4.\,All ranks sample identically} \, (shared RNG seed)};
+
+\node[acceptstep, below=of d] (e)
+  {\textbf{5.\,Accept matching prefix}; \,
+   KV cache updated by accepted tokens};
 
 \foreach \src/\dst in {a/b, b/c, c/d, d/e} {
-  \draw[flow] (\src) -- (\dst);
+  \draw[flow] (\src.south) -- (\dst.north);
 }
 
 \end{tikzpicture}
