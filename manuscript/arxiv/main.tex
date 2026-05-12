@@ -256,17 +256,17 @@ their structural intersection as the RASD design point.
 \subsection{Attention efficiency and the long-context wall}
 \label{sec:related-attention}
 
-The transformer architecture \citep{liu2023ringattention} established
+The transformer architecture \citep{vaswani2017attention} established
 multi-head self-attention as the dominant sequence modelling
 primitive. Its $\mathcal{O}(N^2)$ memory cost in sequence length $N$
 imposed a hard ceiling on context at the scale of a single
 accelerator. Two orthogonal strategies have emerged.
 
 \paragraph{Sparse and recurrent approximations.}
-Longformer \citep{liu2023ringattention} replaced full attention with a
+Longformer \citep{beltagy2020longformer} replaced full attention with a
 sliding window of width $w$, reducing complexity to
 $\mathcal{O}(N \cdot w)$ while adding global tokens to preserve
-long-range reasoning. Transformer-XL \citep{liu2023ringattention}
+long-range reasoning. Transformer-XL \citep{dai2019transformerxl}
 introduced segment-level recurrence. Both sacrifice expressiveness:
 the window can lose critical context, and recurrence cannot revise
 earlier representations in light of later tokens.
