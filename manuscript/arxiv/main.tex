@@ -919,7 +919,11 @@ bitsandbytes 0.49.2 for NF4 quantization,
 \path{flash-attn} 2.8.3 for the local-block kernel, and
 \path{wandb} for run logging. All package versions are pinned in
 \path{requirements-lock.txt} (frozen at the
-\path{m4-phase-c-complete} git tag).
+\path{m4-phase-c-complete} git tag for the throughput matrix and at
+the \path{m3-reablation} git tag\footnote{\url{https://github.com/amankiitg/RASD/releases/tag/m3-reablation}}
+for the ablation grid in \S\ref{sec:methods-ablations} ---
+the latter captures the post-audit fixes that resolved the
+verify-loop defects identified on 2026-04-16).
 
 The repository ships the canonical aggregator
 \path{scripts/aggregate_final_results.py} that builds
@@ -1832,7 +1836,9 @@ The mapping from paper claims to source CSVs is:
   \path{results/ablations/ablations_r65.csv} (49 rows;
   46 succeeded, 3 OOM'd on un-quantized Llama-2-13B as
   noted in the audit at
-  \path{results/ablations/r65_audit.md}).
+  \path{results/ablations/r65_audit.md}). This grid corresponds to
+  the \path{m3-reablation} git
+  tag.\footnote{\url{https://github.com/amankiitg/RASD/releases/tag/m3-reablation}}
 \end{itemize}
 
 The ablation grid above is the post-fix re-run that succeeded the
