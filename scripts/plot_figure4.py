@@ -141,7 +141,7 @@ def main():
 
     # Two-panel layout: per-round trace (left) + distribution histogram (right)
     fig, (ax, ax_hist) = plt.subplots(
-        1, 2, figsize=(11.0, 4.4), dpi=140,
+        1, 2, figsize=(12.0, 5.6), dpi=140,
         gridspec_kw={"width_ratios": [2.4, 1.0]},
     )
 
@@ -185,10 +185,16 @@ def main():
     ax_hist.bar(x, pos_pct, bottom=zero_pct, color="#2ca02c",
                 alpha=0.85, label=r"$\alpha > 0$")
     for xi, (z, m, med) in enumerate(zip(zero_pct, means, medians)):
+        # Dark text on a translucent white pill so the annotation is
+        # legible against either the red (α=0) or green (α>0) segment.
         ax_hist.text(xi, 50, f"mean {m:.2f}\nmed {med:.2f}",
-                     ha="center", va="center", color="white",
-                     fontsize=8, fontweight="bold")
-    ax_hist.set_xticks(x); ax_hist.set_xticklabels(labels)
+                     ha="center", va="center", color="#1a1a1a",
+                     fontsize=8.5, fontweight="bold",
+                     bbox=dict(boxstyle="round,pad=0.25",
+                               facecolor="white", alpha=0.85,
+                               edgecolor="#888", linewidth=0.4))
+    ax_hist.set_xticks(x)
+    ax_hist.set_xticklabels(labels, rotation=90, ha="center")
     ax_hist.set_ylabel("Share of rounds (%)")
     ax_hist.set_title("α=0 vs α>0 (bimodality)")
     ax_hist.set_ylim(0, 100)

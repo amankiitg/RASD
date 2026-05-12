@@ -117,12 +117,16 @@ def main():
                 ax.text(j, i, f"{values[i, j]:.2f}",
                         ha="center", va="center", color="white", fontsize=10)
             else:
-                ax.text(j, i, "n/m", ha="center", va="center",
-                        color="#888888", fontsize=9, style="italic")
-                # Hatch unmeasured cells
+                # Denser, darker hatching + bigger bolder n/m label so
+                # the un-measured cells are unmistakable.
                 ax.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1,
-                                           fill=False, hatch="////",
-                                           edgecolor="#bbbbbb", linewidth=0))
+                                           fill=True, facecolor="#dddddd",
+                                           hatch="xxxx",
+                                           edgecolor="#666666",
+                                           linewidth=0.6))
+                ax.text(j, i, "n/m", ha="center", va="center",
+                        color="#222222", fontsize=12, fontweight="bold",
+                        style="italic")
 
     ax.set_xticks(range(len(K_VALUES)))
     ax.set_xticklabels([lbl for _, lbl in K_VALUES])
@@ -138,7 +142,7 @@ def main():
         "gpu_peak_mem_mb":  "Peak GPU memory (MB)",
     }
     title = metric_titles.get(args.metric, args.metric)
-    ax.set_title(f"M3 ablation: {title}  (R6.5, ctx=64k, 8×A100-SXM4-40GB)",
+    ax.set_title(f"M3 ablation: {title}  (ctx=64k, 8×A100-SXM4-40GB)",
                  fontsize=10)
 
     cb = fig.colorbar(im, ax=ax, shrink=0.85)

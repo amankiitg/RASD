@@ -1729,18 +1729,96 @@ needs the committed CSVs and sidecars.
 
 \section{Vanilla-RoPE Perplexity (methodology baseline)}
 \label{app:vanilla-ppl}
-% From results/perplexity/m4_ppl_vanilla_rope.csv -- shows the
-% 11-18x YaRN benefit at moderate extrapolation.
+
+The YaRN-vs-vanilla PPL comparison reported in
+\S\ref{sec:results-ppl} (Table~\ref{tab:ppl}) is grounded in two
+matched 12-row CSV files at
+\path{results/perplexity/m4_ppl_vanilla_rope.csv} and
+\path{results/perplexity/m4_ppl.csv}. Both are 3 seeds
+$\{42, 123, 456\} \times $ 4 contexts $\{4{,}096; 8{,}192; 16{,}384;
+32{,}768\}$ on PG-19 chunks, single-rank, NF4-quantized
+Llama-2-7B. The two files differ only in \texttt{rope\_type}:
+vanilla RoPE (no scaling) vs.\ YaRN with $f = \lceil N/4096
+\rceil$. 3-seed mean PPLs are: vanilla --- 10.7, 149, 1527,
+3895; YaRN --- 12.1, 13, 85, 814 at the same contexts. The
+$11$--$18\times$ improvement at $8\,$k--$16\,$k that motivates
+adopting YaRN is computed as the ratio of these per-context
+3-seed means. The control run was deliberately limited to
+contexts that fit single-rank without ring-SP forward (the
+$\leq 32\,$k cap), so the YaRN benefit at $\geq 64\,$k is not
+measured here; the bimodal-$\alpha$ analysis in
+\S\ref{sec:results-alpha} is the only PPL-adjacent signal we
+have at long context, and it indicates base-model
+extrapolation rather than YaRN itself as the rate-limiter.
 
 \section{RULER Needle-in-Haystack Infrastructure (deferred eval)}
 \label{app:ruler}
-% Brief description of scripts/score_ruler_niah.py and the
-% --prompt-source ruler_niah flag.  Why the full eval was scoped
-% out of this paper (sample-size / compute-budget).
+
+We built the RULER niah single-needle harness as part of the
+benchmark surface and stopped short of running the full eval
+in this paper. The infrastructure is committed at
+\path{scripts/score_ruler_niah.py} (a stand-alone scorer that
+reads paired \path{<run_id>.ruler_niah.json} +
+\path{<run_id>.generated.txt} sidecars and emits a CSV of
+\texttt{found / not found} per run), with the prompt builder
+exposed via the \texttt{--prompt-source ruler\_niah} flag in the
+main inference driver. What is missing is the run grid: a
+defensible RULER report needs $\sim$50--100 needle positions per
+context and at least 3 seeds, which at the 6 contexts we report
+inflates to 1{,}000+ generations. The compute budget (single
+M3+M4 grant, Lambda \$2000) was prioritized for the throughput
+matrix and the ablation re-run after the verify-loop bug
+(\S\ref{sec:results-alpha}). Wiring is left in place so a
+follow-up grant can run the eval without further engineering;
+the qualitative comparison in \S\ref{sec:results-qualitative}
+is the only retrieval-style evidence reported in this paper.
 
 \section{Full Per-Run Metrics}
 \label{app:full-results}
-% Per-seed CSV dumps for the throughput matrix, target-only baseline,
-% profiler subset, and short-context PG-19 control.
+
+Every per-seed run that produced a number in this paper is
+committed to the repository as a CSV in \path{results/final/}.
+The mapping from paper claims to source CSVs is:
+
+\begin{itemize}\itemsep1pt
+\item \textbf{Throughput matrix} (Tables~\ref{tab:speedup},
+  \ref{tab:ceiling}; Figs.~\ref{fig:throughput},
+  \ref{fig:breakdown}) ---
+  \path{results/final/final_matrix.csv} (RASD spec runs,
+  3 seeds $\times$ 4 contexts) and
+  \path{results/final/target_only_matrix.csv} (matched
+  target-only baseline). 95\% bootstrap CIs in
+  \path{results/final/ablation_cis.csv}.
+\item \textbf{Per-round acceptance traces}
+  (Fig.~\ref{fig:alpha}) --- one JSONL sidecar per run at
+  \path{results/final/per_token/<run_id>.jsonl}, with one
+  record per verify round
+  (\path{round_idx}, \path{global_pos_start},
+  \path{spec_steps}, \path{n_acc}, \path{accepted}, etc.).
+  These files are the source of truth for the
+  bimodal-$\alpha$ histograms.
+\item \textbf{Short-context PG-19 control}
+  (\S\ref{sec:results-alpha}) ---
+  \path{results/final/phase_d_short_ctx_pg19.csv} (4\,k and
+  8\,k runs with PG-19 prompts, the natural-text control that
+  rules out YaRN-extrapolation as the bimodality cause).
+  Prompt-text indexed by
+  \path{results/final/p35d_pg19_prompt.csv}.
+\item \textbf{Profiler measurement} (\S\ref{sec:results-profile})
+  --- raw \texttt{torch.profiler} traces in
+  \path{results/final/profiler_pass/}.
+\item \textbf{M3 ablation grid} (Fig.~\ref{fig:ablation},
+  Table~\ref{tab:m3-ablation}) ---
+  \path{results/ablations/ablations_r65.csv} (49 rows;
+  46 succeeded, 3 OOM'd on un-quantized Llama-2-13B as
+  noted in the audit at
+  \path{results/ablations/r65_audit.md}).
+\end{itemize}
+
+The R6.5 ablation is the post-fix re-run after the verify-loop
+defects identified on 2026-04-16 were resolved
+(\S\ref{sec:methods-ablations}); the pre-fix CSV at
+\path{results/ablations/ablations.csv} is retained for
+provenance only and should not be cited.
 
 \end{document}

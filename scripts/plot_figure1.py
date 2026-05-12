@@ -118,7 +118,8 @@ def main():
     ax.set_xticks(xticks)
     ax.set_xticklabels([xtick_labels[c] for c in xticks])
     ax.grid(True, which="both", alpha=0.3, linewidth=0.5)
-    ax.legend(loc="lower left", frameon=True, framealpha=0.95)
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+              frameon=True, framealpha=0.95, borderaxespad=0.0)
     plt.tight_layout()
 
     out_pdf = REPO_ROOT / args.out_pdf
