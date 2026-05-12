@@ -1302,19 +1302,34 @@ The aggregate mean acceptance rates in Table~\ref{tab:speedup}
 structure. We logged the sidecar trace of every verify round
 (\path{results/final/per_token/<run_id>.jsonl}, one record per
 round with \path{n_acc}, \path{global_pos_start},
-\path{spec_steps}, \path{draft_tokens}). Figure~\ref{fig:alpha}
-shows two views.
+\path{spec_steps}, \path{draft_tokens}).
+Figure~\ref{fig:alpha-trace} shows the per-round acceptance trace;
+Figure~\ref{fig:alpha-bimodality} shows the same data summarized as
+the share of rounds that fully reject the draft vs.\ accept any
+tokens.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\linewidth]{fig4_acceptance_vs_position.pdf}
-\caption{(Left) per-round acceptance $\alpha = n_{\text{acc}}/k$ for
-RASD across six contexts (4\,k and 8\,k with PG-19 prompts,
-128\,k--1\,M with synthetic prompts), smoothed by a 3-round rolling
-mean. Raw points faded behind. (Right) Bimodality view: share of
-rounds at $\alpha = 0$ vs $\alpha > 0$ per context, annotated with
-mean and median $\alpha$.}
-\label{fig:alpha}
+\includegraphics[width=0.95\linewidth]{fig4a_acceptance_trace.pdf}
+\caption{Per-round acceptance $\alpha = n_{\text{acc}}/k$ for RASD
+across six contexts (4\,k and 8\,k with PG-19 prompts, 128\,k--1\,M
+with synthetic prompts), smoothed by a 3-round rolling mean. Raw
+points are drawn faded behind the smoothed line. The traces show
+the per-round texture that the aggregate means in
+Table~\ref{tab:speedup} hide.}
+\label{fig:alpha-trace}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.78\linewidth]{fig4b_bimodality.pdf}
+\caption{Bimodality view of $\alpha$: per-context share of verify
+rounds that fully reject the draft ($\alpha = 0$, red) vs.\ accept
+at least one token ($\alpha > 0$, green). Annotations report the
+per-context mean and median $\alpha$. At every long context
+(128\,k--1\,M), roughly half of all verify rounds fully reject the
+draft --- the structural signal the per-context means obscure.}
+\label{fig:alpha-bimodality}
 \end{figure}
 
 \paragraph{The bimodality finding.}
@@ -1770,7 +1785,7 @@ M3+M4 grant, Lambda \$2000) was prioritized for the throughput
 matrix and the ablation re-run after the verify-loop bug
 (\S\ref{sec:results-alpha}). Wiring is left in place so a
 follow-up grant can run the eval without further engineering;
-the qualitative comparison in \S\ref{sec:results-qualitative}
+the qualitative comparison in \S\ref{sec:results-qual}
 is the only retrieval-style evidence reported in this paper.
 
 \section{Full Per-Run Metrics}
@@ -1790,7 +1805,8 @@ The mapping from paper claims to source CSVs is:
   target-only baseline). 95\% bootstrap CIs in
   \path{results/final/ablation_cis.csv}.
 \item \textbf{Per-round acceptance traces}
-  (Fig.~\ref{fig:alpha}) --- one JSONL sidecar per run at
+  (Figs.~\ref{fig:alpha-trace} and~\ref{fig:alpha-bimodality})
+  --- one JSONL sidecar per run at
   \path{results/final/per_token/<run_id>.jsonl}, with one
   record per verify round
   (\path{round_idx}, \path{global_pos_start},
@@ -1815,8 +1831,8 @@ The mapping from paper claims to source CSVs is:
   \path{results/ablations/r65_audit.md}).
 \end{itemize}
 
-The R6.5 ablation is the post-fix re-run after the verify-loop
-defects identified on 2026-04-16 were resolved
+The ablation grid above is the post-fix re-run that succeeded the
+verify-loop defects identified on 2026-04-16
 (\S\ref{sec:methods-ablations}); the pre-fix CSV at
 \path{results/ablations/ablations.csv} is retained for
 provenance only and should not be cited.

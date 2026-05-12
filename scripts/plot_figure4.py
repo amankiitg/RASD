@@ -84,8 +84,14 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--per-token-dir", default="results/final/per_token",
                    help="Directory of <run_id>.jsonl files.")
-    p.add_argument("--out-pdf", default="figures/fig4_acceptance_vs_position.pdf")
-    p.add_argument("--out-png", default="figures/fig4_acceptance_vs_position.png")
+    p.add_argument("--out-trace-pdf",
+                   default="figures/fig4a_acceptance_trace.pdf")
+    p.add_argument("--out-trace-png",
+                   default="figures/fig4a_acceptance_trace.png")
+    p.add_argument("--out-bimodality-pdf",
+                   default="figures/fig4b_bimodality.pdf")
+    p.add_argument("--out-bimodality-png",
+                   default="figures/fig4b_bimodality.png")
     p.add_argument("--smooth", type=int, default=3,
                    help="Rolling-mean window size for smoothing.")
     p.add_argument("--prefer", default="RASD",
@@ -139,40 +145,43 @@ def main():
         raise SystemExit("No matching per-token files found "
                          f"(prefer={args.prefer}).")
 
-    # Two-panel layout: per-round trace (left) + distribution histogram (right)
-    fig, (ax, ax_hist) = plt.subplots(
-        1, 2, figsize=(12.0, 5.6), dpi=140,
-        gridspec_kw={"width_ratios": [2.4, 1.0]},
-    )
-
+    # =====================================================================
+    # Figure A: per-round acceptance trace (line plot, full width)
+    # =====================================================================
+    fig_a, ax = plt.subplots(figsize=(8.5, 4.6), dpi=140)
     for ctx in sorted(series):
         alphas = series[ctx]
         smoothed = _rolling_mean(alphas, k=args.smooth)
         rounds = list(range(1, len(smoothed) + 1))
         ax.plot(rounds, smoothed, color=CTX_COLOR[ctx],
                 linewidth=2.0, alpha=0.95, label=CTX_LABEL[ctx])
-        # Raw points lightly drawn behind
         ax.scatter(rounds, alphas, color=CTX_COLOR[ctx],
                    s=12, alpha=0.25, edgecolors="none")
-
     ax.set_xlabel("Verify round")
     ax.set_ylabel(r"Acceptance rate $\alpha = n_{\mathrm{acc}}/k$")
-    ax.set_title("Per-round acceptance trace (smoothing window k="
-                 f"{args.smooth})")
+    ax.set_title("Per-round acceptance trace across contexts "
+                 f"(RASD, spec_steps=4, smoothing window k={args.smooth})")
     ax.set_ylim(-0.02, 1.02)
     ax.grid(True, alpha=0.3, linewidth=0.5)
-    ax.legend(title="Context", loc="upper right", frameon=True,
-              framealpha=0.95)
+    ax.legend(title="Context", loc="center left",
+              bbox_to_anchor=(1.02, 0.5), frameon=True,
+              framealpha=0.95, borderaxespad=0.0)
+    fig_a.tight_layout()
 
-    # ---- Right panel: distribution + median/IQR table ----
-    # Stacked bar showing α=0 vs α>0 share per ctx — surfaces the
-    # bimodality finding (many rounds reject the entire draft).
+    out_a_pdf = REPO_ROOT / args.out_trace_pdf
+    out_a_png = REPO_ROOT / args.out_trace_png
+    out_a_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig_a.savefig(out_a_pdf, format="pdf", bbox_inches="tight")
+    fig_a.savefig(out_a_png, format="png", bbox_inches="tight", dpi=160)
+    print(f"Wrote {out_a_pdf}")
+    print(f"Wrote {out_a_png}")
+
+    # =====================================================================
+    # Figure B: bimodality stacked bar (full width — text now has room)
+    # =====================================================================
     ctxs_sorted = sorted(series)
     labels   = [CTX_LABEL[c] for c in ctxs_sorted]
-    zero_pct = []
-    pos_pct  = []
-    medians  = []
-    means    = []
+    zero_pct, pos_pct, medians, means = [], [], [], []
     for c in ctxs_sorted:
         a = series[c]
         zero = sum(1 for v in a if v == 0) / len(a) * 100
@@ -180,39 +189,38 @@ def main():
         medians.append(float(np.median(a)))
         means.append(float(np.mean(a)))
 
+    fig_b, ax_hist = plt.subplots(figsize=(7.0, 4.8), dpi=140)
     x = list(range(len(labels)))
-    ax_hist.bar(x, zero_pct, color="#d62728", alpha=0.85, label=r"$\alpha = 0$")
+    ax_hist.bar(x, zero_pct, color="#d62728", alpha=0.85,
+                label=r"$\alpha = 0$ (full draft rejected)")
     ax_hist.bar(x, pos_pct, bottom=zero_pct, color="#2ca02c",
-                alpha=0.85, label=r"$\alpha > 0$")
+                alpha=0.85, label=r"$\alpha > 0$ (any acceptance)")
     for xi, (z, m, med) in enumerate(zip(zero_pct, means, medians)):
         # Dark text on a translucent white pill so the annotation is
         # legible against either the red (α=0) or green (α>0) segment.
         ax_hist.text(xi, 50, f"mean {m:.2f}\nmed {med:.2f}",
                      ha="center", va="center", color="#1a1a1a",
-                     fontsize=8.5, fontweight="bold",
-                     bbox=dict(boxstyle="round,pad=0.25",
-                               facecolor="white", alpha=0.85,
-                               edgecolor="#888", linewidth=0.4))
+                     fontsize=9.5, fontweight="bold",
+                     bbox=dict(boxstyle="round,pad=0.30",
+                               facecolor="white", alpha=0.90,
+                               edgecolor="#888", linewidth=0.5))
     ax_hist.set_xticks(x)
-    ax_hist.set_xticklabels(labels, rotation=90, ha="center")
+    ax_hist.set_xticklabels(labels, rotation=0, ha="center", fontsize=10)
     ax_hist.set_ylabel("Share of rounds (%)")
-    ax_hist.set_title("α=0 vs α>0 (bimodality)")
-    ax_hist.set_ylim(0, 100)
-    ax_hist.legend(loc="lower right", frameon=True, framealpha=0.95,
-                   fontsize=8)
+    ax_hist.set_title(r"Bimodality of $\alpha$: full-rejection vs "
+                      r"any-acceptance share by context")
+    ax_hist.set_ylim(0, 105)
+    ax_hist.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18),
+                   frameon=True, framealpha=0.95, fontsize=9, ncol=2)
     ax_hist.grid(True, axis="y", alpha=0.3, linewidth=0.5)
+    fig_b.tight_layout()
 
-    fig.suptitle("Per-round acceptance rate across contexts "
-                 "(RASD, spec_steps=4)", fontsize=12, y=1.02)
-    plt.tight_layout()
-
-    out_pdf = REPO_ROOT / args.out_pdf
-    out_png = REPO_ROOT / args.out_png
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_pdf, format="pdf", bbox_inches="tight")
-    plt.savefig(out_png, format="png", bbox_inches="tight", dpi=160)
-    print(f"Wrote {out_pdf}")
-    print(f"Wrote {out_png}")
+    out_b_pdf = REPO_ROOT / args.out_bimodality_pdf
+    out_b_png = REPO_ROOT / args.out_bimodality_png
+    fig_b.savefig(out_b_pdf, format="pdf", bbox_inches="tight")
+    fig_b.savefig(out_b_png, format="png", bbox_inches="tight", dpi=160)
+    print(f"Wrote {out_b_pdf}")
+    print(f"Wrote {out_b_png}")
     print()
     print(f"Per-context α summary (mean over all rounds):")
     for ctx in sorted(series):

@@ -99,8 +99,9 @@ def main():
     ax.set_title("Time breakdown across contexts (RASD, spec_steps=4)")
     ax.set_ylim(0, 100)
     ax.set_yticks([0, 25, 50, 75, 100])
-    ax.legend(loc="upper right", frameon=True, framealpha=0.95,
-              fontsize=9, ncol=4, bbox_to_anchor=(1.0, 1.15))
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+              frameon=True, framealpha=0.95, fontsize=9,
+              borderaxespad=0.0)
     ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
     plt.tight_layout()
 

@@ -105,17 +105,25 @@ def main():
     values, mask = _build_grid(valid, args.metric)
 
     fig, ax = plt.subplots(figsize=(7.5, 3.0))
-    cmap = plt.get_cmap("viridis").copy()
+    # Two-tone sequential (light to deep blue) so the figure reads as
+    # a single-axis quantity rather than a multi-hue thermal map.
+    cmap = plt.get_cmap("Blues").copy()
     cmap.set_bad(color="#e5e5e5")  # un-measured cells
     masked = np.ma.array(values, mask=~mask)
     im = ax.imshow(masked, aspect="auto", cmap=cmap, origin="lower")
 
-    # Annotate measured cells with the mean value
+    # Annotate measured cells with the mean value. Use auto-contrast:
+    # Blues cmap goes from very light (low values) to deep blue (high
+    # values), so we pick white text only where the cell is dark.
+    vmin, vmax = float(np.nanmin(values)), float(np.nanmax(values))
+    vmid = (vmin + vmax) / 2.0
     for i in range(values.shape[0]):
         for j in range(values.shape[1]):
             if mask[i, j]:
+                txt_color = "white" if values[i, j] > vmid else "#1a1a1a"
                 ax.text(j, i, f"{values[i, j]:.2f}",
-                        ha="center", va="center", color="white", fontsize=10)
+                        ha="center", va="center", color=txt_color,
+                        fontsize=10, fontweight="bold")
             else:
                 # Denser, darker hatching + bigger bolder n/m label so
                 # the un-measured cells are unmistakable.
@@ -148,12 +156,13 @@ def main():
     cb = fig.colorbar(im, ax=ax, shrink=0.85)
     cb.set_label(title)
 
-    # Footer note explaining the hatched cells
-    fig.text(0.5, 0.01,
+    # Footer note explaining the hatched cells (larger + darker so it
+    # is actually readable next to the heatmap).
+    fig.text(0.5, 0.02,
              "Hatched cells (n/m) were not measured: A1 fixed k=4; "
              "A2 fixed draft=Sheared-LLaMA-1.3B.",
-             ha="center", fontsize=8, color="#666666")
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+             ha="center", fontsize=10, color="#222222")
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
