@@ -31,3 +31,7 @@ manuscript/**/main.bbl
 manuscript/**/main.log
 manuscript/**/main.out
 manuscript/**/main.toc
+
+# arXiv submission build artifacts (regenerable; flattened-path copies)
+manuscript/**/arxiv-submission/
+manuscript/**/arxiv-submission.tar.gz
