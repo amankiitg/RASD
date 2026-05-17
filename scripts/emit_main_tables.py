@@ -48,7 +48,7 @@ def write_speedup(data: dict, out: Path) -> None:
     lines.append(r"\begin{tabular}{lrrrrr}")
     lines.append(r"\toprule")
     lines.append(r"Context & RASD (tps) & Target (tps) & Speedup & "
-                 r"$n$ seeds & RASD 95\% CI \\")
+                 r"$n$ seeds & RASD $\pm 1.96\,$SEM \\")
     lines.append(r"\midrule")
     for r in rows:
         lines.append(
@@ -74,13 +74,13 @@ def write_memory(data: dict, out: Path) -> None:
         t = tgt.get(t_level, {})
         rows.append((
             r["context_length"],
-            r["mean"] / 1024 if r.get("mean") else 0.0,   # MB -> GB
+            r["mean"] / 1024 if r.get("mean") else 0.0,   # MiB -> GiB
             t.get("mean", 0.0) / 1024 if t.get("mean") else 0.0,
         ))
     lines = [
         r"\begin{tabular}{lrrr}",
         r"\toprule",
-        r"Context & RASD peak (GB) & Target peak (GB) & RASD overhead (GB) \\",
+        r"Context & RASD peak (GiB) & Target peak (GiB) & RASD overhead (GiB) \\",
         r"\midrule",
     ]
     for ctx, rasd_gb, tgt_gb in rows:
@@ -166,7 +166,7 @@ def write_ceiling(data: dict, out: Path) -> None:
     lines = [
         r"\begin{tabular}{lrrl}",
         r"\toprule",
-        r"Context & Throughput (tps) & Peak (GB) & Status \\",
+        r"Context & Throughput (tps) & Peak (GiB) & Status \\",
         r"\midrule",
     ]
     for r in rows:

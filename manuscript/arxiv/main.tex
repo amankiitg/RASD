@@ -83,8 +83,8 @@ not transfer to million-token inference. Per-round acceptance
 on Llama-2-7B with YaRN factor 256 becomes bimodal: roughly
 half of verify rounds fully reject the draft, and cumulative
 speedup against a matched target-only baseline regresses from
-1.24--1.80$\times$ at moderate contexts (128\,k--256\,k) to
-$0.96\times$ at 512\,k and parity ($1.00\times$) at 1\,M.
+1.26--1.76$\times$ at moderate contexts (128\,k--256\,k) to
+$0.94\times$ at 512\,k and $0.97\times$ at 1\,M.
 A short-context PG-19 control attributes the bimodality to
 base-model YaRN extrapolation, not an RASD limitation.
 A profiler measurement shows communication is ${\leq}1.2\%$ of
@@ -98,7 +98,7 @@ with Speculative Decoding), integrating ring-attention sequence
 parallelism, NF4 KV-cache quantization (chunked, with a bf16
 attention-sink prefix), YaRN position scaling, and speculative
 verification with a small draft model. On 8$\times$A100 80\,GB
-SXM4, RASD runs Llama-2-7B at 1\,M-token context with 40\,GB
+SXM4, RASD runs Llama-2-7B at 1\,M-token context with 40\,GiB
 peak per rank, where vanilla HuggingFace FlashAttention-2 OOMs
 at 128\,k single-rank. We derive the dominant terms of the
 per-rank memory equation. We release the implementation under
@@ -131,15 +131,15 @@ simultaneously.
 \paragraph{Bottleneck 1 (memory).}
 The key-value (KV) cache grows linearly with sequence length.  For
 Llama-2-7B in bf16, a 1 million-token KV cache occupies approximately
-67\,GB --- already exceeding a single A100 80\,GB --- and the
-attention matrix for prefill scales quadratically.  Ring Attention
+512\,GiB --- far exceeding the 80\,GiB capacity of a single A100 ---
+and the attention matrix for prefill scales quadratically.  Ring Attention
 \citep{liu2023ringattention} resolves this by sharding the sequence
 dimension across $W$ ranks and pipelining the per-block attention
 computation through a ring of inter-rank exchanges.  Combined with
 FlashAttention-2 \citep{dao2023flashattention2} for the local
 attention kernel and KV quantization (NF4
 \citep{dettmers2023qlora}, KIVI \citep{liu2024kivi},
-KVQuant \citep{hooper2024kvquant}) for cache compression, sub-100\,GB
+KVQuant \citep{hooper2024kvquant}) for cache compression, sub-100\,GiB
 per-rank footprints become feasible at 1\,M context.
 
 \paragraph{Bottleneck 2 (latency).}
@@ -181,7 +181,7 @@ a bf16 outlier-keep prefix \citep{xiao2024streamingllm} on rank 0,
 (iii) YaRN position scaling, and (iv) speculative verification with a
 1.3\,B-parameter draft model into a single end-to-end loop.  On
 8$\times$A100 80\,GB SXM4, RASD runs Llama-2-7B inference at
-1\,M context with 40\,GB peak per rank.  In the same hardware
+1\,M context with 40\,GiB peak per rank.  In the same hardware
 configuration, vanilla HuggingFace FlashAttention-2 \texttt{generate()}
 runs out of memory at 128\,k single-rank --- so a direct
 \emph{throughput} comparison at long context is meaningless; the
@@ -195,9 +195,9 @@ the paper in context. \emph{First}, the answer to the central
 question: the speculative speedup at 4\,k does not transfer to
 1\,M. The three-seed mean speedup of RASD against a matched
 target-only baseline (same RASD infrastructure with the
-speculative verify loop disabled) is $1.24\times$ at 128\,k,
-$1.80\times$ at 256\,k, regresses to $0.96\times$ at 512\,k, and
-reaches parity ($1.00\times$) at 1\,M. \emph{Second}, per-round
+speculative verify loop disabled) is $1.26\times$ at 128\,k,
+$1.76\times$ at 256\,k, regresses to $0.94\times$ at 512\,k, and
+$0.97\times$ at 1\,M. \emph{Second}, per-round
 acceptance at long context is \emph{bimodal} (about half of
 rounds reject the entire draft); a short-context control on real
 text shows this bimodality is specific to Llama-2 under YaRN
@@ -210,7 +210,7 @@ speculator rank shows communication is $\leq 1.2\%$ of wall
 across the matrix; \S\ref{sec:results-profile} interprets this
 result in light of both mechanisms. \emph{Fourth}, as a capability result:
 on 8$\times$A100 80\,GB SXM4, RASD reaches 1\,M-token context
-with a peak per-rank memory of 40\,GB, half the available 80\,GB,
+with a peak per-rank memory of 40\,GiB, half the available 80\,GiB,
 while HuggingFace's standard
 \texttt{Llama-2-7b-hf.generate()} with FlashAttention-2 runs out
 of memory at 128\,k single-rank, making a direct throughput
@@ -223,7 +223,7 @@ characterize when and why this amortization pays off, and when
 it does not. Concretely:
 \begin{itemize}[leftmargin=*,topsep=0pt]
   \item \textbf{A 1\,M-token inference capability} on 8$\times$A100
-        80\,GB at 40\,GB peak per rank. The standard open-source
+        80\,GB at 40\,GiB peak per rank. The standard open-source
         inference stack we benchmark against does not reach 128\,k
         on this hardware. We derive the per-rank memory equation
         from first principles and validate it within rounding
@@ -236,7 +236,7 @@ it does not. Concretely:
         ablation sweeps (draft model, speculative steps, KV block
         size, prefetch depth, target model) at a 64\,k harness ---
         the M3 sweep that fixes every knob in the system. The
-        block-size sweep alone is a 4$\times$ throughput lever.
+        block-size sweep alone is a 2$\times$ throughput lever.
   \item \textbf{An apples-to-apples three-seed speedup matrix} at
         128\,k--1\,M against a target-only baseline that differs
         from RASD in exactly one variable.
@@ -298,7 +298,7 @@ its ring-attention layer.
 
 The $\mathcal{O}(N)$ footprint still grows without bound. For
 $N \sim 10^6$, even $\mathcal{O}(N)$ memory at the per-layer level
-($\sim$1\,MB/token for a 13B model in bf16) exceeds single-device
+($\sim$1\,MiB/token for a 13B model in bf16) exceeds single-device
 capacity. \emph{A fundamentally multi-device approach is required.}
 
 \paragraph{Architectural alternatives to attention.}
@@ -590,9 +590,9 @@ $f = \lceil N/4096 \rceil$.
 \node[legend] at (0, 0) {%
   \textbf{All 8 ranks hold}\\[1pt]
   Target Llama-2-7B (NF4)\\
+  Draft Sheared-LLaMA-1.3B (NF4)\\
   KV shard (NF4): $\lceil N/W \rceil$ tok\\[4pt]
   \textcolor{orange!70!black}{\textbf{R0 (highlighted) also holds}}\\[1pt]
-  Draft Sheared-LLaMA-1.3B (NF4)\\
   bf16 attention-sink prefix [128]
 };
 
@@ -606,10 +606,10 @@ $f = \lceil N/4096 \rceil$.
 \caption{Ring topology and per-rank state in RASD. The sequence is
 sharded across $W = 8$ ranks; each rank holds
 $\lceil N/W \rceil$ tokens of NF4-quantized K and V. Every rank
-loads the target model (Llama-2-7B, NF4); only rank 0 additionally
-runs the draft model (Sheared-LLaMA-1.3B, NF4) in the decode loop
-and only rank 0 retains a bf16 attention-sink prefix of the first
-128 tokens. KV blocks rotate clockwise via
+loads and runs both the target model (Llama-2-7B, NF4) and the
+draft model (Sheared-LLaMA-1.3B, NF4) in the decode loop; only
+rank 0 additionally retains a bf16 attention-sink prefix of the
+first 128 tokens. KV blocks rotate clockwise via
 \texttt{batch\_isend\_irecv} collectives with FlashAttention-2
 inside each local block; per-round per-device memory is
 $\mathcal{O}(N/W)$, independent of total sequence length. The
@@ -638,7 +638,7 @@ Fig.~\ref{fig:rasd-decode}.}
   {Sequence of one RASD decode round};
 
 \node[draftstep] (a) at (0, 2.6)
-  {\textbf{1.\,Draft generates $\gamma{=}4$ tokens} \, (rank 0 only)};
+  {\textbf{1.\,Draft generates $\gamma{=}4$ tokens} \, (all 8 ranks)};
 
 \node[targetstep, below=of a] (b)
   {\textbf{2.\,Target packed-forward} on $\gamma{+}1$ positions \\
@@ -660,10 +660,10 @@ Fig.~\ref{fig:rasd-decode}.}
 
 \end{tikzpicture}
 \caption{Sequence of one RASD decode round. The draft proposes
-$\gamma{=}4$ tokens on rank 0 (step 1); the target verifies them
+$\gamma{=}4$ tokens on all 8 ranks (step 1); the target verifies them
 in a single packed forward over $\gamma{+}1$ positions on all 8
-ranks via ring attention (step 2); target logits are broadcast
-from rank 0 (step 3) and every rank samples identically using a
+ranks via ring attention (step 2); the draft and target logits are
+broadcast from rank 0 (step 3) and every rank samples identically using a
 shared RNG seed (step 4); the longest matching prefix is accepted
 and the KV cache is updated by the accepted tokens (step 5)
 \citep{leviathan2023fast,chen2023accelerating}. The 8-rank
@@ -673,11 +673,11 @@ Fig.~\ref{fig:rasd-topology}.}
 \end{figure}
 
 The decode loop alternates two phases per round: (i) the draft model
-generates $\gamma = 4$ speculative tokens autoregressively on rank
-0; (ii) the target model performs a packed forward over those
-$\gamma + 1$ positions on all ranks via ring attention, broadcasting
-the resulting logits from rank 0 to all ranks so that each rank
-samples identically (the standard ring-decode invariant). The
+generates $\gamma = 4$ speculative tokens autoregressively on every
+rank; (ii) the target model performs a packed forward over those
+$\gamma + 1$ positions on all ranks via ring attention, after which
+rank 0 broadcasts the draft and target logits to all ranks so that
+each rank samples identically (the standard ring-decode invariant). The
 acceptance rule of \citet{leviathan2023fast} determines the longest
 matching prefix; rejected tokens trigger a residual resample from
 $\max(0, p - q)/Z$.
@@ -722,10 +722,10 @@ FlashAttention-2 kernel call.
 The naive KV update appends a new $k_i, v_i$ tensor to the cache and
 re-quantizes the full per-layer block --- which at 1\,M context
 produces a transient bf16 view of the entire layer's KV cache
-(several GB per layer per rank). We split the update into chunks of
-2048 elements at a time, keeping the transient under 100\,MB. This
+(several GiB per layer per rank). We split the update into chunks of
+2048 elements at a time, keeping the transient under 100\,MiB. This
 chunked-update lever is what brings 1\,M-context inference inside
-40\,GB per rank.
+40\,GiB per rank.
 
 \paragraph{(c) Outlier-keep prefix.}
 Following the attention-sink finding of
@@ -733,8 +733,8 @@ Following the attention-sink finding of
 sequence in bf16 on rank 0 only. Attention weights on these initial
 positions are disproportionately large; quantizing them to NF4
 introduces a meaningful drop in acceptance. The outlier prefix costs
-$128 \cdot 2 \cdot 2 \cdot 4096 \cdot L$ bytes per rank
-$\approx 80\,\text{MB}$ for the target model --- negligible.
+$128 \cdot 2 \cdot 2 \cdot 4096 \cdot L$ bytes on rank 0
+$\approx 64\,\text{MiB}$ for the target model --- negligible.
 
 \paragraph{Memory equation.}
 Per-rank peak memory at sequence length $N$ over $W$ ranks is
@@ -742,18 +742,19 @@ approximately
 \begin{equation}
 \label{eq:memory}
 M_{\text{rank}}(N) \;\approx\;
-\underbrace{M_{\text{weights}}}_{\approx 4.0\,\text{GB}}
+\underbrace{M_{\text{weights}}}_{\approx 4.0\,\text{GiB}}
 \;+\;
-\underbrace{\frac{N}{W} \cdot L \cdot 2 \cdot d_h \cdot \tfrac{1}{2}}_{\text{NF4 KV per rank}}
+\underbrace{\frac{N}{W} \cdot L \cdot 2 \cdot d_{\text{model}} \cdot \tfrac{1}{2}}_{\text{NF4 KV per rank}}
 \;+\;
-\underbrace{M_{\text{transient}}}_{\le 4\,\text{GB}}
+\underbrace{M_{\text{transient}}}_{\le 4\,\text{GiB}}
 \end{equation}
-where $L = 32$ layers, $d_h = 4096$ head dim, and the $\tfrac{1}{2}$
+where $L = 32$ layers, $d_{\text{model}} = 4096$ is the hidden width
+(32 KV heads $\times$ 128 head dim), and the $\tfrac{1}{2}$
 factor is the NF4 4-bit compression ratio relative to bf16. We
 use Eq.~\ref{eq:memory} to sketch the dominant terms only: it
 does not model transient or scratch contributions that grow with
 context --- prefill activations, the FA-2 NF4-dequant scratch, and
-the NCCL workspace --- so the measured peak runs ${\sim}15$\,GB
+the NCCL workspace --- so the measured peak runs ${\sim}15$\,GiB
 higher at $N = 10^6$ than these dominant terms account for in
 isolation, while still landing inside the per-rank budget
 (\S\ref{sec:results-memory}).
@@ -762,10 +763,12 @@ isolation, while still landing inside the per-rank budget
 \label{sec:methods-spec}
 
 The verify step packs $\gamma + 1$ positions into a single target
-forward. Rank 0 holds the draft outputs; we broadcast the draft
-sequence to all ranks, run the packed target forward, broadcast the
-target logits at all $\gamma + 1$ positions from rank 0, then every
-rank samples identically using a shared RNG seed. This last point
+forward. Every rank runs the draft model and the packed
+$\gamma + 1$-position target forward locally; rank 0 then
+broadcasts its draft and target logits to all ranks (a
+${\sim}1$\,MB collective per round) so the acceptance test is
+bit-identical everywhere, after which every rank samples using a
+shared RNG seed. This last point
 is load-bearing: the acceptance test
 \begin{equation}
 \label{eq:acceptance}
@@ -796,7 +799,7 @@ quality at moderate extrapolation: PPL at 4\,k is 12.1 and at 8\,k
 is 13.2 (essentially flat, see Table~\ref{tab:ppl}). At 32\,k
 ($f = 8$) PPL rises to 814 --- still interpretable but degraded. We
 do not measure PPL at $f \geq 32$ because single-rank PPL evaluation
-does not fit at those contexts on 80\,GB; the YaRN extrapolation
+does not fit at those contexts on 80\,GiB; the YaRN extrapolation
 regime is the dominant source of degradation in our long-context
 results (\S\ref{sec:results-alpha}).
 
@@ -806,8 +809,8 @@ results (\S\ref{sec:results-alpha}).
 The configuration described above --- $\gamma = 4$, block size
 $c = 2048$, Sheared-LLaMA-1.3B draft, prefetch depth 1 --- was not
 chosen arbitrarily. Each value is the winner of a one-factor-at-a-
-time ablation sweep we ran on a smaller setup (8$\times$A100 80\,GB
-at 64\,k context) before committing to the full 1\,M-context matrix.
+time ablation sweep we ran on a smaller setup (8$\times$A100 40\,GB
+SXM4 at 64\,k context) before committing to the full 1\,M-context matrix.
 This section reports the five sweeps that fix the design point.
 All sweeps reuse 3 seeds $\{42, 123, 456\}$ and report mean
 throughput and acceptance with a 95\% bootstrap CI
@@ -820,7 +823,7 @@ throughput and acceptance with a 95\% bootstrap CI
 levels swept (columns). Color encodes mean throughput (tok/s) over
 3 seeds at 64\,k context. The winning level per axis is annotated
 in bold. The block-size sweep (A3) shows the largest single-axis
-effect: a 4$\times$ throughput improvement from 256-token blocks to
+effect: a 2$\times$ throughput improvement from 256-token blocks to
 2048-token blocks at constant acceptance.}
 \label{fig:ablation}
 \end{figure}
@@ -859,8 +862,8 @@ This sweep is the highest-leverage design choice in the paper.
 We compared $c \in \{256, 512, 1024, 2048\}$ tokens, where $c$ is
 the size of each rank's KV shard exchanged in one ring round. The
 throughput results: 0.62, 0.87, 1.11, 1.25\,tok/s --- a
-\textbf{4$\boldsymbol{\times}$ improvement} from the smallest to
-largest block size, with acceptance unchanged
+\textbf{2$\boldsymbol{\times}$ improvement} ($+102\%$) from the
+smallest to largest block size, with acceptance unchanged
 (it is independent of $c$). Larger blocks amortize the fixed
 per-collective NCCL overhead across more useful work; the
 diminishing returns past 2048 are bounded by tail latency on the
@@ -897,8 +900,9 @@ depends on acceptance, which is a per-round property of the
 draft-target pair; the per-round mechanic is the same at any
 context. The prefetch-depth result trivially extrapolates: if
 communication is 12\% of wall at 64\,k, it can only become a
-smaller fraction at longer contexts where the target forward grows
-quadratically with the KV cache.
+smaller fraction at longer contexts where the target forward's
+attention cost grows linearly with the KV-cache length (the
+packed verify length $\gamma + 1$ is fixed).
 
 \paragraph{Design choices we did not sweep.}
 The paper reports results on Llama-2-7B. A target-family sweep
@@ -1092,7 +1096,7 @@ shows the result of running vanilla HuggingFace
 bf16 KV cache, single rank) at five context lengths. Only the 32\,k
 configuration completes; every context $\geq 128\,$k runs out of
 memory during the prefill of the input prompt, before any generation
-occurs. The 32\,k run consumes 30.8\,GB of GPU memory and produces
+occurs. The 32\,k run consumes 30.1\,GiB of GPU memory and produces
 output at 7.25\,tok/s.
 
 \begin{table}[t]
@@ -1107,7 +1111,7 @@ attempt.}
 \end{table}
 
 In the same hardware budget, RASD reaches 1\,M-token context with a
-peak per-rank memory of 40.3\,GB --- half of the available 80\,GB.
+peak per-rank memory of 39.3\,GiB --- half of the available 80\,GiB.
 Figure~\ref{fig:throughput} plots throughput against context length
 for the three configurations side by side. RASD's throughput
 decreases with context length (as expected; each target forward
@@ -1123,20 +1127,22 @@ baseline (\textcolor{orange!90!black}{$\blacksquare$}) at 4 contexts
 $\times$ 3 seeds; vanilla HF FA-2 \texttt{generate()}
 (\textcolor{green!50!black}{$\blacktriangle$}) at 32\,k only, OOM
 markers (\textcolor{red}{$\times$}) for $\geq 128$\,k. Bands are
-95\% bootstrap CI over 3 seeds. Both axes log scale.}
+95\% CI ($\pm 1.96\,$SEM) over 3 seeds. Both axes log scale.}
 \label{fig:throughput}
 \end{figure}
 
 \paragraph{Why HF FA-2 OOMs.}
 At ctx=128\,k, the bf16 KV cache alone for Llama-2-7B requires
-${\approx} 8.6$\,GB; at 1\,M it requires ${\approx} 67$\,GB. Add
-the model weights (13.5\,GB in bf16) plus prefill activations
+${\approx} 64$\,GiB; at 1\,M it requires ${\approx} 512$\,GiB. Add
+the model weights (${\approx}\,13$\,GiB in bf16) plus prefill activations
 (quadratic in sequence length even with FlashAttention's memory
 optimization, because each per-row online-softmax pass still
-materializes the row's K and V), and a single 80\,GB A100 cannot
-fit the prefill of a 1\,M-token prompt. RASD shards the KV cache
-across $W = 8$ ranks (8.4\,GB/rank at 1\,M context) and quantizes
-each rank's KV to NF4 (2.1\,GB/rank), bringing the per-rank
+materializes the row's K and V), and a single 80\,GiB A100 cannot
+hold the 128\,k working set (model weights $+$ KV cache $+$
+activation/scratch buffers), let alone the prefill of a
+1\,M-token prompt. RASD shards the KV cache
+across $W = 8$ ranks (64\,GiB/rank at 1\,M context) and quantizes
+each rank's KV to NF4 (16\,GiB/rank), bringing the per-rank
 footprint into the regime where the model weights and transient
 buffers fit alongside.
 
@@ -1159,16 +1165,16 @@ speedup ratio.
 \begin{table}[t]
 \centering
 \caption{Throughput speedup of RASD vs.\ a matched target-only
-baseline. All entries are 3-seed means with 95\% bootstrap CIs over
+baseline. All entries are 3-seed means with 95\% CIs ($\pm 1.96\,$SEM) over
 \{42, 123, 456\}. ``Speedup'' is the ratio of RASD throughput to
 target-only throughput at the same context.}
 \label{tab:speedup}
 \input{../../tables/main_speedup.tex}
 \end{table}
 
-The speedup is non-monotonic: 1.24$\times$ at 128\,k climbs to
-1.80$\times$ at 256\,k and contracts to $\approx 1\times$ at 512\,k
-and 1\,M. We argue this is not a deficiency of RASD's architecture
+The speedup is non-monotonic: 1.26$\times$ at 128\,k climbs to
+1.76$\times$ at 256\,k and contracts to $0.94\times$ at 512\,k
+and $0.97\times$ at 1\,M. We argue this is not a deficiency of RASD's architecture
 but a base-model artifact, supported by a short-context
 control experiment.
 
@@ -1184,11 +1190,13 @@ YaRN-extrapolated. Results:
     \item ctx=4\,k PG-19 target-only: 0.55\,tok/s.
     \item \textbf{Speedup at 4\,k native context: $\boldsymbol{4.4\times}$.}
 \end{itemize}
-The contraction to $1\times$ at long context is therefore a
-\emph{lower bound} on RASD's speedup, not an upper bound. A
-long-context-trained base model (e.g., Llama-3.1-128k or Qwen-2.5-1M)
-would --- by this mechanism --- carry the 4.4$\times$ headline to
-substantially longer contexts before the same OOD contraction set in.
+The contraction to near-parity at long context therefore reflects
+base-model behavior under YaRN extrapolation rather than a ceiling
+imposed by RASD itself. We hypothesize --- but do not demonstrate
+--- that a long-context-trained base model (e.g., Llama-3.1-128k or
+Qwen-2.5-1M) may, by this mechanism, sustain a speedup closer to
+the 4.4$\times$ native-context figure at substantially longer
+contexts before the same OOD contraction set in.
 
 % --- 5.3 Memory scaling ----------------------------------------
 \subsection{Memory scaling}
@@ -1197,11 +1205,11 @@ substantially longer contexts before the same OOD contraction set in.
 Table~\ref{tab:memory} shows the per-rank peak memory at each
 context for both modes. RASD's overhead over target-only is the
 Sheared-LLaMA-1.3B draft model plus its own KV cache at the same
-context. At 128\,k the overhead is 2.3\,GB; at 1\,M it shrinks to
-0.9\,GB because the target's KV cache dominates and the draft cache
+context. At 128\,k the overhead is 2.2\,GiB; at 1\,M it shrinks to
+0.9\,GiB because the target's KV cache dominates and the draft cache
 remains fixed (1.3B parameters with NF4 weights are
-${\approx} 0.7$\,GB). The peak per-rank memory at 1\,M (40.3\,GB) runs
-${\sim}15$\,GB above what the dominant terms of
+${\approx} 0.7$\,GiB). The peak per-rank memory at 1\,M (39.3\,GiB) runs
+${\sim}15$\,GiB above what the dominant terms of
 Eq.~\ref{eq:memory} predict on their own; the gap is attributable
 to the transient and scratch buffers we do not model in
 \S\ref{sec:methods-nf4} (prefill activations, FA-2 NF4-dequant
@@ -1209,7 +1217,7 @@ scratch, NCCL workspace), and it grows monotonically with context.
 
 \begin{table}[t]
 \centering
-\caption{Per-rank peak memory (GB) at each context. ``RASD overhead''
+\caption{Per-rank peak memory (GiB) at each context. ``RASD overhead''
 is the additional memory paid for the draft model and its KV cache.}
 \label{tab:memory}
 \input{../../tables/main_memory.tex}
@@ -1492,17 +1500,18 @@ is the consistency property we wanted to confirm.
 \label{sec:limitations}
 
 \paragraph{Speedup is base-model-bounded, not architecture-bounded.}
-The $4.4\times$ speedup at 4\,k PG-19 vs.\ $1.0\times$ at 1\,M
+The $4.4\times$ speedup at 4\,k PG-19 vs.\ $0.97\times$ at 1\,M
 synthetic is a \emph{single} story about how out-of-distribution
 Llama-2-7B becomes under YaRN factor=256, not a story about an
 architectural limit of RASD. The short-context PG-19 control
 (\S\ref{sec:results-speedup}) and the bimodal-$\alpha$ control
 (\S\ref{sec:results-alpha}) jointly identify the rate-limiter as
 target-logit entropy in the YaRN-extrapolated regime, not anything
-in the ring attention or speculative verify loops. A
-long-context-trained base model (e.g., Llama-3.1-128k or Qwen-2.5-1M)
-would be expected to carry the native-context speedup through to
-longer contexts before the same OOD contraction set in.
+in the ring attention or speculative verify loops. We hypothesize
+that a long-context-trained base model (e.g., Llama-3.1-128k or
+Qwen-2.5-1M) may carry the native-context speedup through to
+longer contexts before the same OOD contraction set in; we do not
+test this here.
 
 \paragraph{Comm overlap was not load-bearing.}
 The original RASD gap analysis (\S\ref{sec:related-gap}) predicted
@@ -1555,7 +1564,7 @@ contexts (compute/comm/idle each within $\pm 5\%$ band) suggests the
 All measurements are on a single 8$\times$A100 80\,GB SXM4 node.
 Tensor parallelism ($W_{\text{TP}} > 1$) was demoted to future work
 during M3 because the 1\,M + NF4 + ring-SP target was already
-achievable at 40\,GB peak per rank without TP. Multi-node ring
+achievable at 40\,GiB peak per rank without TP. Multi-node ring
 attention adds inter-node communication cost (typically slower than
 NVLink) and is the natural setting in which the overlap budget
 $\delta_{\text{comm}}$ becomes load-bearing again. We leave that
@@ -1584,8 +1593,8 @@ short-context speedup transfers to million-token inference. The
 answer, on Llama-2-7B under YaRN factor 256, is no. Against a
 matched target-only baseline (same RASD infrastructure with the
 speculative verify loop disabled), the three-seed mean speedup is
-$1.24\times$ at 128\,k and $1.80\times$ at 256\,k, regresses to
-$0.96\times$ at 512\,k, and reaches parity ($1.00\times$) at
+$1.26\times$ at 128\,k and $1.76\times$ at 256\,k, regresses to
+$0.94\times$ at 512\,k, and $0.97\times$ at
 1\,M. Per-round acceptance at long context becomes bimodal:
 about half of verify rounds fully reject the draft. A
 short-context PG-19 control localizes the rate-limiter to
@@ -1605,7 +1614,7 @@ ring-attention sequence parallelism, NF4 KV-cache quantization
 with chunked updates and a bf16 outlier-keep prefix, YaRN
 position scaling, and speculative verification with a small
 draft model. On 8$\times$A100 80\,GB SXM4 the system runs
-Llama-2-7B inference at 1\,M-token context at 40\,GB peak per
+Llama-2-7B inference at 1\,M-token context at 40\,GiB peak per
 rank, while the standard HuggingFace inference stack runs out of
 memory at 128\,k single-rank.
 
@@ -1810,8 +1819,8 @@ The mapping from paper claims to source CSVs is:
   \path{results/final/final_matrix.csv} (RASD spec runs,
   3 seeds $\times$ 4 contexts) and
   \path{results/final/target_only_matrix.csv} (matched
-  target-only baseline). 95\% bootstrap CIs in
-  \path{results/final/ablation_cis.csv}.
+  target-only baseline). 95\% CIs ($\pm 1.96\,$SEM) are
+  recorded in \path{results/final/final_results.json}.
 \item \textbf{Per-round acceptance traces}
   (Figs.~\ref{fig:alpha-trace} and~\ref{fig:alpha-bimodality})
   --- one JSONL sidecar per run at
@@ -1836,8 +1845,9 @@ The mapping from paper claims to source CSVs is:
   \path{results/ablations/ablations_r65.csv} (49 rows;
   46 succeeded, 3 OOM'd on un-quantized Llama-2-13B as
   noted in the audit at
-  \path{results/ablations/r65_audit.md}). This grid corresponds to
-  the \path{m3-reablation} git
+  \path{results/ablations/r65_audit.md}); percentile-bootstrap
+  95\% CIs are in \path{results/final/ablation_cis.csv}. This grid
+  corresponds to the \path{m3-reablation} git
   tag.\footnote{\url{https://github.com/amankiitg/RASD/releases/tag/m3-reablation}}
 \end{itemize}
 

@@ -8,7 +8,7 @@ Three series:
 
 x-axis: context length (log scale, 128k / 256k / 512k / 1M)
 y-axis: generation throughput (tokens/sec)
-shaded bands: 95% CI from 3-seed bootstrap (RASD + target-only only;
+shaded bands: 95% CI (+/-1.96 SEM, 3 seeds; RASD + target-only only;
               HF FA-2 has 1 seed and OOM markers).
 
 Reads from results/final/final_results.json. Output:

@@ -80,13 +80,19 @@ def _group_by_level(rows: list[dict], group_filter: str | None = None) -> dict:
         level = r.get("level_id", "")
         if not level:
             continue
+        tokens  = _i(r.get("tokens_generated"))
+        time_s  = _f(r.get("time_sec"))
+        # Recompute throughput from raw counts. The CSV throughput_tps
+        # column is rounded to 2 decimals, which collapses to spurious
+        # parity at ~0.04 tok/s (1M context); tokens/time_sec is exact.
+        tput = tokens / time_s if time_s > 0 else _f(r.get("throughput_tps"))
         out.setdefault(level, []).append({
             "run_id":           r["run_id"],
             "seed":             _i(r.get("seed")),
             "context_length":   _i(r.get("context_length")),
-            "tokens_generated": _i(r.get("tokens_generated")),
-            "time_sec":         _f(r.get("time_sec")),
-            "throughput_tps":   _f(r.get("throughput_tps")),
+            "tokens_generated": tokens,
+            "time_sec":         time_s,
+            "throughput_tps":   tput,
             "acceptance_rate":  _f(r.get("acceptance_rate")),
             "mean_latency_ms":  _f(r.get("mean_latency_ms")),
             "ttft_ms":          _f(r.get("ttft_ms")),

@@ -21,10 +21,10 @@ memory at 128k single-rank.
 | Claim | Number |
 |---|---|
 | Max context reached on 8×A100 80 GB | **1,048,576 tokens (1 M)** |
-| Per-rank peak memory at 1 M | **40.3 GB** |
+| Per-rank peak memory at 1 M | **39.3 GiB** |
 | Vanilla HF FA-2 `generate()` ceiling, single-rank | **32 k** (OOMs at 128 k) |
-| Throughput speedup vs target-only baseline, 128 k (3-seed mean) | **1.24×** |
-| Throughput speedup vs target-only baseline, 256 k (3-seed mean) | **1.80×** |
+| Throughput speedup vs target-only baseline, 128 k (3-seed mean) | **1.26×** |
+| Throughput speedup vs target-only baseline, 256 k (3-seed mean) | **1.76×** |
 | Communication cost on speculator rank | **≤ 1.2 %** of wall |
 | Per-round acceptance distribution at long context | **bimodal** (≈50 % α=0, ≈50 % α∈[0.25, 0.5]) |
 
