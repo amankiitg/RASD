@@ -14,6 +14,13 @@ memory at 128k single-rank.
 **Paper:** [`manuscript/arxiv/main.pdf`](manuscript/arxiv/main.pdf)
 (arXiv ID pending). **License:** [MIT](LICENSE).
 
+**Workshop submission:** diagnostic-first 8-page extract
+[`manuscript/workshop/main.pdf`](manuscript/workshop/main.pdf),
+submitted to the Workshop on Long Context Foundation Models
+(LCFM) @ NeurIPS 2026 (non-archival, double-blind). Built with the
+official NeurIPS 2026 style file
+(`manuscript/workshop/neurips_2026.sty`).
+
 ---
 
 ## Headline numbers
