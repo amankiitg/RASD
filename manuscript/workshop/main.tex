@@ -58,7 +58,7 @@ speedup against a matched target-only baseline regresses from
 $1.76\times$ $[1.59, 1.93]$ at 256\,k to $0.94\times$ $[0.57, 1.30]$
 at 512\,k and $0.97\times$ $[0.80, 1.14]$ at 1\,M, statistical
 parity. A PG-19 dose-response ($\alpha$: $0.71$@4\,k $\to$ $0.26$@8\,k $\to$
-$0.11$@1\,M) supports context length as the primary driver. A profiler measurement shows communication is
+$0.11$@1\,M) is consistent with context length as a driver, though it cannot be separated from YaRN-induced out-of-distribution degradation, which scales with context by construction. A profiler measurement shows communication is
 ${\leq}1.2\%$ of wall on the speculator rank, ruling out
 communication-overlap masking. The measured speedup is instead set
 by a race between two mechanisms: the acceptance collapse, and the
@@ -115,8 +115,8 @@ acceptance alone cannot explain the speedup shape
 distribution, not a unimodal distribution around the mean
 (\S\ref{sec:bimodal}).
 
-\textbf{Finding 2 (context length, not prompt source, is the
-primary driver).} A dose-response on real text (PG-19) shows mean
+\textbf{Finding 2 (a dose-response consistent with context
+length, not prompt source).} A dose-response on real text (PG-19) shows mean
 acceptance decaying monotonically with context
 ($\alpha = 0.71$@4\,k, $0.26$@8\,k, $0.11$@1\,M), so the
 collapse persists even when the synthetic prompt is replaced with
@@ -203,7 +203,15 @@ equation's independence assumptions.
 Medusa \citep{cai2024medusa} and EAGLE
 \citep{li2024eagle} replaced the separate draft model with heads
 on the target; EAGLE-2/3 improved draft trees further. All report
-acceptance at short-to-moderate context. The natural mechanism
+acceptance at short-to-moderate context. TriForce
+\citep{sun2024triforce} sustains speculation at long context
+through hierarchical retrieval-draft-verification decoding; this
+paper instead measures, diagnostically, where and why speculative
+acceptance collapses as context grows. MagicDec
+\citep{chen2024magicdec} keeps speculation profitable at low-batch
+long-context serving via high speculation lengths; this paper
+complements it by localizing the collapse to acceptance and
+round-cost dynamics on a single 8-GPU node. The natural mechanism
 question at long context is therefore: \emph{does $\alpha$ itself
 collapse?} This paper measures it.
 
@@ -389,7 +397,7 @@ the verify loop: at native
 4\,k the same system concentrates near $\alpha = 1$
 (\S\ref{sec:dose-response}).
 
-\subsection{Context length, not prompt source, is the primary driver}
+\subsection{The dose-response is consistent with context length, not prompt source}
 \label{sec:dose-response}
 
 A competing explanation for the collapse is the \emph{synthetic
@@ -403,10 +411,12 @@ though 8\,k is only $2\times$ the model's 4\,k training window.
 Critically, at 1\,M \emph{real} text, acceptance falls to 0.108,
 at or below the synthetic-prompt 1\,M value (0.201, seed 42). If
 the synthetic prompt were the driver, PG-19 at 1\,M should recover
-native-context acceptance; it does not. The dose-response supports
-context length (base-model OOD under YaRN extrapolation) as the
-primary driver, with prompt source a secondary
-modifier. All rows are a single seed (42), an acknowledged
+native-context acceptance; it does not. The dose-response is consistent with context length as
+a driver, with prompt source a secondary modifier; because the
+YaRN factor scales with context by construction, context length
+cannot be separated from YaRN-induced out-of-distribution
+degradation, and a natively long-context target is needed to
+disentangle them (future work). All rows are a single seed (42), an acknowledged
 limitation (\S\ref{sec:limitations}).
 
 \begin{table}[t]
@@ -511,17 +521,19 @@ construction (the draft window is capped at 4\,k,
 \S\ref{sec:system}), so the packed five-position verify and its
 per-round overheads are the leading candidates, hypothesis only.
 
-Two accounting notes. First, the measured $1.76\times$ at 256\,k
-exceeds the Eq.~\ref{eq:spec-tokens} ceiling at $\alpha \approx
-0.20$ ($1.25\times$). The gap is the idealization gap: residual
-resampling emits at least one token per round, and acceptance is
-heterogeneous across rounds, so measured tokens/round ($1.83$)
-exceeds the i.i.d. prediction. Per seed, the factorization above
-reproduces the measured ratios exactly, leaving no residual; any
-residual beyond the factorization would be an
-infrastructure-level asymmetry that we do not isolate. Second, we
-report measured tokens/round throughout and treat
-Eq.~\ref{eq:spec-tokens} as the i.i.d. idealization only.
+Two accounting notes. First, Eq.~\ref{eq:spec-tokens} is the
+i.i.d. idealization; the residual-resampling acceptance rule used
+here emits at least one token per round regardless of rejection,
+so the expected per-round token yield is $1 + \gamma \bar\alpha
+\approx 1.80$ tokens at 256\,k ($\bar\alpha = 0.201$), matching
+the measured 1.83 tokens/round. The measured $1.76\times$ speedup
+at 256\,k is therefore consistent with this per-round token yield
+at a round-cost ratio of 1.02. Per seed, the factorization above
+reproduces the measured ratios exactly; any residual beyond the
+factorization would be an infrastructure-level asymmetry that we
+do not isolate. Second, we report measured tokens/round
+throughout and treat Eq.~\ref{eq:spec-tokens} as the i.i.d.
+idealization only.
 
 \subsection{Communication overlap is not the mechanism}
 \label{sec:comm}
