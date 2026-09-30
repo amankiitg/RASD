@@ -8,7 +8,7 @@
 
 \documentclass{article}
 
-\usepackage[dblblindworkshop]{neurips_2026}
+\usepackage[dblblindworkshop, final]{neurips_2026}
 \workshoptitle{Workshop on Long Context Foundation Models (LCFM) @ NeurIPS 2026}
 
 \usepackage[utf8]{inputenc}
@@ -31,8 +31,13 @@
 \Urlmuskip=0mu plus 1mu
 \emergencystretch=3em
 
-% Double-blind: no author block. The block is restored on acceptance.
-\author{}
+% Camera-ready: author block restored (the `final` option makes the
+% style print author names; the workshop double-blind setting is kept).
+\author{%
+  Aman Kesarwani \\
+  Independent Researcher \\
+  \texttt{amankesarwani@berkeley.edu} \\
+}
 
 \title{When Speculative Decoding Stops Paying Off at Long Context:\\
        A Diagnostic Study with RASD}
