@@ -152,6 +152,23 @@ class RASDConfig:
     quantize_draft: bool = True          # 4-bit NF4 via bitsandbytes
     quantize_target: bool = False
 
+    # MLSys Phase 1 — draft context window cap.
+    # Hard upper bound (in tokens) on the draft model's context window.
+    # None (default) = use the draft's native max_position_embeddings, which
+    # is the exact M3/M4 behaviour. When set, the effective window is
+    # min(native, cap). Used to run the SAME draft model with a capped
+    # window (arm 2) vs its full native window (arm 3), so the draft-window
+    # effect can be measured in isolation from the target's RoPE regime.
+    draft_window_cap: Optional[int] = None
+
+    # MLSys Phase 3 — draft weight precision.
+    #   "auto" (default) = follow `quantize_draft` (exact M3/M4 behaviour)
+    #   "nf4"            = force 4-bit NF4 draft (requires CUDA)
+    #   "bf16"           = force unquantized draft at cfg.torch_dtype
+    # Used to test whether NF4 draft/target logit divergence — rather than
+    # context length — drives the per-round cost increase.
+    draft_dtype: str = "auto"
+
     # Reproducibility
     seed: int = 42
 
@@ -454,6 +471,8 @@ class RASDInference:
                          for 1M context (factor=256 over Llama-2-7B's 4k).
           * "dynamic"  — NTK-aware dynamic scaling (uses the original
                          theta with rescaled frequencies).
+          * "none"     — apply NO scaling; raise if ctx exceeds the native
+                         window. Used by the MLSys native-context arms.
 
         `apply_rope_scaling` defaults to True (target). For the **draft**
         model we pass False: capping the draft at its native context cap
@@ -469,6 +488,25 @@ class RASDInference:
         import math
 
         hf_cfg = AutoConfig.from_pretrained(model_name, revision=revision)
+        # MLSys Phase 1 — explicit "no scaling" mode. The native arms
+        # (Llama-3.1-8B @128k) must run inside the model's own window with
+        # NO rope_scaling, otherwise the experiment silently stops
+        # separating "native context" from "YaRN/OOD". Fail loud if the
+        # requested context does not actually fit the native window.
+        if rope_type == "none" and apply_rope_scaling:
+            if context_length and context_length > hf_cfg.max_position_embeddings:
+                raise ValueError(
+                    f"rope_type='none' but context_length={context_length} exceeds "
+                    f"{label} native max_position_embeddings="
+                    f"{hf_cfg.max_position_embeddings}. Refusing to silently "
+                    f"apply scaling — fix the config or use 'yarn'/'linear'."
+                )
+            logger.info(
+                "[RoPE] %s: rope_type='none' — ctx=%d within native_max=%d, "
+                "no scaling applied.",
+                label, context_length, hf_cfg.max_position_embeddings,
+            )
+            return hf_cfg
         if (apply_rope_scaling and context_length
                 and context_length > hf_cfg.max_position_embeddings):
             native_max = hf_cfg.max_position_embeddings
@@ -582,12 +620,29 @@ class RASDInference:
         )
 
         logger.info("Loading draft model: %s  [device=%s]", cfg.draft_model_name, self._device)
+        # MLSys Phase 3: an explicit draft_dtype wins over `quantize_draft`.
+        # "auto" resolves to `quantize_draft`, so M3/M4 runs are unchanged.
+        if cfg.draft_dtype not in ("auto", "nf4", "bf16"):
+            raise ValueError(
+                f"draft_dtype={cfg.draft_dtype!r} invalid; "
+                f"expected one of 'auto', 'nf4', 'bf16'"
+            )
+        want_nf4_draft = (
+            cfg.quantize_draft if cfg.draft_dtype == "auto"
+            else cfg.draft_dtype == "nf4"
+        )
+        if want_nf4_draft != cfg.quantize_draft:
+            logger.info(
+                "[draft-dtype] %s override: quantize_draft=%s → %s",
+                cfg.draft_dtype, cfg.quantize_draft, want_nf4_draft,
+            )
         draft_bnb = None
-        if cfg.quantize_draft and self._caps.supports_quantization:
+        if want_nf4_draft and self._caps.supports_quantization:
             draft_bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=cfg.torch_dtype)
-        elif cfg.quantize_draft:
-            logger.warning("quantize_draft=True ignored — 4-bit NF4 requires CUDA (current: %s)",
-                           self._caps.device_type)
+        elif want_nf4_draft:
+            logger.warning("draft NF4 requested (draft_dtype=%s) but ignored — "
+                           "4-bit NF4 requires CUDA (current: %s)",
+                           cfg.draft_dtype, self._caps.device_type)
 
         self.draft_model = AutoModelForCausalLM.from_pretrained(
             cfg.draft_model_name,
@@ -606,9 +661,24 @@ class RASDInference:
             self.draft_tokenizer.pad_token = self.draft_tokenizer.eos_token
 
         # Max sequence length the draft model supports
-        # TinyLlama=2048, Sheared-LLaMA=4096 — all share LLaMA-2 tokenizer
+        # TinyLlama=2048, Sheared-LLaMA=4096 — all share a LLaMA-2 tokenizer
         self.draft_max_len = getattr(self.draft_model.config, "max_position_embeddings",
                              getattr(self.draft_model.config, "n_positions", 4096))
+
+        # MLSys Phase 1 — optional hard cap on the draft context window.
+        # This is the single place the draft window is enforced: the prefill
+        # truncation in generate() and the tokenizer truncation in
+        # generate_text() both read `self.draft_max_len`.
+        if cfg.draft_window_cap is not None:
+            cap = int(cfg.draft_window_cap)
+            if cap <= 0:
+                raise ValueError(f"draft_window_cap must be > 0, got {cap}")
+            native = self.draft_max_len
+            self.draft_max_len = min(native, cap)
+            logger.info(
+                "[draft-window] cap=%d tokens, native=%d → effective=%d",
+                cap, native, self.draft_max_len,
+            )
 
     # ------------------------------------------------------------------
     # M4 C6 — checkpoint helpers (no-ops when checkpoint_every == 0)

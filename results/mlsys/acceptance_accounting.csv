@@ -1,0 +1,7 @@
+run_id,csv_acceptance_rate,trace_alpha_round,alpha_iid,abs_diff,ok,note,source_csv
+RASD_ctx4k_pg19_phaseD_s42,,0.7058823529411765,0.8654293820188321,,,,trace_summary.csv
+RASD_ctx8k_pg19_phaseD_s42,,0.25806451612903225,0.5281595698114443,,,,trace_summary.csv
+RASD_ctx128k_phaseD_s42,,0.11538461538461539,0.31801497367622455,,,,trace_summary.csv
+RASD_ctx256k_phaseD_s42,,0.21323529411764705,0.4731097354637761,,,,trace_summary.csv
+RASD_ctx512k_phaseD_s42,,0.19444444444444445,0.447606596258337,,,,trace_summary.csv
+RASD_ctx1M_phaseD_s42,,0.2013888888888889,0.4572205373828584,,,,trace_summary.csv

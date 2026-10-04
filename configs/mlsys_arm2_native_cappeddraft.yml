@@ -1,0 +1,70 @@
+# MLSys Phase 1 — ARM 2: Llama-3.1-8B @128k (NATIVE target, capped draft)
+#
+# Second arm of the native-vs-YaRN experiment. Everything matches Arm 1
+# except the two things under test:
+#
+#   * target  = Llama-3.1-8B    native window 131072 → NO rope_scaling
+#   * rope    = "none"          fails loud if ctx > native window
+#   * draft   = Llama-3.2-1B    native window 131072, CAPPED to 4096 here
+#
+# The draft window cap is the only remaining difference from Arm 3, so
+# Arm 2 vs Arm 3 isolates the draft-window effect with the target held
+# fixed. Arm 1 vs Arm 2 isolates the YaRN/OOD effect with the draft
+# window held at 4k in both.
+#
+# 128k < 131072 native, so Llama-3.1-8B runs entirely in-distribution.
+# rope_type="none" asserts this rather than trusting it silently.
+#
+# PREREQUISITE: Llama-3.1-8B and Llama-3.2-1B must share an identical
+# tokenizer (the whole premise of cross-family speculation). Verify with
+# scripts/mlsys_check_tokenizer_llama3.py BEFORE launching.
+#
+# Seeds [42, 123, 456]. 3 runs per group × 2 groups = 6 runs.
+
+canary:
+  id:   "mlsys_arm2_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-3.1-8B"
+  draft_model_name:  "meta-llama/Llama-3.2-1B"
+  target_revision:   null
+  draft_revision:    null
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "none"         # native window — no scaling, fail-loud
+  kv_quant:          true           # identical KV path to arms 1 and 3
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true           # NF4 draft
+  quantize_target:   true
+  draft_window_cap:  4096           # <<< the arm-2 lever: draft held at 4k
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# Arm 2 — speculative (RASD) at 128k, native target, 4k draft window
+# ---------------------------------------------------------------------------
+ARM2_SPEC:
+  name:   "arm2_native_cappeddraft_spec"
+  factor: "context_length"
+  levels:
+    - id: "ARM2_llama3_native_128k_cap4k"
+      context_length: 131072
+      notes: "Llama-3.1-8B native @128k, Llama-3.2-1B draft capped at 4096"
+
+# ---------------------------------------------------------------------------
+# Arm 2 — matched target-only baseline (spec_steps=0)
+# ---------------------------------------------------------------------------
+ARM2_TARGET_ONLY:
+  name:   "arm2_native_cappeddraft_target_only"
+  factor: "context_length"
+  levels:
+    - id: "ARM2_llama3_native_128k_targetonly"
+      context_length: 131072
+      spec_steps: 0
+      checkpoint_every: 4
+      notes: "matched target-only baseline for ARM2_llama3_native_128k_cap4k"

@@ -1,0 +1,49 @@
+# MLSys Phase 2.1b — PG-19 1M TARGET-ONLY baseline, all 3 seeds
+#
+# The 1M PG-19 cell (P35D_ctx1M_pg19_s42) was the only dose-response point
+# with no paired target-only baseline, so its speedup had no denominator.
+# This file fills that gap for ALL THREE seeds (42 included, so the
+# baseline and the spec row share the same generation settings).
+#
+# Same configuration as configs/mlsys_pg19_multiseed.yml with
+# spec_steps=0. With spec_steps=0 no draft model is loaded, so
+# draft-related keys are inert here.
+#
+# Launch into the SAME csv as the spec rows:
+#   --output results/mlsys/pg19_multiseed.csv
+#
+# Expected cost: 1M target-only is ~2x the speculative cell's wall time
+# (no draft assist). Phase D measured 1M spec at 1167 s; budget ~40 min
+# per seed, 2 hr for the three.
+
+canary:
+  id:   "mlsys_pg19_1m_targetonly_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        0              # <<< target-only baseline
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+PG19_1M_TARGET_ONLY:
+  name:   "pg19_1m_target_only"
+  factor: "context_length"
+  levels:
+    - id: "PG19_ctx1M_targetonly"
+      context_length: 1048576
+      checkpoint_every: 4
+      notes: "paired target-only baseline for P35D_ctx1M_pg19 / PG19_ctx1M"

@@ -63,6 +63,10 @@ CSV_FIELDS = [
     "acceptance_rate", "mean_latency_ms", "ttft_ms",
     "gpu_peak_mem_mb",
     "n_rounds", "status", "error",
+    # MLSys Phase 1/3 — draft isolation provenance. Appended (not
+    # interleaved) so existing CSV headers keep their column order and
+    # --resume against older result files still aligns.
+    "draft_window_cap", "draft_dtype",
 ]
 
 
@@ -509,6 +513,11 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C11 NF4 KV-cache. Default False -> M3 byte-identical.
             # Phase C P3.5 final matrix uses kv_quant=true at all contexts.
             kv_quant          = bool(run.get("kv_quant", False)),
+            # MLSys Phase 1/3 — draft isolation knobs. Both default to
+            # None/"auto", which reproduces M3/M4 behaviour exactly.
+            draft_window_cap  = (int(run["draft_window_cap"])
+                                 if run.get("draft_window_cap") else None),
+            draft_dtype       = str(run.get("draft_dtype", "auto")),
             # M4 Phase C 2026-05-10 NF4 acceptance-recovery levers. The
             # YAMLs don't override these by default; we let the RASDConfig
             # defaults apply (kv_outlier_prefix_size=128, kv_block_size_nf4=32).
@@ -843,6 +852,23 @@ def main():
                              "Used by F5 (qualitative comparison table) and "
                              "F8 (low-acceptance error analysis). Default off "
                              "so M3 replay stays byte-identical.")
+    # --- MLSys experiment program (2026-10-04) ---
+    parser.add_argument("--draft-window-cap", type=int, default=None,
+                        help="Hard cap (tokens) on the draft model's context "
+                             "window. Default: the draft's native "
+                             "max_position_embeddings (exact M3/M4 behaviour). "
+                             "MLSys Phase 1 arm 2 uses 4096 to hold the draft "
+                             "at a 4k window while the target runs natively at "
+                             "128k. A YAML level may set its own "
+                             "`draft_window_cap`, which takes precedence.")
+    parser.add_argument("--draft-dtype", choices=["auto", "nf4", "bf16"],
+                        default="auto",
+                        help="Draft weight precision. 'auto' (default) follows "
+                             "the config's quantize_draft — i.e. M3/M4 "
+                             "behaviour. 'nf4' forces 4-bit NF4 (CUDA only). "
+                             "'bf16' forces unquantized bf16 draft weights. "
+                             "MLSys Phase 3 runs the same 64k cell both ways to "
+                             "isolate NF4 draft/target logit divergence.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -893,6 +919,15 @@ def main():
             # Per-run override wins; CLI flag is a default for runs that
             # don't specify their own checkpoint_every in the YAML
             r.setdefault("checkpoint_every", args.checkpoint_every)
+    # MLSys Phase 1/3 — draft isolation knobs. `setdefault` so a YAML level
+    # can pin its own value (arm configs are one-YAML-per-arm, so both
+    # routes work); the CLI flag acts as the grid-wide default.
+    if args.draft_window_cap is not None:
+        for r in all_runs:
+            r.setdefault("draft_window_cap", args.draft_window_cap)
+    if args.draft_dtype != "auto":
+        for r in all_runs:
+            r.setdefault("draft_dtype", args.draft_dtype)
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))
@@ -906,7 +941,9 @@ def main():
                 f"k={r['spec_steps']}  "
                 f"block={r['kv_block_size']}  "
                 f"prefetch={r['prefetch_depth']}  "
-                f"target={r['target_model_name'].split('/')[-1]}"
+                f"target={r['target_model_name'].split('/')[-1]}  "
+                f"dwindow={r.get('draft_window_cap') or 'native'}  "
+                f"ddtype={r.get('draft_dtype', 'auto')}"
             )
             print(f"{r['run_id']:<35}  {r['group']:<5}  {r['seed']:>5}  {config_summary}")
         print(f"\n{len(all_runs)} runs total.")
@@ -947,6 +984,10 @@ def main():
                     "memory_trace_dir",
                     str(Path(args.output).parent / "memory_trace"),
                 )
+            if args.draft_window_cap is not None:
+                canary_run.setdefault("draft_window_cap", args.draft_window_cap)
+            if args.draft_dtype != "auto":
+                canary_run.setdefault("draft_dtype", args.draft_dtype)
             if args.prompt_source != "synthetic":
                 canary_run["prompt_source"] = args.prompt_source
                 if args.prompt_pg19_meta:

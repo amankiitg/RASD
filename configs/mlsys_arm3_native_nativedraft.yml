@@ -1,0 +1,71 @@
+# MLSys Phase 1 — ARM 3: Llama-3.1-8B @128k (NATIVE target, NATIVE draft)
+#
+# Third arm. Byte-identical in config to Arm 2 except that the draft
+# window cap is REMOVED, so Llama-3.2-1B sees its full 131072-token
+# native window (and therefore the whole 128k prompt).
+#
+#   Arm 2 vs Arm 3  → the draft-window effect, isolated. Target, rope,
+#                     KV format, k and seeds are all held fixed; the only
+#                     moving part is how much context the draft sees.
+#
+# EXPECTED COST: without the cap the draft prefills all 128k tokens and
+# keeps a full-length draft KV cache per rank. This is the memory-hungry
+# arm by construction — that cost IS part of the measured window effect.
+# If it OOMs at nproc=8 on 80GB, record the OOM as a result (it is the
+# honest answer to "what does a native draft window cost?") and fall back
+# to nproc=8 with kv_quant already on, or report the 40GB variant.
+#
+# Seeds [42, 123, 456]. 3 runs per group × 2 groups = 6 runs.
+
+canary:
+  id:   "mlsys_arm3_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-3.1-8B"
+  draft_model_name:  "meta-llama/Llama-3.2-1B"
+  target_revision:   null
+  draft_revision:    null
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "none"         # native window — no scaling, fail-loud
+  kv_quant:          true
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true           # NF4 draft
+  quantize_target:   true
+  # NOTE: no draft_window_cap — the draft runs at its full native 131072.
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# Arm 3 — speculative (RASD) at 128k, native target, native draft window
+# ---------------------------------------------------------------------------
+ARM3_SPEC:
+  name:   "arm3_native_nativedraft_spec"
+  factor: "context_length"
+  levels:
+    - id: "ARM3_llama3_native_128k_nativedraft"
+      context_length: 131072
+      checkpoint_every: 4
+      notes: "Llama-3.1-8B native @128k, Llama-3.2-1B draft at full native window"
+
+# ---------------------------------------------------------------------------
+# Arm 3 — matched target-only baseline (spec_steps=0)
+# Note: with spec_steps=0 no draft is loaded, so the target-only baseline
+# is numerically identical to Arm 2's. It is regenerated here anyway so
+# the arm's CSV is self-contained; de-duplicate at analysis time by
+# preferring the Arm 2 baseline row (same config, same seed).
+# ---------------------------------------------------------------------------
+ARM3_TARGET_ONLY:
+  name:   "arm3_native_nativedraft_target_only"
+  factor: "context_length"
+  levels:
+    - id: "ARM3_llama3_native_128k_targetonly"
+      context_length: 131072
+      spec_steps: 0
+      checkpoint_every: 4
+      notes: "matched target-only baseline (identical to Arm 2's; see header)"

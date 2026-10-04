@@ -1,0 +1,68 @@
+# MLSys Phase 2.2 — Llama-2 matrix per-round traces, seeds 123 + 456
+#
+# Reviewer complaint: bimodality / P(alpha=0) claims rest on per-round
+# traces that exist for seed 42 only (results/final/per_token/
+# RASD_ctx{128k,256k,512k,1M}_phaseD_s42.jsonl). The scalar CSVs already
+# cover 3 seeds (results/final/final_matrix.csv), but the SHAPE claims
+# need per-round data from every seed to carry a CI.
+#
+# This reproduces configs/m4_final_matrix.yml exactly — same models,
+# k=4, block=2048, prefetch=1, YaRN, NF4 KV, 64 new tokens — for seeds
+# 123 and 456, and turns on the per-round sidecar with --log-per-token.
+#
+# Run IDs deliberately match the existing matrix (M4_ctx128k_s123, ...)
+# so the new traces join the existing final_matrix.csv rows directly.
+#
+# Launch (sidecars land in results/mlsys/per_token/):
+#   python run_experiment.py \
+#     --config configs/mlsys_llama2_matrix_multiseed.yml \
+#     --output results/mlsys/llama2_matrix_multiseed.csv \
+#     --nproc 8 --log-per-token --timeout-per-run-s 14400
+#
+# 4 levels x 2 seeds = 8 runs. Budget ~1.5 hr total (1M cells dominate
+# at ~25 min each).
+
+canary:
+  id:   "mlsys_matrix_multiseed_canary_s123"
+  seed: 123
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [123, 456]
+
+M4_MULTISEED:
+  name:   "rasd_long_context_matrix_multiseed"
+  factor: "context_length"
+  levels:
+    - id: "M4_ctx128k"
+      context_length: 131072
+      notes: "128k — seed-42 trace already on disk under a phaseD name"
+
+    - id: "M4_ctx256k"
+      context_length: 262144
+      notes: "256k — factor=64"
+
+    - id: "M4_ctx512k"
+      context_length: 524288
+      checkpoint_every: 4
+      notes: "512k — factor=128"
+
+    - id: "M4_ctx1M"
+      context_length: 1048576
+      checkpoint_every: 4
+      notes: "1M — factor=256"

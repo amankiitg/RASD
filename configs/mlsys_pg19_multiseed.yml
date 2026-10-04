@@ -1,0 +1,66 @@
+# MLSys Phase 2.1 — PG-19 dose-response, seeds 123 + 456
+#
+# Reviewer complaint: the acceptance analyses are "largely single-seed".
+# The seed-42 PG-19 cells already exist:
+#
+#   4k   RASD_ctx4k_pg19_phaseD_s42   results/final/phase_d_short_ctx_pg19.csv
+#   8k   RASD_ctx8k_pg19_phaseD_s42   results/final/phase_d_short_ctx_pg19.csv
+#   1M   P35D_ctx1M_pg19_s42          results/final/p35d_pg19_prompt.csv
+#
+# This file reproduces the SAME configuration (Llama-2-7B + Sheared-1.3B,
+# k=4, block=2048, prefetch=1, YaRN, NF4 KV, 64 new tokens, bf16) at seeds
+# 123 and 456 so every dose-response point gets a 3-seed CI.
+#
+# IMPORTANT — this config is only meaningful with real PG-19 prompts. The
+# dose-response is a property of narrative text, not the synthetic
+# repeated-paragraph prompt. Launch with:
+#
+#   --prompt-source pg19 \
+#   --prompt-pg19-meta data/processed/pg19/pg19_validation_metadata.json
+#
+# The paired 1M TARGET-ONLY baseline (also for seed 42) lives in
+# configs/mlsys_pg19_1m_targetonly.yml; run both into the same
+# results/mlsys/pg19_multiseed.csv.
+#
+# NOTE ON 1M TIMEOUT: seed-42's 1M cell took 1167 s at 64 tokens. Use
+# --timeout-per-run-s 14400 so a slow seed cannot truncate the cell.
+
+canary:
+  id:   "mlsys_pg19_multiseed_canary_s123"
+  seed: 123
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [123, 456]
+
+PG19_MULTISEED:
+  name:   "pg19_dose_response_multiseed"
+  factor: "context_length"
+  levels:
+    - id: "PG19_ctx4k"
+      context_length: 4096
+      notes: "PG-19 4k — matches RASD_ctx4k_pg19_phaseD_s42"
+
+    - id: "PG19_ctx8k"
+      context_length: 8192
+      notes: "PG-19 8k — matches RASD_ctx8k_pg19_phaseD_s42"
+
+    - id: "PG19_ctx1M"
+      context_length: 1048576
+      checkpoint_every: 4     # ~20 min/cell; recover from crash
+      notes: "PG-19 1M — matches P35D_ctx1M_pg19_s42"

@@ -1,0 +1,74 @@
+# MLSys Phase 1 — ARM 1: Llama-2-7B + YaRN @128k  (reproduction control)
+#
+# The headline reviewer ask was to separate "context length" from
+# "YaRN / out-of-distribution RoPE". Arm 1 is the existing behaviour
+# reproduced exactly, so arms 2 and 3 have a matched reference point:
+#
+#   * target  = Llama-2-7B      native window 4096  → YaRN needed @128k
+#   * draft   = Sheared-1.3B    native window 4096  → draft window IS 4k
+#   * rope    = yarn, factor = ceil(131072 / 4096) = 32
+#
+# Arm 1 vs Arm 2 answers: when the target is native (no YaRN), does
+# acceptance recover? If yes → YaRN/OOD was the driver. If no → context
+# length itself degrades speculation.
+#
+# Both rows of the comparison are produced by this file: the SPEC group
+# (spec_steps=4) and the matched TARGET_ONLY group (spec_steps=0), so the
+# speedup is always reported against a baseline sharing model, context,
+# KV format and outlier-keep.
+#
+# Seeds [42, 123, 456]. 6 runs per group × 2 groups = 12 runs.
+#
+# Launch (dry-run first, see scripts/mlsys_pod_session.sh):
+#   python run_experiment.py --config configs/mlsys_arm1_llama2_yarn.yml \
+#     --output results/mlsys/arm1_llama2_yarn.csv --nproc 8 \
+#     --log-per-token --memory-trace
+
+canary:
+  id:   "mlsys_arm1_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        4
+  kv_block_size:     2048           # M3 A3 winner
+  prefetch_depth:    1              # M3 A4 winner
+  rope_type:         "yarn"         # factor=32 over Llama-2's 4k native
+  kv_quant:          true           # NF4 KV + outlier-keep, matches M4 matrix
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true           # NF4 draft
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# Arm 1 — speculative (RASD) at 128k
+# ---------------------------------------------------------------------------
+ARM1_SPEC:
+  name:   "arm1_llama2_yarn_spec"
+  factor: "context_length"
+  levels:
+    - id: "ARM1_llama2_yarn_128k"
+      context_length: 131072
+      notes: "Llama-2-7B + YaRN factor=32 @128k, Sheared-1.3B draft (4k native window)"
+
+# ---------------------------------------------------------------------------
+# Arm 1 — matched target-only baseline (spec_steps=0)
+# Identical prefill, KV format, ring attention and outlier-keep; no
+# speculation. This is the denominator of the Arm 1 speedup.
+# ---------------------------------------------------------------------------
+ARM1_TARGET_ONLY:
+  name:   "arm1_llama2_yarn_target_only"
+  factor: "context_length"
+  levels:
+    - id: "ARM1_llama2_yarn_128k_targetonly"
+      context_length: 131072
+      spec_steps: 0
+      checkpoint_every: 4         # ~50 min/run at 128k; recover from crashes
+      notes: "matched target-only baseline for ARM1_llama2_yarn_128k"

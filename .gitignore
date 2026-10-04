@@ -21,6 +21,15 @@ results/**/checkpoints/
 results/**/wandb/
 results/**/per_token/
 results/lever_validation/
+
+# MLSys (2026-10-04): results/mlsys/per_token/ IS a committed deliverable —
+# it holds the 3-seed per-round traces the Phase 4 dip test consumes, and
+# the whole point of the MLSys phase-2 reruns is to get all three seeds
+# into one analysis directory. The "100+ MB" concern above does not apply
+# here: these files carry one record per ROUND (~200 B), not per token, so
+# the committed set measures ~40 KB for 6 traces. results/final/per_token/
+# is already tracked under the same reasoning.
+!results/mlsys/per_token/
 results/m4_smoke/long_smoke.v4_oom.csv
 *.pt
 
