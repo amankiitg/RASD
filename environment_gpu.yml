@@ -31,17 +31,19 @@ dependencies:
   - jsonlines
 
   - pip:
-    - transformers>=4.46,<5       # MLSys Phase 0.4: Llama-3.2 needs >=4.46.
-                                   # Upper bound is REQUIRED, not cosmetic:
-                                   # transformers 5.x moved `rotary_emb` to
-                                   # the model level and replaced
-                                   # `num_key_value_heads` with
-                                   # `num_key_value_groups` on LlamaAttention,
-                                   # which breaks the ring patch
-                                   # (ring_llama_attention reads
-                                   #  self.rotary_emb and self.num_key_value_heads).
-                                   # Demonstrated by
-                                   # scripts/mlsys_ring_binding_check.py on 5.5.4.
+    - transformers>=4.46,<4.48    # MLSys: pin verified against upstream
+                                   # LlamaAttention source, not guessed.
+                                   #   >=4.46 : registers Llama-3.2
+                                   #   <4.48  : 4.48.0 REMOVED
+                                   #            self.num_key_value_heads and
+                                   #            moved rotary_emb, breaking the
+                                   #            ring patch (checked v4.46.3/
+                                   #            4.47.0/4.47.1 OK vs v4.48.0/
+                                   #            4.49.0/4.52.4/4.57.6 BROKEN).
+                                   # An earlier >=4.46,<5 bound installed
+                                   # 4.57.6 and cost a run: the ring patch
+                                   # breaks for Llama-2 targets too, not
+                                   # just the native arms.
                                    # Was ==4.44.2 (dynamic RoPE, tuple past_kv).
     - datasets>=2.16.0
     - tokenizers>=0.15.0

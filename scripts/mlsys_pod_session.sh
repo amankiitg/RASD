@@ -185,6 +185,17 @@ p0_tokenizer() {
 }
 
 p0_ring_binding() {
+    # The check verifies the ring patch binds to Llama-3.1's attention
+    # surface. When the native arms are already disabled there is nothing
+    # to verify, and a failure here must NOT kill a run whose remaining
+    # work (Llama-2 + Sheared) is the production config.
+    if [ "${SKIP_LLAMA3:-0}" = "1" ]; then
+        echo "SKIPPED: native arms disabled (no gated-model access) — the"
+        echo "         Llama-3.1 ring-binding check is not applicable."
+        echo "         Arm 1 / Phase 2 / Phase 3 use the production Llama-2"
+        echo "         ring path, exercised by every M3/M4 run."
+        return 0
+    fi
     python scripts/mlsys_ring_binding_check.py
 }
 

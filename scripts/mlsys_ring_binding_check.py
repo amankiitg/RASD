@@ -55,9 +55,56 @@ LLAMA31_SHAPE = dict(
 )
 
 
+def _load_llama_classes():
+    """Import LlamaConfig / LlamaForCausalLM across transformers layouts.
+
+    Top-level `from transformers import LlamaForCausalLM` is not
+    guaranteed: it failed on the Lambda pod (transformers 4.4x) even
+    though the package imported fine. Transformers lazy-loads model
+    classes via `_LazyModule`, so a lazy-attr miss is possible while
+    `import transformers` succeeds. Fall back to the submodule path.
+
+    Returns (LlamaConfig, LlamaForCausalLM, note) or raises RuntimeError
+    with every attempt's error attached.
+    """
+    import transformers
+    errors = []
+
+    def _try(label, fn):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{label}: {type(e).__name__}: {e}")
+            return None
+
+    LlamaConfig = _try("transformers.LlamaConfig",
+                       lambda: __import__("transformers",
+                                          fromlist=["LlamaConfig"]).LlamaConfig)
+    LlamaForCausalLM = _try(
+        "transformers.LlamaForCausalLM",
+        lambda: __import__("transformers",
+                           fromlist=["LlamaForCausalLM"]).LlamaForCausalLM)
+    if LlamaForCausalLM is None:
+        LlamaForCausalLM = _try(
+            "transformers.models.llama.modeling_llama.LlamaForCausalLM",
+            lambda: __import__("transformers.models.llama.modeling_llama",
+                               fromlist=["LlamaForCausalLM"]).LlamaForCausalLM)
+    if LlamaConfig is None:
+        LlamaConfig = _try(
+            "transformers.models.llama.configuration_llama.LlamaConfig",
+            lambda: __import__("transformers.models.llama.configuration_llama",
+                               fromlist=["LlamaConfig"]).LlamaConfig)
+
+    note = f"transformers {transformers.__version__}"
+    if LlamaConfig is None or LlamaForCausalLM is None:
+        raise RuntimeError(note + " | " + " | ".join(errors))
+    return LlamaConfig, LlamaForCausalLM, note
+
+
 def main() -> int:
     try:
-        from transformers import LlamaConfig, LlamaForCausalLM
+        LlamaConfig, LlamaForCausalLM, note = _load_llama_classes()
+        print(f"  loaded Llama classes via fallback chain ({note})")
     except Exception as e:  # noqa: BLE001
         print(f"  ERROR: cannot import transformers Llama classes: {e}")
         return 2
