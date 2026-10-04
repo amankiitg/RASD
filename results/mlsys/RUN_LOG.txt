@@ -1,0 +1,115 @@
+================================================================================
+MLSys EXPERIMENT PROGRAM — RUN LOG
+================================================================================
+Session attempt : 2026-10-04T17:50 UTC-04:00
+Branch          : mlsys-experiments  (HEAD f6ed0e7)
+Result          : *** ABORTED AT PRECHECK 1 — NO CUDA GPU ***
+GPU-hours spent : 0.0
+Estimated cost  : $0.00
+Phases executed : NONE (0 of 5)
+
+No experimental number was produced, and none was synthesised. Every phase
+below is recorded as NOT RUN, not as a failure of the code.
+
+--------------------------------------------------------------------------------
+PRECHECK 1 — GPU PRESENCE .......... FAIL  (hard abort condition)
+--------------------------------------------------------------------------------
+  nvidia-smi                    : command not found
+  /usr/local/cuda*              : does not exist; nvcc not found
+  torch.cuda.is_available()     : False
+  torch.cuda.device_count()     : 0
+  platform                      : Darwin arm64, macOS 26.4
+  CPU / RAM                     : Apple M2 / 8 GB unified
+  docker/podman/kubectl         : absent
+  runpodctl                     : absent
+  ssh host "hlevel"             : connect to 166.19.34.192:443 — timed out
+  AWS CLI                       : present but NO CREDENTIALS
+                                  (NoCredentials) -> cannot provision or
+                                  reach any GPU instance
+
+  => No CUDA GPU is reachable by any path on this host. Per the run
+     instructions ("If no CUDA GPU, ABORT the whole run"), execution stops
+     here. This is not a code failure: scripts/mlsys_pod_session.sh was
+     never invoked.
+
+--------------------------------------------------------------------------------
+PRECHECK 2 — HF GATED-MODEL AUTH ... FAIL  (skip native arms, do not abort)
+--------------------------------------------------------------------------------
+  HUGGING_FACE_HUB_TOKEN        : not set
+  HF_TOKEN                      : not set
+  ~/.cache/huggingface/token    : absent
+  meta-llama/Llama-3.1-8B       : HTTP 401 (gated)
+  meta-llama/Llama-3.2-1B       : HTTP 401 (gated)
+
+  Per the instructions this would NOT abort the run: arm2, arm3 and the
+  native-dependent cells would be marked "skipped: no gated-model access"
+  and everything else would run. Moot here, because precheck 1 aborted
+  first — but recorded so the native arms are not quietly assumed runnable.
+
+--------------------------------------------------------------------------------
+PRECHECK 3 — BRANCH + TRANSFORMERS PIN ... PASS (pin correct, no env to apply it to)
+--------------------------------------------------------------------------------
+  branch                        : mlsys-experiments              OK
+  working tree                  : clean                            OK
+  declared GPU pin              : transformers>=4.46,<5            OK
+                                  (environment_gpu.yml line 34; correctly
+                                   excludes 5.x, which breaks the ring patch)
+  local analysis venv           : transformers 5.5.4
+  GPU conda/venv env            : DOES NOT EXIST on this host
+                                  (no ~/venv-rasd, no ~/venv-vllm)
+
+  The "if transformers is 5.x, fix to <5" rule is not actionable here: the
+  only env present is the CPU analysis venv, which holds no GPU and never
+  executes the ring patch. The 5.x version is precisely what
+  scripts/mlsys_ring_binding_check.py is designed to detect and report.
+
+--------------------------------------------------------------------------------
+BUDGET GUARD
+--------------------------------------------------------------------------------
+  Cumulative GPU-hours : 0.00 of the session
+  Cumulative cost      : $0.00
+  Budget ceiling       : $600.00
+  Guard triggered      : NO  (nothing was launched, so nothing accrued)
+
+--------------------------------------------------------------------------------
+PHASE STATUS
+--------------------------------------------------------------------------------
+  PHASE 0  tokenizer + ring binding gates ....... NOT RUN (no GPU)
+  PHASE 1  arm1 / arm2 / arm3 + baselines ....... NOT RUN (no GPU)
+  PHASE 2  PG-19 multiseed + per-round traces ... NOT RUN (no GPU)
+  PHASE 3  bf16-draft isolation @64k ............ NOT RUN (no GPU)
+  PHASE 5  vLLM @128k baseline ................. NOT RUN (no GPU)
+  ANALYSIS mlsys_analysis.py ................... NOT RUN (no new inputs;
+                                                 re-running would only
+                                                 rewrite the existing
+                                                 seed-42 artefacts)
+  MASTER TABLE mlsys_master_table.py ........... unchanged; every "new"
+                                                 cell remains
+                                                 "(pending GPU run)"
+
+--------------------------------------------------------------------------------
+WHAT IS NEEDED TO EXECUTE
+--------------------------------------------------------------------------------
+  1. A CUDA host with 8x A100 80GB (configs assume this; 40GB variants
+     exist but arm3's native draft window is expected to OOM there).
+  2. HF_TOKEN / HUGGING_FACE_HUB_TOKEN with accepted access to the gated
+     meta-llama/Llama-3.1-8B and meta-llama/Llama-3.2-1B repositories.
+     Without it, run with SKIP_LLAMA3=1 and expect arms 2 and 3 to be
+     recorded as "skipped: no gated-model access".
+  3. The GPU env built FROM THE REPO: conda env create -f environment_gpu.yml
+     (this pins transformers>=4.46,<5), then
+     pip install --no-build-isolation flash-attn>=2.4.0 && pip install -e .
+
+  Then a single, resumable command runs everything and logs per-stage
+  GPU-hours and cost to results/mlsys/gpu_hours.csv:
+
+      NPROC=8 bash scripts/mlsys_pod_session.sh
+
+  The previous session's CPU-side deliverable is complete and committed at
+  f6ed0e7: 7 configs, both new flags (--draft-window-cap, --draft-dtype),
+  the dip test, the acceptance accounting, the vLLM runner and the
+  orchestrator. Nothing about it needs redoing to run on the pod.
+
+================================================================================
+END OF LOG — no results were produced; no numbers were synthesised.
+================================================================================
