@@ -49,6 +49,11 @@ cd "$(dirname "$0")/.."
 
 NPROC="${NPROC:-8}"
 NODE_RATE_PER_HOUR="${NODE_RATE_PER_HOUR:-15.92}"
+# Hard budget guard. Before each stage the cumulative cost is recomputed
+# from gpu_hours.csv; once it reaches this figure no further stage is
+# launched, so an unattended session cannot run past the ceiling. The
+# final `report` stage is exempt (we always want the cost breakdown).
+MAX_COST_USD="${MAX_COST_USD:-600}"
 TIMEOUT_LONG_S="${TIMEOUT_LONG_S:-14400}"
 SKIP_VLLM="${SKIP_VLLM:-0}"
 SKIP_LLAMA3="${SKIP_LLAMA3:-0}"   # set 1 if the tokenizer check fails
@@ -67,7 +72,16 @@ if [ ! -f "$COST_LOG" ]; then
     echo "stage,wall_seconds,nproc,gpu_hours,node_cost_usd" > "$COST_LOG"
 fi
 
-# --- stage helper: resume marker + timing + GPU-hour accounting -----------
+# Cumulative spend recorded so far (column 5 of the cost log).
+cumulative_cost() {
+    if [ -f "$COST_LOG" ]; then
+        awk -F, 'NR>1 { c += $5 } END { printf "%.2f", c+0 }' "$COST_LOG"
+    else
+        echo "0.00"
+    fi
+}
+
+# --- stage helper: budget guard + resume marker + timing + accounting -----
 stage() {
     local name="$1"; shift
     local marker="$OUT/.markers/${name}.done"
@@ -76,9 +90,23 @@ stage() {
         echo "==> [$name] already complete, skipping"
         return 0
     fi
+    # Budget guard: refuse to START a new stage once the ceiling is hit.
+    # `report` is exempt so the cost breakdown always gets written.
+    if [ "$name" != "report" ]; then
+        local spent
+        spent=$(cumulative_cost)
+        if awk -v s="$spent" -v m="$MAX_COST_USD" 'BEGIN{exit !(s>=m)}'; then
+            echo ""
+            echo "!!! BUDGET GUARD TRIPPED: cumulative \$$spent >= \$$MAX_COST_USD"
+            echo "!!! Not launching [$name]. Stopping so the instance can be terminated."
+            echo "$(date -u +%FT%TZ) BUDGET_GUARD_TRIPPED spent=$spent limit=$MAX_COST_USD at=$name" \
+                >> "$OUT/RUN_LOG.txt"
+            exit 99
+        fi
+    fi
     echo ""
     echo "============================================================"
-    echo "==> [$name] starting $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "==> [$name] starting $(date -u +%Y-%m-%dT%H:%M:%SZ)  (spent so far: \$$(cumulative_cost))"
     echo "============================================================"
     local t0 t1 rc
     t0=$(date +%s)
