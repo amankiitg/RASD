@@ -30,6 +30,12 @@ results/lever_validation/
 # the committed set measures ~40 KB for 6 traces. results/final/per_token/
 # is already tracked under the same reasoning.
 !results/mlsys/per_token/
+
+# MLSys run-state: created on the pod and pulled back. Markers are
+# per-instance progress flags, meaningless locally, and shipping them
+# back to a fresh instance makes stages skip ("already complete").
+# Never commit them.
+results/mlsys/.markers/
 results/m4_smoke/long_smoke.v4_oom.csv
 *.pt
 
