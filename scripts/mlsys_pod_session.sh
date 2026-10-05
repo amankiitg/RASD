@@ -211,8 +211,17 @@ p0_tokenizer() {
     # NEITHER is a reason to abort: per the run instructions, no access
     # means "skip the native arms and run everything else". Making this
     # stage fatal aborted two whole runs at rc=2.
-    python scripts/mlsys_check_tokenizer_llama3.py
-    local rc=$?
+    # NB: the check MUST run in a condition context. Under `set -e` a bare
+    # failing command aborts the entire script *before* `local rc=$?` is
+    # ever reached — that is precisely what killed the 8xA100 run at
+    # Phase 0.2 (the check's own PASS/FAIL lines printed, then the session
+    # exited 1 with no stage banner). `if ...; then` suppresses set -e.
+    local rc=0
+    if python scripts/mlsys_check_tokenizer_llama3.py; then
+        rc=0
+    else
+        rc=$?
+    fi
     if [ "$rc" -eq 0 ]; then
         echo "[tokenizer] identity verified — native arms enabled"
     else

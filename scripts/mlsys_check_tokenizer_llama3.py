@@ -84,13 +84,25 @@ def main() -> int:
     ref_name, ref = next(iter(tokenizers.items()))
     all_pass = True
 
-    header(f"2.1  vocab_size == {EXPECTED_VOCAB}")
+    # Authoritative size is len(tokenizer) == base BPE + added special
+    # tokens.  `tokenizer.vocab_size` is only the base BPE table and
+    # reports 128000 for Llama-3.x; comparing THAT to 128256 is a false
+    # divergence signal (it cost a full 8xA100 launch once).
+    header(f"2.1  vocabulary size (len(tokenizer); Llama-3.x = {EXPECTED_VOCAB})")
+    lengths = {}
     for name, tok in tokenizers.items():
-        ok = tok.vocab_size == EXPECTED_VOCAB
-        all_pass &= sub_result(f"{name}: vocab_size = {tok.vocab_size}", ok)
-    if not all_pass:
-        print("  NOTE: a size mismatch here means a different tokenizer")
-        print("        family — the native arms cannot be run as specified.")
+        lengths[name] = len(tok)
+        note = ""
+        if len(tok) != EXPECTED_VOCAB:
+            note = (f"vs {EXPECTED_VOCAB} expected for Llama-3.x "
+                    f"(base vocab_size={tok.vocab_size})")
+        sub_result(f"{name}: len(tokenizer) = {len(tok)}", True, note)
+    # Verdict is driven by CROSS-MODEL agreement, not by matching a
+    # constant: if the two models agree with each other, the native arms
+    # are sound regardless of the constant above.
+    if len(set(lengths.values())) != 1:
+        all_pass &= sub_result(
+            "cross-model vocabulary length", False, f"disagree: {lengths}")
 
     header(f"2.2  get_vocab() equality vs {ref_name}")
     ref_vocab = ref.get_vocab()
@@ -139,6 +151,7 @@ def main() -> int:
     print("  FAIL — tokenizer divergence. SKIP the native arms (2 and 3) and")
     print("         report this: cross-family speculation is unsound here.")
     print("         Run only arm 1 + everything that does not need Llama-3.")
+    print("         (rc=1 => session marks SKIP_NATIVE_ARMS and CONTINUES)")
     return 1
 
 
