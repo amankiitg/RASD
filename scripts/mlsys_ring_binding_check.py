@@ -159,10 +159,17 @@ def main() -> int:
     print(f"         num_key_value_heads = {attn0.num_key_value_heads}")
 
     # world_size=1 must be a strict no-op (preserves single-rank exactness)
-    original_forward = attn0.forward
+    # NB: compare `__func__`, NOT the bound methods. `obj.forward` builds a
+    # fresh bound-method object on every attribute access, so
+    # `a.forward is b.forward` is ALWAYS False — an `is` test on bound
+    # methods fails even when the patch is a genuine no-op. This check was
+    # latent while the tokenizer gate returned rc=2 and skipped Phase 0.3.
+    original_func = attn0.forward.__func__
     n = install_ring_attention(model, world_size=1, rank=0)
-    if n != 0 or model.model.layers[0].self_attn.forward is not original_forward:
-        print(f"  [FAIL] world_size=1 was not a no-op (patched {n} layers)")
+    now_func = model.model.layers[0].self_attn.forward.__func__
+    if n != 0 or now_func is not original_func:
+        print(f"  [FAIL] world_size=1 was not a no-op "
+              f"(patched {n} layers, forward changed={now_func is not original_func})")
         return 1
     print("  [PASS] world_size=1 is a no-op (single-rank path unchanged)")
 
