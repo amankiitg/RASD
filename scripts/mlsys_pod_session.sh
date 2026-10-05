@@ -57,6 +57,12 @@ MAX_COST_USD="${MAX_COST_USD:-600}"
 TIMEOUT_LONG_S="${TIMEOUT_LONG_S:-14400}"
 SKIP_VLLM="${SKIP_VLLM:-0}"
 SKIP_LLAMA3="${SKIP_LLAMA3:-0}"   # set 1 if the tokenizer check fails
+# Unattended policy: a failed stage is logged and the session CONTINUES to
+# the next stage, so one OOM (arm 3 is memory-hungry by construction) does
+# not discard the output of every later phase. Set STRICT_STAGES=1 to
+# restore fail-fast behaviour.
+STRICT_STAGES="${STRICT_STAGES:-0}"
+STAGE_FAILURES=0
 
 OUT=results/mlsys
 LOG_DIR=$OUT/logs
@@ -121,8 +127,19 @@ stage() {
         >> "$COST_LOG"
     if [ "$rc" -ne 0 ]; then
         echo "!!! [$name] FAILED (rc=$rc). Log: $LOG_DIR/${name}.log"
-        echo "!!! Markers are per-stage; fix and re-run to resume."
-        exit "$rc"
+        echo "!!! Recording the failure and CONTINUING to the next stage."
+        echo "!!! The marker is deliberately NOT written, so a resumed"
+        echo "!!! session retries this stage. STRICT_STAGES=1 aborts instead."
+        mkdir -p "$OUT/.markers"
+        : > "$OUT/.markers/FAILED_${name}"
+        echo "$(date -u +%FT%TZ) STAGE_FAILED name=$name rc=$rc log=$LOG_DIR/${name}.log" \
+            >> "$OUT/RUN_LOG.txt"
+        STAGE_FAILURES=$((STAGE_FAILURES + 1))
+        if [ "$STRICT_STAGES" = "1" ]; then
+            echo "!!! STRICT_STAGES=1 -> aborting on [$name]"
+            exit "$rc"
+        fi
+        return 0
     fi
     touch "$marker"
     echo "==> [$name] done in ${wall}s"
@@ -415,4 +432,17 @@ stage p4_analysis_final   p4_analysis
 stage report              report
 
 echo ""
-echo "==> MLSys session complete at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ "$STAGE_FAILURES" -gt 0 ]; then
+    echo "==> MLSys session finished PARTIALLY at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "    $STAGE_FAILURES stage(s) failed (cells stay pending, nothing synthesized):"
+    ls -1 "$OUT/.markers"/FAILED_* 2>/dev/null | sed 's|.*/FAILED_|      - |' || true
+    echo "    See results/mlsys/RUN_LOG.txt and results/mlsys/logs/*.log"
+    echo "SESSION_PARTIAL stages_failed=$STAGE_FAILURES"
+else
+    echo "==> MLSys session complete at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "SESSION_COMPLETE"
+fi
+# Exit 0 either way when STRICT_STAGES=0: the remote runner must still run
+# the analysis stage so the phases that DID complete get summarised. The
+# partial/failed state is carried by .markers/FAILED_* and RUN_LOG.txt.
+exit 0
