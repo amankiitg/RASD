@@ -61,7 +61,7 @@ APPROVED=${MLSYS_APPROVED_STAGES:-gate_calibration,engine_cap_smoke,coherence_ga
 # value REFUSES EVERY STAGE. "Unset" must not be able to mean "run everything":
 # a launch script that forgot the variable would otherwise run the whole
 # campaign on the strength of an omission.
-DEFAULT_ONLY=gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,natural_spec_gated_256k,vllm_ladder
+DEFAULT_ONLY=gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
 ONLY=${MLSYS_ONLY_STAGES-$DEFAULT_ONLY}
 ONLY_EXPLICIT=0
 [ -n "${MLSYS_ONLY_STAGES+set}" ] && ONLY_EXPLICIT=1
@@ -330,9 +330,9 @@ expected_rows() {   # $1=config  $2=groups
     | awk 'BEGIN{sep=0} /^-{10,}$/{sep=1; next} sep && NF>=3 {n++} END{print n+0}'
 }
 
-gate_pass() {   # $1=candidate name -> 0 if the gate cleared it
-  local c=$1
-  "$PY" - "$OUT/coherence_gate.csv" "$c" <<'PY'
+gate_pass() {   # $1=candidate name  $2=gate csv (default: the ladder's gate)
+  local c=$1 csv=${2:-$OUT/coherence_gate.csv}
+  "$PY" - "$csv" "$c" <<'PY'
 import csv, sys
 try:
     for r in csv.DictReader(open(sys.argv[1])):
@@ -549,6 +549,45 @@ for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
   check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
   report_spec_stage "$OUT/${name}.csv" "$name"
 done
+
+# ---- S6b: rope_intervention_128k ----------------------------------------
+# Pre-registered as C6 in the plan revision. Context held at 128k; ONLY the
+# target's rope moves. The intervention arm must clear the gate at 128k first,
+# and a gate failure IS the result, not a campaign failure: it says a llama3
+# factor-16 intervention at 128k does not produce a coherent target, which is
+# worth reporting and is not something to retry with a different threshold.
+if on_list rope_intervention_128k "$ONLY"; then
+  stage rope_intervention_gate 14400 "$PY" scripts/mlsys_coherence_gate.py \
+    --candidates configs/mlsys_rope_intervention_candidates.json \
+    --pg19-meta "$DOCS" \
+    --out "$OUT/rope_intervention_gate.csv" \
+    --gen-dir "$OUT/rope_intervention_gate_generated"
+
+  if gate_pass RI_llama3_f16_128k "$OUT/rope_intervention_gate.csv"; then
+    interim "GATE_PASS name=rope_intervention_128k candidate=RI_llama3_f16_128k"
+    want=$(expected_rows configs/mlsys_rope_intervention_128k.yml \
+                         "RI_native_128k_SPEC RI_llama3_f16_128k_SPEC")
+    stage rope_intervention_128k 43200 "$PY" run_experiment.py \
+      --config configs/mlsys_rope_intervention_128k.yml \
+      --groups RI_native_128k_SPEC RI_llama3_f16_128k_SPEC \
+      --output "$OUT/rope_intervention_128k.csv" --stage-id rope_intervention_128k \
+      --timeout-per-run-s 9000 --abort-on-failure \
+      --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+    check_stage_rows rope_intervention_128k "$OUT/rope_intervention_128k.csv" "${want:-0}"
+    # Paired per document (pair_id), the arms differing only in arm_role.
+    stage rope_intervention_128k_doc_intervals 1800 "$PY" \
+      scripts/mlsys_document_bootstrap.py \
+      --results "$OUT/rope_intervention_128k.csv" --group-by context_length \
+      --ratio-metric decode_tps \
+      --out "$OUT/rope_intervention_128k_intervals.csv"
+  else
+    # Recorded as the RESULT. Not a stage failure, and not retried.
+    interim "RESULT name=rope_intervention_128k gate=FAIL candidate=RI_llama3_f16_128k note=no_coherent_target_at_factor16_128k"
+    echo "RESULT rope_intervention_128k: the factor-16 intervention did not pass the gate at 128k; arms not run"
+  fi
+else
+  interim "SKIPPED name=rope_intervention_128k reason=needs_approval"
+fi
 
 # ---- S7: vLLM baseline ---------------------------------------------------
 # Plain (non-speculative) decode at every rung: the production-stack reference

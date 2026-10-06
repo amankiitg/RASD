@@ -168,6 +168,40 @@ stages:
       with target perplexity beside every acceptance figure. Answers whether the
       reported saturation is the repetitive synthetic prompt or the system.
 
+  - id: rope_intervention_128k
+    kind: spec
+    order: 5.5
+    depends_on: [natural_f1_128k]
+    config: configs/mlsys_rope_intervention_128k.yml
+    groups: [RI_native_128k_SPEC, RI_llama3_f16_128k_SPEC]
+    rung: 131072
+    require_gate_verdict: pass
+    gate_candidates: configs/mlsys_rope_intervention_candidates.json
+    gate_candidate: RI_llama3_f16_128k
+    est_hours: 3.7
+    est_cost_usd: 82
+    baseline_design: {target_full_docs: 0, target_short_docs: 0}
+    spec_only: true
+    losslessness: not_required
+    measure_target_ppl: true
+    output: results/mlsys/rope_intervention_128k.csv
+    fail_action: >
+      If the factor-16 arm fails the gate at 128k, the failure IS the result:
+      record it and do not run the arms, and do not retry with a different
+      threshold. A threshold relaxed to make the intervention agree is a
+      threshold that no longer excludes anything.
+    why: >
+      Pre-registered C6. Every other comparison moves the context length and
+      the rope together, so none isolates a rope intervention. Context is held
+      at 128k and ONLY the target's rope moves, so if acceptance here is a
+      property of the positional frame rather than of the context, that is
+      visible. Speculative runs only: nothing is reported as a ratio against a
+      baseline, only as a paired difference between two speculative arms, so
+      there is no target-only arm to pair against and losslessness does not
+      apply. Equivalence margin 0.05 on the paired difference; an interval
+      overlapping the boundary is INCONCLUSIVE, which with n = 10 documents is
+      the likely outcome and is not a failure.
+
   - id: impl_validation
     kind: cross_impl
     order: 6

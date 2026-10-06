@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Gate candidates for the rope_intervention_128k stage (plan revision",
+    "2026-10-06). The intervention arm must pass the coherence gate at 128k",
+    "BEFORE it runs; if it fails, the failure is the result.",
+    "",
+    "A declared native baseline at 128k is required or the ratio is undefined",
+    "and the arm would report 'no baseline', which is not a verdict. The",
+    "baseline is a separate row with a different seed, so it is an independent",
+    "measurement rather than the candidate compared with itself (which would be",
+    "ratio 1.0 by construction and could not fail).",
+    "",
+    "The tolerance is the fixed 1.5x from the plan revision, not a derived one."
+  ],
+  "candidates": [
+    {
+      "name": "RI_llama3_f16_128k",
+      "expect": "pass",
+      "role": "candidate",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "rope_type": "llama3",
+      "rope_factor": 16,
+      "rope_anchor_base": 8192,
+      "context_length": 131072,
+      "seed": 42,
+      "_what_it_is": "The intervention arm: the shipped llama3 dict with only factor changed from 8 to 16, at the shipped 8192 anchor, evaluated at 128k."
+    },
+    {
+      "name": "B_native_128k_ri",
+      "expect": "pass",
+      "role": "baseline",
+      "native_baseline": true,
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "rope_type": "none",
+      "context_length": 131072,
+      "seed": 7
+    }
+  ]
+}

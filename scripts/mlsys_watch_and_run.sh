@@ -39,7 +39,7 @@ ASK_OVER=${MLSYS_ASK_OVER_USD:-300}
 # The allowlist is passed to the pod with the SAME default as the manifest's, and
 # both are exported rather than left empty. An empty list means "approve
 # nothing" on both sides -- "unset" must never be able to mean "run everything".
-DEFAULT_ONLY=gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,natural_spec_gated_256k,vllm_ladder
+DEFAULT_ONLY=gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
 ONLY_STR=${MLSYS_ONLY_STAGES-$DEFAULT_ONLY}
 [ -z "$ONLY_STR" ] && say "WARNING: MLSYS_ONLY_STAGES is empty; the pod will refuse every stage"
 RATE=22.32

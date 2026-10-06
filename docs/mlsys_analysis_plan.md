@@ -579,8 +579,13 @@ interval-inclusion rule above licenses the word "equivalent", and with n = 10
 documents the interval will often be too wide to license it. That outcome is
 expected, is reported as inconclusive, and is not a failure of the stage.
 
-**Cost.** ~$35 (2 arms x 10 documents x 128k, speculative only; spec decode is
-0.55 s/token at 128k, so 20 runs x ~573 s = 3.2h at $22.32/h).
+**Cost.** ~$82, not the ~$35 first estimated. The arms alone are 2 x 10 = 20
+speculative runs; spec decode is 0.55 s/token at 128k, so 20 x ~570 s = 3.2h at
+$22.32/h = $71, and the gate pass at 128k adds ~0.5h = ~$11, giving ~$82 -- the
+figure the manifest records as `est_cost_usd`. The stage is approved at that
+figure. The earlier "$35" was an arithmetic slip in this revision (3.2h was
+costed as if each hour were ~$11); it is corrected here BEFORE the stage runs,
+and the correction is the reason the number is stated with its derivation.
 
 ### Losslessness verdicts
 

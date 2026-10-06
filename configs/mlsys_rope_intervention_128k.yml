@@ -1,0 +1,89 @@
+# MLSys — rope_intervention_128k: does the target's positional frame move
+# acceptance with the CONTEXT HELD FIXED?
+#
+# Pre-registered as a dated revision in docs/mlsys_analysis_plan.md before this
+# file existed. Read that revision before changing anything here.
+#
+# WHY. Every other comparison changes the context length and the rope together,
+# so none of them isolates a rope intervention. If acceptance at 128k is a
+# property of the target's positional frame rather than of the context length,
+# that has to be visible with the context held at 128k and ONLY the rope moved.
+#
+# TWO ARMS, paired by document:
+#   R_native_SPEC     the shipped `llama3` block, untouched (rope_type: none
+#                     asserts it is the shipped one)
+#   R_llama3_f16_SPEC rope_type llama3, the SHIPPED dict with only `factor`
+#                     changed from 8 to 16, anchored where the model ships it
+#                     (original_max_position_embeddings = 8192)
+# The shipped dict is spread and one key overridden, so the factor is the only
+# difference between the arms. Nothing else varies.
+#
+# SPECULATIVE RUNS ONLY. There is no target-only arm and losslessness is not
+# required: nothing here is reported as a ratio against a baseline, only as a
+# paired DIFFERENCE between two speculative arms. Losslessness remains an
+# implementation property already checked on the target-only pairs at this
+# rung (natural_f1_128k).
+#
+# GATE. The factor-16 arm must first pass the coherence gate at 128k
+# (configs/mlsys_rope_intervention_candidates.json). If it fails, that failure
+# IS the result: the arm is not run and is reported as "a llama3 factor-16
+# intervention at 128k does not produce a coherent target".
+#
+# COMPARISON (pre-registered, C6): per document, the paired difference in
+# alpha_round (factor-16 minus native), document-bootstrap 95% interval,
+# n_boot 10000, resampling documents. Equivalence margin 0.05: the arms are
+# "equivalent" only when the interval lies entirely inside [-0.05, +0.05].
+# An interval overlapping a boundary is INCONCLUSIVE and is reported as such.
+# With n = 10 documents, inconclusive is the likely outcome and is not a
+# failure of the stage.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0        # greedy, per plan section 2
+  top_p: 1.0
+  seeds: [42]             # the document is the replication unit
+  log_per_token: true
+  save_generated_text: true
+  save_generated_tokens: true
+  measure_target_ppl: true
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+
+# The same 10 core documents as natural_f1_128k, so the two stages are
+# comparable document by document.
+RI_native_128k_SPEC:
+  name: rope_intervention_native
+  factor: context_length
+  levels:
+  - id: RI_native_128k
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 1024
+    checkpoint_every: 0
+    notes: 'control arm: shipped llama3 rope, 128k, 10 documents, 1024 tokens'
+
+RI_llama3_f16_128k_SPEC:
+  name: rope_intervention_llama3_f16
+  factor: context_length
+  levels:
+  - id: RI_llama3_f16_128k
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    # The intervention: shipped llama3 dict, factor 8 -> 16, anchor unchanged.
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    max_new_tokens: 1024
+    checkpoint_every: 0
+    notes: 'intervention arm: llama3 factor 16 at the shipped 8192 anchor, same 10 documents, same 1024 tokens'

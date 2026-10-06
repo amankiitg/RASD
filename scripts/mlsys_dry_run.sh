@@ -746,7 +746,7 @@ fails = []
 # 1. the allowlist defaults to the approved set on BOTH sides
 approv = ("gate_calibration,engine_cap_smoke,coherence_gate,"
           "correction_note_evidence,natural_f1_128k,impl_validation,"
-          "natural_spec_gated_256k,vllm_ladder")
+          "rope_intervention_128k,natural_spec_gated_256k,vllm_ladder")
 if f"DEFAULT_ONLY={approv}" not in man:
     fails.append("the manifest's allowlist default is not the approved set")
 # empty must refuse, never admit
@@ -843,7 +843,7 @@ watch = open(sys.argv[1]).read()
 fails = []
 approv = ("gate_calibration,engine_cap_smoke,coherence_gate,"
           "correction_note_evidence,natural_f1_128k,impl_validation,"
-          "natural_spec_gated_256k,vllm_ladder")
+          "rope_intervention_128k,natural_spec_gated_256k,vllm_ladder")
 
 # the allowlist and the interpreter, on the watcher side
 if "MLSYS_ONLY_STAGES" not in watch:
@@ -897,6 +897,85 @@ sys.exit(1 if fails else 0)
 PYWBLK
   [ $? -eq 0 ] && ok "the watcher refuses, verifies and terminates to zero" \
                || bad "a watcher lifecycle guarantee is missing"
+
+# --------------------------------------------------------------------------
+step "16  rope_intervention_128k: pre-registered, gated, plannable"
+"$PY" - <<'PYRI'
+import json, sys, yaml, pathlib
+fails = []
+plan = pathlib.Path("docs/mlsys_analysis_plan.md").read_text()
+man = pathlib.Path("configs/mlsys_manifest.yml").read_text()
+shell = pathlib.Path("scripts/mlsys_manifest.sh").read_text()
+
+# pre-registered BEFORE it appears in the manifest (it does)
+if "rope_intervention_128k" not in plan:
+    fails.append("the stage is not pre-registered in the plan")
+if "equivalence margin: 0.05" not in plan.lower():
+    fails.append("the pre-registered equivalence margin of 0.05 is missing")
+if "document-bootstrap" not in plan:
+    fails.append("the comparison is not the pre-registered document bootstrap")
+
+cfg = yaml.safe_load(open("configs/mlsys_rope_intervention_128k.yml"))
+groups = [k for k in cfg if k != "defaults"]
+if groups != ["RI_native_128k_SPEC", "RI_llama3_f16_128k_SPEC"]:
+    fails.append(f"unexpected arms: {groups}")
+lv = {g: cfg[g]["levels"][0] for g in groups}
+native, treated = lv["RI_native_128k_SPEC"], lv["RI_llama3_f16_128k_SPEC"]
+
+# the ONLY difference between the arms must be the rope
+for key in ("context_length", "max_new_tokens", "documents", "spec_steps"):
+    if native.get(key) != treated.get(key):
+        fails.append(f"the arms differ in {key}, so the rope is not isolated")
+if "rope_type" in native:
+    fails.append("the control arm declares a rope, so it is not the shipped one")
+if treated.get("rope_type") != "llama3" or int(treated.get("rope_factor", 0)) != 16:
+    fails.append("the intervention arm is not llama3 factor 16")
+if int(treated.get("rope_anchor_base", 0)) != 8192:
+    fails.append("the intervention arm is not anchored where the model ships "
+                 "(8192), so the factor is not the only change")
+if len(treated.get("documents", [])) != 10:
+    fails.append("the intervention arm does not use the 10 core documents")
+if int(cfg["defaults"].get("temperature", -1)) != 0.0:
+    fails.append("the stage is not greedy")
+if cfg["defaults"].get("ignore_eos") is not True:
+    fails.append("the stage does not fix the EOS policy")
+
+# no target-only arm and no losslessness requirement: nothing here is a ratio
+for g in groups:
+    if "TARGET" in g:
+        fails.append(f"a target-only arm is present: {g}")
+
+# the gate runs first and a gate failure is recorded, not retried
+i_gate = shell.find("rope_intervention_gate")
+i_stage = shell.find("stage rope_intervention_128k ")
+if i_gate < 0 or i_stage < 0:
+    fails.append("the stage or its gate invocation is missing")
+elif i_gate > i_stage:
+    fails.append("the arms run before the gate, so an incoherent target can run")
+if "RESULT name=rope_intervention_128k gate=FAIL" not in shell:
+    fails.append("a gate failure is not recorded as the result")
+
+# the gate candidates file declares a baseline at the candidate's own context
+j = json.load(open("configs/mlsys_rope_intervention_candidates.json"))
+base = {(c["context_length"], c["target_model_name"])
+        for c in j["candidates"] if c.get("native_baseline")}
+for c in j["candidates"]:
+    if (c["context_length"], c["target_model_name"]) not in base:
+        fails.append(f"{c['name']} has no baseline at its own context")
+
+# approved on both sides
+if "rope_intervention_128k" not in man:
+    fails.append("the stage has no manifest entry")
+for f in ("scripts/mlsys_manifest.sh", "scripts/mlsys_watch_and_run.sh"):
+    if "rope_intervention_128k" not in open(f).read():
+        fails.append(f"{f} does not list the stage as approved")
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYRI
+  [ $? -eq 0 ] && ok "rope_intervention_128k is pre-registered, isolated, gated first and approved" \
+               || bad "the new stage is not as pre-registered"
 
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
