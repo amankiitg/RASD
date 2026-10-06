@@ -28,16 +28,24 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from src.analysis.losslessness import compare_generations, require_same_request
+from src.analysis.losslessness import (
+    compare_generations, require_same_request, stage_requirement,
+)
 
 
 def pair_key(row: dict) -> tuple:
-    """Identity of the *request*: same document, rung, prompt and generation."""
+    """Identity of the *request*: same document, rung and prompt.
+
+    `max_new_tokens` is deliberately NOT part of the key. The campaign's
+    target-only baselines generate 128 tokens for 7 of the 10 documents and 1024
+    for the other 3, so keying on the generation length would report NO_PAIR for
+    seven correct cells — and NO_PAIR reads as "nothing to check" rather than as
+    "the check is weaker than intended".
+    """
     return (
         str(row.get("doc_id", "")),
         str(row.get("prompt_sha256", "")),
         str(row.get("context_length", "")),
-        str(row.get("max_new_tokens", "")),
     )
 
 
@@ -57,12 +65,20 @@ def load_tokens(tokens_dir: Path, run_id: str) -> dict | None:
     return json.loads(path.read_text())
 
 
-def check(csv_path: Path, tokens_dir: Path) -> list[dict]:
+def check(csv_path: Path, tokens_dir: Path, full_length: int = 1024,
+          min_prefix: int = 128) -> tuple:
     rows = load_rows(csv_path)
+    # Keep the LONGEST partner per request: when both a full-length and a short
+    # partner exist for the same document, the full one is the stronger check.
     by_key: dict[tuple, dict] = {}
     for r in rows:
-        if is_target_only(r):
-            by_key[pair_key(r)] = r
+        if not is_target_only(r):
+            continue
+        k = pair_key(r)
+        cur = by_key.get(k)
+        if cur is None or int(r.get("max_new_tokens") or 0) > int(
+                cur.get("max_new_tokens") or 0):
+            by_key[k] = r
 
     out = []
     for r in rows:
@@ -83,11 +99,6 @@ def check(csv_path: Path, tokens_dir: Path) -> list[dict]:
             continue
         base["target_run_id"] = tgt["run_id"]
         base["target_throughput_tps"] = tgt.get("throughput_tps", "")
-        problems = require_same_request(r, tgt)
-        if problems:
-            out.append({**base, "lossless": "", "verdict": "BAD_PAIR",
-                        "detail": "; ".join(problems)})
-            continue
         a = load_tokens(tokens_dir, r["run_id"])
         b = load_tokens(tokens_dir, tgt["run_id"])
         if a is None or b is None:
@@ -96,14 +107,21 @@ def check(csv_path: Path, tokens_dir: Path) -> list[dict]:
             out.append({**base, "lossless": "", "verdict": "NO_TOKENS",
                         "detail": f"missing token sidecar for {missing}"})
             continue
-        req = None
-        if str(r.get("max_new_tokens", "")).strip():
-            req = int(r["max_new_tokens"])
+        base["target_tokens_requested"] = tgt.get("max_new_tokens", "")
+        # The guard needs the actual lengths to enforce "partner is not longer".
+        r2, t2 = dict(r), dict(tgt)
+        r2["_n_tokens"] = len(a["generated_token_ids"])
+        t2["_n_tokens"] = len(b["generated_token_ids"])
+        problems = require_same_request(r2, t2)
+        if problems:
+            out.append({**base, "verdict": "BAD_PAIR", "lossless": "",
+                        "detail": "; ".join(problems)})
+            continue
         res = compare_generations(
-            a["generated_token_ids"], b["generated_token_ids"], req)
-        out.append({**base, **res,
-                    "verdict": "LOSSLESS" if res["lossless"] else "MISMATCH"})
-    return out
+            a["generated_token_ids"], b["generated_token_ids"],
+            full_length=full_length, min_prefix=min_prefix)
+        out.append({**base, **res})
+    return out, stage_requirement(out, full_length, min_prefix)
 
 
 def main() -> int:
@@ -111,17 +129,25 @@ def main() -> int:
     p.add_argument("--results", required=True)
     p.add_argument("--tokens-dir", default=None,
                    help="Default: <results dir>/tokens")
+    p.add_argument("--full-length", type=int, default=1024,
+                   help="Generation length of the full-length target-only pairs")
+    p.add_argument("--min-prefix", type=int, default=128,
+                   help="Shortest verified prefix a cell may settle for")
     p.add_argument("--out", default=None)
     args = p.parse_args()
 
     csv_path = Path(args.results)
     tokens_dir = Path(args.tokens_dir) if args.tokens_dir else (
         csv_path.resolve().parent / "tokens")
-    rows = check(csv_path, tokens_dir)
+    rows, req = check(csv_path, tokens_dir, args.full_length,
+                      args.min_prefix)
 
     fields = ["spec_run_id", "target_run_id", "doc_id", "context_length",
-              "verdict", "lossless", "first_mismatch_position",
-              "spec_tokens", "target_tokens", "compared_tokens",
+              "verdict", "lossless", "lossless_full_prefix",
+              "verified_prefix", "meets_min_prefix", "min_prefix",
+              "first_mismatch_position",
+              "spec_tokens", "target_tokens", "target_tokens_requested",
+              "compared_tokens",
               "spec_acceptance", "spec_throughput_tps",
               "target_throughput_tps", "detail"]
     out_path = Path(args.out) if args.out else csv_path.with_name(
@@ -132,13 +158,19 @@ def main() -> int:
         for r in rows:
             w.writerow(r)
 
-    bad = [r for r in rows if r["verdict"] != "LOSSLESS"]
     for r in rows:
-        print(f"  {r['verdict']:<9} {r['spec_run_id']:<44} "
-              f"{r.get('detail','')[:60]}")
-    print(f"\n{len(rows) - len(bad)}/{len(rows)} cells lossless; wrote {out_path}")
-    if bad:
-        print(f"NOT LOSSLESS: {[r['spec_run_id'] for r in bad]}")
+        print(f"  {r['verdict']:<20} {r['spec_run_id']:<42} "
+              f"prefix={r.get('verified_prefix','')} {r.get('detail','')[:44]}")
+    n_loss = sum(1 for r in rows if r["verdict"] == "LOSSLESS")
+    n_pref = sum(1 for r in rows if str(r["verdict"]).startswith("LOSSLESS_PREFIX"))
+    print(f"\n{n_loss} full-length LOSSLESS, {n_pref} prefix-verified, "
+          f"{len(rows) - n_loss - n_pref} failed; wrote {out_path}")
+    print(f"  requirement: every cell verified over >= {min_prefix} tokens, and "
+          f"all {req['full_length_cells']} full-length pairs LOSSLESS over "
+          f"{full_length}")
+    if not req["ok"]:
+        for f in req["failures"]:
+            print(f"  FAIL  {f}")
         return 1
     return 0
 

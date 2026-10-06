@@ -43,52 +43,101 @@ def first_mismatch(a: Sequence[int], b: Sequence[int]) -> Optional[int]:
 def compare_generations(
     spec_ids: Sequence[int],
     target_ids: Sequence[int],
-    requested_tokens: int | None = None,
+    full_length: int | None = None,
+    min_prefix: int = 128,
 ) -> dict:
     """Losslessness verdict for one (speculative, target-only) pair.
 
-    `requested_tokens` is the generation length both runs were asked for. A run
-    that produced FEWER tokens than requested is incomplete: the comparison
-    window would be shorter than the plan fixed, and the shortfall usually means
-    generation stopped early, which is itself a divergence. A run that produced
-    more is not treated as a failure — see below — but is reported.
+    The two arms do NOT have to generate the same number of tokens. The campaign
+    uses three target-only partners at the full 1024 tokens and seven at 128
+    tokens, because a throughput RATE needs a steady state while losslessness
+    needs an equal length. So the comparison is over the common prefix and the
+    verdict says which one it is:
+
+      LOSSLESS           the partner reached `full_length` and every token matches
+      LOSSLESS_PREFIX_n  the partner produced n < full_length tokens and the first
+                         n tokens match
+      MISMATCH           the first divergence position, with both tokens named
+
+    `verified_prefix` is the length actually checked, and `meets_min_prefix` says
+    whether it clears `min_prefix`. A stage requiring losslessness needs every
+    speculative cell to clear the minimum and the full-length pairs to be
+    lossless over `full_length`.
+
+    Comparison is on token IDs, never on decoded text: text is not injective.
     """
-    pos = first_mismatch(spec_ids, target_ids)
-    short = None
-    if requested_tokens is not None:
-        if len(spec_ids) < requested_tokens or len(target_ids) < requested_tokens:
-            short = min(len(spec_ids), len(target_ids))
-    # A speculative run may legitimately emit more than the cap if the engine
-    # commits a whole verify round; the target-only arm stops exactly on the
-    # cap. Comparing over their common prefix is the correct comparison, and
-    # the overrun is recorded because it also shifts the throughput denominator.
-    overrun = (max(len(spec_ids), len(target_ids)) - requested_tokens
-               if requested_tokens is not None else 0)
-    lossless = (pos is None) and (short is None)
+    n_common = min(len(spec_ids), len(target_ids))
+    pos = first_mismatch(spec_ids[:n_common], target_ids[:n_common])
+
+    if pos is not None:
+        verdict = "MISMATCH"
+    elif full_length is not None and len(target_ids) >= full_length \
+            and len(spec_ids) >= full_length:
+        verdict = "LOSSLESS"
+    elif full_length is None and len(spec_ids) == len(target_ids):
+        verdict = "LOSSLESS"
+    else:
+        verdict = f"LOSSLESS_PREFIX_{n_common}"
+
     out = {
-        "lossless": bool(lossless),
+        "verdict": verdict,
+        "lossless": bool(verdict == "LOSSLESS"),
+        "lossless_full_prefix": bool(verdict.startswith("LOSSLESS")),
+        "verified_prefix": int(n_common),
+        "meets_min_prefix": bool(n_common >= min_prefix and verdict.startswith("LOSSLESS")),
         "first_mismatch_position": "" if pos is None else int(pos),
         "spec_tokens": len(spec_ids),
         "target_tokens": len(target_ids),
-        "compared_tokens": min(len(spec_ids), len(target_ids)),
-        "spec_overrun_tokens": max(0, len(spec_ids) - (requested_tokens or len(spec_ids))),
-        "target_overrun_tokens": max(0, len(target_ids) - (requested_tokens or len(target_ids))),
-        "length_overrun": max(0, overrun),
+        "compared_tokens": int(n_common),
+        "min_prefix": int(min_prefix),
     }
     if pos is not None:
         out["detail"] = (
             f"token {pos}: spec={spec_ids[pos]} target={target_ids[pos]}"
-            if pos < min(len(spec_ids), len(target_ids))
-            else f"runs diverged by length at {pos}"
+            if pos < n_common else f"runs diverged by length at {pos}"
         )
-    elif short is not None:
-        out["detail"] = (
-            f"incomplete generation: asked for {requested_tokens}, "
-            f"shortest run produced {short}"
-        )
+    elif verdict == "LOSSLESS":
+        out["detail"] = f"identical over the full {full_length or n_common} tokens"
     else:
-        out["detail"] = "identical over the full generation"
+        out["detail"] = (
+            f"identical over the {n_common}-token common prefix "
+            f"(partner produced {len(target_ids)})"
+        )
     return out
+
+
+def stage_requirement(rows: list[dict], full_length: int,
+                      min_prefix: int = 128) -> dict:
+    """Apply the plan's rule for a stage that declares `losslessness: required`.
+
+    Every speculative cell must have a verified prefix of at least `min_prefix`,
+    AND every cell whose partner reached `full_length` must be LOSSLESS over
+    `full_length`. Returns the failures, so a stage can report them rather than
+    trusting an aggregate.
+    """
+    failures = []
+    full_cells = 0
+    for r in rows:
+        v = str(r.get("verdict", ""))
+        if not v:
+            continue
+        if not v.startswith("LOSSLESS"):
+            failures.append(f"{r.get('spec_run_id')}: {v} at "
+                            f"{r.get('first_mismatch_position')}")
+            continue
+        if int(r.get("verified_prefix") or 0) < min_prefix:
+            failures.append(f"{r.get('spec_run_id')}: verified prefix "
+                            f"{r.get('verified_prefix')} < {min_prefix}")
+        if int(r.get("target_tokens") or 0) >= full_length:
+            full_cells += 1
+            if v != "LOSSLESS":
+                failures.append(f"{r.get('spec_run_id')}: partner reached "
+                                f"{full_length} but verdict is {v}")
+    if full_cells == 0:
+        failures.append(f"no pair had a {full_length}-token partner, so the "
+                        f"full-length check did not happen")
+    return {"failures": failures, "full_length_cells": full_cells,
+            "ok": not failures}
 
 
 def require_same_request(spec_row: dict, target_row: dict) -> list[str]:
@@ -103,8 +152,13 @@ def require_same_request(spec_row: dict, target_row: dict) -> list[str]:
     # The contract fields, not just the request identity. Losslessness is only
     # defined for greedy decoding with EOS ignored, and a pair that differs in
     # sampling or rope is not the same experiment even when the prompt matches.
+    #
+    # `max_new_tokens` is deliberately NOT compared: the campaign's short
+    # target-only baselines generate 128 tokens against a 1024-token speculative
+    # run, which is exactly the case the prefix verdict exists for. What matters
+    # is that the partner is not LONGER than the run it checks.
     for field in ("prompt_sha256", "prompt_tokens", "context_length",
-                  "max_new_tokens", "temperature", "top_p", "ignore_eos",
+                  "temperature", "top_p", "ignore_eos",
                   "rope_type", "rope_factor", "rope_anchor_base",
                   "target_revision", "draft_revision"):
         a, b = spec_row.get(field), target_row.get(field)
@@ -114,4 +168,12 @@ def require_same_request(spec_row: dict, target_row: dict) -> list[str]:
         problems.append("spec row has spec_steps=0 (it is a target-only run)")
     if str(target_row.get("spec_steps")) not in ("", "0"):
         problems.append(f"target row has spec_steps={target_row.get('spec_steps')}")
+
+    spec_len, tgt_len = spec_row.get("_n_tokens"), target_row.get("_n_tokens")
+    if spec_len is not None and tgt_len is not None and int(tgt_len) > int(spec_len):
+        problems.append(
+            f"partner generated more tokens than the run it checks "
+            f"({tgt_len} > {spec_len}); the prefix comparison would be over a "
+            f"window the speculative run does not have"
+        )
     return problems

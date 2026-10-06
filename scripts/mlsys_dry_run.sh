@@ -415,16 +415,22 @@ $PY - "$WORK" <<'PYEOF'
 import csv, json, pathlib, sys
 work = pathlib.Path(sys.argv[1])
 tw = work / "lossless" / "tokens"; tw.mkdir(parents=True, exist_ok=True)
-# Two documents x (spec, target-only). Doc 0 agrees; doc 1 diverges at token 3.
+# Three documents x (spec, target-only), exercising all three verdicts:
+#   d0  full-length partner, identical                    -> LOSSLESS
+#   d1  SHORT partner (128-token baseline), identical     -> LOSSLESS_PREFIX_128
+#   d2  divergence at token 3                             -> MISMATCH
 rows, toks = [], {}
-for doc in ("d0", "d1"):
-    good = [11, 12, 13, 14, 15]
-    spec = good if doc == "d0" else [11, 12, 13, 99, 15]
-    for arm, ss, ids in (("spec", 4, spec), ("tgt", 0, good)):
+FULL, SHORT = 1024, 128
+for doc in ("d0", "d1", "d2"):
+    body = list(range(100, 100 + (FULL if doc != "d1" else FULL)))
+    spec = body if doc != "d2" else body[:3] + [999] + body[4:]
+    tgt = body if doc != "d1" else body[:SHORT]
+    for arm, ss, ids in (("spec", 4, spec), ("tgt", 0, tgt)):
         rid = f"{doc}_{arm}"
         toks[rid] = ids
         rows.append({"run_id": rid, "doc_id": doc, "context_length": 2048,
-                     "max_new_tokens": 5, "spec_steps": ss, "status": "ok",
+                     "max_new_tokens": FULL if doc != "d1" or arm == "spec" else SHORT,
+                     "spec_steps": ss, "status": "ok",
                      "prompt_sha256": "h" + doc, "prompt_tokens": 1024,
                      "acceptance_rate": 0.9,
                      # decode_tps is the pre-registered primary ratio metric;
@@ -441,20 +447,26 @@ PYEOF
 $PY scripts/mlsys_losslessness.py --results "$WORK/lossless.csv" \
     --tokens-dir "$WORK/lossless/tokens" --out "$WORK/losslessness.csv" \
     > "$WORK/lossless.log" 2>&1
-grep -q "d0.*LOSSLESS\|LOSSLESS.*d0_spec" "$WORK/lossless.log" \
-  && ok "agreeing spec/target pair reported LOSSLESS" \
-  || { bad "agreeing pair was not reported lossless"; sed -n '1,6p' "$WORK/lossless.log"; }
 $PY - "$WORK" <<'PYEOF'
 import csv, pathlib, sys
-work = pathlib.Path(sys.argv[1])
-rows = {r["spec_run_id"]: r for r in csv.DictReader((work / "losslessness.csv").open())}
-d1 = rows["d1_spec"]
-ok = d1["verdict"] == "MISMATCH" and d1["first_mismatch_position"] == "3"
-print(f"  d1_spec verdict={d1['verdict']} first_mismatch_position={d1['first_mismatch_position']}")
-sys.exit(0 if ok else 1)
+rows = {r["spec_run_id"]: r for r in
+        csv.DictReader((pathlib.Path(sys.argv[1]) / "losslessness.csv").open())}
+want = {"d0_spec": "LOSSLESS", "d1_spec": "LOSSLESS_PREFIX_128"}
+bad = []
+for rid, exp in want.items():
+    got = rows[rid]["verdict"]
+    print(f"  {rid} verdict={got} prefix={rows[rid]['verified_prefix']} (want {exp})")
+    if got != exp:
+        bad.append(rid)
+d2 = rows["d2_spec"]
+print(f"  d2_spec verdict={d2['verdict']} first_mismatch_position="
+      f"{d2['first_mismatch_position']} (want MISMATCH at 3)")
+if d2["verdict"] != "MISMATCH" or d2["first_mismatch_position"] != "3":
+    bad.append("d2_spec")
+sys.exit(1 if bad else 0)
 PYEOF
-[ $? -eq 0 ] && ok "diverging pair reported MISMATCH with the first mismatch position" \
-             || bad "divergence was not reported with its position"
+[ $? -eq 0 ] && ok "full match, 128-token prefix and divergence each got the right verdict" \
+             || bad "losslessness verdicts were wrong"
 # A pair whose requests disagree must be refused, not ticked green. Two ways to
 # disagree: a field inside the pair key (no pair is found at all) and a field
 # outside it (the pair is found but rejected). Both must refuse.
@@ -466,7 +478,7 @@ rows = list(csv.DictReader(p.open()))
 for r in rows:
     if r["run_id"] == "d0_tgt":
         r["prompt_tokens"] = "9999"      # outside the pair key -> BAD_PAIR
-    if r["run_id"] == "d1_tgt":
+    if r["run_id"] == "d2_tgt":
         r["prompt_sha256"] = "DIFFERENT"  # inside the pair key -> NO_PAIR
 with p.open("w", newline="") as fh:
     w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
@@ -478,8 +490,8 @@ $PY - "$WORK" <<'PYEOF'
 import csv, pathlib, sys
 rows = {r["spec_run_id"]: r for r in
         csv.DictReader((pathlib.Path(sys.argv[1]) / "losslessness2.csv").open())}
-a, b = rows["d0_spec"], rows["d1_spec"]
-print(f"  d0_spec verdict={a['verdict']}  d1_spec verdict={b['verdict']}")
+a, b = rows["d0_spec"], rows["d2_spec"]
+print(f"  d0_spec verdict={a['verdict']}  d2_spec verdict={b['verdict']}")
 sys.exit(0 if a["verdict"] == "BAD_PAIR" and b["verdict"] == "NO_PAIR" else 1)
 PYEOF
 [ $? -eq 0 ] && ok "a mismatched request was refused, not ticked" \

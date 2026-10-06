@@ -144,15 +144,19 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
             problems.append(f"{r['run_id']}: missing token sidecar for a pair "
                             f"member")
             continue
+        # Both arms of the smoke use the SAME cap, so the verdict must be
+        # LOSSLESS rather than a prefix verdict: a prefix here would mean the
+        # partner stopped short, which for this stage is itself a failure.
+        cap = int(r["max_new_tokens"])
         res = compare_generations(a["generated_token_ids"],
                                   b["generated_token_ids"],
-                                  int(r["max_new_tokens"]))
+                                  full_length=cap, min_prefix=cap)
         seen += 1
-        if not res["lossless"]:
-            problems.append(f"{r['run_id']}: NOT LOSSLESS vs "
+        if res["verdict"] != "LOSSLESS":
+            problems.append(f"{r['run_id']}: {res['verdict']} vs "
                             f"{partner['run_id']} — {res['detail']}")
         else:
-            notes.append(f"losslessness OK at cap {r['max_new_tokens']} "
+            notes.append(f"losslessness OK at cap {cap} "
                          f"({res['compared_tokens']} tokens)")
     if seen == 0:
         problems.append("no speculative/target-only pair was checked")

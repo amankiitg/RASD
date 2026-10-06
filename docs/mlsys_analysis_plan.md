@@ -422,10 +422,10 @@ seeing the affected data)*
   Justification, as required: **losslessness is an implementation property**, not
   a throughput measurement. Under greedy decoding the speculative output must be
   token-identical to the target-only output, and that can only be checked against
-  a target-only run of the *same length*; three documents are enough to establish
-  it, and all ten speculative runs are checked against the three they share a
-  document with. Throughput, by contrast, needs a steady-state rate, and a rate
-  does not need the same token count on both sides. **Prefill is identical across
+  a target-only run of the *same length*: **3 full-length checks at 1024 tokens,
+  plus a 128-token prefix check on the other 7**. Throughput, by contrast, needs
+  a steady-state rate, and a rate does not need the same token count on both
+  sides. **Prefill is identical across
   arms and is under 5% of the decode wall** — measured 10 s of prefill against
   4495 s of decode at 128k (0.22%) and 97 s against 18022 s at 512k (0.54%) — so
   the end-to-end ratio is a prefill-weighted restatement of the decode ratio
@@ -466,3 +466,27 @@ seeing the affected data)*
   stage covers only 128k and only speculative decoding: without the ladder there
   is no production-stack reference at the 256k and 512k rungs, which is where the
   payoff boundary is claimed.
+
+### Losslessness verdicts
+
+`losslessness: required` on a stage means, exactly:
+
+* every speculative cell has a **verified prefix of at least 128 tokens**, and
+* every cell whose partner reached the full 1024 tokens is **LOSSLESS over all
+  1024**.
+
+The verdict vocabulary is fixed:
+
+| verdict | meaning |
+|---|---|
+| `LOSSLESS` | the partner reached 1024 and every token matches |
+| `LOSSLESS_PREFIX_n` | the partner produced n < 1024 tokens and the first n match |
+| `MISMATCH` | the first divergence, with position and both tokens named |
+| `NO_PAIR` | genuinely no same-document partner exists |
+| `BAD_PAIR` | a partner exists but the request fields disagree, so the pair is refused |
+
+The pair guard deliberately does **not** compare `max_new_tokens`: the short
+baselines generate 128 tokens against a 1024-token speculative run, which is the
+case the prefix verdict exists for. It requires instead that the partner is not
+**longer** than the run it checks, since a longer partner cannot be a prefix
+comparison.

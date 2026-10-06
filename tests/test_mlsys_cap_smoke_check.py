@@ -91,7 +91,7 @@ def test_cap_smoke_checker_accepts_a_clean_run_and_rejects_each_defect(tmp_path)
     # passing because the lengths agree.
     problems, _ = mod.check(_write(tmp_path / "c", lossless=False),
                             tmp_path / "c" / "tokens")
-    assert any("NOT LOSSLESS" in p for p in problems), problems
+    assert any("MISMATCH" in p for p in problems), problems
 
     # No target-only partner means losslessness is unverified, which is not the
     # same as verified.

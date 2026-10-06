@@ -25,7 +25,7 @@ ASK_OVER=${MLSYS_ASK_OVER_USD:-300}
 # reports rather than spending on a stage nobody signed off.
 # Defaults to the operator's 2026-10-06 approval. Override with
 # MLSYS_APPROVED_STAGES at launch; an empty value means "approve nothing".
-APPROVED=${MLSYS_APPROVED_STAGES:-gate_calibration,engine_cap_smoke,natural_f1_128k,impl_validation,coherence_gate,correction_note_evidence,natural_spec_gated_256k}
+APPROVED=${MLSYS_APPROVED_STAGES:-gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,natural_spec_gated_256k,vllm_ladder}
 mkdir -p "$OUT"
 [ -f "$COST_LOG" ] || echo "stage,wall_seconds,nproc,gpu_hours,node_cost_usd" > "$COST_LOG"
 
