@@ -136,7 +136,7 @@ def dip_over_trace_dir(trace_dir: str | Path, boot_pval: bool = False,
     the formal test so the zero/nonzero split the reviewer objected to is
     reported *next to* the test rather than instead of it.
     """
-    from .acceptance import summarize_trace
+    from .acceptance import run_family, summarize_trace
 
     rows = []
     for run_id, trace in load_trace_dir(trace_dir).items():
@@ -149,6 +149,7 @@ def dip_over_trace_dir(trace_dir: str | Path, boot_pval: bool = False,
             "run_id":           run_id,
             "context_length":   ctx,
             "seed":             s,
+            "family":           run_family(run_id),
             "alpha_round":      summary["alpha_round"],
             "alpha_iid":        summary["alpha_iid"],
             "iid_ks":           summary["iid_ks"],
@@ -181,13 +182,22 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
 
     if per_run.empty:
         return pd.DataFrame(columns=[
-            "context_length", "n_seeds", "n_runs", "dip_mean", "dip_ci_lo",
-            "dip_ci_hi", "n_runs_reject", "n_seeds_reject", "min_p_value",
-            "p_values", "n_rounds_total",
+            "family", "context_length", "n_seeds", "n_runs", "dip_mean",
+            "dip_ci_lo", "dip_ci_hi", "n_runs_reject", "n_seeds_reject",
+            "min_p_value", "p_values", "n_rounds_total",
         ])
 
+    if "family" not in per_run.columns:
+        per_run = per_run.assign(family="matrix")
+
     rows = []
-    for ctx, sub in per_run.groupby("context_length", dropna=False):
+    # Group by (family, context): the native-vs-YaRN arms and the M4
+    # dose-response are DIFFERENT experiments that happen to share context
+    # lengths (both have 128k cells). Pooling them would silently merge
+    # distinct treatments into one dip statistic, so each family gets its
+    # own row and its own label.
+    for (fam, ctx), sub in per_run.groupby(["family", "context_length"],
+                                           dropna=False):
         # A context can back MULTIPLE runs per seed (e.g. the NF4 and bf16
         # draft variants at 64k), so the number of rejecting RUNS is not
         # the number of rejecting SEEDS. Reporting one as the other
@@ -202,6 +212,7 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
         mean, lo, hi = bootstrap_mean_ci(dips) if dips.size else (np.nan, np.nan, np.nan)
         rej = sub["reject_unimodal"].fillna(False).astype(bool)
         rows.append({
+            "family":         str(fam),
             "context_length": int(ctx),
             "n_seeds":        int(sub["seed"].nunique(dropna=True)),
             "n_runs":         int(len(sub)),
@@ -216,8 +227,10 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
         })
     if not rows:
         return pd.DataFrame(columns=[
-            "context_length", "n_seeds", "n_runs", "dip_mean", "dip_ci_lo",
-            "dip_ci_hi", "n_runs_reject", "n_seeds_reject", "min_p_value",
-            "p_values", "n_rounds_total",
+            "family", "context_length", "n_seeds", "n_runs", "dip_mean",
+            "dip_ci_lo", "dip_ci_hi", "n_runs_reject", "n_seeds_reject",
+            "min_p_value", "p_values", "n_rounds_total",
         ])
-    return pd.DataFrame(rows).sort_values("context_length").reset_index(drop=True)
+    return (pd.DataFrame(rows)
+            .sort_values(["family", "context_length"])
+            .reset_index(drop=True))

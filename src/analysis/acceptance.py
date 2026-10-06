@@ -58,17 +58,51 @@ import pandas as pd
 # ("M4_ctx128k_s42") and the Phase D / PG-19 runs
 # ("RASD_ctx4k_pg19_phaseD_s42", "P35D_ctx1M_pg19_s42").
 _CTX_RE = re.compile(r"ctx(\d+)([kM])", re.IGNORECASE)
+# Phase-1 / Phase-A arm run ids carry the context as a bare `_<N>k_` /
+# `_<N>M_` token instead of a `ctx<N>` token, e.g.
+#   ARM1_llama2_yarn_128k_s42
+#   ARM2_llama3_native_128k_cap4k_s42
+#   ARM3_llama3_native_128k_nativedraft_s42
+#   ARM4_llama3_yarn_256k_s123
+# Without this second pattern those traces silently parsed to (None, None)
+# and were dropped from every by-context aggregate, so the 131072 row
+# reported the M4 matrix while appearing to cover the arms too.
+#
+# Anchoring on `_` before the digits and `_`/end after the unit is what
+# keeps it from mis-reading a draft-cap suffix: in
+# "ARM2_llama3_native_128k_cap4k_s42" the `4k` is preceded by "cap", not
+# by an underscore, so only the intended `_128k_` matches.
+_CTX_TRAILING_RE = re.compile(r"_(\d+)([kM])(?=_|$)", re.IGNORECASE)
 _SEED_RE = re.compile(r"_s(\d+)$", re.IGNORECASE)
+
+# Experiment family, so arm runs are never pooled with the M4
+# dose-response cells that happen to share a context length.
+_ARM_RE = re.compile(r"^ARM(\d+)", re.IGNORECASE)
+
+
+def run_family(run_id: str) -> str:
+    """Group a run_id into an experiment family.
+
+    "arm1".."armN" for the native-vs-YaRN arms; "matrix" for the M4
+    dose-response / Phase-D / PG-19 cells. Arms and matrix cells at the
+    SAME context length are different experiments and must be aggregated
+    separately.
+    """
+    m = _ARM_RE.match(run_id)
+    if m:
+        return f"arm{int(m.group(1))}"
+    return "matrix"
 
 
 def parse_run_id(run_id: str) -> tuple[Optional[int], Optional[int]]:
     """Extract (context_length_tokens, seed) from a run_id.
 
-    "ctx128k" -> 131072, "ctx1M" -> 1048576. Returns (None, None) for
-    pieces that are absent (canary rows carry no context).
+    "ctx128k" -> 131072, "ctx1M" -> 1048576, and the arm dialect
+    "_128k_" -> 131072. Returns (None, None) for pieces that are absent
+    (canary rows carry no context).
     """
     ctx: Optional[int] = None
-    m = _CTX_RE.search(run_id)
+    m = _CTX_RE.search(run_id) or _CTX_TRAILING_RE.search(run_id)
     if m:
         magnitude = 1024 if m.group(2).lower() == "k" else 1024 * 1024
         ctx = int(m.group(1)) * magnitude

@@ -146,7 +146,11 @@ def build_rows() -> list[dict]:
 
     # ---- Phase 4: statistics -------------------------------------------
     if dip is not None and not dip.empty:
+        # Render per (family, context) so the native-vs-YaRN arms and the
+        # M4 dose-response never read as one pooled series at shared
+        # contexts (e.g. both have a 128k cell).
         parts = []
+        by_fam: dict = {}
         for _, r in dip.iterrows():
             ctx = int(r["context_length"]) if pd.notna(r["context_length"]) else "?"
             # Report rejecting SEEDS (the unit a reader cares about) and
@@ -158,7 +162,11 @@ def build_rows() -> list[dict]:
             if "n_runs_reject" in r and int(r["n_runs_reject"]) != n_seed_rej:
                 txt += (f" ({int(r['n_runs_reject'])}/{int(r['n_runs'])} "
                         f"runs reject)")
-            parts.append(f"{ctx}: dip={r['dip_mean']:.3f}, {txt}")
+            fam = str(r.get("family", "matrix"))
+            by_fam.setdefault(fam, []).append(
+                f"{ctx}: dip={r['dip_mean']:.3f}, {txt}")
+        for fam in sorted(by_fam):
+            parts.append(f"[{fam}] " + "; ".join(by_fam[fam]))
         dip_new = "; ".join(parts)
         seeds_seen = sorted(set(
             int(x) for x in dip["n_seeds"].dropna().unique()))

@@ -1,0 +1,10 @@
+arm,seed,n_rounds,spec_steps,alpha_mean,p_zero,frac_full_accept,dip,p_value,rejects_005
+Arm1_Llama2_YaRN,42,13,4,0.115385,0.5385,0.0,0.230769,0.0,True
+Arm1_Llama2_YaRN,123,19,4,0.118421,0.6316,0.0,0.157895,7.04458290445853e-05,True
+Arm1_Llama2_YaRN,456,12,4,0.0625,0.75,0.0,0.125,0.07575766859296418,False
+Arm2_Llama3_native_cap4k,42,15,4,0.866667,0.1333,0.8667,0.066667,0.851571205305597,False
+Arm2_Llama3_native_cap4k,123,14,4,0.928571,0.0714,0.9286,0.035714,1.0,False
+Arm2_Llama3_native_cap4k,456,14,4,0.875,0.0714,0.7857,0.035714,1.0,False
+Arm3_Llama3_native_nativedraft,42,15,4,0.866667,0.1333,0.8667,0.066667,0.851571205305597,False
+Arm3_Llama3_native_nativedraft,123,14,4,0.928571,0.0714,0.9286,0.035714,1.0,False
+Arm3_Llama3_native_nativedraft,456,14,4,0.910714,0.0714,0.8571,0.035714,1.0,False

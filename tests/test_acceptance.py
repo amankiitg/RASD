@@ -23,6 +23,7 @@ from src.analysis.acceptance import (
     load_trace,
     parse_run_id,
     per_round_alpha,
+    run_family,
     summarize_trace,
     verify_csv_acceptance,
 )
@@ -50,6 +51,59 @@ class TestParseRunId:
     ])
     def test_parses_both_id_dialects(self, run_id, ctx, seed):
         assert parse_run_id(run_id) == (ctx, seed)
+
+    @pytest.mark.parametrize("run_id,ctx,seed,family", [
+        # All four native-vs-YaRN arm dialects. These carry the context as a
+        # bare `_<N>k_`/`_<N>M_` token with no `ctx<N>`, so before the
+        # trailing-token pattern they parsed to (None, None) and were
+        # silently dropped from every by-context aggregate.
+        ("ARM1_llama2_yarn_128k_s42",            131072,   42,  "arm1"),
+        ("ARM1_llama2_yarn_128k_s123",           131072,  123,  "arm1"),
+        ("ARM1_llama2_yarn_128k_s456",           131072,  456,  "arm1"),
+        ("ARM2_llama3_native_128k_cap4k_s42",    131072,   42,  "arm2"),
+        ("ARM2_llama3_native_128k_cap4k_s123",   131072,  123,  "arm2"),
+        ("ARM2_llama3_native_128k_cap4k_s456",   131072,  456,  "arm2"),
+        ("ARM3_llama3_native_128k_nativedraft_s42",  131072, 42, "arm3"),
+        ("ARM3_llama3_native_128k_nativedraft_s456", 131072, 456, "arm3"),
+        ("ARM4_llama3_yarn_128k_s42",            131072,   42,  "arm4"),
+        ("ARM4_llama3_yarn_256k_s42",            262144,   42,  "arm4"),
+        ("ARM4_llama3_yarn_512k_s123",           524288,  123,  "arm4"),
+        ("ARM4_llama3_yarn_1M_s456",             1048576, 456,  "arm4"),
+    ])
+    def test_parses_all_four_arm_patterns(self, run_id, ctx, seed, family):
+        assert parse_run_id(run_id) == (ctx, seed)
+        assert run_family(run_id) == family
+
+    def test_draft_cap_suffix_is_not_mistaken_for_the_context(self):
+        """Arm2's `cap4k` must not be read as a 4k context.
+
+        The trailing pattern anchors on `_` before the digits and `_`/end
+        after the unit, so `_cap4k_` (where `4k` follows "cap", not "_")
+        does not match; only the real `_128k_` token does.
+        """
+        ctx, seed = parse_run_id("ARM2_llama3_native_128k_cap4k_s42")
+        assert ctx == 131072, "cap4k was mis-read as the context"
+        assert seed == 42
+
+    @pytest.mark.parametrize("run_id", [
+        "mlsys_arm1_canary_s42",
+        "shakedown_canary_s42",
+        "mlsys_bf16_draft_canary_s42",
+    ])
+    def test_canaries_still_have_no_context(self, run_id):
+        assert parse_run_id(run_id)[0] is None
+
+    @pytest.mark.parametrize("run_id,fam", [
+        ("M4_ctx128k_s123", "matrix"),
+        ("RASD_ctx1M_phaseD_s42", "matrix"),
+        ("PG19_ctx4k_s123", "matrix"),
+        ("BFTD_ctx64k_draftnf4_s42", "matrix"),
+        ("ARM2_llama3_native_128k_cap4k_s42", "arm2"),
+    ])
+    def test_family_separates_arms_from_matrix(self, run_id, fam):
+        """Arms and matrix cells share contexts (both have 128k) but are
+        different experiments and must not be pooled."""
+        assert run_family(run_id) == fam
 
 
 class TestPerRoundAlpha:
