@@ -107,8 +107,13 @@ stages:
     order: 1
     script: scripts/mlsys_coherence_gate.py
     candidates: configs/mlsys_gate_controls.json
-    est_hours: 0.6
-    est_cost_usd: 13
+    est_hours: 1.0
+    est_cost_usd: 22
+    cost_note: >
+      Raised from $13 when every control gained a declared native baseline at
+      its own context: 9 rows instead of 5, and three of them at 128k where a
+      row costs ~4x a 32k row. A control with no baseline cannot be measured,
+      so the extra rows are the price of the verdicts meaning anything.
     positive_controls: [P1_native_32k, P2_native_64k, P3_native_128k]
     negative_controls: [N1_arm4_f2_construction, N2_llama2_misanchored]
     sets_threshold: >
