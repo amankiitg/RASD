@@ -13,7 +13,7 @@ Run everything with one command: `bash scripts/mlsys_pod_session.sh`.
 | `pg19_multiseed.csv` | 2 | PG-19 dose-response 4k/8k/1M (seeds 123/456) and the 1M target-only baseline (seeds 42/123/456) |
 | `llama2_matrix_multiseed.csv` | 2 | Llama-2 matrix 128k/256k/512k/1M for seeds 123/456 |
 | `per_token/` | 2 | Per-round acceptance traces (`.jsonl`). Seed-42 traces are copied from `results/final/per_token/`; seeds 123/456 are new |
-| `bf16_draft_isolation.csv` | 3 | 64k, draft in NF4 vs bf16, 3 seeds |
+| `bf16_draft_isolation.csv` | 3 | 64k, draft in 4-bit FP4 weights (bitsandbytes) vs bf16, 3 seeds |
 | `vllm_baseline.csv` | 5 | vLLM @128k, throughput in RASD's unit + `unit_matched` flag |
 | `logs/`, `.markers/` | all | Per-stage logs and resume markers |
 | `gpu_hours.csv` | all | Wall time, GPU-hours and node cost per stage |

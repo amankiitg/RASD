@@ -28,6 +28,7 @@ Usage
 
 import argparse
 import csv
+import hashlib
 import itertools
 import json
 import logging
@@ -73,6 +74,11 @@ CSV_FIELDS = [
     # it makes that visible in the results rather than inferred. Appended for
     # the same --resume alignment reason as above.
     "max_new_tokens",
+    # MLSys A6 — per-row provenance. Provenance is only meaningful if it
+    # travels with the row: a revision pin that lives only in a config file
+    # cannot be checked against an old CSV later.
+    "target_revision", "draft_revision",
+    "prompt_tokens", "prompt_sha256",
 ]
 
 
@@ -605,6 +611,22 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             ruler_sidecar_dir=run.get("ruler_sidecar_dir"),
             run_id=run["run_id"],
         )
+
+        # MLSys A6 — per-row prompt provenance. Record the exact prompt
+        # token count and a content hash so a result can be tied to the
+        # precise input that produced it (A7 makes the prompt seed-dependent,
+        # so this is the only way to prove the three seeds really differ).
+        try:
+            _pids = engine.tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            row["prompt_tokens"] = len(_pids)
+            row["prompt_sha256"] = hashlib.sha256(
+                ",".join(str(i) for i in _pids).encode()).hexdigest()
+        except Exception as _e:  # noqa: BLE001
+            row["prompt_tokens"] = ""
+            row["prompt_sha256"] = ""
+            log.warning("prompt provenance failed: %r", _e)
+        row["target_revision"] = run.get("target_revision") or ""
+        row["draft_revision"] = run.get("draft_revision") or ""
 
         # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
         # run["profile"] = True (set from --profile CLI flag below).

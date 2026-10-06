@@ -132,11 +132,11 @@ def build_rows() -> list[dict]:
     # ---- Phase 3: mechanism isolation ----------------------------------
     rows.append({
         "item": "Phase 3 / roadmap T3.3 (round-cost source not isolated)",
-        "question": "Does NF4 draft/target logit divergence drive the "
+        "question": "Does 4-bit-FP4 draft/target logit divergence drive the "
                     "round-cost increase, rather than context length?",
         "old": "no bf16-draft long-context comparison existed "
                "(only scripts/run_quant_ablation.py at short context)",
-        "new": f"64k NF4 draft alpha="
+        "new": f"64k FP4 draft alpha="
                f"{_alpha(bftd, level_id='BFTD_ctx64k_draftnf4')[0]}  "
                f"64k bf16 draft alpha="
                f"{_alpha(bftd, level_id='BFTD_ctx64k_draftbf16')[0]}",
