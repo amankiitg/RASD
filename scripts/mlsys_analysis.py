@@ -52,11 +52,17 @@ METRICS = [
 # CSVs the analyser *writes*; excluded from the inputs it reads. Other
 # derived artefacts are additionally filtered by required-column check in
 # load_arm_frames, so a new by-product can never crash the aggregation.
+#
+# pg19_multiseed.csv and bf16_draft_isolation.csv are deliberately NOT
+# listed here: they are RAW run output (one row per executed cell), and
+# treating them as derived aggregates meant the analyser silently ignored the
+# very cells Phase 2 and Phase 3 produced.
 OUTPUT_NAMES = {
     "summary_with_ci.csv", "dip_test.csv", "dip_by_context.csv",
     "acceptance_accounting.csv", "trace_summary.csv",
     "acceptance_accounting_seed42_pg19.csv",
-    "pg19_multiseed.csv", "bf16_draft_isolation.csv", "vllm_baseline.csv",
+    "arm_dip.csv", "vllm_baseline.csv",
+    "seed_coverage.csv",
 }
 
 # A results CSV must carry these to be aggregatable as an arm frame.
@@ -123,10 +129,176 @@ def summarize_with_ci(df: pd.DataFrame, ci: float = 0.95,
     return pd.DataFrame(rows)
 
 
+def load_seed42_from_final(final_dir: Path) -> pd.DataFrame:
+    """A1: recover the seed-42 rows that live in results/final.
+
+    The Phase 2 multiseed cells only ran seeds 123 and 456 — the seed-42 point
+    of each series already existed from the original Phase D / p35d work. Left
+    unjoined, a group labelled "3 seeds" carries n=2, which is precisely the
+    "largely single-seed" complaint the multiseed run exists to answer.
+
+    Only seed-42 rows are taken; seeds 123/456 must come from the new run, so
+    an old value can never masquerade as a new one.
+    """
+    if not final_dir.is_dir():
+        print(f"[warn] {final_dir} not found — seed-42 join skipped")
+        return pd.DataFrame()
+
+    frames = []
+    for p in sorted(final_dir.glob("*.csv")):
+        try:
+            df = pd.read_csv(p)
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] could not read {p.name}: {e}")
+            continue
+        if df.empty or "seed" not in df.columns:
+            continue
+        missing = REQUIRED_ARM_COLUMNS - set(df.columns)
+        if missing:
+            continue
+        keep = df[pd.to_numeric(df["seed"], errors="coerce") == 42].copy()
+        if keep.empty:
+            continue
+        keep["source_csv"] = f"final/{p.name}"
+        frames.append(keep)
+        print(f"[info] seed-42 join: {len(keep):>2} rows from final/{p.name}")
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def join_seed42(raw: pd.DataFrame, seed42: pd.DataFrame) -> pd.DataFrame:
+    """Append seed-42 rows, never overwriting a seed-42 row that already ran.
+
+    If the new run produced its own seed-42 cell (the ARM4-f1 rung does), that
+    row is the authority and the historical copy is dropped, so a re-run is
+    never silently replaced by a stale number.
+    """
+    if seed42.empty:
+        return raw
+    if raw.empty:
+        return seed42
+    if "run_id" in raw.columns:
+        have = set(raw["run_id"].astype(str))
+        seed42 = seed42[~seed42["run_id"].astype(str).isin(have)]
+    if seed42.empty:
+        return raw
+    print(f"[info] joined {len(seed42)} historical seed-42 row(s)")
+    return pd.concat([raw, seed42], ignore_index=True, sort=False)
+
+
+# Historical seed-42 rows carry the ORIGINAL Phase-D labels for the same
+# series the multiseed config re-ran at 123/456:
+#   group "M4",        level "M4_ctx128k"                vs M4_MULTISEED/M4_ctx128k
+#   group "M4",        level "RASD_ctx4k_pg19_phaseD"    vs PG19_MULTISEED/PG19_ctx4k
+#   group "M4",        level "P35D_ctx1M_pg19"           vs PG19_MULTISEED/PG19_ctx1M
+# Joining on run_id succeeds while leaving the seeds split across two buckets,
+# so the coverage check would still see n=2. The mapping below is EXPLICIT
+# rather than pattern-inferred so it can be audited and cannot silently
+# mis-pair two different cells.
+_PG19_LEVEL_BY_CTX = {4096: "PG19_ctx4k", 8192: "PG19_ctx8k",
+                      1048576: "PG19_ctx1M"}
+_SERIES_GROUP_ALIAS = {"M4_MULTISEED": "M4"}
+
+
+def add_series(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach the canonical series key used by the seed-coverage assertion."""
+    if df.empty:
+        return df
+    out = df.copy()
+    n = len(out)
+    grp = (out["group"].astype(str) if "group" in out
+           else pd.Series([""] * n, index=out.index))
+    lvl = (out["level_id"].astype(str) if "level_id" in out
+           else pd.Series([""] * n, index=out.index))
+    rid = (out["run_id"].astype(str) if "run_id" in out else lvl)
+    ctx = (pd.to_numeric(out["context_length"], errors="coerce")
+           if "context_length" in out else pd.Series([np.nan] * n, index=out.index))
+    is_pg19 = (lvl.str.contains("pg19", case=False)
+               | rid.str.contains("pg19", case=False)
+               | grp.str.contains("pg19", case=False))
+    # Target-only rows are a DIFFERENT series from their spec siblings: the
+    # baseline exists to divide by, not to pool with. spec_steps==0 marks
+    # them, and the historical TARGET_*_pg19_phaseD rows would otherwise be
+    # relabelled as spec cells.
+    spec = (pd.to_numeric(out["spec_steps"], errors="coerce")
+            if "spec_steps" in out else pd.Series([np.nan] * n, index=out.index))
+
+    series = []
+    for g, l, c, pg, sp in zip(grp, lvl, ctx, is_pg19, spec):
+        ng = _SERIES_GROUP_ALIAS.get(g, g)
+        if pg:
+            ng = "PG19_MULTISEED"
+            if pd.notna(c):
+                base = _PG19_LEVEL_BY_CTX.get(int(c))
+                if base:
+                    l = base if not (pd.notna(sp) and int(sp) == 0) \
+                        else f"{base}_targetonly"
+        series.append(f"{ng}::{l}")
+    out["series"] = series
+    return out
+
+
+def check_seed_coverage(df: pd.DataFrame, expected: int = 3,
+                        out_dir: Path | None = None) -> pd.DataFrame:
+    """A1: assert every multi-seed group really carries n=3.
+
+    A group that has more than one seed is claiming to be a multi-seed result,
+    so it must have exactly `expected` of them. Anything else is printed as a
+    failing row rather than quietly reported as a 3-seed CI computed over two
+    seeds.
+    """
+    if df.empty or "seed" not in df.columns:
+        print("[warn] seed coverage check skipped (no seed column)")
+        return pd.DataFrame()
+
+    # Group by the canonical series key (see add_series), NOT by the raw
+    # group/level_id labels, so a historical seed-42 row lands in the same
+    # bucket as its 123/456 siblings.
+    if "series" in df.columns:
+        grouped = df.groupby("series", dropna=False)
+    else:
+        keys = [c for c in ("group", "level_id") if c in df.columns]
+        grouped = (df.groupby(keys, dropna=False) if keys
+                   else [("", df)])
+
+    rows = []
+    for k, sub in grouped:
+        seeds = sorted({int(s) for s in
+                        pd.to_numeric(sub["seed"], errors="coerce").dropna()})
+        rows.append({
+            "series": str(k),
+            "n_seeds": len(seeds),
+            "seeds": ",".join(str(s) for s in seeds),
+        })
+    cov = pd.DataFrame(rows)
+    if cov.empty:
+        return cov
+
+    # Multi-seed = more than one seed present. A single-seed group is reported
+    # but not treated as a failure; it is simply not a "3-seed" claim.
+    multi = cov[cov["n_seeds"] > 1]
+    bad = multi[multi["n_seeds"] != expected]
+    if not bad.empty:
+        print()
+        print("[ERROR] A1 SEED COVERAGE FAILED — these groups claim to be "
+              f"multi-seed but do not have n={expected}:")
+        print(bad.to_string(index=False))
+    else:
+        print(f"[ok] seed coverage: {len(multi)} multi-seed group(s), "
+              f"all have n={expected}")
+    if out_dir is not None:
+        cov.to_csv(out_dir / "seed_coverage.csv", index=False)
+    return cov
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results-dir", default=str(REPO / "results" / "mlsys"))
+    ap.add_argument("--final-dir", default=str(REPO / "results" / "final"),
+                    help="A1: source of the historical seed-42 rows that "
+                         "complete each multiseed series")
     ap.add_argument("--trace-dir", default=None,
                     help="Per-round trace dir. Defaults to "
                          "<results-dir>/per_token.")
@@ -150,6 +322,11 @@ def main() -> int:
 
     # --- 1. bootstrap CIs over the arm CSVs -----------------------------
     df = load_arm_frames(results_dir)
+    # A1: complete the multiseed series with their historical seed-42 rows,
+    # then verify no group over-claims its seed count.
+    df = join_seed42(df, load_seed42_from_final(Path(args.final_dir)))
+    df = add_series(df)
+    check_seed_coverage(df, out_dir=out_dir)
     summary = summarize_with_ci(df, ci=args.ci, seed=args.seed)
     summary.to_csv(out_dir / "summary_with_ci.csv", index=False)
     print(f"[write] summary_with_ci.csv  ({len(summary)} rows)")

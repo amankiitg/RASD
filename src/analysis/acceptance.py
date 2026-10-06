@@ -424,6 +424,14 @@ def verify_csv_acceptance(csv_path: str | Path, trace_dir: str | Path,
 
     Rows that exist in only one of the two sources get ok=None (with a
     note) so they are visibly unverified rather than silently dropped.
+
+    A4 — matching is by EXACT run_id and nothing else. `traces` is a dict
+    keyed on the exact string, so there is no prefix or normalized fallback
+    that could pair a CSV row with a different run's trace. A row whose
+    trace does not exist is reported `unverifiable_no_trace`, which means
+    "we could not check this", NOT "this checked out" and NOT "this
+    mismatched". The three states are distinct in the `verdict` column so a
+    reader cannot mistake absence of evidence for a pass.
     """
     csv_path, trace_dir = Path(csv_path), Path(trace_dir)
     if not csv_path.exists():
@@ -439,31 +447,39 @@ def verify_csv_acceptance(csv_path: str | Path, trace_dir: str | Path,
             run_id = str(r["run_id"])
             seen.add(run_id)
             csv_val = _as_float(r.get("acceptance_rate"))
+            # Exact-key lookup only. A missing trace is reported as such and
+            # is never substituted with a near-match.
             if run_id not in traces:
                 rows.append({"run_id": run_id,
                              "csv_acceptance_rate": csv_val,
                              "trace_alpha_round": float("nan"),
                              "alpha_iid": float("nan"),
                              "abs_diff": float("nan"), "ok": None,
-                             "note": "no trace (target-only run?)"})
+                             "verdict": "unverifiable_no_trace",
+                             "note": "no trace exists for this exact run_id"})
                 continue
             summary = summarize_trace(traces[run_id])
             trace_val = summary["alpha_round"]
             diff = abs(csv_val - trace_val) if np.isfinite(csv_val) else float("nan")
+            ok = bool(diff <= tol) if np.isfinite(diff) else None
             rows.append({
                 "run_id":              run_id,
                 "csv_acceptance_rate": csv_val,
                 "trace_alpha_round":   trace_val,
                 "alpha_iid":           summary["alpha_iid"],
                 "abs_diff":            diff,
-                "ok":                  bool(diff <= tol) if np.isfinite(diff) else None,
+                "ok":                  ok,
+                "verdict":             ("match" if ok else
+                                        "mismatch" if ok is False else
+                                        "unverifiable_no_csv_value"),
                 "note":                "",
             })
     for run_id in sorted(set(traces) - seen):
         rows.append({"run_id": run_id, "csv_acceptance_rate": float("nan"),
                      "trace_alpha_round": float("nan"), "alpha_iid": float("nan"),
                      "abs_diff": float("nan"), "ok": None,
-                     "note": "trace present, no CSV row"})
+                     "verdict": "unverifiable_no_csv_row",
+                     "note": "trace exists but no CSV row references this run_id"})
     return pd.DataFrame(rows)
 
 
