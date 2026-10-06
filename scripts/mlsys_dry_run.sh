@@ -835,6 +835,69 @@ PYBLK
 [ $? -eq 0 ] && ok "an empty allowlist admits no stage" \
              || bad "an empty allowlist still admits stages"
 
+# --------------------------------------------------------------------------
+step "15  the watcher's lifecycle: refuse, verify, terminate-to-zero"
+"$PY" - scripts/mlsys_watch_and_run.sh <<'PYWBLK'
+import re, sys
+watch = open(sys.argv[1]).read()
+fails = []
+approv = ("gate_calibration,engine_cap_smoke,coherence_gate,"
+          "correction_note_evidence,natural_f1_128k,impl_validation,"
+          "natural_spec_gated_256k,vllm_ladder")
+
+# the allowlist and the interpreter, on the watcher side
+if "MLSYS_ONLY_STAGES" not in watch:
+    fails.append("the watcher never passes MLSYS_ONLY_STAGES to the pod")
+if approv not in watch:
+    fails.append("the watcher's allowlist default is not the approved set")
+if re.search(r"(?m)\bpython3 -c", watch):
+    fails.append("the watcher still calls bare python3")
+
+# refuse rather than adopt
+if "already exist" not in watch or "exit 5" not in watch:
+    fails.append("the watcher does not refuse to start when an instance exists")
+if "MLSYS_ADOPT_EXISTING" not in watch:
+    fails.append("adopting an existing instance is not gated on an explicit opt-in")
+
+# TERMINATED means confirmed
+term = watch[watch.index("terminate_and_confirm()"):]
+term = term[:term.index("\n}") + 2]
+if "TERMINATED=1" not in term:
+    fails.append("terminate_and_confirm never sets TERMINATED")
+elif 'if [ "$confirmed" = "1" ]; then' not in term:
+    fails.append("TERMINATED=1 is not guarded by the API confirmation")
+if "NOT CONFIRMED TERMINATED" not in term:
+    fails.append("an unconfirmed termination is not reported")
+if "re-issuing terminate" not in term:
+    fails.append("termination is not retried")
+
+# ssh failure is UNKNOWN
+if '"$rc" -eq 1' not in watch:
+    fails.append("the manifest-running check does not distinguish ssh failure")
+if "state UNKNOWN" not in watch:
+    fails.append("an ssh failure is still treated as the manifest finishing")
+
+# pull integrity
+if "rsync FAILED" not in watch or "NOT merged" not in watch:
+    fails.append("an rsync failure does not stop the merge")
+if "shasum -a 256" not in watch or "sha256 MISMATCH" not in watch:
+    fails.append("the sha256 pull-verify the comment claims is not implemented")
+
+# campaign clock
+if "CAPACITY_WAIT_DEADLINE" not in watch:
+    fails.append("the deadline is not separated from the capacity wait")
+if "campaign clock starts NOW" not in watch:
+    fails.append("the campaign deadline does not start at acquisition")
+if "MLSYS_CAMPAIGN_HOURS:-40" not in watch:
+    fails.append("the campaign deadline is not sized to the campaign (~40h)")
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYWBLK
+  [ $? -eq 0 ] && ok "the watcher refuses, verifies and terminates to zero" \
+               || bad "a watcher lifecycle guarantee is missing"
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."

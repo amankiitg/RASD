@@ -36,10 +36,25 @@ FOUND=$SESSION_DIR/CAPACITY_FOUND
 
 INSTANCE_TYPE=${MLSYS_INSTANCE_TYPE:-gpu_8x_a100_80gb_sxm4}
 ASK_OVER=${MLSYS_ASK_OVER_USD:-300}
+# The allowlist is passed to the pod with the SAME default as the manifest's, and
+# both are exported rather than left empty. An empty list means "approve
+# nothing" on both sides -- "unset" must never be able to mean "run everything".
+DEFAULT_ONLY=gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,natural_spec_gated_256k,vllm_ladder
+ONLY_STR=${MLSYS_ONLY_STAGES-$DEFAULT_ONLY}
+[ -z "$ONLY_STR" ] && say "WARNING: MLSYS_ONLY_STAGES is empty; the pod will refuse every stage"
 RATE=22.32
 SSH_KEY=$HOME/.ssh/id_ed25519
 SSH_USER=ubuntu
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -i $SSH_KEY"
+# Interpreter to use ON THE POD. Resolved there, because the local PATH says
+# nothing about the remote machine.
+RPY='$( if [ -x "$HOME/miniconda3/envs/rasd/bin/python" ]; then echo "$HOME/miniconda3/envs/rasd/bin/python"; else command -v python3; fi )'
+
+# Local interpreter for this script's own helpers. Never bare `python3`.
+PY=$(command -v python3)
+for c in "$HOME/miniconda3/envs/rasd/bin/python" /opt/conda/bin/python; do
+  [ -x "$c" ] && PY="$c" && break
+done
 
 mkdir -p "$SESSION_DIR"
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
@@ -57,7 +72,7 @@ api_get() { curl -sS --max-time 60 -u "$KEY:" "https://cloud.lambda.ai/api/v1/$1
 
 count_instances() {
   local n
-  n=$(api_get instances 2>/dev/null | python3 -c \
+  n=$(api_get instances 2>/dev/null | "$PY" -c \
       "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>/dev/null)
   echo "${n:-unknown}"
 }
@@ -65,14 +80,22 @@ count_instances() {
 # --------------------------------------------------------------------------
 # deadline
 # --------------------------------------------------------------------------
-if [ -n "${MLSYS_DEADLINE_EPOCH:-}" ]; then
-  DEADLINE=$MLSYS_DEADLINE_EPOCH
-else
-  DEADLINE=$(( $(date -u +%s) + ${MLSYS_HOURS:-18} * 3600 ))
-fi
+# Waiting for capacity has no campaign deadline: a slot may not appear for
+# hours, and counting that wait against the campaign would silently shorten it.
+# The wait is bounded separately (MLSYS_CAPACITY_WAIT_HOURS); the CAMPAIGN clock
+# starts when an instance is actually acquired.
+CAPACITY_WAIT_DEADLINE=$(( $(date -u +%s) + ${MLSYS_CAPACITY_WAIT_HOURS:-72} * 3600 ))
+# Absolute override, when the operator names one explicitly.
+DEADLINE=${MLSYS_DEADLINE_EPOCH:-0}
 say "target=$INSTANCE_TYPE  per-stage approval threshold=\$$ASK_OVER @ \$$RATE/hr"
 say "approved stages: ${MLSYS_APPROVED_STAGES:-<none>}"
-say "absolute deadline epoch=$DEADLINE ($(date -u -r "$DEADLINE" +%FT%TZ 2>/dev/null || date -u +%FT%TZ -d "@$DEADLINE"))"
+say "allowlist: ${ONLY_STR:-<empty: nothing may run>}"
+if [ "${DEADLINE:-0}" -gt 0 ] 2>/dev/null; then
+  say "absolute deadline epoch=$DEADLINE ($(date -u -r "$DEADLINE" +%FT%TZ 2>/dev/null || date -u +%FT%TZ -d "@$DEADLINE"))"
+else
+  say "campaign deadline is set when the instance is acquired (+${MLSYS_CAMPAIGN_HOURS:-40}h)"
+fi
+say "capacity wait bounded until epoch=$CAPACITY_WAIT_DEADLINE (+${MLSYS_CAPACITY_WAIT_HOURS:-72}h)"
 
 # --------------------------------------------------------------------------
 # phase A: wait for capacity, then launch
@@ -80,6 +103,9 @@ say "absolute deadline epoch=$DEADLINE ($(date -u -r "$DEADLINE" +%FT%TZ 2>/dev/
 rm -f "$FOUND"
 INSTANCE_ID=""
 TERMINATED=0
+# How many times to re-issue terminate and re-poll before declaring the
+# termination unconfirmed. Each cycle is 40 polls x 15s.
+TERMINATE_ATTEMPTS=${MLSYS_TERMINATE_ATTEMPTS:-3}
 
 # Terminate and poll to ZERO. Idempotent and safe to call from a trap, so it can
 # run on every exit path. Without the trap, Ctrl-C, a dropped session or any
@@ -100,22 +126,41 @@ terminate_and_confirm() {
     -H 'Content-Type: application/json' \
     -d "{\"instance_ids\":[\"$INSTANCE_ID\"]}" >>"$LOG" 2>&1
   say "confirming termination by polling to ZERO instances (stderr visible)"
-  local confirmed=0 resp rc n
-  for i in $(seq 1 40); do
-    resp=$(api_get instances 2>&1); rc=$?
-    if [ $rc -ne 0 ]; then
-      say "  attempt $i: api rc=$rc :: $(printf '%s' "$resp" | head -c 120)"
-      interruptible_sleep 15; continue
-    fi
-    n=$(printf '%s' "$resp" | python3 -c \
-      "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>&1)
-    say "  attempt $i: instances=$n"
-    if [ "$n" = "0" ]; then confirmed=1; break; fi
-    interruptible_sleep 15
+  local confirmed=0 resp rc n attempt
+  for attempt in $(seq 1 "$TERMINATE_ATTEMPTS"); do
+    [ "$attempt" -gt 1 ] && {
+      say "  re-issuing terminate (attempt $attempt)"
+      curl -sS --max-time 60 -u "$KEY:" -X POST \
+        "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
+        -H 'Content-Type: application/json' \
+        -d "{\"instance_ids\":[\"$INSTANCE_ID\"]}" >>"$LOG" 2>&1
+    }
+    for i in $(seq 1 40); do
+      resp=$(api_get instances 2>&1); rc=$?
+      if [ $rc -ne 0 ]; then
+        say "  attempt $attempt.$i: api rc=$rc :: $(printf '%s' "$resp" | head -c 120)"
+        interruptible_sleep 15; continue
+      fi
+      n=$(printf '%s' "$resp" | "$PY" -c \
+        "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>&1)
+      say "  attempt $attempt.$i: instances=$n"
+      if [ "$n" = "0" ]; then confirmed=1; break; fi
+      interruptible_sleep 15
+    done
+    [ "$confirmed" = "1" ] && break
+    interruptible_sleep 30
   done
-  TERMINATED=1
-  [ "$confirmed" = "1" ] && say "CONFIRMED TERMINATED (0 instances)" \
-                         || say "!!! COULD NOT CONFIRM TERMINATION — CHECK THE DASHBOARD"
+  # TERMINATED means CONFIRMED. Setting it after an unconfirmed attempt is how
+  # a live instance survives the script that was supposed to end it: the flag
+  # makes every later attempt a no-op, including the one from the exit trap.
+  if [ "$confirmed" = "1" ]; then
+    TERMINATED=1
+    say "CONFIRMED TERMINATED (0 instances)"
+    return 0
+  fi
+  say "!!! NOT CONFIRMED TERMINATED after $TERMINATE_ATTEMPTS x 40 polls"
+  say "!!! the instance may still be billing: $INSTANCE_ID — CHECK THE DASHBOARD"
+  return 1
 }
 
 # EXIT covers normal completion and explicit `exit`; INT/TERM cover Ctrl-C and a
@@ -125,12 +170,12 @@ trap 'terminate_and_confirm; exit 130' INT
 trap 'terminate_and_confirm; exit 143' TERM
 
 attempt=0
-while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
+while [ "$(date -u +%s)" -lt "$CAPACITY_WAIT_DEADLINE" ]; do
   attempt=$((attempt+1))
   nap=$(( 90 + RANDOM % 510 ))
   n=$(count_instances)
   if [ "$n" = "0" ]; then
-    avail=$(api_get instance-types 2>/dev/null | python3 -c "
+    avail=$(api_get instance-types 2>/dev/null | "$PY" -c "
 import json,sys
 d=json.load(sys.stdin).get('data',{})
 t=d.get('$INSTANCE_TYPE',{})
@@ -142,7 +187,7 @@ print(','.join(r['name'] for r in t.get('regions_with_capacity_available',[])))"
         "https://cloud.lambda.ai/api/v1/instance-operations/launch" \
         -H 'Content-Type: application/json' \
         -d "{\"region_name\":\"$region\",\"instance_type_name\":\"$INSTANCE_TYPE\",\"ssh_key_names\":[\"rasd-amank\"],\"name\":\"rasd-mlsys\",\"quantity\":1}" 2>&1)
-      INSTANCE_ID=$(printf '%s' "$resp" | python3 -c "
+      INSTANCE_ID=$(printf '%s' "$resp" | "$PY" -c "
 import json,sys
 try: print(json.loads(sys.stdin.read())['data']['instance_ids'][0])
 except Exception: print('')" 2>/dev/null)
@@ -159,17 +204,36 @@ except Exception: print('')" 2>/dev/null)
       say "attempt $attempt: no capacity for $INSTANCE_TYPE; next poll in ~${nap}s"
     fi
   else
-    say "instances already running ($n) — not launching a second one"
-    INSTANCE_ID=$(api_get instances | python3 -c \
-      "import json,sys;d=json.load(sys.stdin)['data'];print(d[0]['id'] if d else '')")
-    break
+    # REFUSE. Adopting an instance this script did not launch means it would
+    # report on, and later TERMINATE, someone else's machine -- and the run it
+    # is watching would be one nobody sized or approved. Stop and say so.
+    OTHER=$(api_get instances | "$PY" -c \
+      "import json,sys;d=json.load(sys.stdin)['data'];print(','.join(x['id'] for x in d))")
+    say "FATAL: $n instance(s) already exist ($OTHER); refusing to launch or adopt."
+    say "Terminate them, or set MLSYS_ADOPT_EXISTING=1 to run on one deliberately."
+    if [ "${MLSYS_ADOPT_EXISTING:-0}" = "1" ]; then
+      INSTANCE_ID=$(api_get instances | "$PY" -c \
+        "import json,sys;d=json.load(sys.stdin)['data'];print(d[0]['id'] if d else '')")
+      say "ADOPTING $INSTANCE_ID as instructed by MLSYS_ADOPT_EXISTING"
+      break
+    fi
+    exit 5
   fi
   interruptible_sleep $nap
 done
 
 if [ -z "$INSTANCE_ID" ]; then
-  say "DEADLINE PASSED with no capacity and nothing launched."
+  say "CAPACITY WAIT EXPIRED after ${MLSYS_CAPACITY_WAIT_HOURS:-72}h with nothing launched."
+  say "Nothing was acquired, so nothing is billing."
   exit 3
+fi
+
+# The instance is acquired: start the campaign clock, sized to the campaign.
+if [ "${DEADLINE:-0}" -gt 0 ] 2>/dev/null; then
+  say "campaign deadline from MLSYS_DEADLINE_EPOCH (absolute)"
+else
+  DEADLINE=$(( $(date -u +%s) + ${MLSYS_CAMPAIGN_HOURS:-40} * 3600 ))
+  say "campaign clock starts NOW: $(date -u -r "$DEADLINE" +%FT%TZ) (+${MLSYS_CAMPAIGN_HOURS:-40}h, sized to the campaign)"
 fi
 
 # --------------------------------------------------------------------------
@@ -177,7 +241,7 @@ fi
 # --------------------------------------------------------------------------
 IP=""
 for i in $(seq 1 60); do
-  read -r status ip <<<"$(api_get instances | python3 -c "
+  read -r status ip <<<"$(api_get instances | "$PY" -c "
 import json,sys
 d=json.load(sys.stdin).get('data',[])
 for x in d:
@@ -211,9 +275,15 @@ rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
 for d in data/processed/pg19_docs data/processed/pg19_docs_diverse \
          data/processed/pg19_llama3 data/processed/pg19; do
   [ -d "$d" ] || continue
-  rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-    "$d/" "$SSH_USER@$IP:~/RASD/$d/" >>"$LOG" 2>&1
-  ssh $SSH_OPTS "$SSH_USER@$IP" "cd ~/RASD && python3 -c \"
+  if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
+         "$d/" "$SSH_USER@$IP:~/RASD/$d/" >>"$LOG" 2>&1; then
+    say "FATAL: staging $d to the pod failed; refusing to run on incomplete data"
+    terminate_and_confirm
+    exit 6
+  fi
+  # The pod's own interpreter, preferring the environment that has torch and
+  # transformers. Bare `python3` on the pod may be a stock system python.
+  ssh $SSH_OPTS "$SSH_USER@$IP" "cd ~/RASD && ${RPY:-python3} -c \"
 import json,pathlib,sys
 m=json.load(open('$d/documents.json')) if pathlib.Path('$d/documents.json').exists() else json.load(open('$d/pg19_validation_metadata.json'))
 items=m.get('documents') or m.get('chunks') or []
@@ -231,15 +301,36 @@ ssh $SSH_OPTS "$SSH_USER@$IP" \
   "cd ~/RASD && NODE_RATE_PER_HOUR=$RATE \
    MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \
    MLSYS_MAX_HOURS=${MLSYS_MAX_HOURS:-20} \
-   MLSYS_APPROVED_STAGES='${MLSYS_APPROVED_STAGES:-}' \
+   MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-700} \
+   MLSYS_ONLY_STAGES='${ONLY_STR}' \
+   MLSYS_APPROVED_STAGES='${ONLY_STR}' \
    nohup bash scripts/mlsys_manifest.sh > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
 
+# A failed ssh says NOTHING about whether the manifest is still running. Treating
+# it as "finished" ends the run and, worse, moves on to terminate an instance
+# whose work is still in progress. Only exit code 1 from `pgrep` (no match, on a
+# successful connection) means finished; 255 means the connection failed and is
+# retried.
+SSH_UNKNOWN=0
 while true; do
-  if ! ssh $SSH_OPTS "$SSH_USER@$IP" 'pgrep -f mlsys_manifest.sh >/dev/null' 2>/dev/null; then
-    say "manifest finished"
+  ssh $SSH_OPTS "$SSH_USER@$IP" 'pgrep -f mlsys_manifest.sh >/dev/null' 2>/dev/null
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    say "manifest finished (ssh ok, no manifest process)"
     break
+  elif [ "$rc" -eq 0 ]; then
+    SSH_UNKNOWN=0
+  else
+    SSH_UNKNOWN=$((SSH_UNKNOWN + 1))
+    say "ssh check failed (rc=$rc) — state UNKNOWN, retry $SSH_UNKNOWN"
+    if [ "$SSH_UNKNOWN" -ge "${MLSYS_SSH_UNKNOWN_LIMIT:-30}" ]; then
+      say "!!! $SSH_UNKNOWN consecutive ssh failures: cannot tell whether the"
+      say "!!! manifest is running. Continuing to wait rather than guessing."
+    fi
   fi
-  if [ "$(date -u +%s)" -gt "$DEADLINE" ]; then say "deadline hit mid-manifest"; break; fi
+  if [ "${DEADLINE:-0}" -gt 0 ] && [ "$(date -u +%s)" -gt "$DEADLINE" ]; then
+    say "campaign deadline hit mid-manifest"; break
+  fi
   interruptible_sleep 120
 done
 
@@ -248,12 +339,47 @@ done
 # --------------------------------------------------------------------------
 STAGE=$SESSION_DIR/pull_$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$STAGE"
+PULL_FAILED=0
 say "pulling results to $STAGE (no --delete anywhere)"
-rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-  --exclude 'checkpoints/' \
-  "$SSH_USER@$IP:~/RASD/results/mlsys/" "$STAGE/" >>"$LOG" 2>&1 && say "  rsync ok"
+if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
+       --exclude 'checkpoints/' \
+       "$SSH_USER@$IP:~/RASD/results/mlsys/" "$STAGE/" >>"$LOG" 2>&1; then
+  # A partial pull merged into results/ is indistinguishable from a complete
+  # one. Stop before merging anything.
+  say "!!! rsync FAILED; not merging a partial pull. Staged files kept at $STAGE"
+  PULL_FAILED=1
+fi
 
-python3 - "$STAGE" <<'PYEOF' >>"$LOG" 2>&1
+if [ "$PULL_FAILED" = "0" ]; then
+  say "  rsync ok"
+
+  # --- the sha256 comparison the comment always claimed --------------------
+  # The remote computes a manifest and the local side recomputes it. rsync
+  # catches a size change, but not a transfer that was silently truncated and
+  # padded, and not a file the remote never wrote at all.
+  say "verifying per-file sha256 against the remote"
+  ssh $SSH_OPTS "$SSH_USER@$IP" \
+    'cd ~/RASD/results/mlsys 2>/dev/null && find . -type f -not -path "*/checkpoints/*" -print0 | sort -z | xargs -0 shasum -a 256' \
+    > "$SESSION_DIR/pull_remote.sha256" 2>>"$LOG"
+  if [ ! -s "$SESSION_DIR/pull_remote.sha256" ]; then
+    say "!!! could not obtain the remote sha256 manifest; verification NOT done"
+    PULL_FAILED=1
+  else
+    ( cd "$STAGE" && find . -type f -print0 | sort -z | xargs -0 shasum -a 256 ) \
+      > "$SESSION_DIR/pull_local.sha256" 2>>"$LOG"
+    if diff -u "$SESSION_DIR/pull_remote.sha256" \
+                "$SESSION_DIR/pull_local.sha256" >>"$LOG" 2>&1; then
+      say "  sha256 OK: every file matches the remote ($(wc -l < "$SESSION_DIR/pull_local.sha256" | tr -d ' ') files)"
+    else
+      say "!!! sha256 MISMATCH between remote and staged pull; see $LOG"
+      diff "$SESSION_DIR/pull_remote.sha256" "$SESSION_DIR/pull_local.sha256" \
+        | head -20 >>"$LOG" 2>&1
+      PULL_FAILED=1
+    fi
+  fi
+fi
+
+"$PY" - "$STAGE" <<'PYEOF' >>"$LOG" 2>&1
 import hashlib, pathlib, sys
 stage = pathlib.Path(sys.argv[1]); dest = pathlib.Path("results/mlsys")
 dest.mkdir(parents=True, exist_ok=True)
@@ -266,7 +392,11 @@ for f in stage.rglob("*"):
     n += 1
 print(f"  merged {n} files (additive; nothing deleted)")
 PYEOF
-say "  merged into results/mlsys (additive)"
+if [ "$PULL_FAILED" = "0" ]; then
+  say "  merged into results/mlsys (additive)"
+else
+  say "!!! NOT merged: the pull did not verify. Staged copy kept at $STAGE"
+fi
 
 # --------------------------------------------------------------------------
 # 60-minute grace, then terminate and CONFIRM
