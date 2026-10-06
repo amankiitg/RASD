@@ -410,6 +410,14 @@ def _build_per_token_record(
         n_acc              : how many of the k were accepted (prefix)
         draft_seq          : (B, k) draft token IDs
         accepted           : (B, k) bool mask from _acceptance_mask
+
+    `ended_on_eos` is always present and defaults to False; the verify loop
+    flips it to True on the round whose bonus token was EOS and therefore
+    terminated generation. It could not be computed here because the bonus
+    token is sampled AFTER this record is appended (and appended before the
+    EOS test so that a mid-round checkpoint captures the current round). The
+    key is emitted unconditionally so every record has the same schema and
+    post-hoc analysis never has to distinguish "absent" from "False".
     """
     return {
         "round_idx":        int(round_idx),
@@ -418,6 +426,7 @@ def _build_per_token_record(
         "n_acc":            int(n_acc),
         "draft_tokens":     draft_seq[0].tolist(),
         "accepted":         [bool(x) for x in accepted[0].tolist()],
+        "ended_on_eos":     False,
     }
 
 
@@ -1548,6 +1557,13 @@ class RASDInference:
 
             # Early stop on EOS (suppressed when B3 ignore_eos is set)
             if (not cfg.ignore_eos) and (cur_token == self.tokenizer.eos_token_id).all():
+                # Record that THIS round is the one that ended generation, so
+                # acceptance can be split at the EOS boundary instead of at an
+                # arbitrary token count. Set here rather than at append time
+                # because the bonus token is sampled after the record is
+                # appended (see _build_per_token_record).
+                if cfg.log_per_token and per_token_trace:
+                    per_token_trace[-1]["ended_on_eos"] = True
                 break
 
         # ---- Finalize ----
