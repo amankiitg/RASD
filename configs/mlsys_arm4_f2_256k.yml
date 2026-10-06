@@ -34,7 +34,7 @@ defaults:
   quantize_target: true
   draft_window_cap: 4096
   max_new_tokens: 128
-  ignore_eos: true      # B3: exactly 128 tokens, EOS not honoured
+  ignore_eos: false      # B3: exactly 128 tokens, EOS not honoured
   temperature: 1.0
   top_p: 1.0
   seeds:
@@ -61,3 +61,11 @@ ARM4_TARGET_ONLY:
     spec_steps: 0
     checkpoint_every: 0
     notes: matched target-only baseline for ARM4_f2_256k
+# ignore_eos: false — HONOR EOS here, deliberately.
+#   B3 originally forced exactly max_new_tokens tokens by ignoring EOS. On the
+#   ARM4 cells that is wrong: f1/f2/f4 push the target OUT of distribution, the
+#   model then emits EOS early, and forced post-EOS rounds are exactly the
+#   low-acceptance regime we are trying to measure. Ignoring EOS would inflate
+#   the apparent collapse. Honoring EOS can only understate it, which is the
+#   safe direction for a claim of the form "acceptance degrades with factor".
+#   max_new_tokens: 128 is kept as a CAP, not a target.

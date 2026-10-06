@@ -298,27 +298,62 @@ def build_prompt(context_length: int, tokenizer,
     order = list(_SYNTHETIC_SENTENCES)
     rng.shuffle(order)
     block = "".join(order)
-    block_tokens = tokenizer.encode(block)
+    # add_special_tokens=False is REQUIRED: this list is repeated below, so a
+    # BOS prepended here is replicated at every repetition boundary. With the
+    # default it appeared 1337 times (once per ~97 tokens, 4 in the last 400),
+    # which asks the model to continue a document that restarts continuously.
+    # That is what collapsed ARM4-f1 acceptance to 0.24 from round 0, while
+    # Arm2 — whose builder repeated a STRING and encoded once — measured 0.89.
+    block_tokens = tokenizer.encode(block, add_special_tokens=False)
     if not block_tokens:
         block_tokens = tokenizer.encode(
-            "The following is a detailed technical analysis. ")
+            "The following is a detailed technical analysis. ",
+            add_special_tokens=False)
     # Over-provision so we can trim DOWN to hit the target exactly. The
     # engine takes a prompt STRING and re-tokenises it, so the id count can
     # drift across decode->encode; B2 requires prompt+output to fit inside
     # the native window, so we converge on the requested count rather than
     # hoping the round-trip is lossless.
-    reps = context_length // max(1, len(block_tokens)) + 2
+    #
+    # The round trip is LOSSY here and NOT merely off by a constant: each
+    # repetition re-merges the sentence-boundary tokens, so re-encoding
+    # returns roughly one token fewer per block. Feeding decode() exactly
+    # `context_length` ids therefore yields a prompt SHORTER than requested
+    # (measured: 130944 -> 129595), and a fixed over-provision cannot fix that
+    # because the loss grows with the repetition count. So solve for the id
+    # count whose ENGINE-VISIBLE length equals the target, using the observed
+    # ratio to converge in a few encodes instead of a linear scan (each
+    # encode is ~130k tokens, so a scan would be minutes).
+    reps = context_length // max(1, len(block_tokens)) + 64
     pool = block_tokens * reps
     n = context_length
     text = tokenizer.decode(pool[:n])
-    for _ in range(8):
-        if len(pool) < n or n <= 0:
+    L = len(tokenizer.encode(text, add_special_tokens=False))
+    for _ in range(14):
+        if L == context_length:
+            break
+        n = max(1, int(round(n * context_length / max(1, L))))
+        if L < context_length:
+            n += 1
+        if n > len(pool):
             break
         text = tokenizer.decode(pool[:n])
-        re_ids = tokenizer.encode(text, add_special_tokens=False)
-        if len(re_ids) == context_length:
-            break
-        n -= (len(re_ids) - context_length)
+        L = len(tokenizer.encode(text, add_special_tokens=False))
+    if L != context_length:
+        # Local scan to land exactly; the ratio step can oscillate by one.
+        for delta in list(range(1, 96)) + list(range(-1, -96, -1)):
+            m = n + delta
+            if m < 1 or m > len(pool):
+                continue
+            t = tokenizer.decode(pool[:m])
+            l2 = len(tokenizer.encode(t, add_special_tokens=False))
+            if l2 == context_length:
+                n, text, L = m, t, l2
+                break
+    if L != context_length:
+        logger.warning(
+            "synthetic prompt length %d != requested %d after convergence",
+            L, context_length)
     return text
 
 

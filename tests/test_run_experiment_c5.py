@@ -711,11 +711,19 @@ class TestRulerScorer:
 
 
 class TestIgnoreEosB3:
-    """MLSys B3 — ARM4 generates EXACTLY max_new_tokens, EOS ignored.
+    """MLSys B3 (REVISED) — ARM4 honors EOS; max_new_tokens is a cap.
 
-    Without this every ARM4 cell would stop at a different round, and the
-    spec-vs-target throughput ratios inside the ladder would not be
-    comparable. Acceptance is per-round and unaffected either way.
+    B3 originally forced exactly max_new_tokens tokens by ignoring EOS. On the
+    ARM4 cells that is the wrong direction: f1/f2/f4 push the target out of
+    distribution, the model emits EOS early, and forced post-EOS rounds are
+    precisely the low-acceptance regime under measurement. Ignoring EOS would
+    INFLATE the apparent collapse with padding rounds that the model never
+    intended to produce; honoring EOS can only understate it. For a claim of
+    the form "acceptance degrades as the factor rises", understating is the
+    safe error and inflating is not.
+
+    max_new_tokens: 128 stays as a CAP so a cell cannot run away, not as a
+    target the engine must reach.
     """
 
     def test_ignore_eos_defaults_off(self):
@@ -731,13 +739,13 @@ class TestIgnoreEosB3:
             "ignore_eos not propagated from the run dict into RASDConfig"
 
     def test_both_eos_break_sites_are_guarded(self):
-        """There are two EOS early-stops (target-only and spec paths); B3
-        must suppress BOTH or one mode still truncates."""
+        """The guard must exist on BOTH early-stops (target-only and spec) so
+        the option is usable in either mode; ARM4 simply leaves it off."""
         src = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
         guarded = src.count("not cfg.ignore_eos")
         assert guarded == 2, f"expected 2 guarded EOS breaks, found {guarded}"
 
-    def test_every_arm4_config_sets_ignore_eos_and_128(self):
+    def test_every_arm4_config_honors_eos_with_128_cap(self):
         import glob
         import yaml
         files = (glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_f*.yml"))
@@ -746,4 +754,67 @@ class TestIgnoreEosB3:
         for f in files:
             d = yaml.safe_load(Path(f).read_text())["defaults"]
             assert d.get("max_new_tokens") == 128, f"{f}: max_new_tokens != 128"
-            assert d.get("ignore_eos") is True, f"{f}: ignore_eos not set"
+            # False or absent both mean "honor EOS"; only True is a failure.
+            assert d.get("ignore_eos") is not True, (
+                f"{f}: ignore_eos must be false/absent — forced post-EOS rounds "
+                f"would inflate the ARM4 collapse")
+
+    def test_no_arm4_config_still_ignores_eos(self):
+        import glob
+        import yaml
+        files = (glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_f*.yml"))
+                 + glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_llama3*.yml")))
+        offenders = []
+        for f in files:
+            d = yaml.safe_load(Path(f).read_text()).get("defaults", {})
+            if d.get("ignore_eos") is True:
+                offenders.append(Path(f).name)
+        assert not offenders, f"ARM4 configs still ignoring EOS: {offenders}"
+
+
+
+class TestSyntheticPromptNoBosInjection:
+    """Regression guard for the ARM4-f1 collapse.
+
+    build_prompt repeated the token LIST returned by tokenizer.encode(block).
+    With the default add_special_tokens=True that list starts with a BOS, so
+    every repetition carried one: 1337 BOS tokens, once per ~97 tokens, 4 of
+    them in the final 400. The model was asked to continue a document that
+    restarts continuously, and ARM4-f1 acceptance collapsed to 0.24 from round
+    0 against Arm2's 0.89. The old builder repeated a STRING and encoded once,
+    so it had exactly one BOS — which is why only the A7 path regressed.
+    """
+
+    @staticmethod
+    def _prompt_ids(seed, n=4096):
+        from transformers import AutoTokenizer
+        from run_experiment import build_prompt
+        tok = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+        text = build_prompt(n, tok, source="synthetic", seed=seed)
+        return tok, tok(text, add_special_tokens=False)["input_ids"]
+
+    def test_no_bos_beyond_position_zero(self):
+        tok, ids = self._prompt_ids(42)
+        bos = tok.convert_tokens_to_ids("<|begin_of_text|>")
+        interior = [i for i, t in enumerate(ids) if t == bos]
+        assert interior == [], (
+            f"BOS injected at {len(interior)} position(s) inside the prompt "
+            f"(first at {interior[:3]}); token-list repetition is replicating "
+            f"the special token again")
+
+    def test_engine_visible_length_is_exact(self):
+        # B2: prompt + max_new_tokens must fit the window, and gate (b)
+        # requires the prompt to be exactly window - 128.
+        n = 4096
+        _, ids = self._prompt_ids(123, n)
+        assert len(ids) == n, f"prompt is {len(ids)} tokens, requested {n}"
+
+    def test_seed_dependent_and_reproducible(self):
+        import hashlib
+        import json
+        _, a = self._prompt_ids(42)
+        _, a2 = self._prompt_ids(42)
+        _, b = self._prompt_ids(456)
+        h = lambda x: hashlib.sha256(json.dumps(list(x)).encode()).hexdigest()
+        assert h(a) == h(a2), "prompt is not reproducible for a fixed seed"
+        assert h(a) != h(b), "different seeds produced identical prompts"
