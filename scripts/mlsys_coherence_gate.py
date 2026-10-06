@@ -560,11 +560,23 @@ def main() -> int:
     gen_dir = Path(args.gen_dir)
     gen_dir.mkdir(parents=True, exist_ok=True)
 
-    tok = AutoTokenizer.from_pretrained(candidates[0]["target_model_name"])
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
+    # One tokenizer PER MODEL, cached. A single tokenizer taken from
+    # candidates[0] was used for every row, so the Llama-2 controls were
+    # generated and EOS-checked with Llama-3.1's tokenizer -- a different vocab
+    # and a different eos id, which corrupts exactly the two numbers
+    # (early-EOS, degeneration share) that decide those controls' verdicts.
+    _tok_cache: dict = {}
 
-    rows = [run_candidate(c, tok, args.pg19_meta, gen_dir) for c in candidates]
+    def _tok_for(model_name: str):
+        if model_name not in _tok_cache:
+            t = AutoTokenizer.from_pretrained(model_name)
+            if t.pad_token is None:
+                t.pad_token = t.eos_token
+            _tok_cache[model_name] = t
+        return _tok_cache[model_name]
+
+    rows = [run_candidate(c, _tok_for(c["target_model_name"]), args.pg19_meta,
+                          gen_dir) for c in candidates]
 
     # The reference every candidate is judged against. It must be DECLARED, and
     # it must be measured at the candidate's own context.

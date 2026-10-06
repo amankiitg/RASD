@@ -19,8 +19,14 @@ to match its declared `expect`:
 Either way, no candidate may be gated until this passes. Neither is fixed by
 relaxing a threshold to make a control agree.
 
-Also reports the tolerance that the positive controls' spread implies, so the
-a-priori 1.5x can be replaced by a measured number.
+A control counts as MEASURED only when the gate produced a perplexity for it
+AND a declared native baseline to compare against at its own context. "no
+baseline" is not a detection: without it the ratio is undefined, so a negative
+control could otherwise be "detected" by never having been measured at all.
+
+The tolerance is FIXED at 1.5x by the 2026-10-06 plan revision, so the
+positives' spread no longer sets it. The spread is still reported, as the
+evidence that the gate's perplexity measurement sits well inside the tolerance.
 
 Usage:
     python scripts/mlsys_gate_calibration_check.py results/mlsys/gate_calibration.csv
@@ -56,7 +62,7 @@ def check(csv_path: Path, controls_path: Path) -> tuple[list[str], dict]:
         if want is None:
             problems.append(f"{name}: not a declared control")
             continue
-        if r.get("status") != "ok":
+        if r.get("status") not in ("ok", ""):
             # A control the gate could not measure cannot be judged. Report it
             # rather than skipping it silently: an unmeasured control is not a
             # passing control.
@@ -68,8 +74,23 @@ def check(csv_path: Path, controls_path: Path) -> tuple[list[str], dict]:
         got = "pass" if str(r.get("gate_pass")) == "True" else "fail"
         ppl = r.get("ppl_continuation", "")
         reason = r.get("gate_reason", "")
+        # MEASURED means the gate produced both a perplexity and a declared
+        # baseline to compare it with. A row whose ratio is undefined was not
+        # measured, and "no baseline" must never be read as a detected failure
+        # for a negative control.
+        measured = bool(ppl not in ("", None)) and bool(
+            r.get("native_ppl_reference") not in ("", None))
+        if not measured:
+            problems.append(
+                f"{name}: NOT MEASURED -- no perplexity and/or no declared "
+                f"native baseline at its own context ({reason[:70]}). An "
+                f"unmeasured control is neither a pass nor a detected failure."
+            )
+            continue
         entry = {"name": name, "want": want, "got": got, "ppl": ppl,
-                 "reason": reason}
+                 "reason": reason, "measured": True,
+                 "baseline": r.get("native_ppl_reference", ""),
+                 "ratio": r.get("ppl_ratio", "")}
         (summary["positives"] if want == "pass" else summary["negatives"]).append(entry)
         if got != want:
             problems.append(
@@ -104,13 +125,17 @@ def main() -> int:
 
     for e in summary["positives"]:
         print(f"  positive {e['name']:<28} want={e['want']:<5} got={e['got']:<5} "
-              f"ppl={e['ppl']}")
+              f"ppl={e['ppl']:<12} baseline={e.get('baseline', ''):<12} "
+              f"ratio={e.get('ratio', '')}")
     for e in summary["negatives"]:
         print(f"  negative {e['name']:<28} want={e['want']:<5} got={e['got']:<5} "
-              f"ppl={e['ppl']}")
+              f"ppl={e['ppl']:<12} baseline={e.get('baseline', ''):<12} "
+              f"ratio={e.get('ratio', '')}")
     if "positive_ppl_spread" in summary:
         print(f"  positive-control ppl spread max/min = "
-              f"{summary['positive_ppl_spread']} (the a-priori tolerance is 1.5x)")
+              f"{summary['positive_ppl_spread']}  (informational: the tolerance "
+              f"is FIXED at 1.5x by the plan revision; this is the evidence the "
+              f"measurement sits well inside it)")
 
     if problems:
         print("\nCALIBRATION FAILED:")

@@ -281,12 +281,19 @@ Measured at the candidate's real context. A 512-token prompt cannot exercise
 long context: the two anchorings were indistinguishable at 512/4096 tokens (PPL
 4.89 vs 4.80) yet 57× apart at 32k.
 
-**Calibration (S0).** The gate's thresholds are set from the **measured spread
-of the positive controls on real weights** — native at 32k, 64k, 128k — not
-chosen a priori. The negative controls (the ARM4 f2 construction, and
-mis-anchored Llama-2) must fail. The threshold actually used is recorded in the
-revisions block. A gate that has never seen real weights has not been calibrated,
-so no candidate is gated before S0.
+**Calibration (S0).** The tolerance is **fixed at 1.5×** and pre-registered in the
+revisions block; the earlier rule that derived it from the positive controls'
+measured spread was **withdrawn before any run** (the three positives are single
+measurements at three different contexts, so their spread does not estimate the
+gate's noise, and every available estimator can only loosen the gate). The
+controls therefore act as a **falsification test of the gate at the fixed
+threshold**: native at 32k, 64k and 128k must pass, and the negative controls
+(the ARM4 f2 construction, and mis-anchored Llama-2) must fail. Each control must
+be **measured at its own context against a declared native baseline at that same
+context and model**; a control reporting "no baseline" was not measured and is
+neither a pass nor a detected failure, so it stops the campaign. A gate that has
+never seen real weights has not been calibrated, so no candidate is gated before
+S0.
 
 ## 7. Pre-registered comparisons
 
@@ -358,8 +365,9 @@ aggregate tables, not silently dropped.
 seeing the affected data)*
 
 - **2026-10-06 — plan frozen** before any run. No data seen under this plan.
-  - Gate threshold: **not yet set** — set in S0 from the positive controls'
-    measured spread, recorded below.
+  - Gate threshold: **fixed at 1.5×** in the 2026-10-06 revision below, before any
+    run. The "derive it from the positive controls' spread" rule was withdrawn;
+    the controls falsify the gate at the fixed threshold instead.
 - **2026-10-06 — 1M natural-text rung declared unavailable**, before any data.
   6 eligible books, 10 required. Measured in
   `data/processed/pg19_books/book_lengths_train.json`.
@@ -466,6 +474,113 @@ seeing the affected data)*
   stage covers only 128k and only speculative decoding: without the ladder there
   is no production-stack reference at the 256k and 512k rungs, which is where the
   payoff boundary is claimed.
+
+### Revision: the gate tolerance is FIXED at 1.5x, not derived (2026-10-06)
+
+*Before any GPU run; no data seen.*
+
+The plan contradicted itself: section 6.2 states the normative tolerance as
+"within 1.5x the native baseline", while the calibration note said the
+threshold was "not yet set -- set in S0 from the positive controls' measured
+spread". One of the two had to go.
+
+**Decision: the tolerance is fixed at 1.5x, pre-registered here, and the
+"derive it from the positive-control spread" rule is withdrawn.** The
+derivation was abandoned for three reasons, none of which is that 1.5 is more
+convenient:
+
+1. It cannot be estimated from the controls we have. There are three
+   positives, measured at three *different contexts* (32k, 64k, 128k) with one
+   seed each and no replication unit. Their spread is dominated by the context
+   change and by single-measurement noise, so it does not estimate the
+   quantity the threshold needs (the gate's measurement noise at a *fixed*
+   context).
+2. Every available estimator is monotone in the direction of loosening. Both
+   `max(ratio)` and `mean + k*sd` can only raise the tolerance above the
+   positives' ratios; neither can produce a tighter gate than 1.5x unless the
+   positives happen to sit far below it. A looser gate admits exactly the
+   configurations the gate exists to exclude, so the failure mode is silent.
+3. It made the threshold tunable *after* seeing a candidate's ratio, which is
+   the thing a pre-registration exists to prevent.
+
+The S0 controls therefore change role: they are no longer the source of the
+threshold, they are a **falsification test of the gate at the fixed
+threshold**. Each positive control must pass at 1.5x and each negative control
+must fail at 1.5x, and a disagreement means the gate is wrong.
+
+Two consequences of fixing the threshold are recorded here because they are
+claimed in the results:
+
+* Each control must be **measured at its own context** against a **declared**
+  native baseline at that same context and model. A control that reports "no
+  baseline" was not measured, so it is neither a pass nor a detected failure --
+  it is a failure of the calibration and stops the campaign.
+* The positive controls at 32k and 64k are within Llama-3.1-8B's native
+  window, so they test the gate's machinery (rope assertion, early-EOS
+  detection, degeneration shares, the full-length prompt path) rather than a
+  rope extension. That is deliberate: the gate must be shown to pass a
+  configuration known to be correct before its verdicts on extensions mean
+  anything.
+
+### Revision: new stage `rope_intervention_128k` (2026-10-06)
+
+*Before any GPU run; no data seen.*
+
+**Motivation.** Every comparison in section 7 changes either the context
+length or the target's rope configuration together with other things, so none
+of them isolates what a *rope intervention alone* does to acceptance. If
+acceptance at 128k is a property of the target's positional frame rather than
+of the context length, that should be visible with the context HELD FIXED and
+only the rope changed.
+
+**Design.** Llama-3.1-8B target with Llama-3.2-1B draft, the same 10 core
+documents as `natural_f1_128k`, the same 128k context, greedy, 1024 tokens,
+`ignore_eos=true`, speculative runs only (no target-only arm: this is a
+comparison between two speculative arms, and the losslessness partner is not
+required because neither arm is being reported as a baseline ratio).
+
+Two arms, paired by document:
+
+| arm | target rope |
+|---|---|
+| `R_native` | the model's shipped `llama3` block, untouched |
+| `R_llama3_f16` | `rope_type: llama3`, the **shipped dict** with only `factor` changed to 16 |
+
+The shipped dict is used deliberately, so the only difference between the arms
+is the factor. Nothing else is varied.
+
+**Gate.** The factor-16 arm must first pass the coherence gate at **128k** at
+the fixed 1.5x tolerance. If it fails, that failure **is the result**: the arm
+is not run, and it is reported as "a llama3 factor-16 intervention at 128k does
+not produce a coherent target", not as an acceptance difference. This stage is
+the first to gate an intervention rather than an extension, and it is reported
+as such.
+
+**Pre-registered comparison (C6).** Per document, the paired difference in
+`alpha_round` (factor-16 minus native), with a document-bootstrap 95% interval,
+`n_boot = 10000`, resampling documents, the same interval machinery as every
+other comparison in section 5.
+
+**Pre-registered equivalence margin: 0.05.** The two arms are declared
+**equivalent** when the 95% document-bootstrap interval on the paired
+difference lies entirely inside **[-0.05, +0.05]**. The rule is asymmetric on
+purpose and is fixed now, before the data:
+
+* interval entirely inside [-0.05, +0.05] -> **equivalent**: acceptance is
+  insensitive to a factor-16 rope intervention at fixed context.
+* interval entirely outside [-0.05, +0.05] (both bounds above +0.05 or both
+  below -0.05) -> **a rope effect exists**, reported with its direction.
+* interval overlapping a margin boundary -> **inconclusive**, never rounded to
+  whichever side is more interesting. An inconclusive result is reported as
+  inconclusive.
+
+Absence of a detected difference is not evidence of equivalence: only the
+interval-inclusion rule above licenses the word "equivalent", and with n = 10
+documents the interval will often be too wide to license it. That outcome is
+expected, is reported as inconclusive, and is not a failure of the stage.
+
+**Cost.** ~$35 (2 arms x 10 documents x 128k, speculative only; spec decode is
+0.55 s/token at 128k, so 20 runs x ~573 s = 3.2h at $22.32/h).
 
 ### Losslessness verdicts
 

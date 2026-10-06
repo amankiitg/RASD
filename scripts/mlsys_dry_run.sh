@@ -659,6 +659,59 @@ if [ -s "$WORK/guards.sh" ]; then
                || bad "the allowlist let an unapproved stage through (or blocked an approved one)"
 else bad "could not extract the guard functions from the manifest"; fi
 
+# --------------------------------------------------------------------------
+step "13  plan/code contracts: tolerance, pre-registration and control baselines"
+"$PY" - <<'PYPLAN'
+import json, re, sys, pathlib
+plan = pathlib.Path("docs/mlsys_analysis_plan.md").read_text()
+gate = pathlib.Path("scripts/mlsys_coherence_gate.py").read_text()
+fails = []
+
+# --- the tolerance is fixed in ONE place, and plan and code agree ------------
+m = re.search(r"^PPL_TOLERANCE\s*=\s*([0-9.]+)", gate, re.M)
+if not m:
+    fails.append("the gate declares no PPL_TOLERANCE")
+else:
+    tol = float(m.group(1))
+    if abs(tol - 1.5) > 1e-9:
+        fails.append(f"PPL_TOLERANCE is {tol}, but the plan revision fixes 1.5")
+    if "FIXED at 1.5" not in plan:
+        fails.append("the plan has no revision fixing the tolerance at 1.5")
+    # The revision quotes the withdrawn rule verbatim, so look only at the
+    # normative list item that stated the threshold was unset.
+    for line in plan.splitlines():
+        if line.strip().startswith("- Gate threshold:"):
+            if "1.5" not in line:
+                fails.append("the plan's gate-threshold item does not fix 1.5: "
+                             + line.strip()[:70])
+            break
+    else:
+        fails.append("the plan has no 'Gate threshold:' item")
+
+# --- every gate control must have a declared baseline at its own context -----
+spec = json.loads(pathlib.Path("configs/mlsys_gate_controls.json").read_text())
+cands = spec["candidates"] if isinstance(spec, dict) else spec
+baselines = [(c["context_length"], c["target_model_name"]) for c in cands
+             if c.get("native_baseline")]
+for c in cands:
+    key = (c["context_length"], c["target_model_name"])
+    if key not in baselines:
+        fails.append(
+            f"control {c['name']} has no declared native baseline at its own "
+            f"context {c['context_length']} for {c['target_model_name']}")
+
+# --- the new stage is pre-registered before it is implemented ----------------
+if "rope_intervention_128k" in pathlib.Path("configs/mlsys_manifest.yml").read_text():
+    if "rope_intervention_128k" not in plan:
+        fails.append("rope_intervention_128k is in the manifest but not "
+                     "pre-registered in the plan (the revision must precede it)")
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYPLAN
+  [ $? -eq 0 ] && ok "tolerance fixed in one place, every control has a baseline, new stage pre-registered" \
+               || bad "a plan/code contract is broken"
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."
