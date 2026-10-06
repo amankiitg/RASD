@@ -732,6 +732,109 @@ PYPLAN
   [ $? -eq 0 ] && ok "tolerance fixed in one place, every control has a baseline, new stage pre-registered" \
                || bad "a plan/code contract is broken"
 
+# --------------------------------------------------------------------------
+step "14  launch blockers: fail-closed guards and the watcher's lifecycle"
+MAN=scripts/mlsys_manifest.sh
+WATCH=scripts/mlsys_watch_and_run.sh
+"$PY" - "$MAN" "$WATCH" <<'PYBLK'
+import sys, re, yaml
+man = open(sys.argv[1]).read()
+watch = open(sys.argv[2]).read()
+m = yaml.safe_load(open("configs/mlsys_manifest.yml"))
+fails = []
+
+# 1. the allowlist defaults to the approved set on BOTH sides
+approv = ("gate_calibration,engine_cap_smoke,coherence_gate,"
+          "correction_note_evidence,natural_f1_128k,impl_validation,"
+          "natural_spec_gated_256k,vllm_ladder")
+if f"DEFAULT_ONLY={approv}" not in man:
+    fails.append("the manifest's allowlist default is not the approved set")
+# empty must refuse, never admit
+if 'if [ -z "$ONLY" ]; then' not in man:
+    fails.append("an empty allowlist does not refuse stages")
+if 'ONLY=${MLSYS_ONLY_STAGES-$DEFAULT_ONLY}' not in man:
+    fails.append("the allowlist does not default to the approved set")
+
+# 2. fail closed; conda python; session cap
+if "sys.exit(3)" not in man or "sys.exit(7)" not in man:
+    fails.append("est_cost does not fail closed on an unreadable projection")
+if "no readable cost projection" not in man:
+    fails.append("the runner does not refuse a stage with no cost estimate")
+if re.search(r"(?m)^\s*python3 - ", man) or re.search(r"(?m)\bpython3 scripts/", man):
+    fails.append("the manifest still calls bare python3")
+if m["meta"].get("max_cost_usd") != 700:
+    fails.append("no $700 session cap in the manifest")
+if "MAX_COST" not in man:
+    fails.append("the session cap is not enforced")
+
+# 3/4. control baselines and the fixed tolerance are checked in step 13
+
+# 5. the rope reference anchor (checked by the pytest suite as well)
+if "original_max_position_embeddings" not in open(
+        "scripts/mlsys_coherence_gate.py").read():
+    fails.append("the gate no longer reads the shipped anchor")
+
+# 6. a gate that clears nothing must be a hard failure. Look at the CODE, not
+# the comments: the comments name the flag to explain why it is gone.
+man_code = "\n".join(l for l in man.splitlines()
+                     if not l.strip().startswith("#"))
+if "--allow-empty" in man_code:
+    fails.append("a gated stage can still silently skip when the gate clears "
+                 "no candidate")
+if "reason=no_gate_passing_config" not in man:
+    fails.append("no hard failure when the gate clears no candidate")
+
+# 7. per-rung per-run timeouts
+for rung in ("131072", "262144", "524288"):
+    if rung not in man:
+        fails.append(f"no per-run timeout for rung {rung}")
+if "--timeout-per-run-s" not in man:
+    fails.append("no --timeout-per-run-s is passed")
+if man.count("--timeout-per-run-s") < 4:
+    fails.append("not every stage passes --timeout-per-run-s")
+smoke = man[man.index("stage engine_cap_smoke"):]
+if "--timeout-per-run-s" not in smoke[:400]:
+    fails.append("engine_cap_smoke passes no per-run timeout")
+
+# 8. a stage passes only on valid rows
+if "--abort-on-failure" not in man or man.count("--abort-on-failure") < 3:
+    fails.append("--abort-on-failure is not passed to every runner stage")
+if "check_stage_rows" not in man:
+    fails.append("no row-count check on stage output")
+if "STAGE_INVALID" not in man:
+    fails.append("an invalid stage does not reach the ledger")
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYBLK
+  [ $? -eq 0 ] && ok "launch blockers: allowlist, fail-closed cost, cap, timeouts, rows, watcher lifecycle" \
+               || bad "a launch blocker is unfixed"
+
+# Behavioural, not textual: est_cost must FAIL on a stage that is not in the
+# manifest, rather than reporting 0 (which made every stage look free).
+( MANIFEST=configs/mlsys_manifest.yml; PY="$PY"
+  eval "$(sed -n '/^est_cost() {/,/^}/p' scripts/mlsys_manifest.sh)"
+  if est_cost no_such_stage >/dev/null 2>&1; then
+    echo "  est_cost returned success for an unknown stage"
+    exit 1
+  fi
+  est_cost gate_calibration >/dev/null 2>&1 || {
+    echo "  est_cost failed for a real stage"; exit 1; } ) 2>/dev/null
+[ $? -eq 0 ] && ok "est_cost fails closed on an unknown stage and succeeds on a real one" \
+             || bad "est_cost does not fail closed"
+
+# Behavioural: an empty allowlist must refuse EVERY stage.
+( MANIFEST=configs/mlsys_manifest.yml; PY="$PY"; ONLY=""
+  eval "$(sed -n '/^MANIFEST_STAGE_IDS=/,/^approved() { on_list/p' scripts/mlsys_manifest.sh)"
+  for s in gate_calibration engine_cap_smoke natural_f1_128k; do
+    if [ -n "$ONLY" ] || on_list "$s" "$ONLY"; then
+      echo "  empty allowlist admitted $s"; exit 1
+    fi
+  done; exit 0 ) 2>/dev/null
+[ $? -eq 0 ] && ok "an empty allowlist admits no stage" \
+             || bad "an empty allowlist still admits stages"
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."

@@ -41,7 +41,10 @@ meta:
   analysis_plan: docs/mlsys_analysis_plan.md
   transformers_pin: "4.47.1"
   node_rate_per_hour: 22.32
-  max_cost_usd: null                 # no cumulative ceiling; per-stage approval
+  max_cost_usd: 700                  # SESSION ceiling, enforced by the runner
+                                     # before every stage: spent + projection
+                                     # must stay under it. The per-stage guard
+                                     # bounds one stage; this bounds the run.
   ask_before_stage_over_usd: 300     # per stage, not cumulative
   max_hours: 20                      # default on-instance watchdog
   terminate_grace_minutes: 60
@@ -384,8 +387,23 @@ reporting:
 
 guards:
   - ask before starting any SINGLE stage projected above ask_before_stage_over_usd
+  - "the ALLOWLIST (MLSYS_ONLY_STAGES) is the authority -- a stage not on it does
+    not run whatever its projection, and an EMPTY allowlist approves nothing. It
+    defaults to the approved set, because 'unset' must never mean 'run everything'"
+  - an aggregate SESSION ceiling (meta.max_cost_usd) refuses any stage whose
+    projection would take cumulative spend past it
+  - "the cost projection FAILS CLOSED -- an unreadable or missing estimate refuses
+    the stage instead of being read as zero"
+  - every helper and stage runs under the resolved interpreter (MLSYS_PYTHON or
+    the conda env), never bare python3
   - the manifest STOPS before natural_f1_128k if engine_cap_smoke fails
   - the manifest STOPS if gate calibration fails its controls
+  - a gate that clears NO candidate is a hard failure for that gated stage, not a
+    skip; --allow-empty is not used
+  - every stage passes --timeout-per-run-s sized at >=2x the longest projected
+    single run at its rung (128k 9000s, 256k 18000s, 512k 36200s)
+  - a stage passes only if its CSV holds the expected number of runs, all with
+    status ok; --abort-on-failure stops at the first error row
   - pull and sha256-verify after EVERY stage, before the next one starts
   - interim report after every stage
   - never write into results/mlsys while a pull is in progress
