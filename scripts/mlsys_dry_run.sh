@@ -635,6 +635,30 @@ PYDRY
   [ $? -eq 0 ] && ok "watchdog, ledger and terminate-on-every-exit are wired" \
                || bad "a run guard is missing or its arithmetic is wrong"
 
+# The allowlist must outrank the cost guard. MLSYS_APPROVED_STAGES alone is a COST
+# guard, so a stage cheap enough to sit under the threshold still runs unapproved
+# -- with two ids "approved", ten of twelve stages would have run. Reuse the
+# manifest's own guard functions rather than restating the rule here.
+sed -n '/^MANIFEST_STAGE_IDS=/,/^approved() { on_list/p' scripts/mlsys_manifest.sh > "$WORK/guards.sh"
+if [ -s "$WORK/guards.sh" ]; then
+  ( MANIFEST=configs/mlsys_manifest.yml
+    . "$WORK/guards.sh"
+    ONLY="gate_calibration,engine_cap_smoke"; APPROVED="$ONLY"; ASK_OVER=300
+    on_list gate_calibration "$ONLY" || { echo "  allowed stage refused"; exit 1; }
+    on_list engine_cap_smoke  "$ONLY" || { echo "  allowed stage refused"; exit 1; }
+    # cheap but unapproved: the cost guard would let this through
+    on_list natural_f1_128k "$ONLY" && { echo "  unapproved stage allowed"; exit 1; }
+    on_list vllm_ladder "$ONLY" && { echo "  unapproved stage allowed"; exit 1; }
+    # a real stage id must match exactly, so approving the parent must not admit
+    # the _diverse sibling
+    on_list natural_f1_128k_diverse "natural_f1_128k" && { echo "  prefix leaked"; exit 1; }
+    # but a derived sub-stage of an approved parent must follow it
+    on_list natural_f1_128k_losslessness "natural_f1_128k" || { echo "  sub-stage blocked"; exit 1; }
+    exit 0 ) 2>/dev/null
+  [ $? -eq 0 ] && ok "allowlist outranks the cost guard; unapproved stages are refused" \
+               || bad "the allowlist let an unapproved stage through (or blocked an approved one)"
+else bad "could not extract the guard functions from the manifest"; fi
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."

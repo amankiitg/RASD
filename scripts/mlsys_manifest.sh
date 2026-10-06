@@ -26,6 +26,14 @@ ASK_OVER=${MLSYS_ASK_OVER_USD:-300}
 # Defaults to the operator's 2026-10-06 approval. Override with
 # MLSYS_APPROVED_STAGES at launch; an empty value means "approve nothing".
 APPROVED=${MLSYS_APPROVED_STAGES:-gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,natural_spec_gated_256k,vllm_ladder}
+# An EXPLICIT allowlist. MLSYS_APPROVED_STAGES alone cannot narrow a run: it is
+# a cost guard, so it refuses a stage only when the projection exceeds
+# ask_before_stage_over_usd. With two ids "approved", ten of the twelve stages --
+# including the 256k rung at $290 -- are still under that threshold and would
+# run. When MLSYS_ONLY_STAGES is non-empty it is the authority, whatever a
+# stage's projection. Empty (the default) means "no allowlist", preserving the
+# cost-guard behaviour exactly.
+ONLY=${MLSYS_ONLY_STAGES:-}
 mkdir -p "$OUT"
 [ -f "$COST_LOG" ] || echo "stage,wall_seconds,nproc,gpu_hours,node_cost_usd" > "$COST_LOG"
 
@@ -74,7 +82,30 @@ print(0)
 PY
 }
 
-approved() { [ -n "$APPROVED" ] && [[ ",$APPROVED," == *",$1,"* ]]; }
+MANIFEST_STAGE_IDS=$(python3 - "$MANIFEST" <<'PYIDS'
+import sys, yaml
+print(",".join(s["id"] for s in yaml.safe_load(open(sys.argv[1]))["stages"]))
+PYIDS
+)
+
+# Derived sub-stages are named "<stage id>_<suffix>", so a prefix match has to be
+# allowed for them -- but NOT for real stage ids, or approving `natural_f1_128k`
+# would silently admit `natural_f1_128k_diverse`. Real ids therefore require an
+# exact match; only names that are not manifest ids may match by prefix.
+on_list() {   # $1=name  $2=comma list
+  local name=$1 list=$2 e
+  [ -z "$list" ] && return 1
+  for e in ${list//,/ }; do
+    [ "$name" = "$e" ] && return 0
+    case ",$MANIFEST_STAGE_IDS," in
+      *",$name,"*) ;;                                   # a real stage id: exact only
+      *) case "$name" in "$e"_*) return 0;; esac ;;
+    esac
+  done
+  return 1
+}
+
+approved() { on_list "$1" "$APPROVED"; }
 
 # Run a stage, recording wall time and cost. Never truncates an existing ledger.
 stage() {   # $1=name  $2=timeout_s  $3..=cmd
@@ -86,6 +117,12 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   # stages and let the expensive ones run unapproved — the opposite of the
   # declared guard. Test the condition directly instead of through an integer
   # comparison nobody can read.
+  # The allowlist outranks the cost guard, and is checked first.
+  if [ -n "$ONLY" ] && ! on_list "$name" "$ONLY"; then
+    interim "SKIPPED name=$name reason=needs_approval (not in MLSYS_ONLY_STAGES=$ONLY)"
+    echo "SKIP $name (not in MLSYS_ONLY_STAGES; projected \$$est)"
+    return 9
+  fi
   if awk -v e="$est" -v a="$ASK_OVER" 'BEGIN{exit !(e > a)}' && ! approved "$name"; then
     # Above the approval threshold and not approved: refuse, and say so.
     interim "SKIPPED name=$name reason=needs_approval projected=\$$est over=\$$ASK_OVER"
@@ -179,7 +216,7 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
 }
 
 DOCS=${MLSYS_DOCUMENTS_JSON:-data/processed/pg19_docs/documents.json}
-interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDOG}h approved='$APPROVED' ==="
+interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDOG}h only='${ONLY:-<none>}' approved='$APPROVED' ==="
 echo "spend before manifest: \$$(spend)"
 
 # ---- S0: calibrate the gate on real weights. MUST be first. ---------------
