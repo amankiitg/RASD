@@ -1,0 +1,3 @@
+{"round_idx": 0, "global_pos_start": 130944, "spec_steps": 4, "n_acc": 0, "draft_tokens": [5422, 19625, 6636, 26168], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 130945, "spec_steps": 4, "n_acc": 0, "draft_tokens": [86205, 30, 10260, 769], "accepted": [false, false, false, false]}
+{"round_idx": 2, "global_pos_start": 130946, "spec_steps": 4, "n_acc": 0, "draft_tokens": [32284, 11, 423, 13], "accepted": [false, false, false, false]}

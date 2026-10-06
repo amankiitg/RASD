@@ -298,25 +298,25 @@
     },
     {
       "label": "post_verify_round_4",
-      "allocated_mb": 8692.4892578125,
-      "reserved_mb": 11512.0,
-      "max_alloc_mb": 9972.30859375,
-      "max_reserved_mb": 11512.0
+      "allocated_mb": 8822.80126953125,
+      "reserved_mb": 11652.0,
+      "max_alloc_mb": 10101.50732421875,
+      "max_reserved_mb": 11652.0
     },
     {
       "label": "post_verify_round_8",
-      "allocated_mb": 8692.92919921875,
-      "reserved_mb": 11514.0,
-      "max_alloc_mb": 9972.82666015625,
-      "max_reserved_mb": 11514.0
+      "allocated_mb": 8824.93017578125,
+      "reserved_mb": 11652.0,
+      "max_alloc_mb": 10103.94873046875,
+      "max_reserved_mb": 11652.0
     },
     {
       "label": "end",
-      "allocated_mb": 8967.66064453125,
-      "reserved_mb": 11698.0,
-      "max_alloc_mb": 10116.48095703125,
-      "max_reserved_mb": 11698.0,
-      "n_rounds": 63
+      "allocated_mb": 8834.9765625,
+      "reserved_mb": 11678.0,
+      "max_alloc_mb": 10115.54638671875,
+      "max_reserved_mb": 11678.0,
+      "n_rounds": 27
     }
   ]
 }

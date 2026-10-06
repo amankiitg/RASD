@@ -291,25 +291,18 @@
     },
     {
       "label": "post_verify_round_2",
-      "allocated_mb": 8382.80224609375,
-      "reserved_mb": 9926.0,
-      "max_alloc_mb": 9023.7470703125,
-      "max_reserved_mb": 9926.0
-    },
-    {
-      "label": "post_verify_round_4",
-      "allocated_mb": 8513.36572265625,
-      "reserved_mb": 10066.0,
-      "max_alloc_mb": 9153.24365234375,
-      "max_reserved_mb": 10066.0
+      "allocated_mb": 8511.97412109375,
+      "reserved_mb": 10026.0,
+      "max_alloc_mb": 9151.75830078125,
+      "max_reserved_mb": 10026.0
     },
     {
       "label": "end",
-      "allocated_mb": 8512.7998046875,
-      "reserved_mb": 10066.0,
-      "max_alloc_mb": 9153.24365234375,
-      "max_reserved_mb": 10066.0,
-      "n_rounds": 4
+      "allocated_mb": 8511.9404296875,
+      "reserved_mb": 10026.0,
+      "max_alloc_mb": 9152.36865234375,
+      "max_reserved_mb": 10026.0,
+      "n_rounds": 3
     }
   ]
 }

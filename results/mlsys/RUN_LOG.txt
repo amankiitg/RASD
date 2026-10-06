@@ -395,3 +395,93 @@ SPEND AFTER THIS ATTEMPT: ~$26.62 cumulatively of the $300 ceiling.
 [2026-10-06T05:25:59Z] remote status (final): state=aborted step=arm4_sanity rc=6 ts=2026-10-06T05:25:32Z
 [2026-10-06T05:26:00Z] terminate(run-finished): instance bece058dfee4440cbf31294c441726a0, uptime 0.90h, ~$19.99
 [2026-10-06T05:26:14Z] CONFIRMED TERMINATED: status=terminating, uptime=0.90h, cost ~$20.07
+[2026-10-06T15:59:04Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-06T15:59:08Z] launched gpu_8x_a100_80gb_sxm4 id=fed815641fc345d797e332021664a4a6 region=us-east-1
+[2026-10-06T16:06:34Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-06T16:06:38Z] on-instance self-terminate watchdog armed for 20.0h (independent of the local orchestrator); installed=True
+[2026-10-06T16:08:19Z] remote MLSys run started (detached, verified running)
+
+================================================================================
+INTERIM REPORT — after STEP A (2026-10-06T17:02Z)
+================================================================================
+SPEND at this point: $22.44 of the $450 ceiling.
+
+--- A1. WHAT THE TARGET'S ROPE ACTUALLY IS (CPU-verified, layer-0 inv_freq) ---
+native Llama-3.1-8B : rope_scaling = {'factor':8.0,'low_freq_factor':1.0,
+                      'high_freq_factor':4.0,'original_max_position_embeddings':8192,
+                      'rope_type':'llama3'}, rope_theta=500000,
+                      max_position_embeddings=131072
+
+  f1 : native llama3 block PRESERVED EXACTLY — max relative inv_freq diff
+       = 0.000e+00 vs the shipped model.
+  f2 : yarn factor 2.0, original_max_position_embeddings=131072 — 35/64
+       inv_freq entries changed, attention_scaling=1.0693.
+  f4 : yarn factor 4.0, original_max_position_embeddings=131072 — 35/64
+       entries changed, attention_scaling=1.1386.
+  f16: llama3 block KEPT, only factor overridden to 16 (0.0000635e0 diff).
+
+YES — the YaRN dict REPLACES the llama3 scaling entirely rather than composing
+with it. That is the documented composition choice, now measured.
+
+Correction to an earlier suspicion: the dict key is `type`, not `rope_type`,
+but transformers normalises it (the module reports rope_type='yarn'). Not a bug.
+
+Draft/target rope: the draft is loaded with apply_rope_scaling=False
+(src/models/rasd_inference.py:741). At f1 both are native (matched). At f2/f4
+the target is YaRN-scaled and the draft is not. The user's decision #1 stands:
+two models need not share positional frames, so this is NOT treated as a bug.
+
+--- A2. THE RUNNING RUNG: arm4_f2_256k ---
+ARM4_f2_256k_s42  accept=0.042  6 trace records  ~7 generated tokens
+  decoded text : 'Ab'
+  n_acc/round  : [0, 1, 0, 0, 0, 0]
+  -> generation TERMINATED after ~7 tokens. With ignore_eos=false that means
+     the target emitted EOS within its first few tokens.
+
+IMPORTANT: 256k is ABOVE the native 131072 window, so factor 2 there is the
+CORRECT extrapolation and is genuinely needed. The target still broke.
+Therefore the failure is NOT "scaling a context that needed no extension" —
+it is that REPLACING Llama-3.1's llama3 block with YaRN over base 131072
+breaks the model at ANY context.
+
+ACTION TAKEN: stopped the ladder immediately (killed remote_followup.sh and
+the orphaned run_experiment job; the bash wrapper died first and left the job
+running under `timeout`, which had to be killed separately). All 8 GPUs
+verified back to 0 MiB. This also prevented arm4_f4_512k from starting, since
+it uses the same rope construction.
+
+--- WHAT WAS STOPPED / SKIPPED ---
+  arm4_f2_256k   STOPPED mid-rung (target degrades: EOS at ~7 tokens)
+  arm4_f4_512k   SKIPPED (same rope construction)
+  llama3 f16/f32 NOT skipped (different construction: llama3 block KEPT) but
+                 MUST pass the coherence gate before any speculative run.
+  vLLM           not reached.
+
+--- RULE APPLIED ---
+Per the standing rule, f2/f4 cells are recorded as "target degrades at this
+factor and context" and their acceptance figures are NOT reported as
+speculative-decoding results. The honest statement for those configurations:
+replacing the native RoPE scaling breaks the target (EOS at token 0), which
+merely APPEARS as an acceptance collapse.
+
+--- STATUS ---
+Committed results kept: arm4_f1_128k (spec+target), arm4_f2_128k,
+arm4_f4_128k, pg19_short_target, arm4_f2_256k (partial).
+Next: coherence gate (B) on every rope configuration intended for contexts
+above 128k, then P1 (natural-text f1 at 128k), then D.
+
+=== POD RUN LOG (instance fed815641fc345d797e332021664a4a6, pulled 2026-10-06T17:06Z) ===
+2026-10-06T16:08:37Z === PHASE A: ARM4 RoPE extrapolation ladder ===
+2026-10-06T16:46:52Z STAGE_OK name=arm4_f1_128k wall=2295s cost=$14.23 cumulative=$14.23
+2026-10-06T16:46:52Z ARM4 f1 128k (cell 1/10) done; sanity stop passed
+2026-10-06T16:50:55Z STAGE_OK name=arm4_f2_128k wall=243s cost=$1.51 cumulative=$15.74
+2026-10-06T16:56:27Z STAGE_OK name=arm4_f4_128k wall=332s cost=$2.06 cumulative=$17.80
+2026-10-06T16:57:49Z STAGE_FAILED name=pg19_short_target rc=1 cost=$0.51

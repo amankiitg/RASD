@@ -1,2 +1,6 @@
 stage,wall_seconds,nproc,gpu_hours,node_cost_usd
 arm4_f1_128k,2669,8,5.9311,16.55
+arm4_f1_128k,2295,8,5.1000,14.23
+arm4_f2_128k,243,8,0.5400,1.51
+arm4_f4_128k,332,8,0.7378,2.06
+pg19_short_target,82,8,0.1822,0.51

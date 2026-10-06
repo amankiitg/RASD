@@ -15,9 +15,9 @@
     {
       "label": "prefill_after_layer_00",
       "allocated_mb": 6923.138671875,
-      "reserved_mb": 8094.0,
+      "reserved_mb": 8034.0,
       "max_alloc_mb": 7790.138671875,
-      "max_reserved_mb": 8094.0,
+      "max_reserved_mb": 8034.0,
       "layer_idx": 0
     },
     {
@@ -291,25 +291,18 @@
     },
     {
       "label": "post_verify_round_2",
-      "allocated_mb": 8371.80224609375,
-      "reserved_mb": 9994.0,
-      "max_alloc_mb": 9012.7470703125,
-      "max_reserved_mb": 9994.0
-    },
-    {
-      "label": "post_verify_round_4",
-      "allocated_mb": 8502.36572265625,
-      "reserved_mb": 10134.0,
-      "max_alloc_mb": 9142.24365234375,
-      "max_reserved_mb": 10134.0
+      "allocated_mb": 8500.97412109375,
+      "reserved_mb": 10094.0,
+      "max_alloc_mb": 9140.75830078125,
+      "max_reserved_mb": 10094.0
     },
     {
       "label": "end",
-      "allocated_mb": 8501.7998046875,
-      "reserved_mb": 10134.0,
-      "max_alloc_mb": 9142.24365234375,
-      "max_reserved_mb": 10134.0,
-      "n_rounds": 4
+      "allocated_mb": 8500.9404296875,
+      "reserved_mb": 10094.0,
+      "max_alloc_mb": 9141.36865234375,
+      "max_reserved_mb": 10094.0,
+      "n_rounds": 3
     }
   ]
 }

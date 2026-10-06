@@ -1,0 +1,2 @@
+{"round_idx": 0, "global_pos_start": 130944, "spec_steps": 4, "n_acc": 1, "draft_tokens": [128001, 128000, 475, 16986], "accepted": [true, false, false, false]}
+{"round_idx": 1, "global_pos_start": 130946, "spec_steps": 4, "n_acc": 1, "draft_tokens": [59, 614, 28783, 25], "accepted": [true, false, false, false]}

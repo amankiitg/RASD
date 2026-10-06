@@ -15,9 +15,9 @@
     {
       "label": "prefill_after_layer_00",
       "allocated_mb": 6044.72900390625,
-      "reserved_mb": 8290.0,
+      "reserved_mb": 8410.0,
       "max_alloc_mb": 7777.03564453125,
-      "max_reserved_mb": 8290.0,
+      "max_reserved_mb": 8410.0,
       "layer_idx": 0
     },
     {

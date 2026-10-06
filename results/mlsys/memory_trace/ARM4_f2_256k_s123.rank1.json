@@ -1,0 +1,56 @@
+{
+  "run_id": "ARM4_f2_256k_s123",
+  "rank": 1,
+  "device": "cuda:1",
+  "snapshots": [
+    {
+      "label": "post_load",
+      "allocated_mb": 6775.88671875,
+      "reserved_mb": 6856.0,
+      "max_alloc_mb": 6775.88671875,
+      "max_reserved_mb": 6856.0,
+      "S": 262017,
+      "S_local": 32752
+    },
+    {
+      "label": "prefill_after_layer_00",
+      "allocated_mb": 7352.234375,
+      "reserved_mb": 11160.0,
+      "max_alloc_mb": 10566.6640625,
+      "max_reserved_mb": 11160.0,
+      "layer_idx": 0
+    },
+    {
+      "label": "prefill_after_layer_01",
+      "allocated_mb": 7648.08984375,
+      "reserved_mb": 11720.0,
+      "max_alloc_mb": 10862.51953125,
+      "max_reserved_mb": 11720.0,
+      "layer_idx": 1
+    },
+    {
+      "label": "prefill_after_layer_02",
+      "allocated_mb": 7688.0703125,
+      "reserved_mb": 11760.0,
+      "max_alloc_mb": 10902.5,
+      "max_reserved_mb": 11760.0,
+      "layer_idx": 2
+    },
+    {
+      "label": "prefill_after_layer_03",
+      "allocated_mb": 7728.05078125,
+      "reserved_mb": 11800.0,
+      "max_alloc_mb": 10942.48046875,
+      "max_reserved_mb": 11800.0,
+      "layer_idx": 3
+    },
+    {
+      "label": "prefill_after_layer_04",
+      "allocated_mb": 7768.03125,
+      "reserved_mb": 11840.0,
+      "max_alloc_mb": 10982.4609375,
+      "max_reserved_mb": 11840.0,
+      "layer_idx": 4
+    }
+  ]
+}
