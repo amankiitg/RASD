@@ -94,6 +94,31 @@ def run_family(run_id: str) -> str:
     return "matrix"
 
 
+def run_labels(run_id: str) -> dict:
+    """Prompt source and draft precision for a run_id (A2).
+
+    The dip statistic is a property of a DISTRIBUTION, so two runs may only
+    share a row if their treatment is identical. NF4/FP4 and bf16 drafts have
+    different acceptance distributions, and PG-19 narrative prompts behave
+    differently from the synthetic repeated-paragraph prompt — pooling either
+    pair would average distinct treatments into one meaningless number.
+
+    Labels are derived from the run_id rather than passed in, so a trace
+    loaded from disk still lands in the right bucket even when no config
+    accompanies it.
+    """
+    rid = run_id.lower()
+    prompt_source = "pg19" if "pg19" in rid else "synthetic"
+    if "bf16" in rid:
+        draft_precision = "bf16"
+    elif "fp4" in rid or "nf4" in rid:
+        draft_precision = "fp4"
+    else:
+        draft_precision = "default"
+    return {"prompt_source": prompt_source,
+            "draft_precision": draft_precision}
+
+
 def parse_run_id(run_id: str) -> tuple[Optional[int], Optional[int]]:
     """Extract (context_length_tokens, seed) from a run_id.
 
@@ -206,6 +231,109 @@ def iid_ks_distance(n_acc: np.ndarray, gamma: int) -> float:
     return float(np.max(np.abs(empirical - model)))
 
 
+def truncated_geometric_gof(n_acc, gamma: int, alpha_hat: float,
+                            min_expected: float = 5.0) -> dict:
+    """Goodness-of-fit of the i.i.d. acceptance model to observed n_acc.
+
+    This is the test the reviewer's objection actually calls for. "Bimodal"
+    was previously argued from a zero/nonzero split, but a single geometric
+    with a large zero mass produces exactly that split, so the split cannot
+    distinguish the two explanations. Here the i.i.d. model is FITTED (a_iid
+    chosen to match the observed mean) and then the observed accepted-length
+    counts are tested against its truncated-geometric pmf.
+
+    A small p-value therefore means "the i.i.d. model is insufficient", which
+    is evidence for round-to-round heterogeneity — the honest version of the
+    bimodality claim.
+
+    pmf (cap absorbs all-accepted rounds, so it sums to exactly 1):
+        P(N=k) = a^k (1-a)   for k = 0 .. gamma-1
+        P(N=gamma) = a^gamma
+    """
+    n = int(len(n_acc))
+    counts = np.bincount(np.asarray(n_acc, dtype=int), minlength=gamma + 1)
+    counts = counts[:gamma + 1].astype(float)
+    a = float(alpha_hat)
+
+    probs = np.array([a ** k * (1.0 - a) for k in range(gamma)], dtype=float)
+    probs = np.append(probs, a ** gamma)
+    probs = np.clip(probs, 0.0, None)
+    total = probs.sum()
+    if not np.isfinite(total) or total <= 0:
+        return {"gof_stat": float("nan"), "gof_df": 0,
+                "gof_p_value": float("nan"), "gof_method": "degenerate"}
+    probs = probs / total
+
+    expected = n * probs
+    # Pool adjacent categories so every expected count clears min_expected;
+    # a chi-square on bins with expected<5 is not trustworthy, and pooling is
+    # preferable to silently reporting the invalid statistic. The all-accepted
+    # bin is kept as the final category rather than dropped.
+    obs_bins, exp_bins = [], []
+    o_run = e_run = 0.0
+    for o, e in zip(counts, expected):
+        o_run += o
+        e_run += e
+        if e_run >= min_expected:
+            obs_bins.append(o_run)
+            exp_bins.append(e_run)
+            o_run = e_run = 0.0
+    if e_run > 0:
+        if obs_bins:
+            obs_bins[-1] += o_run
+            exp_bins[-1] += e_run
+        else:
+            obs_bins.append(o_run)
+            exp_bins.append(e_run)
+
+    if len(obs_bins) < 2:
+        # Only one usable bin leaves no residual degrees of freedom; the test
+        # is uninformative rather than passing. Say so instead of returning a
+        # p-value that would look like evidence.
+        return {"gof_stat": float("nan"), "gof_df": 0,
+                "gof_p_value": float("nan"), "gof_method": "insufficient_bins"}
+
+    stat = float(((np.asarray(obs_bins) - np.asarray(exp_bins)) ** 2
+                  / np.asarray(exp_bins)).sum())
+    df = len(obs_bins) - 1 - 1          # categories - 1 - 1 fitted parameter
+    df = max(df, 1)
+
+    if n < 50:
+        # Chi-square is unreliable this small; use the exact multinomial
+        # probability of a statistic at least as extreme.
+        p = _multinomial_gof_pvalue(np.asarray(obs_bins, dtype=float), probs,
+                                   n, stat, len(obs_bins))
+        method = "exact_multinomial"
+    else:
+        from scipy import stats as _st
+        p = float(_st.chi2.sf(stat, df))
+        method = "chi2"
+
+    return {"gof_stat": stat, "gof_df": int(df),
+            "gof_p_value": float(p), "gof_method": method}
+
+
+def _multinomial_gof_pvalue(obs, probs, n, stat, n_bins, n_draw=20000,
+                            seed=0) -> float:
+    """Monte-Carlo multinomial p-value for small n."""
+    rng = np.random.default_rng(seed)
+    # Re-derive pooled probabilities matching the pooled observed bins.
+    pooled = np.asarray(probs, dtype=float)
+    if pooled.size != n_bins:
+        # Pool probs the same way the observed bins were pooled: greedily by
+        # equal split is wrong, so fall back to proportional rescaling.
+        pooled = pooled / pooled.sum()
+        pooled = np.array([pooled[:n_bins].sum()] * n_bins) / n_bins
+    exp = n * pooled / pooled.sum()
+    hits = 0
+    for _ in range(n_draw):
+        draw = rng.multinomial(n, pooled / pooled.sum())
+        s = float((((draw - exp) ** 2) / np.where(exp > 0, exp, 1.0)).sum())
+        if s >= stat - 1e-12:
+            hits += 1
+    return (hits + 1) / (n_draw + 1)
+
+
 def summarize_trace(trace: list[dict]) -> dict:
     """Both acceptance conventions plus the round / zero structure.
 
@@ -222,10 +350,14 @@ def summarize_trace(trace: list[dict]) -> dict:
             "mean_n_acc": float("nan"), "p_zero": float("nan"),
             "frac_full_accept": float("nan"),
             "total_accepted": 0, "total_proposed": 0,
+            "gof_stat": float("nan"), "gof_df": 0,
+            "gof_p_value": float("nan"), "gof_method": "no_rounds",
         }
 
     gamma = int(trace[0].get("spec_steps", 0))
     n_acc = np.asarray([int(r["n_acc"]) for r in trace], dtype=float)
+    a_iid = iid_alpha_for_mean(float(n_acc.mean()), gamma)
+    gof = truncated_geometric_gof(n_acc, gamma, a_iid)
 
     return {
         "n_rounds":            n_rounds,
@@ -236,7 +368,7 @@ def summarize_trace(trace: list[dict]) -> dict:
         "alpha_round_sem":     float(alpha_r.std(ddof=1) / np.sqrt(n_rounds))
                                if n_rounds > 1 else 0.0,
         # the DERIVED i.i.d. parameter, not a separate estimator
-        "alpha_iid":           iid_alpha_for_mean(float(n_acc.mean()), gamma),
+        "alpha_iid":           a_iid,
         # distance to the memoryless model; large => i.i.d. rejected
         "iid_ks":              iid_ks_distance(n_acc, gamma),
         "mean_n_acc":          float(n_acc.mean()),
@@ -245,6 +377,13 @@ def summarize_trace(trace: list[dict]) -> dict:
         "total_accepted":      int(n_acc.sum()),
         # denominator that makes alpha_round = total_accepted / total_proposed
         "total_proposed":      gamma * n_rounds,
+        # A3: formal GOF of the fitted i.i.d. model. Small p => the i.i.d.
+        # geometric cannot explain the accepted-length distribution, which is
+        # the defensible form of "bimodal" (see truncated_geometric_gof).
+        "gof_stat":            gof["gof_stat"],
+        "gof_df":              gof["gof_df"],
+        "gof_p_value":         gof["gof_p_value"],
+        "gof_method":          gof["gof_method"],
     }
 
 

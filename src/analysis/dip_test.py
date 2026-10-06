@@ -136,7 +136,7 @@ def dip_over_trace_dir(trace_dir: str | Path, boot_pval: bool = False,
     the formal test so the zero/nonzero split the reviewer objected to is
     reported *next to* the test rather than instead of it.
     """
-    from .acceptance import run_family, summarize_trace
+    from .acceptance import run_family, run_labels, summarize_trace
 
     rows = []
     for run_id, trace in load_trace_dir(trace_dir).items():
@@ -150,12 +150,17 @@ def dip_over_trace_dir(trace_dir: str | Path, boot_pval: bool = False,
             "context_length":   ctx,
             "seed":             s,
             "family":           run_family(run_id),
+            **run_labels(run_id),
             "alpha_round":      summary["alpha_round"],
             "alpha_iid":        summary["alpha_iid"],
             "iid_ks":           summary["iid_ks"],
             "p_zero":           summary["p_zero"],
             "frac_full_accept": summary["frac_full_accept"],
             "n_rounds":         summary["n_rounds"],
+            # A3: fitted-model GOF, reported per run so the aggregate can
+            # count how many runs the i.i.d. geometric actually fails.
+            "gof_p_value":      summary.get("gof_p_value"),
+            "gof_method":       summary.get("gof_method"),
         })
         rows.append(rec)
     if not rows:
@@ -167,6 +172,25 @@ def dip_over_trace_dir(trace_dir: str | Path, boot_pval: bool = False,
     return (pd.DataFrame(rows)
             .sort_values(["context_length", "seed"])
             .reset_index(drop=True))
+
+
+def _unimodality_verdict(n_reject: int, n_runs: int, n_seeds: int) -> str:
+    """Plain-language verdict, deliberately NOT the word "bimodal".
+
+    A dip test rejecting unimodality is evidence AGAINST the hypothesis that
+    the rounds come from one mode; it is not proof of two modes, and a
+    large-zero-mass geometric also produces a zero/nonzero split. The label
+    is the claim the test actually supports.
+    """
+    if n_runs == 0:
+        return "no runs"
+    if n_reject == 0:
+        return "no evidence against unimodality"
+    if n_reject == n_runs:
+        return (f"evidence against unimodality in all {n_runs} run(s) "
+                f"across {n_seeds} seed(s)")
+    return (f"evidence against unimodality in {n_reject}/{n_runs} run(s) "
+            f"across {n_seeds} seed(s)")
 
 
 def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
@@ -182,22 +206,33 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
 
     if per_run.empty:
         return pd.DataFrame(columns=[
-            "family", "context_length", "n_seeds", "n_runs", "dip_mean",
+            "family", "prompt_source", "draft_precision", "context_length",
+            "n_seeds", "n_runs", "dip_mean",
             "dip_ci_lo", "dip_ci_hi", "n_runs_reject", "n_seeds_reject",
             "min_p_value", "p_values", "n_rounds_total",
+            "n_gof_reject", "verdict",
         ])
 
     if "family" not in per_run.columns:
         per_run = per_run.assign(family="matrix")
+    # A2: prompt source and draft precision are part of the treatment. Absent
+    # columns default to an explicit "unknown" rather than being silently
+    # coalesced with a real value.
+    if "prompt_source" not in per_run.columns:
+        per_run = per_run.assign(prompt_source="unknown")
+    if "draft_precision" not in per_run.columns:
+        per_run = per_run.assign(draft_precision="unknown")
 
     rows = []
-    # Group by (family, context): the native-vs-YaRN arms and the M4
-    # dose-response are DIFFERENT experiments that happen to share context
-    # lengths (both have 128k cells). Pooling them would silently merge
-    # distinct treatments into one dip statistic, so each family gets its
-    # own row and its own label.
-    for (fam, ctx), sub in per_run.groupby(["family", "context_length"],
-                                           dropna=False):
+    # Group by (family, prompt_source, draft_precision, context). The native-
+    # vs-YaRN arms and the M4 dose-response are DIFFERENT experiments that
+    # happen to share context lengths; NF4/FP4 and bf16 drafts have different
+    # acceptance distributions; PG-19 and the synthetic prompt behave
+    # differently. Pooling any of these averages distinct treatments into one
+    # dip statistic, so each combination gets its own row and its own label.
+    for (fam, psrc, dprec, ctx), sub in per_run.groupby(
+            ["family", "prompt_source", "draft_precision", "context_length"],
+            dropna=False):
         # A context can back MULTIPLE runs per seed (e.g. the NF4 and bf16
         # draft variants at 64k), so the number of rejecting RUNS is not
         # the number of rejecting SEEDS. Reporting one as the other
@@ -213,6 +248,8 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
         rej = sub["reject_unimodal"].fillna(False).astype(bool)
         rows.append({
             "family":         str(fam),
+            "prompt_source":  str(psrc),
+            "draft_precision": str(dprec),
             "context_length": int(ctx),
             "n_seeds":        int(sub["seed"].nunique(dropna=True)),
             "n_runs":         int(len(sub)),
@@ -224,13 +261,25 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
             "min_p_value":    float(sub["p_value"].min()),
             "p_values":       ",".join(f"{p:.4g}" for p in sub["p_value"]),
             "n_rounds_total": int(sub["n_rounds"].sum()),
+            # A3: how many of these runs the FITTED i.i.d. geometric model
+            # fails. This is the defensible replacement for the zero/nonzero
+            # "bimodality" claim, which a single large-zero-mass geometric
+            # also produces.
+            "n_gof_reject": (int((pd.to_numeric(sub["gof_p_value"],
+                                                errors="coerce") < 0.05).sum())
+                             if "gof_p_value" in sub.columns else 0),
+            "verdict": _unimodality_verdict(rej.sum(), int(len(sub)),
+                                            int(sub["seed"].nunique(dropna=True))),
         })
     if not rows:
         return pd.DataFrame(columns=[
-            "family", "context_length", "n_seeds", "n_runs", "dip_mean",
+            "family", "prompt_source", "draft_precision", "context_length",
+            "n_seeds", "n_runs", "dip_mean",
             "dip_ci_lo", "dip_ci_hi", "n_runs_reject", "n_seeds_reject",
             "min_p_value", "p_values", "n_rounds_total",
+            "n_gof_reject", "verdict",
         ])
     return (pd.DataFrame(rows)
-            .sort_values(["family", "context_length"])
+            .sort_values(["family", "prompt_source", "draft_precision",
+                          "context_length"])
             .reset_index(drop=True))
