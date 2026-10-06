@@ -318,6 +318,31 @@ def _build_rope_scaling_dict(rope_type: str, factor: float,
     defaults — overrideable by the user setting them on the hf_cfg
     after-the-fact if needed for paper-quality runs.
 
+    ``native_max`` is the LOADED target's own ``max_position_embeddings``
+    (4096 for Llama-2-7B, 131072 for Llama-3.1-8B), and the caller derives
+    ``factor = ceil(context_length / native_max)`` from the same value. It
+    is a parameter rather than a constant precisely so the MLSys Phase-A
+    extrapolation ladder can push Llama-3.1-8B past its own 131072 window:
+    256k -> factor 2, 512k -> factor 4, both anchored on base 131072.
+    Hardcoded 4096 here would silently mis-scale every Llama-3 cell.
+
+    COMPOSITION CHOICE (Llama-3.x). Llama-3.1-8B ships its own rope block,
+    ``{'rope_type': 'llama3', 'factor': 8.0,
+      'original_max_position_embeddings': 8192}`` — that block IS the
+    model's native long-context mechanism, and it is what the native arms
+    (rope_type="none") rely on. When YaRN is requested we REPLACE that
+    block outright with the yarn dict anchored on the full 131072 native
+    window rather than trying to compose YaRN on top of the llama3
+    rescaling. Rationale: stacking two frequency-rescaling schemes has no
+    defined semantics in transformers (rope_scaling holds a single dict),
+    and anchoring on 131072 makes the ladder a clean, interpretable
+    extrapolation from the model's own window — factor N means "N x the
+    window the model was trained on". The consequence is that the 256k/512k
+    cells are NOT native-llama3-plus-YaRN; they are pure YaRN over 131072.
+    That is the intended treatment (RoPE extrapolation) and is why the
+    Phase-A 128k cell uses rope_type="none" — it must stay byte-identical
+    to Arm2 to serve as the in-distribution anchor of the ladder.
+
     Raises ValueError on an unknown rope_type.
     """
     rt = rope_type.lower()
@@ -509,6 +534,12 @@ class RASDInference:
             return hf_cfg
         if (apply_rope_scaling and context_length
                 and context_length > hf_cfg.max_position_embeddings):
+            # native_max is the LOADED model's own window, so the ladder
+            # generalises to any target: Llama-2-7B (4096) at 128k -> factor
+            # 32, Llama-3.1-8B (131072) at 256k/512k -> factor 2/4.
+            # NOTE: this REPLACES any rope block the model ships (Llama-3.x
+            # has its own 'llama3' block) — see the composition note in
+            # _build_rope_scaling_dict.
             native_max = hf_cfg.max_position_embeddings
             factor = float(math.ceil(context_length / native_max))
             hf_cfg.rope_scaling = _build_rope_scaling_dict(

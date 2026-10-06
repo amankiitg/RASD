@@ -67,6 +67,11 @@ CSV_FIELDS = [
     # interleaved) so existing CSV headers keep their column order and
     # --resume against older result files still aligns.
     "draft_window_cap", "draft_dtype",
+    # MLSys Phase A — generation-length provenance. ARM4 uses 128 (2x the
+    # M3/M4 value of 64) so the per-round dip test has more rounds; recording
+    # it makes that visible in the results rather than inferred. Appended for
+    # the same --resume alignment reason as above.
+    "max_new_tokens",
 ]
 
 

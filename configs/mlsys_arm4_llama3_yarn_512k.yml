@@ -1,0 +1,78 @@
+# MLSys Phase A — ARM4 @512k: Llama-3.1-8B + YaRN factor 4
+#
+# Rung 3 (and the expensive end) of the within-model extrapolation ladder.
+# Same target, same draft config, same k and seeds as the 128k/256k rungs —
+# the ONLY change is that the target is pushed to 512k, i.e. 4x its native
+# 131072 window, using YaRN.
+#
+# Effective rope_scaling applied to the target (see _build_hf_config):
+#   {"type": "yarn", "factor": 4.0,
+#    "original_max_position_embeddings": 131072}
+#
+# A 1M rung (factor 8) is OPTIONAL and only if the budget still allows; it is
+# deliberately not shipped as a config so it cannot be run by accident.
+#
+# COST NOTE: this is the memory-heavy rung. KV per rank grows linearly with
+# context, so 512k needs ~4x the 128k KV. If it OOMs at nproc=8 on 80GB,
+# record the OOM as the result (it is the honest answer) rather than
+# silently changing the config.
+#
+# Intermediate checkpoints are DISABLED for this file: checkpointing the full
+# generation state at 512k produced multi-TB write volumes last run (16 TB was
+# observed at 1M) and the wall-clock that costs is pure waste. The per-token
+# traces are what the analysis needs.
+#
+# VERIFY BEFORE LAUNCH (free, CPU-only):
+#   python scripts/mlsys_check_arm4_rope.py
+#
+# Seeds [42, 123, 456]. 3 seeds x 2 groups = 6 runs.
+
+canary:
+  id:   "mlsys_arm4_512k_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-3.1-8B"
+  draft_model_name:  "meta-llama/Llama-3.2-1B"
+  target_revision:   null
+  draft_revision:    null
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  # Rung 3: 512k = 4 x 131072 native -> YaRN factor 4.
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    128
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  draft_window_cap:  4096           # held fixed across the whole ladder
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# ARM4 rung 3 — speculative (RASD) at 512k, YaRN factor 4
+# ---------------------------------------------------------------------------
+ARM4_SPEC:
+  name:   "arm4_llama3_yarn_512k_spec"
+  factor: "context_length"
+  levels:
+    - id: "ARM4_llama3_yarn_512k"
+      context_length: 524288
+      checkpoint_every: 0
+      notes: "ARM4 rung 3: Llama-3.1-8B + YaRN factor 4 @512k (4x native)"
+
+# ---------------------------------------------------------------------------
+# ARM4 rung 3 — matched target-only baseline (spec_steps=0)
+# ---------------------------------------------------------------------------
+ARM4_TARGET_ONLY:
+  name:   "arm4_llama3_yarn_512k_target_only"
+  factor: "context_length"
+  levels:
+    - id: "ARM4_llama3_yarn_512k_targetonly"
+      context_length: 524288
+      spec_steps: 0
+      checkpoint_every: 0
+      notes: "matched target-only baseline for ARM4_llama3_yarn_512k"

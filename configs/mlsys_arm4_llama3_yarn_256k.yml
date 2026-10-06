@@ -1,0 +1,70 @@
+# MLSys Phase A — ARM4 @256k: Llama-3.1-8B + YaRN factor 2
+#
+# Rung 2 of the within-model extrapolation ladder. Same target, same draft
+# config, same k and seeds as the 128k rung — the ONLY change is that the
+# target is pushed to 256k, i.e. 2x its native 131072 window, using YaRN.
+#
+# Effective rope_scaling applied to the target (see _build_hf_config):
+#   {"type": "yarn", "factor": 2.0,
+#    "original_max_position_embeddings": 131072}
+#
+# The base is 131072 (Llama-3.1's OWN native window), not 4096 — the builder
+# reads the loaded config's max_position_embeddings. YaRN REPLACES
+# Llama-3.1's native 'llama3' rope block outright; see the composition note
+# in _build_rope_scaling_dict for why stacking the two schemes is not
+# attempted.
+#
+# VERIFY BEFORE LAUNCH (free, CPU-only):
+#   python scripts/mlsys_check_arm4_rope.py
+#
+# Seeds [42, 123, 456]. 3 seeds x 2 groups = 6 runs.
+
+canary:
+  id:   "mlsys_arm4_256k_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-3.1-8B"
+  draft_model_name:  "meta-llama/Llama-3.2-1B"
+  target_revision:   null
+  draft_revision:    null
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  # Rung 2: 256k = 2 x 131072 native -> YaRN factor 2.
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    128
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  draft_window_cap:  4096           # held fixed across the whole ladder
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# ARM4 rung 2 — speculative (RASD) at 256k, YaRN factor 2
+# ---------------------------------------------------------------------------
+ARM4_SPEC:
+  name:   "arm4_llama3_yarn_256k_spec"
+  factor: "context_length"
+  levels:
+    - id: "ARM4_llama3_yarn_256k"
+      context_length: 262144
+      checkpoint_every: 0
+      notes: "ARM4 rung 2: Llama-3.1-8B + YaRN factor 2 @256k (2x native)"
+
+# ---------------------------------------------------------------------------
+# ARM4 rung 2 — matched target-only baseline (spec_steps=0)
+# ---------------------------------------------------------------------------
+ARM4_TARGET_ONLY:
+  name:   "arm4_llama3_yarn_256k_target_only"
+  factor: "context_length"
+  levels:
+    - id: "ARM4_llama3_yarn_256k_targetonly"
+      context_length: 262144
+      spec_steps: 0
+      checkpoint_every: 0
+      notes: "matched target-only baseline for ARM4_llama3_yarn_256k"
