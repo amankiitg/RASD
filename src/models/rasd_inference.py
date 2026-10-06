@@ -175,6 +175,28 @@ class RASDConfig:
     #            regardless of context length.
     rope_factor: Optional[float] = None
 
+    # MLSys — YaRN anchor override.
+    #
+    # `original_max_position_embeddings` in a YaRN dict is the base window the
+    # scaling is computed AGAINST: the frequency bands are interpolated for a
+    # length of factor x anchor. Two different anchors are defensible for
+    # Llama-3.1-8B beyond its 131072 window:
+    #
+    #   None    -> anchor = the loaded model's max_position_embeddings
+    #              (131072 for Llama-3.1-8B). "N x the window the model was
+    #              trained for" — the ARM4 f2/f4 treatment.
+    #   int     -> anchor = this value. In particular 8192, Llama-3.1's
+    #              *pretraining* base: the length the frequencies were
+    #              originally fit for and the base its own native `llama3`
+    #              block names. Anchoring here keeps the base consistent with
+    #              the model's own scaling rather than re-basing it.
+    #
+    # Both are candidates, not a settled choice: which one preserves the
+    # target's coherence past 128k is an empirical question, so they are
+    # gated by scripts/mlsys_coherence_gate.py before any speculative run.
+    # Ignored for non-YaRN rope types. None preserves all earlier behaviour.
+    rope_anchor_base: Optional[int] = None
+
     # Quantisation (to fit draft + target on same GPUs)
     quantize_draft: bool = True          # 4-bit NF4 via bitsandbytes
     quantize_target: bool = False
@@ -389,6 +411,65 @@ def _build_rope_scaling_dict(rope_type: str, factor: float,
     )
 
 
+def _resolve_rope_anchor(rope_anchor_base: Optional[int],
+                         native_max: int) -> int:
+    """Resolve the YaRN `original_max_position_embeddings` to use.
+
+    Pure function so the anchor choice is unit-testable without booting a
+    model. `rope_anchor_base=None` returns `native_max`, preserving every
+    pre-existing call path byte-for-byte. An explicit value wins, but must be
+    a positive int and must not exceed the loaded window: a YaRN anchor
+    LARGER than the model's own window would ask for interpolation over a
+    length the model cannot address, and would silently mis-scale rather
+    than fail, so it is rejected.
+    """
+    if rope_anchor_base is None:
+        return int(native_max)
+    try:
+        anchor = int(rope_anchor_base)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"rope_anchor_base={rope_anchor_base!r} is not an integer"
+        ) from None
+    if anchor <= 0:
+        raise ValueError(f"rope_anchor_base={anchor} must be positive")
+    if anchor > native_max:
+        raise ValueError(
+            f"rope_anchor_base={anchor} exceeds the model's own window "
+            f"({native_max}); a YaRN anchor beyond the trained window asks "
+            f"for interpolation over an unaddressable length."
+        )
+    return anchor
+
+
+def _rope_anchor_channel(rope_type: str) -> str:
+    """Where transformers 4.47.1 actually reads a long-context anchor.
+
+    Verified against the installed implementation, not the docs:
+
+      * ``"llama3"`` -> ``"dict"``. ``_compute_llama3_parameters`` reads
+        ``rope_scaling["original_max_position_embeddings"]`` and lists it as a
+        REQUIRED key. Writing the anchor into the rope_scaling dict works.
+      * ``"yarn"``   -> ``"config"``. ``_compute_yarn_parameters`` carries a
+        ``TODO (joao): use the new `original_max_position_embeddings` from
+        rope_scaling`` and never reads that key. Its interpolation band comes
+        from ``config.max_position_embeddings``. Writing the anchor into the
+        dict alone is therefore SILENTLY INERT for YaRN — the value has to go
+        on the config.
+      * anything else -> ``"unused"``: no anchor concept.
+
+    This distinction is the difference between a rung that measures a rope
+    configuration and one that measures nothing at all, so it is pinned here
+    as a pure function and asserted by tests.
+    """
+    rt = (rope_type or "").lower()
+    if rt == "llama3":
+        return "dict"
+    if rt == "yarn":
+        return "config"
+    return "unused"
+
+
 def _build_per_token_record(
     round_idx: int,
     global_pos_start: int,
@@ -516,7 +597,8 @@ class RASDInference:
                          context_length: int, label: str,
                          apply_rope_scaling: bool = True,
                          rope_type: str = "linear",
-                         rope_factor: Optional[float] = None):
+                         rope_factor: Optional[float] = None,
+                         rope_anchor_base: Optional[int] = None):
         """Load the model's HF config and apply RoPE scaling if needed.
 
         Llama-2 ships with max_position_embeddings=4096. To run at longer
@@ -600,16 +682,42 @@ class RASDInference:
                     )
                 d = dict(base)
                 d["factor"] = f
+                if rope_anchor_base is not None:
+                    # llama3 reads the anchor from the dict, so this is the
+                    # effective channel for this rope type.
+                    d["original_max_position_embeddings"] = _resolve_rope_anchor(
+                        rope_anchor_base, native_max,
+                    )
                 hf_cfg.rope_scaling = d
             else:
+                eff_rt = rope_type if rope_type not in ("none",) else "yarn"
+                anchor = _resolve_rope_anchor(rope_anchor_base, native_max)
                 hf_cfg.rope_scaling = _build_rope_scaling_dict(
-                    rope_type if rope_type not in ("none",) else "yarn",
-                    f, native_max,
+                    eff_rt, f, anchor,
+                )
+                # Put the anchor where this rope type actually reads it. For
+                # YaRN the dict key is inert in transformers 4.47.1, so
+                # without this the "true 8192 base" rung would be a silent
+                # no-op identical to the re-based one.
+                chan = _rope_anchor_channel(eff_rt)
+                if chan == "config" and rope_anchor_base is not None:
+                    hf_cfg.max_position_embeddings = anchor
+                logger.info(
+                    "[RoPE] %s: rope_type=%s anchored on base=%d via %s "
+                    "(model native window=%d)",
+                    label, eff_rt, anchor, chan, native_max,
                 )
             # target_length may stay <= native_max; the window is what the
             # scaled frequencies are valid for, so raise it to at least the
-            # scaled span for bookkeeping.
-            if context_length and context_length > native_max:
+            # scaled span for bookkeeping — EXCEPT when the anchor is being
+            # carried on this field for YaRN, where overwriting it would
+            # silently undo the anchor before the model ever reads it.
+            anchored_via_config = (
+                rope_anchor_base is not None
+                and _rope_anchor_channel(rope_type) == "config"
+            )
+            if (context_length and context_length > native_max
+                    and not anchored_via_config):
                 hf_cfg.max_position_embeddings = context_length
             logger.info(
                 "[RoPE] %s: EXPLICIT rope_factor=%.3g over native_max=%d "
@@ -627,10 +735,19 @@ class RASDInference:
             # _build_rope_scaling_dict.
             native_max = hf_cfg.max_position_embeddings
             factor = float(math.ceil(context_length / native_max))
+            anchor = _resolve_rope_anchor(rope_anchor_base, native_max)
             hf_cfg.rope_scaling = _build_rope_scaling_dict(
-                rope_type, factor, native_max,
+                rope_type, factor, anchor,
             )
-            hf_cfg.max_position_embeddings = context_length
+            # Existing behaviour for every un-anchored call: advertise the
+            # scaled span. An explicit YaRN anchor instead occupies this
+            # field (it is the channel transformers reads), so it must not be
+            # overwritten.
+            if (rope_anchor_base is not None
+                    and _rope_anchor_channel(rope_type) == "config"):
+                hf_cfg.max_position_embeddings = anchor
+            else:
+                hf_cfg.max_position_embeddings = context_length
             logger.info(
                 "[RoPE] %s: ctx=%d > native=%d → %s scaling factor=%.1f",
                 label, context_length, native_max, rope_type, factor,
@@ -664,6 +781,7 @@ class RASDInference:
             cfg.target_model_name, cfg.target_revision, cfg.context_length,
             label="target", rope_type=cfg.rope_type,
             rope_factor=cfg.rope_factor,
+            rope_anchor_base=getattr(cfg, "rope_anchor_base", None),
         )
 
         logger.info("Loading target model: %s  [device=%s]", cfg.target_model_name, self._device)

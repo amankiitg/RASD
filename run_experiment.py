@@ -606,6 +606,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # MLSys B1 — explicit extrapolation factor (None = automatic).
             rope_factor       = (float(run["rope_factor"])
                                  if run.get("rope_factor") is not None else None),
+            # MLSys — YaRN anchor override (None = the model's own window).
+            # Set to the model's true pretraining base (8192 for Llama-3.1)
+            # to build on the native scaling instead of re-basing it.
+            rope_anchor_base  = (int(run["rope_anchor_base"])
+                                 if run.get("rope_anchor_base") is not None
+                                 else None),
             # MLSys B3 — exact-length generation (EOS ignored).
             ignore_eos        = bool(run.get("ignore_eos", False)),
             # C11 NF4 KV-cache. Default False -> M3 byte-identical.
