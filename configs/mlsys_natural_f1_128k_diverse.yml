@@ -1,4 +1,4 @@
-# MLSys — natural-text f1 at the native 128k window.
+# MLSys — natural-text f1 at 128k on a DIVERSE document pool.
 #
 # TARGET POLICY: Llama-3.1-8B. At 128k it runs its NATIVE shipped `llama3` rope block, untouched; `rope_type: none` asserts that.
 #
@@ -17,6 +17,11 @@
 # is 2 Bibles, 2 Shakespeare volumes and an omnibus. The composition is constant
 # across rungs and cancels in the paired comparison, but it limits
 # generalisation — which is what the separate `diverse` arm checks at 128k.
+# WHY THIS ARM EXISTS: the core-10 that the paired design is forced
+# into at 512k is Bible/omnibus-heavy. This arm measures the same
+# 128k configuration on 10 books drawn uniformly from the 534 books
+# eligible at 128k, so the headline acceptance number can be checked
+# against one that is not a property of that set.
 defaults:
   target_model_name: meta-llama/Llama-3.1-8B
   draft_model_name: meta-llama/Llama-3.2-1B
@@ -40,23 +45,21 @@ defaults:
   save_generated_tokens: true     # losslessness compares token ids, not text
   measure_target_ppl: true        # target quality beside every acceptance figure
   prompt_source: pg19_document
-  prompt_documents_json: data/processed/pg19_docs/documents.json
-NATURAL_F1_SPEC:
-  name: natural_f1_128k
+  prompt_documents_json: data/processed/pg19_docs_diverse/documents.json
+DIVERSE_F1_SPEC:
+  name: natural_f1_128k_diverse
   factor: context_length
   levels:
-  - id: NATURAL_f1_128k
+  - id: NATURAL_f1_128k_diverse
     context_length: 131072
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     checkpoint_every: 0
-    notes: 'Natural-text f1, native window, 10 paired documents.'
-NATURAL_F1_TARGET_ONLY:
-  name: natural_f1_128k_target_only
+    notes: '10 books sampled from the 534 eligible at 128k (seeded, seed 20261006).'
+DIVERSE_F1_TARGET_ONLY:
+  name: natural_f1_128k_diverse_target_only
   factor: context_length
   levels:
-  - id: NATURAL_f1_128k_targetonly
+  - id: NATURAL_f1_128k_diverse_targetonly
     context_length: 131072
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     spec_steps: 0
     checkpoint_every: 0
-    notes: 'Paired target-only baseline: same documents, same prompt, same length.'
+    notes: 'Paired target-only baseline for the diverse arm.'

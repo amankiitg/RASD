@@ -1,14 +1,26 @@
-# MLSys — pg19-prompt speculative runs on GATE-PASSING rope configurations.
+# MLSys — natural-text speculative runs on GATE-PASSING rope configurations.
 #
-# Every level here must correspond to a candidate that PASSED
-# results/mlsys/coherence_gate.csv. A configuration the gate failed MUST be
-# removed, not re-run with adjusted settings until it passes.
+# TARGET POLICY: Llama-3.1-8B. Above 128k ONLY a rope configuration that PASSED results/mlsys/coherence_gate.csv may be used.
 #
-# The levels below are the >128k candidates from
-# configs/mlsys_rope_candidates.json. The manifest re-checks each one against
+# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy,
+# 1024 generated tokens, ignore_eos true, prompt = context - 1024 - 1 so the
+# sequence the engine builds (prompt + leading BOS + generation) is EXACTLY the
+# rung context. The builder derives the prompt from `context_length`, so the
+# value here is the rung, not the prompt length.
+#
+# UNITS OF INDEPENDENCE: the DOCUMENT (one PG-19 book). `seeds: [42]` because
+# greedy decoding is deterministic, so a second seed would repeat a run rather
+# than replicate it; replication is the 10 documents below, identical at every
+# rung so the rung comparison is paired (same book, different context).
+#
+# REPORTED LIMITATION: only 14 PG-19 train books reach 512k tokens, so this set
+# is 2 Bibles, 2 Shakespeare volumes and an omnibus. The composition is constant
+# across rungs and cancels in the paired comparison, but it limits
+# generalisation — which is what the separate `diverse` arm checks at 128k.
+# Every level must correspond to a candidate the CALIBRATED gate
+# passed. A failed candidate is REMOVED, never re-run with adjusted
+# settings until it passes; the manifest re-checks each level against
 # the gate output at run time and skips any that did not pass.
-#
-# Prompt source: pg19. 1024 tokens, ignore_eos true, per-round ended_on_eos.
 defaults:
   target_model_name: meta-llama/Llama-3.1-8B
   draft_model_name: meta-llama/Llama-3.2-1B
@@ -26,29 +38,60 @@ defaults:
   ignore_eos: true
   temperature: 1.0
   top_p: 1.0
-  seeds: [42, 123, 456]
-  prompt_source: pg19
-  prompt_pg19_meta: data/processed/pg19_llama3/pg19_validation_metadata.json
+  seeds: [42]
   log_per_token: true
   save_generated_text: true
+  save_generated_tokens: true     # losslessness compares token ids, not text
+  measure_target_ppl: true        # target quality beside every acceptance figure
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
 GATED_LLAMA3_F16_256K:
   name: gated_llama3_f16_256k
   factor: context_length
   levels:
   - id: GATED_llama3_f16_256k
-    context_length: 261120
+    context_length: 262144
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     rope_type: llama3
     rope_factor: 16
     checkpoint_every: 0
-    notes: 'gate candidate llama3_f16_256k (builds on the native mechanism; only factor moves 8 -> 16)'
+    notes: 'gate candidate llama3_f16_256k (native mechanism; only the factor moves)'
+  - id: GATED_llama3_f16_256k_targetonly
+    context_length: 262144
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    spec_steps: 0
+    rope_type: llama3
+    rope_factor: 16
+    checkpoint_every: 0
+    notes: 'Paired target-only baseline at 256k.'
+GATED_LLAMA3_F32_512K:
+  name: gated_llama3_f32_512k
+  factor: context_length
+  levels:
+  - id: GATED_llama3_f32_512k
+    context_length: 524288
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    rope_type: llama3
+    rope_factor: 32
+    checkpoint_every: 0
+    notes: 'gate candidate llama3_f32_512k (native mechanism; only the factor moves)'
+  - id: GATED_llama3_f32_512k_targetonly
+    context_length: 524288
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    spec_steps: 0
+    rope_type: llama3
+    rope_factor: 32
+    checkpoint_every: 0
+    notes: 'Paired target-only baseline at 512k.'
 GATED_YARN_B8192_F32_256K:
   name: gated_yarn_b8192_f32_256k
   factor: context_length
   levels:
   - id: GATED_yarn_b8192_f32_256k
-    context_length: 261120
+    context_length: 262144
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     rope_type: yarn
     rope_factor: 32
     rope_anchor_base: 8192
     checkpoint_every: 0
-    notes: 'gate candidate yarn_base8192_f32_256k (YaRN anchored on the true 8192 pretraining base)'
+    notes: 'gate candidate yarn_base8192_f32_256k (YaRN over the true 8192 base)'

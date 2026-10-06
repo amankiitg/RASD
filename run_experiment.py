@@ -1317,6 +1317,13 @@ def main():
                         help="Directory to write per-run RULER needle metadata "
                              "JSONs (used by scripts/score_ruler_niah.py). "
                              "Defaults to <output_csv_dir>/ruler/.")
+    parser.add_argument("--save-generated-tokens", action="store_true",
+                        help="Write each run's raw generated token IDs to "
+                             "<output_csv_dir>/tokens/<run_id>.json. "
+                             "Losslessness is a token-level claim and decoded "
+                             "text is not injective, so the IDs must survive "
+                             "the run for the check to be possible at all. "
+                             "Default off so M3 replay stays byte-identical.")
     parser.add_argument("--save-generated-text", action="store_true",
                         help="Write the decoded generated text from each run "
                              "to <output_csv_dir>/generated/<run_id>.txt. "
@@ -1366,6 +1373,9 @@ def main():
     if args.save_generated_text:
         for r in all_runs:
             r["save_generated_text"] = True
+    if args.save_generated_tokens:
+        for r in all_runs:
+            r["save_generated_tokens"] = True
     if args.prompt_source != "synthetic":
         if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
             raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
@@ -1451,6 +1461,8 @@ def main():
                 canary_run["log_per_token"] = True
             if args.save_generated_text:
                 canary_run["save_generated_text"] = True
+            if args.save_generated_tokens:
+                canary_run["save_generated_tokens"] = True
             if args.memory_trace:
                 canary_run["memory_trace"] = True
                 canary_run.setdefault(

@@ -2,15 +2,22 @@
 #
 # Read by scripts/mlsys_manifest.sh on the pod and by the provisioning watcher.
 # Nothing here starts a GPU stage that the coherence gate has not cleared:
-# stage 1 writes results/mlsys/coherence_gate.csv and every later stage
+# stage S3 writes results/mlsys/coherence_gate.csv and every later stage
 # declares which gate verdict it requires.
+#
+# THE ANALYSIS PLAN IS THE CONTRACT. docs/mlsys_analysis_plan.md fixes the
+# metrics, the unit of independence (the document), the documents per rung
+# (10), the interval method (bootstrap over documents), the comparisons and the
+# payoff rule. This file says which stages produce those numbers. Where the two
+# disagree, the plan wins and this file is wrong.
 #
 # TARGET POLICY (binding, from the anchor investigation):
 #   * Target is Llama-3.1-8B.
 #   * At 128k and below it runs its NATIVE shipped `llama3` rope block,
 #     untouched (rope_type: none). No scaling is applied.
 #   * Above 128k, ONLY a rope configuration that PASSED the coherence gate may
-#     be used. The gate's verdict column is the only authority.
+#     be used. The gate's verdict column is the only authority, and the gate
+#     itself is calibrated first (S0) against controls with known answers.
 #   * No training-free YaRN on a 4k-native model anywhere in this ladder.
 #     Measured on Llama-2-7B at 32k: even correctly anchored, training-free
 #     YaRN left 4.9x native perplexity and a generation that collapsed into
@@ -25,12 +32,18 @@
 #   * Every run records its effective inv_freq summary (inv_freq[0],
 #     inv_freq[-1], slowest-channel stretch, and the matched anchor) in its
 #     output row.
+#
+# DECODING CONTRACT (from the plan; identical in every stage below):
+#   greedy (temperature=0), 1024 generated tokens, ignore_eos=true,
+#   prompt_tokens + leading BOS + generated == context_length exactly.
 
 meta:
   name: mlsys_natural_text_ladder
+  analysis_plan: docs/mlsys_analysis_plan.md
   transformers_pin: "4.47.1"
   node_rate_per_hour: 22.32
-  max_cost_usd: 400          # hard ceiling; ask before crossing
+  max_cost_usd: null         # no hard ceiling; per-stage approval instead
+  ask_before_stage_over_usd: 300   # per stage, not cumulative
   max_hours: 20              # on-instance self-terminate watchdog
   terminate_grace_minutes: 60  # after the last stage, wait this long for the
                                # operator before terminating and confirming
@@ -39,33 +52,156 @@ meta:
   pull_verify: sha256
   interim_report_after_each_stage: true
 
+# Cost model, so a projected figure can be argued with rather than guessed.
+# Per-token decode cost is taken from measured cells (ARM4 f1 128k, ARM2 128k,
+# the Llama-2 matrix at 256k/512k/1M) and scales ~linearly with context because
+# the ring decode is communication-bound:
+#
+#   context   prefill   spec decode    target-only decode
+#    128k       10s       0.55 s/tok        4.39 s/tok
+#    256k       35s       1.10 s/tok        8.80 s/tok
+#    512k       97s       2.20 s/tok       17.60 s/tok
+#
+# The target-only arm costs ~8x the speculative arm, because target-only issues
+# one ring decode per token while a speculative round emits 4-5 tokens per
+# target forward. It is therefore the dominant cost of every rung, not the runs
+# being measured.
+cost_model:
+  per_run_seconds:
+    "128k": {spec: 573, target_only: 4505}
+    "256k": {spec: 1161, target_only: 9046}
+    "512k": {spec: 2350, target_only: 18119}
+
 # Prompt builders. `natural` is the primary arm; `synthetic` is the secondary
 # comparison at the same configurations, so a prompt-content effect can be
 # separated from a rope/context effect.
 prompts:
   natural:
-    source: pg19
-    meta: data/processed/pg19_llama3/pg19_validation_metadata.json
-    # The .dat chunk files named by that metadata MUST be staged alongside it.
+    source: pg19_document
+    # One memmap per PG-19 BOOK, so a document is a real book rather than an
+    # offset into a concatenation of books.
+    documents_json: data/processed/pg19_docs/documents.json
+    documents_dir: data/processed/pg19_docs
+    # The .dat files named by that metadata MUST be staged alongside it.
     # Staging only the metadata is exactly what killed pg19_short_target.
-    data_dir: data/processed/pg19_llama3
-    per_seed_offset: true       # deterministic offset per seed
     log_prompt_hash: true
   synthetic:
     source: synthetic
-    per_seed_offset: true
     log_prompt_hash: true
 
+# The 10 documents, identical at every rung, so the rung comparison is paired
+# (same book, different context). Fixed before data; see the plan.
+#
+# REPORTED LIMITATION: only 14 books are long enough for the 512k rung, so this
+# set is 2 Bibles, 2 Shakespeare volumes and an omnibus. The composition is
+# constant across rungs, so it cancels in the paired rung comparison; it limits
+# generalisation, and it is why stage S4b re-measures 128k on a diverse pool.
+documents:
+  core_10: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537,
+            pg19_train_915, pg19_train_1404, pg19_train_1726,
+            pg19_train_1981, pg19_train_2204, pg19_train_2768]
+  rungs: [131072, 262144, 524288]
+
 # ---------------------------------------------------------------------------
-# STAGE 1 — the gate. Everything else depends on it.
+# S0 — gate calibration on real weights. MUST run first.
 # ---------------------------------------------------------------------------
 stages:
+  - id: gate_calibration
+    kind: gate_calibration
+    order: 1
+    script: scripts/mlsys_coherence_gate.py
+    est_hours: 0.6
+    est_cost_usd: 13
+    positive_controls:            # must PASS
+      - {name: native_32k,  model: meta-llama/Llama-3.1-8B, rope_type: none, context_length: 32768}
+      - {name: native_64k,  model: meta-llama/Llama-3.1-8B, rope_type: none, context_length: 65536}
+      - {name: native_128k, model: meta-llama/Llama-3.1-8B, rope_type: none, context_length: 131072}
+    negative_controls:            # must FAIL
+      - name: arm4_f2_construction   # the rope dict that broke the ARM4 f2 cell
+        model: meta-llama/Llama-3.1-8B
+        rope_type: yarn
+        rope_factor: 2
+        context_length: 131072
+      - name: llama2_misanchored     # YaRN anchored on the context, not 4096
+        model: meta-llama/Llama-2-7b-hf
+        rope_type: yarn
+        rope_factor: 8
+        context_length: 32768
+        rope_anchor_base: 32768
+    output: results/mlsys/gate_calibration.csv
+    sets_threshold: >
+      The perplexity tolerance is set from the POSITIVE controls' measured
+      spread, not chosen a priori, and the value actually used is written into
+      the analysis plan's revisions block. A gate that has never been run
+      against real weights has not been calibrated, and the ARM4 f2 cell is
+      proof that an uncalibrated rope configuration can pass unnoticed.
+    fail_action: >
+      If a positive control FAILS, the gate is wrong, not the control: fix the
+      gate and re-run. If a negative control PASSES, the gate cannot detect a
+      known-bad configuration: fix the gate before gating any candidate. Never
+      relax the threshold to make a control agree.
+
+# ---------------------------------------------------------------------------
+# S1 — implementation validation against another implementation.
+# ---------------------------------------------------------------------------
+  - id: impl_validation
+    kind: cross_impl
+    order: 2
+    est_hours: 4.4
+    est_cost_usd: 98
+    native_check: true
+    script: scripts/mlsys_vllm_baseline.py
+    prompt: natural
+    documents: core_10_first3
+    context_length: 131072
+    max_new_tokens: 1024
+    ignore_eos: true
+    compare: >
+      RASD and vLLM speculative decoding, same model pair, same documents,
+      greedy. Compare acceptance. Run the losslessness check on BOTH: if one
+      implementation is lossless and the other is not, that is a finding about
+      an implementation, and it must be reported rather than averaged away.
+    output: results/mlsys/impl_validation.csv
+    why: >
+      An acceptance number with no independent implementation behind it is a
+      number about our own code. Agreement makes it a number about speculative
+      decoding; disagreement localises the defect before it reaches the ladder.
+
+# ---------------------------------------------------------------------------
+# S2 — correction-note evidence (paired with the LCFM correction).
+# ---------------------------------------------------------------------------
+  - id: correction_note_evidence
+    kind: rope_quality
+    order: 3
+    est_hours: 3.0
+    est_cost_usd: 67
+    prompt: natural
+    model: meta-llama/Llama-2-7b-hf
+    factors: [32, 64, 128, 256]
+    anchorings: [correct_4096, mis_anchored_context]
+    contexts: [32768, 131072]
+    max_new_tokens: 1024
+    capture_generation: true
+    output: results/mlsys/correction_note_evidence.csv
+    why: >
+      The correction note claims the anchor explains most of the perplexity
+      damage and not the degeneration. That claim needs the paper's actual
+      factors, measured with and without the correct anchor, at full prompt
+      length. Never reported as a speculation result.
+
+# ---------------------------------------------------------------------------
+# S3 — the gate, now that it is calibrated.
+# ---------------------------------------------------------------------------
   - id: coherence_gate
     kind: gate
-    order: 1
+    order: 4
+    est_hours: 4.2
+    est_cost_usd: 93
+    depends_on: [gate_calibration]
     script: scripts/mlsys_coherence_gate.py
     candidates: configs/mlsys_rope_candidates.json
     contexts: [262144, 524288]
+    threshold_from: gate_calibration
     output: results/mlsys/coherence_gate.csv
     gen_dir: results/mlsys/gate_generated
     required_before_dependent_stages: true
@@ -74,63 +210,123 @@ stages:
       different settings until it passes. Record the verdict, the reason, and
       the effective inv_freq that was measured.
 
+# ---------------------------------------------------------------------------
+# S4 — natural text at the native window (native rope; no gate needed).
+# ---------------------------------------------------------------------------
   - id: natural_f1_128k
     kind: spec
-    order: 2
-    depends_on: []              # 128k is native; no gate needed
+    order: 5
+    est_hours: 14.1
+    est_cost_usd: 315
+    depends_on: [impl_validation]
     config: configs/mlsys_natural_f1_128k.yml
     prompt: natural
-    seeds: [42, 123, 456]
+    documents: core_10
+    context_length: 131072
+    spec_steps: 4
     max_new_tokens: 1024
     ignore_eos: true
     log_per_token: true
     memory_trace: true
+    losslessness: required
+    measure_target_ppl: true
     output: results/mlsys/natural_f1_128k.csv
     why: >
       The f1 acceptance ceiling on non-degenerate text at the native window.
       Answers whether the reported saturation is the repetitive synthetic
-      prompt or the system.
+      prompt or the system, with target perplexity beside every acceptance
+      figure.
 
+  - id: natural_f1_128k_diverse
+    kind: spec
+    order: 6
+    est_hours: 14.1
+    est_cost_usd: 315
+    optional: true
+    depends_on: [natural_f1_128k]
+    config: configs/mlsys_natural_f1_128k_diverse.yml
+    prompt: natural
+    documents: diverse_10_128k
+    context_length: 131072
+    spec_steps: 4
+    max_new_tokens: 1024
+    ignore_eos: true
+    losslessness: required
+    measure_target_ppl: true
+    output: results/mlsys/natural_f1_128k_diverse.csv
+    why: >
+      Robustness for the one composition weakness of the core-10: 10 documents
+      drawn from the 534 books eligible at 128k, so the headline acceptance
+      number is not an artefact of the Bible/Shakespeare set the paired design
+      forces at 512k.
+
+# ---------------------------------------------------------------------------
+# S5 — the gated rungs: the dose-response that the plan's payoff rule uses.
+# ---------------------------------------------------------------------------
   - id: natural_spec_gated
     kind: spec
-    order: 3
+    order: 7
+    est_hours: 85.1
+    est_cost_usd: 1900
     depends_on: [coherence_gate]
-    require_gate_verdict: pass  # only configs the gate cleared
+    require_gate_verdict: pass
     config: configs/mlsys_natural_gated.yml
     prompt: natural
-    seeds: [42, 123, 456]
+    documents: core_10
+    contexts: [262144, 524288]
+    spec_steps: 4
     max_new_tokens: 1024
     ignore_eos: true
     log_per_token: true
     memory_trace: true
+    losslessness: required
+    measure_target_ppl: true
     output: results/mlsys/natural_spec_gated.csv
     why: >
-      The factor effect measured on a prompt that is not degenerate, so a
-      factor comparison is not confounded with prompt collapse.
+      The factor effect on a prompt that is not degenerate, so a factor
+      comparison is not confounded with prompt collapse. This is where the
+      plan's payoff rule is evaluated.
 
+# ---------------------------------------------------------------------------
+# S6 — synthetic text at the same configurations (secondary, optional).
+# ---------------------------------------------------------------------------
   - id: synthetic_spec_gated
     kind: spec
-    order: 4
+    order: 8
+    est_hours: 99.2
+    est_cost_usd: 2214
+    optional: true
     depends_on: [coherence_gate]
     require_gate_verdict: pass
     config: configs/mlsys_synthetic_gated.yml
     prompt: synthetic
-    seeds: [42, 123, 456]
+    documents: core_10
+    contexts: [131072, 262144, 524288]
+    spec_steps: 4
     max_new_tokens: 1024
     ignore_eos: true
     log_per_token: true
-    memory_trace: true
+    losslessness: required
+    measure_target_ppl: true
     output: results/mlsys/synthetic_spec_gated.csv
     why: >
-      Secondary comparison at the SAME configurations as stage 3; the paired
-      difference isolates prompt content from rope/context.
+      Secondary comparison at the SAME configurations as S4/S5; the paired
+      difference isolates prompt content from rope/context. Costs as much as
+      the primary ladder, so it runs only if the primary is complete inside
+      budget.
 
+# ---------------------------------------------------------------------------
+# S7 — production-stack baseline.
+# ---------------------------------------------------------------------------
   - id: vllm_ladder
     kind: baseline
-    order: 5
+    order: 9
+    est_hours: 3.0
+    est_cost_usd: 67
     depends_on: []
     script: scripts/mlsys_vllm_baseline.py
     prompt: natural
+    documents: core_10_first3
     max_new_tokens: 1024
     attempts_per_model: 3
     capture_traceback: true
@@ -149,31 +345,61 @@ stages:
 # Reporting contract, applied to every stage above.
 # ---------------------------------------------------------------------------
 reporting:
+  primary_metric: alpha_round   # per plan 4.1; a_iid is reported beside it
   acceptance:
     alpha_round: accepted_prefix_length / gamma, PER ROUND  # the spec-decoding rate
     a_iid: total_accepted / total_proposed                  # the i.i.d. per-token parameter
     report_both: true
     warn_if_conflated: true   # reviewer AbH52 #1: these are not the same number
+    exclude_partial_final_round: true
+    report_n_acc_distribution: true
+    flag_saturated_above: 0.90   # full_accept_share; a saturated rung cannot
+                                 # support a comparative claim
   intervals:
-    method: cluster_bootstrap_over_rounds
+    method: bootstrap_over_documents
     n_boot: 10000
     alpha: 0.05
-    resample_unit: rounds      # tokens in a round are accepted/rejected together
-    also_report_common_window: true
+    resample_unit: documents    # per plan 3: the book, not the token or round
+    also_report_cluster_t_interval: true   # at 10 clusters the bootstrap is
+                                           # optimistic; report both, and call
+                                           # a disagreement inconclusive
+    paired_for_ratios: true
+    script: scripts/mlsys_document_bootstrap.py
+  losslessness:
+    required: true
+    compare: token_ids          # never decoded text; text is not injective
+    fail_action: cell is not a result; report the first mismatch position
+    script: scripts/mlsys_losslessness.py
+  target_quality:
+    required: true
+    measure: continuation_perplexity_after_full_length_prompt
+    report_beside: acceptance
+    script: src/analysis/target_quality.py
+  speedup:
+    unit: end_to_end_generation_tokens_per_second   # NOT forward_tps
+    baseline: paired target-only run, same document and same requested length
+    payoff_rule: >
+      "Stops paying off" at rung C when the 95% document-bootstrap interval on
+      the paired throughput ratio lies entirely below 1.0. An interval that
+      contains 1.0 is INCONCLUSIVE, never rounded to the nearer side. A
+      saturated rung cannot support this claim.
   per_round:
     ended_on_eos: true         # split acceptance at the EOS boundary
   nominal_vs_actual_context:
     record_actual_prompt_tokens: true
+    assert_sequence_equals_context: true   # prompt + BOS + generation == context
     note: >
-      Committed context_length values for synthetic cells are NOMINAL
-      (measured ~95.2% Llama-3.1 / ~95.6% Llama-2). Paired comparisons are
-      unaffected because spec and target-only cells share the same actual
-      length. Natural-text prompts are within 0.005% of nominal.
+      Committed context_length values for the LEGACY synthetic cells are
+      NOMINAL (~95.2% Llama-3.1 / ~95.6% Llama-2). New stages assert exactness
+      instead: the document builder resolves the prompt to a fixed point and
+      raises rather than running at a context nobody measured. Verified on the
+      real tokenizer: Llama-3.1-8B re-encodes 130047/261119/523263-token
+      prompts back to the identical ids.
   effective_rope_per_run: true # inv_freq summary recorded on every row
 
 guards:
   - do not start a stage whose projected finish is later than 1h before the deadline
-  - ask before total spend would pass max_cost_usd
+  - ask before starting any SINGLE stage projected above ask_before_stage_over_usd
   - pull and sha256-verify after EVERY stage, before the next one starts
   - write an interim report after every stage, so results survive a cut-short run
   - never write into results/mlsys while a pull is in progress

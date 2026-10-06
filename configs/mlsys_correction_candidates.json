@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Correction-note evidence (S2): Llama-2-7B YaRN at the paper's actual",
+    "factors, measured twice so the anchor's contribution is separable.",
+    "",
+    "For each (factor, context) the pair is mis-anchored vs correctly anchored.",
+    "The gate script writes the numbers (perplexity after a full-length prompt,",
+    "the generation's early-EOS/blank-line/repetition scores, and the effective",
+    "inv_freq it asserted from the built model). These are the evidence for the",
+    "correction note; they are NEVER reported as speculative-decoding results.",
+    "",
+    "`expect` is deliberately absent: this is a measurement, and the gate's",
+    "pass/fail rule is not the point here. The claim under test is that the",
+    "anchor explains most of the perplexity damage and NOT the degeneration,",
+    "which is read off the numbers rather than off a verdict."
+  ],
+  "candidates": [
+    {"name": "llama2_f32_misanchored_32k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 32, "rope_anchor_base": 32768,
+     "context_length": 32768, "seed": 42},
+    {"name": "llama2_f32_anchored_32k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 32, "rope_anchor_base": 4096,
+     "context_length": 32768, "seed": 42},
+    {"name": "llama2_f64_misanchored_32k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 64, "rope_anchor_base": 32768,
+     "context_length": 32768, "seed": 42},
+    {"name": "llama2_f64_anchored_32k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 64, "rope_anchor_base": 4096,
+     "context_length": 32768, "seed": 42},
+    {"name": "llama2_f128_misanchored_128k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 128, "rope_anchor_base": 131072,
+     "context_length": 131072, "seed": 42},
+    {"name": "llama2_f128_anchored_128k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 128, "rope_anchor_base": 4096,
+     "context_length": 131072, "seed": 42},
+    {"name": "llama2_f256_misanchored_128k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 256, "rope_anchor_base": 131072,
+     "context_length": 131072, "seed": 42},
+    {"name": "llama2_f256_anchored_128k", "target_model_name": "meta-llama/Llama-2-7b-hf",
+     "rope_type": "yarn", "rope_factor": 256, "rope_anchor_base": 4096,
+     "context_length": 131072, "seed": 42}
+  ]
+}

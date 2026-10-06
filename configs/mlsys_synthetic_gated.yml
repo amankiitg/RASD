@@ -1,14 +1,22 @@
-# MLSys — synthetic-prompt speculative runs on GATE-PASSING rope configurations.
+# MLSys — SYNTHETIC-prompt speculative runs across the rungs.
 #
-# Every level here must correspond to a candidate that PASSED
-# results/mlsys/coherence_gate.csv. A configuration the gate failed MUST be
-# removed, not re-run with adjusted settings until it passes.
+# TARGET POLICY: Llama-3.1-8B. At 128k it runs its NATIVE shipped `llama3` rope
+# block, untouched. Above 128k ONLY a rope configuration that PASSED
+# results/mlsys/coherence_gate.csv may be used.
 #
-# The levels below are the >128k candidates from
-# configs/mlsys_rope_candidates.json. The manifest re-checks each one against
-# the gate output at run time and skips any that did not pass.
+# This is the SECONDARY arm. The synthetic prompt is the repeated-paragraph
+# builder, which historically produced LOWER acceptance than natural text, and
+# its own saturation (92.6-96.3% fully-accepted rounds) is part of what the
+# natural arm exists to test. Running both at the SAME configurations makes the
+# paired difference a measure of prompt content rather than of the system.
 #
-# Prompt source: synthetic. 1024 tokens, ignore_eos true, per-round ended_on_eos.
+# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy, 1024
+# generated tokens, ignore_eos true. The document builder derives the prompt so
+# the sequence the engine builds is EXACTLY `context_length`.
+#
+# UNITS OF INDEPENDENCE: the DOCUMENT. The synthetic prompt does not depend on
+# the book's text, but the run is still paired to the natural arm by document so
+# the two arms are compared on the same 10 units.
 defaults:
   target_model_name: meta-llama/Llama-3.1-8B
   draft_model_name: meta-llama/Llama-3.2-1B
@@ -26,28 +34,59 @@ defaults:
   ignore_eos: true
   temperature: 1.0
   top_p: 1.0
-  seeds: [42, 123, 456]
-  prompt_source: synthetic
+  seeds: [42]
   log_per_token: true
   save_generated_text: true
-GATED_LLAMA3_F16_256K:
-  name: gated_llama3_f16_256k
+  save_generated_tokens: true
+  measure_target_ppl: true
+  prompt_source: synthetic
+
+SYNTHETIC_CTX128K:
+  name: synthetic_ctx128k
   factor: context_length
   levels:
-  - id: GATED_llama3_f16_256k
-    context_length: 261120
+  - id: SYNTHETIC_ctx128k
+    context_length: 131072
+    checkpoint_every: 0
+    notes: 'synthetic prompt at the native 128k rung'
+  - id: SYNTHETIC_ctx128k_targetonly
+    context_length: 131072
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'Paired target-only baseline for the synthetic 128k rung.'
+
+SYNTHETIC_CTX256K:
+  name: synthetic_ctx256k
+  factor: context_length
+  levels:
+  - id: SYNTHETIC_ctx256k
+    context_length: 262144
     rope_type: llama3
     rope_factor: 16
     checkpoint_every: 0
-    notes: 'gate candidate llama3_f16_256k (builds on the native mechanism; only factor moves 8 -> 16)'
-GATED_YARN_B8192_F32_256K:
-  name: gated_yarn_b8192_f32_256k
+    notes: 'synthetic prompt at the gated 256k rung'
+  - id: SYNTHETIC_ctx256k_targetonly
+    context_length: 262144
+    spec_steps: 0
+    rope_type: llama3
+    rope_factor: 16
+    checkpoint_every: 0
+    notes: 'Paired target-only baseline for the synthetic 256k rung.'
+
+SYNTHETIC_CTX512K:
+  name: synthetic_ctx512k
   factor: context_length
   levels:
-  - id: GATED_yarn_b8192_f32_256k
-    context_length: 261120
-    rope_type: yarn
+  - id: SYNTHETIC_ctx512k
+    context_length: 524288
+    rope_type: llama3
     rope_factor: 32
-    rope_anchor_base: 8192
     checkpoint_every: 0
-    notes: 'gate candidate yarn_base8192_f32_256k (YaRN anchored on the true 8192 pretraining base)'
+    notes: 'synthetic prompt at the gated 512k rung'
+  - id: SYNTHETIC_ctx512k_targetonly
+    context_length: 524288
+    spec_steps: 0
+    rope_type: llama3
+    rope_factor: 32
+    checkpoint_every: 0
+    notes: 'Paired target-only baseline for the synthetic 512k rung.'

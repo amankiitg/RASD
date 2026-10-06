@@ -36,6 +36,25 @@ from pathlib import Path
 GEN = 1024
 
 
+def spread(books: list[dict], need_docs: int, seed: int) -> list[dict]:
+    """A seeded uniform sample without replacement from an eligible pool.
+
+    The paired design takes the LONGEST books, which at 512k leaves only 14
+    candidates and makes the set Bible- and omnibus-heavy. This is the other
+    selection: an actual random sample of the eligible pool, so a rung's
+    headline number can be checked against one that is not an artefact of the
+    set the paired design is forced into. Seeded, so it is reproducible.
+    """
+    import numpy as np
+    if len(books) < need_docs:
+        raise RuntimeError(
+            f"need {need_docs} documents, pool has {len(books)}"
+        )
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(books), size=need_docs, replace=False)
+    return [books[int(i)] for i in sorted(idx)]
+
+
 def eligible(books: list[dict], max_rung: int, need_docs: int) -> list[dict]:
     """Books that can serve every rung up to `max_rung`, longest first.
 
@@ -56,14 +75,23 @@ def eligible(books: list[dict], max_rung: int, need_docs: int) -> list[dict]:
 
 
 def build(lengths_path: Path, out_dir: Path, rungs: list[int], n_docs: int,
-          tokenizer_name: str, split: str, dataset_name: str) -> dict:
+          tokenizer_name: str, split: str, dataset_name: str,
+          selection: str = "longest", seed: int = 20261006) -> dict:
     import numpy as np
     from datasets import load_dataset
     from transformers import AutoTokenizer
 
     lengths = json.loads(Path(lengths_path).read_text())
     max_rung = max(rungs)
-    chosen = eligible(lengths["books"], max_rung, n_docs)[:n_docs]
+    # `eligible` returns the whole sorted pool and checks feasibility against
+    # the number of documents actually needed, so pass n_docs, not the pool size.
+    pool = eligible(lengths["books"], max_rung, n_docs)
+    if selection == "longest":
+        chosen = pool[:n_docs]
+    elif selection == "spread":
+        chosen = spread(pool, n_docs, seed)
+    else:
+        raise ValueError(f"unknown selection {selection!r}")
     want = {b["index"]: b for b in chosen}
     # Memmaps carry up to GEN tokens of tail headroom beyond the largest rung.
     # Nothing scores that tail; it exists so that a later change to the
@@ -142,9 +170,11 @@ def build(lengths_path: Path, out_dir: Path, rungs: list[int], n_docs: int,
         "gen_tokens": GEN,
         "rungs": sorted(rungs),
         "selection": (
-            f"{len(docs)} longest books with >= {max_len:,} tokens "
-            f"(required: context + {GEN})"
+            f"{selection}: {len(docs)} books from {len(pool)} eligible "
+            f"(>= {max_rung:,} tokens)" + (f", seed {seed}" if selection == "spread" else "")
         ),
+        "selection_mode": selection,
+        "selection_seed": seed if selection == "spread" else None,
         "documents": docs,
         "per_rung": rung_meta,
     }
@@ -164,12 +194,16 @@ def main():
     p.add_argument("--rungs", type=int, nargs="+",
                    default=[131072, 262144, 524288])
     p.add_argument("--documents", type=int, default=10)
+    p.add_argument("--selection", choices=["longest", "spread"], default="longest",
+                   help="longest = the paired core set; spread = a seeded "
+                        "uniform sample of the eligible pool")
+    p.add_argument("--seed", type=int, default=20261006)
     p.add_argument("--tokenizer", default="meta-llama/Llama-3.1-8B")
     p.add_argument("--split", default="train")
     p.add_argument("--dataset", default="emozilla/pg19")
     args = p.parse_args()
     build(Path(args.lengths), Path(args.out), args.rungs, args.documents,
-          args.tokenizer, args.split, args.dataset)
+          args.tokenizer, args.split, args.dataset, args.selection, args.seed)
 
 
 if __name__ == "__main__":
