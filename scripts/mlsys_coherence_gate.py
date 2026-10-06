@@ -101,8 +101,17 @@ def load_pg19_window(meta_path: str, context_length: int, seed: int):
 # --------------------------------------------------------------------------
 
 def built_inv_freq(model):
-    """The inv_freq the model actually built, read off layer 0."""
-    return model.model.layers[0].self_attn.rotary_emb.inv_freq.detach().float().cpu()
+    """The inv_freq the model actually built, read off layer 0.
+
+    This is the assertion of record: on transformers 4.47.1 the YaRN dict's
+    original_max_position_embeddings is IGNORED, so reading the config back
+    cannot tell you which rope is running. The built buffer can.
+    """
+    rope = model.model.layers[0].self_attn.rotary_emb
+    inv = rope.inv_freq
+    if not torch.is_tensor(inv):
+        inv = torch.as_tensor(inv)
+    return inv.detach().float().cpu()
 
 
 def reference_inv_freq(hf_config_kwargs, model_name):
@@ -136,11 +145,18 @@ def assert_effective_rope(model, model_name: str, intended: dict) -> dict:
     native_max = AutoConfig.from_pretrained(model_name).max_position_embeddings
 
     refs = {
-        "native_shipped": {},
         "intended": {"rope_scaling": intended.get("rope_scaling"),
                      "max_position_embeddings": intended.get("max_position_embeddings")},
     }
-    if intended.get("rope_scaling") is not None:
+    # When the intended rope IS the model's shipped configuration (no scaling
+    # requested, context inside the native window), "native_shipped" is not a
+    # mismatch — it is exactly what was asked for. Without this the no-scaling
+    # baseline candidate reports a rope mismatch and fails the gate it defines.
+    if intended.get("rope_scaling") is None:
+        native_expected = True
+    else:
+        native_expected = False
+        refs["native_shipped"] = {}
         rs = dict(intended["rope_scaling"])
         refs["anchor_on_context"] = {
             "rope_scaling": {**rs, "original_max_position_embeddings": native_max},
@@ -163,10 +179,12 @@ def assert_effective_rope(model, model_name: str, intended: dict) -> dict:
     native = reference_inv_freq({}, model_name)
     stretch = float((built[-1] / native[-1]).item()) if native[-1] != 0 else float("nan")
 
+    matches = (best_err < 1e-6) and (
+        best == "intended" or (native_expected and best == "intended"))
     return {
         "effective_rope_match": best,
         "effective_rope_maxerr": best_err,
-        "effective_rope_matches_intent": best == "intended" and best_err < 1e-6,
+        "effective_rope_matches_intent": bool(matches),
         "inv_freq_last": f"{float(built[-1]):.6g}",
         "inv_freq_first": f"{float(built[0]):.6g}",
         "slowest_channel_stretch": round(stretch, 6),
@@ -237,6 +255,17 @@ def generation_metrics(text: str, new_ids: list[int], eos_id) -> dict:
 # One candidate
 # --------------------------------------------------------------------------
 
+def _device_map():
+    """Single-device placement that works on CPU as well as CUDA.
+
+    The gate must be runnable locally on CPU for the pipeline dry run; passing
+    `{"": 0}` unconditionally makes torch assert "Torch not compiled with CUDA
+    enabled" and the gate cannot be exercised without a GPU, which defeats the
+    point of a dry run.
+    """
+    return {"": 0} if torch.cuda.is_available() else {"": "cpu"}
+
+
 def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
     from src.models.rasd_inference import RASDInference
 
@@ -259,10 +288,12 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
         )
         intended["rope_scaling"] = getattr(hf_cfg, "rope_scaling", None)
         intended["max_position_embeddings"] = hf_cfg.max_position_embeddings
+        intended["context_length"] = ctx
         model = AutoModelForCausalLM.from_pretrained(
             model_name, config=hf_cfg,
             revision=cand.get("target_revision"),
-            torch_dtype=torch.bfloat16, device_map={"": 0}).eval()
+            torch_dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
+            device_map=_device_map()).eval()
         row["config_max_position_embeddings"] = hf_cfg.max_position_embeddings
         row["config_rope_scaling"] = json.dumps(getattr(hf_cfg, "rope_scaling", None))
     except Exception as e:
@@ -321,9 +352,11 @@ def verdict(row: dict, native_ppl: float) -> dict:
     if row.get("gen_repeat_share", 0) > MAX_REPEAT_SHARE:
         reasons.append(f"repeated n-grams {row['gen_repeat_share']:.0%}")
     if not row.get("effective_rope_matches_intent"):
+        err = row.get("effective_rope_maxerr")
+        err_s = f"{err:.3g}" if isinstance(err, (int, float)) else "n/a"
         reasons.append(
             f"rope mismatch: built {row.get('effective_rope_match')} "
-            f"(err {row.get('effective_rope_maxerr'):.3g}), not the intended config")
+            f"(err {err_s}), not the intended config")
     out["gate_pass"] = not reasons
     out["gate_reason"] = "pass" if not reasons else "; ".join(reasons)
     return out
