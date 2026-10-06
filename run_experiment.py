@@ -131,6 +131,13 @@ CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     # ignore_eos, and a row from a different contract must not be compared
     # against one from this one.
     "prompt_source", "doc_id", "temperature", "top_p", "ignore_eos",
+    # Pairing key. Spec, target-full and target-short rows of the same rung and
+    # document carry the SAME pair_id, so the paired bootstrap can select the
+    # intended target arm by id instead of by position. Position-based
+    # selection (`first row with spec_steps == 0`) silently averaged or
+    # discarded the other arm whenever a document had more than one partner,
+    # and nothing in the output said which partner had been used.
+    "pair_id", "arm_role",
     "generated_tokens_sha256",
     # Target quality beside acceptance (plan 4.3). Blank when not measured,
     # which is distinguishable from a measured zero.
@@ -862,6 +869,24 @@ def decode_rate_tps(tokens_generated, time_sec, ttft_ms) -> float:
     return (n - 1) / wall
 
 
+def _arm_role(run: dict) -> str:
+    """What this row is, for pairing: spec, target_full or target_short.
+
+    Taken from the group name when the config supplies one (the stage configs
+    name their groups `*_TARGET_FULL` / `*_TARGET_SHORT`), and otherwise from the
+    generation length against the spec arm's: a target-only row that generates
+    the full 1024 tokens is the short arm's complement, not a different thing.
+    """
+    group = str(run.get("group", "") or "").upper()
+    if int(run.get("spec_steps", 0) or 0) > 0:
+        return "spec"
+    if group.endswith("TARGET_FULL") or "TARGET_FULL" in group:
+        return "target_full"
+    if group.endswith("TARGET_SHORT") or "TARGET_SHORT" in group:
+        return "target_short"
+    return f"target_{int(run.get('max_new_tokens', 0) or 0)}"
+
+
 def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     """Worker executed in a subprocess — full isolation, fresh CUDA context.
 
@@ -1035,6 +1060,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         if doc_prov.get("sequence_tokens") is not None:
             row["sequence_tokens"] = doc_prov["sequence_tokens"]
         row["doc_id"] = run.get("doc_id", "") or ""
+        # pair_id: rung + document, shared across the arms compared. The rung is
+        # in the key because the same document is run at several contexts and a
+        # document-only key would pair a 128k spec row with a 256k baseline.
+        _ctx = run.get("context_length", "")
+        row["pair_id"] = f"{_ctx}:{row['doc_id']}" if row["doc_id"] else ""
+        row["arm_role"] = _arm_role(run)
         row["temperature"] = run.get("temperature", 1.0)
         row["top_p"] = run.get("top_p", 1.0)
         row["ignore_eos"] = bool(run.get("ignore_eos", False))

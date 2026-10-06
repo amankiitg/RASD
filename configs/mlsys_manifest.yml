@@ -349,6 +349,18 @@ reporting:
     resample_unit: documents
     also_report_cluster_t_interval: true
     paired_for_ratios: true
+    pairing_key: pair_id
+    pairing_note: >
+      Every row carries `pair_id` = "<context_length>:<doc_id>", shared by the
+      spec row and its target-only partners, plus `arm_role` in
+      {spec, target_full, target_short}. The paired bootstrap selects the
+      intended target arm BY THAT ID rather than by position. A pair_id with
+      more than one candidate target arm is an ERROR unless --target-role names
+      the one wanted, and the roles actually used are written into the output
+      (`paired_arm_roles`), so the pairing is auditable instead of inferred.
+      The previous positional rule took the first row whose spec_steps equalled
+      the target arm, so a document with two partners silently used whichever
+      came first in the file and nothing in the output said which.
     script: scripts/mlsys_document_bootstrap.py
   speedup:
     unit: decode_tokens_per_second_after_prefill     # decode_tps, pre-registered

@@ -431,6 +431,12 @@ for doc in ("d0", "d1", "d2"):
         rows.append({"run_id": rid, "doc_id": doc, "context_length": 2048,
                      "max_new_tokens": FULL if doc != "d1" or arm == "spec" else SHORT,
                      "spec_steps": ss, "status": "ok",
+                     # Shared pairing key per rung+document, as run_experiment
+                     # writes it, plus the role that names the intended partner.
+                     "pair_id": f"2048:{doc}",
+                     "arm_role": ("spec" if arm == "spec"
+                                  else ("target_short" if doc == "d1"
+                                        else "target_full")),
                      "prompt_sha256": "h" + doc, "prompt_tokens": 1024,
                      "acceptance_rate": 0.9,
                      # decode_tps is the pre-registered primary ratio metric;
@@ -561,6 +567,20 @@ import csv, pathlib, sys
 rows = list(csv.DictReader((pathlib.Path(sys.argv[1]) / "doc_intervals.csv").open()))
 sp = [r for r in rows if r["estimate"] == "paired_speedup"]
 assert sp, "no paired speedup row produced"
+# Paired BY ID: the row must say which target arm each pair used, which is only
+# recorded when the pairing went through pair_id/arm_role rather than position.
+# The column aggregates over the documents in the group, so a group holding both
+# a full-baseline document and a short-baseline one reports both roles.
+for r in sp:
+    roles = (r.get("paired_arm_roles") or "").split(",")
+    assert roles and all(roles), (
+        f"paired row does not record which target arm it used: {r}")
+    assert set(roles) <= {"target_full", "target_short",
+                          "target_1024", "target_128"}, roles
+# The fixture pairs one document with the SHORT baseline and the rest with the
+# full one, so a positional pairing would have shown a single role for all three.
+assert set().union(*[set((r["paired_arm_roles"] or "").split(",")) for r in sp]) \
+    == {"target_full", "target_short"}, [r["paired_arm_roles"] for r in sp]
 r = sp[0]
 print(f"  paired speedup point={r['point']} ci=[{r['ci_lo']}, {r['ci_hi']}] "
       f"n={r['n_documents']} verdict={r['verdict']}")

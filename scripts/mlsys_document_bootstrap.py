@@ -69,18 +69,85 @@ def _per_document_values(rows: list[dict], metric: str, arm_column: str):
     return vals, mean_sat
 
 
-def _per_document_first(rows: list[dict], metric: str, arm_column: str,
-                        arm: str) -> dict[str, float]:
-    """One value per document for one arm, averaging duplicate rows."""
-    by_doc: dict[str, list[float]] = {}
+def _key_of(r: dict) -> str:
+    """The pairing key of a row.
+
+    `pair_id` is written by run_experiment as "<context_length>:<doc_id>" and is
+    shared by every arm of the same rung and document. Falling back to doc_id
+    keeps older CSVs analysable, and the caller reports when the fallback was
+    used so a pairing that is only as good as the document id is not mistaken
+    for one that is keyed on the row's own identity.
+    """
+    pid = str(r.get("pair_id", "") or "").strip()
+    if pid:
+        return pid
+    return str(r.get("doc_id", "") or "").strip()
+
+
+def _paired_arms(rows: list[dict], metric: str, arm_column: str, spec_arm: str,
+                 target_role: str | None, problems: list[str],
+                 ) -> tuple[dict[str, float], dict[str, float], dict[str, str]]:
+    """Select the spec row and the intended target row, one pair per key.
+
+    Selection is BY ID, not by position. An earlier version took the first row
+    whose spec_steps equalled the target arm, so a pair_id with more than one
+    partner silently used whichever came first in the file, and nothing in the
+    output recorded which one that was. Now:
+
+      * one spec row and one target row per key, or the pair is refused;
+      * more than one target row for a key is an ERROR unless `target_role`
+        names the one wanted, because a document with two partners is a design
+        question, not something to resolve silently.
+    """
+    spec: dict[str, float] = {}
+    targ: dict[str, float] = {}
+    roles: dict[str, str] = {}
+    candidates: dict[str, list[dict]] = {}
+
     for r in rows:
-        if str(r.get(arm_column, "")) != arm:
-            continue
         v = _f(r.get(metric))
         if v is None:
             continue
-        by_doc.setdefault(str(r.get("doc_id", "")), []).append(v)
-    return {d: sum(v) / len(v) for d, v in by_doc.items() if v}
+        key = _key_of(r)
+        if not key:
+            problems.append(f"row {r.get('run_id', '?')}: no pair_id and no "
+                            f"doc_id, so it cannot be paired")
+            continue
+        role = str(r.get("arm_role", "") or "").strip()
+        is_spec = str(r.get(arm_column, "")) == spec_arm or role == "spec"
+        if is_spec:
+            spec.setdefault(key, v)
+        else:
+            candidates.setdefault(key, []).append({**r, "_v": v})
+
+    for key, cands in candidates.items():
+        if target_role:
+            sel = [c for c in cands if c.get("arm_role") == target_role]
+            if not sel:
+                problems.append(
+                    f"{key}: no {target_role} partner among "
+                    f"{sorted({c.get('arm_role', '?') for c in cands})}"
+                )
+                continue
+        else:
+            sel = cands
+            distinct = {c.get("arm_role", "?") for c in sel}
+            if len(distinct) > 1:
+                problems.append(
+                    f"{key}: {len(sel)} target rows with roles "
+                    f"{sorted(distinct)}; the intended arm must be named with "
+                    f"--target-role rather than chosen by position"
+                )
+                continue
+        if len(sel) > 1:
+            problems.append(
+                f"{key}: {len(sel)} rows share this target arm, so the pair is "
+                f"ambiguous (a re-run appended to the same CSV?)"
+            )
+            continue
+        targ[key] = sel[0]["_v"]
+        roles[key] = str(sel[0].get("arm_role", "") or "")
+    return spec, targ, roles
 
 
 def group_rows(rows: list[dict], keys: list[str]) -> dict[tuple, list[dict]]:
@@ -93,8 +160,12 @@ def group_rows(rows: list[dict], keys: list[str]) -> dict[tuple, list[dict]]:
 def summarise(rows: list[dict], keys: list[str], metrics: list[str],
               arm_column: str, spec_arm: str, target_arm: str,
               seed: int = 20261006,
-              ratio_metric: str = "decode_tps") -> list[dict]:
+              ratio_metric: str = "decode_tps",
+              target_role: str | None = None,
+              problems: list[str] | None = None) -> list[dict]:
     out: list[dict] = []
+    if problems is None:
+        problems = []
     for gkey, grows in sorted(group_rows(rows, keys).items()):
         label = dict(zip(keys, gkey))
         for metric in metrics:
@@ -123,8 +194,8 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
         # Primary ratio on the pre-registered decode-only rate; the end-to-end
         # ratio is reported beside it for the documents that have a full-length
         # target-only partner. See the plan's revision block.
-        spec = _per_document_first(grows, ratio_metric, arm_column, spec_arm)
-        targ = _per_document_first(grows, ratio_metric, arm_column, target_arm)
+        spec, targ, roles = _paired_arms(
+            grows, ratio_metric, arm_column, spec_arm, target_role, problems)
         paired = sorted(set(spec) & set(targ))
         if not paired:
             continue
@@ -143,6 +214,9 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
             "t_ci_lo": round(tr["lo"], 6), "t_ci_hi": round(tr["hi"], 6),
             "n_documents": pr["n_documents"],
             "verdict": verdict,
+            # Which target arm each pair actually used, so the pairing is
+            # auditable from the output instead of inferred.
+            "paired_arm_roles": ",".join(sorted({roles[d] for d in paired})),
             "note": ("bootstrap and t interval disagree"
                      if v_boot != v_t else ""),
         })
@@ -164,21 +238,29 @@ def main() -> int:
                         "(decode_tps; throughput_tps for the end-to-end view)")
     p.add_argument("--seed", type=int, default=20261006)
     p.add_argument("--out", default=None)
+    p.add_argument("--target-role", default=None,
+                   choices=["target_full", "target_short"],
+                   help="which baseline arm to pair against, when a document "
+                        "has more than one; without it an ambiguous pair is an "
+                        "error rather than a silent choice")
     args = p.parse_args()
 
     path = Path(args.results)
     with path.open() as fh:
         rows = [r for r in csv.DictReader(fh) if r.get("status") == "ok"]
 
+    problems: list[str] = []
     res = summarise(rows, args.group_by, args.metrics, args.spec_arm_column,
                     args.spec_arm, args.target_arm, seed=args.seed,
-                    ratio_metric=args.ratio_metric)
+                    ratio_metric=args.ratio_metric,
+                    target_role=args.target_role, problems=problems)
     # The end-to-end ratio is reported BESIDE the primary one, so a reader can
     # see the prefill weighting rather than take it on trust.
     other = "throughput_tps" if args.ratio_metric != "throughput_tps" else "decode_tps"
     for r in summarise(rows, args.group_by, args.metrics, args.spec_arm_column,
                        args.spec_arm, args.target_arm, seed=args.seed,
-                       ratio_metric=other):
+                       ratio_metric=other,
+                       target_role=args.target_role, problems=problems):
         if r["estimate"] == "paired_speedup":
             r["estimate"] = f"paired_speedup_{other}"
             r["verdict"] = ""
@@ -188,7 +270,7 @@ def main() -> int:
         path.stem + "_doc_intervals.csv")
     fields = list(args.group_by) + [
         "estimate", "metric", "point", "ci_lo", "ci_hi", "t_ci_lo", "t_ci_hi",
-        "n_documents", "saturated", "verdict", "note"]
+        "n_documents", "saturated", "verdict", "paired_arm_roles", "note"]
     with out_path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
@@ -206,6 +288,14 @@ def main() -> int:
               f"{r['point']:>9} {boot:>24} {tci:>24} {r['n_documents']:>3}  "
               f"{r['verdict']}")
     print(f"\nwrote {out_path}")
+    if problems:
+        # An ambiguous or missing pair is not a note: it means a paired figure
+        # in this file was computed against a partner the code chose, not the
+        # one the design intended.
+        print("\nPAIRING PROBLEMS:")
+        for pr in problems:
+            print(f"  - {pr}")
+        return 1
     return 0
 
 
