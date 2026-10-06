@@ -1,0 +1,3 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error,draft_window_cap,draft_dtype
+shakedown_canary_s42,canary,shakedown_canary_s42,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,,bfloat16,16,36.9432,0.43,0.0385,2308.95,18376.562,20656.1,13,ok,,,
+SHAKEDOWN_ctx4k_s42,SHAKEDOWN,SHAKEDOWN_ctx4k,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,4096,bfloat16,66,5.8878,11.21,1.0,89.209,1181.648,8775.1,13,ok,,,

@@ -139,9 +139,37 @@ class TestAggregateByContext:
         three = aggregate_by_context(dip_over_trace_dir(d))
         row3 = three[three["context_length"] == 131072].iloc[0]
         assert row3["n_seeds"] == 3
-        assert row3["n_reject"] <= 3
+        # Rejecting SEEDS can never exceed the number of seeds. The old
+        # single `n_reject` column summed over runs and could report
+        # impossible values like "5/3 seeds" when a context had several
+        # variants per seed.
+        assert row3["n_seeds_reject"] <= row3["n_seeds"]
+        assert row3["n_runs_reject"] <= row3["n_runs"]
+        assert row3["n_runs"] == 3 and row3["n_seeds"] == 3
         # three identical seeds -> zero-width CI
         assert row3["dip_ci_lo"] == pytest.approx(row3["dip_ci_hi"])
+
+    def test_runs_and_seeds_are_counted_separately(self, tmp_path):
+        """Two variants of one seed must not inflate the seed count."""
+        d = tmp_path / "per_token"
+        # Same seed, two different variants at the same context (as the
+        # 64k NF4-vs-bf16 isolation produces).
+        _write_trace(d, "BF16_ctx64k_nf4_s42", [0, 4, 0, 4, 2, 1, 0, 3])
+        _write_trace(d, "BF16_ctx64k_bf16_s42", [0, 4, 0, 4, 2, 1, 0, 3])
+        agg = aggregate_by_context(dip_over_trace_dir(d))
+        row = agg[agg["context_length"] == 65536].iloc[0]
+        assert row["n_seeds"] == 1        # ONE seed
+        assert row["n_runs"] == 2         # TWO runs
+        assert row["n_seeds_reject"] <= 1
+
+    def test_missing_context_is_not_a_context(self, tmp_path):
+        """Rows without a context must not be bucketed into a bogus row."""
+        d = tmp_path / "per_token"
+        _write_trace(d, "M4_ctx128k_s42", [0, 4, 0, 4, 2, 1, 0, 3])
+        _write_trace(d, "canary_s42", [0, 4, 0, 4, 2, 1, 0, 3])
+        agg = aggregate_by_context(dip_over_trace_dir(d))
+        assert agg["context_length"].notna().all()
+        assert set(agg["context_length"]) == {131072.0}
 
     def test_empty_input(self):
         assert aggregate_by_context(pd.DataFrame()).empty

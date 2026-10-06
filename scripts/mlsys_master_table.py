@@ -149,8 +149,16 @@ def build_rows() -> list[dict]:
         parts = []
         for _, r in dip.iterrows():
             ctx = int(r["context_length"]) if pd.notna(r["context_length"]) else "?"
-            parts.append(f"{ctx}: dip={r['dip_mean']:.3f}, "
-                         f"{int(r['n_reject'])}/{int(r['n_seeds'])} seeds reject")
+            # Report rejecting SEEDS (the unit a reader cares about) and
+            # rejecting RUNS when they differ, so a context with several
+            # variants per seed cannot read as "5/3 seeds".
+            n_seed_rej = int(r["n_seeds_reject"])
+            n_seeds = int(r["n_seeds"])
+            txt = f"{n_seed_rej}/{n_seeds} seeds reject"
+            if "n_runs_reject" in r and int(r["n_runs_reject"]) != n_seed_rej:
+                txt += (f" ({int(r['n_runs_reject'])}/{int(r['n_runs'])} "
+                        f"runs reject)")
+            parts.append(f"{ctx}: dip={r['dip_mean']:.3f}, {txt}")
         dip_new = "; ".join(parts)
         seeds_seen = sorted(set(
             int(x) for x in dip["n_seeds"].dropna().unique()))

@@ -1,0 +1,13 @@
+{"round_idx": 0, "global_pos_start": 65536, "spec_steps": 4, "n_acc": 0, "draft_tokens": [29889, 13, 4706, 435], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 65537, "spec_steps": 4, "n_acc": 0, "draft_tokens": [13, 13, 28350, 2224], "accepted": [false, false, false, false]}
+{"round_idx": 2, "global_pos_start": 65538, "spec_steps": 4, "n_acc": 0, "draft_tokens": [30140, 29889, 13, 4706], "accepted": [false, false, false, false]}
+{"round_idx": 3, "global_pos_start": 65539, "spec_steps": 4, "n_acc": 0, "draft_tokens": [13, 4706, 1394, 2180], "accepted": [false, false, false, false]}
+{"round_idx": 4, "global_pos_start": 65540, "spec_steps": 4, "n_acc": 0, "draft_tokens": [30140, 29878, 2776, 5469], "accepted": [false, true, true, false]}
+{"round_idx": 5, "global_pos_start": 65541, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29900, 29955, 29947, 13], "accepted": [true, false, false, false]}
+{"round_idx": 6, "global_pos_start": 65543, "spec_steps": 4, "n_acc": 0, "draft_tokens": [13, 462, 9651, 1919], "accepted": [false, false, false, true]}
+{"round_idx": 7, "global_pos_start": 65544, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29997, 13, 4706, 334], "accepted": [true, false, false, false]}
+{"round_idx": 8, "global_pos_start": 65546, "spec_steps": 4, "n_acc": 0, "draft_tokens": [20809, 25288, 5595, 10156], "accepted": [false, false, false, false]}
+{"round_idx": 9, "global_pos_start": 65547, "spec_steps": 4, "n_acc": 0, "draft_tokens": [596, 2462, 297, 278], "accepted": [false, false, false, false]}
+{"round_idx": 10, "global_pos_start": 65548, "spec_steps": 4, "n_acc": 0, "draft_tokens": [29916, 4006, 13, 539], "accepted": [false, false, false, false]}
+{"round_idx": 11, "global_pos_start": 65549, "spec_steps": 4, "n_acc": 0, "draft_tokens": [30140, 2204, 11383, 29901], "accepted": [false, true, false, false]}
+{"round_idx": 12, "global_pos_start": 65550, "spec_steps": 4, "n_acc": 0, "draft_tokens": [29984, 29939, 29903, 13], "accepted": [false, false, false, false]}

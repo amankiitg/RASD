@@ -1,0 +1,13 @@
+{"round_idx": 0, "global_pos_start": 62656, "spec_steps": 4, "n_acc": 0, "draft_tokens": [275, 338, 263, 1051], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 62657, "spec_steps": 4, "n_acc": 0, "draft_tokens": [375, 432, 4749, 11293], "accepted": [false, false, false, false]}
+{"round_idx": 2, "global_pos_start": 62658, "spec_steps": 4, "n_acc": 0, "draft_tokens": [293, 29889, 9664, 370], "accepted": [false, false, true, false]}
+{"round_idx": 3, "global_pos_start": 62659, "spec_steps": 4, "n_acc": 0, "draft_tokens": [515, 278, 297, 1328], "accepted": [false, false, false, false]}
+{"round_idx": 4, "global_pos_start": 62660, "spec_steps": 4, "n_acc": 0, "draft_tokens": [29881, 23232, 29881, 411], "accepted": [false, false, false, false]}
+{"round_idx": 5, "global_pos_start": 62661, "spec_steps": 4, "n_acc": 0, "draft_tokens": [451, 3023, 29899, 14318], "accepted": [false, false, false, false]}
+{"round_idx": 6, "global_pos_start": 62662, "spec_steps": 4, "n_acc": 0, "draft_tokens": [739, 338, 23892, 29889], "accepted": [false, false, false, false]}
+{"round_idx": 7, "global_pos_start": 62663, "spec_steps": 4, "n_acc": 0, "draft_tokens": [570, 4505, 1108, 5146], "accepted": [false, false, false, false]}
+{"round_idx": 8, "global_pos_start": 62664, "spec_steps": 4, "n_acc": 0, "draft_tokens": [3449, 6465, 273, 3465], "accepted": [false, false, false, false]}
+{"round_idx": 9, "global_pos_start": 62665, "spec_steps": 4, "n_acc": 2, "draft_tokens": [431, 20144, 896, 345], "accepted": [true, true, false, false]}
+{"round_idx": 10, "global_pos_start": 62668, "spec_steps": 4, "n_acc": 0, "draft_tokens": [399, 340, 29871, 243], "accepted": [false, false, false, false]}
+{"round_idx": 11, "global_pos_start": 62669, "spec_steps": 4, "n_acc": 0, "draft_tokens": [13432, 2204, 12868, 1664], "accepted": [false, false, true, false]}
+{"round_idx": 12, "global_pos_start": 62670, "spec_steps": 4, "n_acc": 1, "draft_tokens": [16975, 2271, 7998, 27766], "accepted": [true, false, false, false]}

@@ -129,17 +129,34 @@ def run_one(model: str, ctx: int, max_new: int, tp: int, out_rows: list[dict],
         tok_kwargs = {}
         if rope:
             tok_kwargs["rope_scaling"] = rope
+        # max_model_len must cover prompt + generation, but must not exceed
+        # the model's own max_position_embeddings: requesting ctx + max_new
+        # (= 131136 for Llama-3) made vLLM reject the engine outright
+        # ("User-specified max_model_len (131136) is greater than the
+        # derived max_model_len (131072)"). We instead keep max_model_len
+        # at the model's native ctx and size the PROMPT to ctx - max_new,
+        # so prompt + output exactly fills the window. That is also the
+        # honest apples-to-apples match to the RASD runs, which likewise
+        # stopped at the model's context limit.
+        prompt_tokens_target = max(1, ctx - max_new)
         llm_kwargs = dict(
             model=model,
             tensor_parallel_size=tp,
             gpu_memory_utilization=gpu_mem_util,
-            max_model_len=ctx + max_new,
+            max_model_len=ctx,
             trust_remote_code=True,
             enforce_eager=False,
         )
+        # vLLM moved `rope_scaling` off EngineArgs; it is now applied via
+        # hf_overrides. Try the modern spelling first and fall back to the
+        # legacy kwarg so this works across vLLM versions.
         if rope:
-            llm_kwargs["rope_scaling"] = rope
-        llm = LLM(**llm_kwargs)
+            try:
+                llm = LLM(**llm_kwargs, hf_overrides={"rope_scaling": rope})
+            except TypeError:
+                llm = LLM(**llm_kwargs, rope_scaling=rope)
+        else:
+            llm = LLM(**llm_kwargs)
     except torch.cuda.OutOfMemoryError as e:  # type: ignore[attr-defined]
         row.update({"status": "oom", "unit_matched": "no",
                     "error": f"OOM constructing engine: {str(e)[:300]}"})
@@ -158,7 +175,7 @@ def run_one(model: str, ctx: int, max_new: int, tp: int, out_rows: list[dict],
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(model)
-        prompt = build_prompt(tokenizer, ctx)
+        prompt = build_prompt(tokenizer, prompt_tokens_target)
         row["prompt_tokens"] = len(
             tokenizer(prompt, add_special_tokens=False)["input_ids"])
         params = SamplingParams(temperature=1.0, top_p=1.0,

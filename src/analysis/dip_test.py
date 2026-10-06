@@ -181,23 +181,43 @@ def aggregate_by_context(per_run: pd.DataFrame) -> pd.DataFrame:
 
     if per_run.empty:
         return pd.DataFrame(columns=[
-            "context_length", "n_seeds", "dip_mean", "dip_ci_lo", "dip_ci_hi",
-            "n_reject", "min_p_value", "p_values", "n_rounds_total",
+            "context_length", "n_seeds", "n_runs", "dip_mean", "dip_ci_lo",
+            "dip_ci_hi", "n_runs_reject", "n_seeds_reject", "min_p_value",
+            "p_values", "n_rounds_total",
         ])
 
     rows = []
     for ctx, sub in per_run.groupby("context_length", dropna=False):
+        # A context can back MULTIPLE runs per seed (e.g. the NF4 and bf16
+        # draft variants at 64k), so the number of rejecting RUNS is not
+        # the number of rejecting SEEDS. Reporting one as the other
+        # produced impossible lines like "5/3 seeds reject". Both are
+        # reported, separately and explicitly.
+        if pd.isna(ctx):
+            # Canary/smoke rows carry no context_length. Bucketing them
+            # together invented a spurious "?" context that mixed
+            # unrelated runs; they are not a context and are excluded.
+            continue
         dips = sub["dip"].dropna().to_numpy()
         mean, lo, hi = bootstrap_mean_ci(dips) if dips.size else (np.nan, np.nan, np.nan)
+        rej = sub["reject_unimodal"].fillna(False).astype(bool)
         rows.append({
-            "context_length": int(ctx) if pd.notna(ctx) else None,
+            "context_length": int(ctx),
             "n_seeds":        int(sub["seed"].nunique(dropna=True)),
+            "n_runs":         int(len(sub)),
             "dip_mean":       float(mean),
             "dip_ci_lo":      float(lo),
             "dip_ci_hi":      float(hi),
-            "n_reject":       int(sub["reject_unimodal"].sum()),
+            "n_runs_reject":  int(rej.sum()),
+            "n_seeds_reject": int(sub.loc[rej, "seed"].nunique(dropna=True)),
             "min_p_value":    float(sub["p_value"].min()),
             "p_values":       ",".join(f"{p:.4g}" for p in sub["p_value"]),
             "n_rounds_total": int(sub["n_rounds"].sum()),
         })
+    if not rows:
+        return pd.DataFrame(columns=[
+            "context_length", "n_seeds", "n_runs", "dip_mean", "dip_ci_lo",
+            "dip_ci_hi", "n_runs_reject", "n_seeds_reject", "min_p_value",
+            "p_values", "n_rounds_total",
+        ])
     return pd.DataFrame(rows).sort_values("context_length").reset_index(drop=True)

@@ -1,7 +1,268 @@
 run_id,csv_acceptance_rate,trace_alpha_round,alpha_iid,abs_diff,ok,note,source_csv
-RASD_ctx4k_pg19_phaseD_s42,,0.7058823529411765,0.8654293820188321,,,,trace_summary.csv
-RASD_ctx8k_pg19_phaseD_s42,,0.25806451612903225,0.5281595698114443,,,,trace_summary.csv
-RASD_ctx128k_phaseD_s42,,0.11538461538461539,0.31801497367622455,,,,trace_summary.csv
-RASD_ctx256k_phaseD_s42,,0.21323529411764705,0.4731097354637761,,,,trace_summary.csv
-RASD_ctx512k_phaseD_s42,,0.19444444444444445,0.447606596258337,,,,trace_summary.csv
-RASD_ctx1M_phaseD_s42,,0.2013888888888889,0.4572205373828584,,,,trace_summary.csv
+mlsys_arm1_canary_s42,0.0833,0.08333333333333333,0.25074337612531505,3.333333333332966e-05,True,,arm1_llama2_yarn.csv
+ARM1_llama2_yarn_128k_s42,0.1154,0.11538461538461539,0.31801497367622455,1.5384615384611555e-05,True,,arm1_llama2_yarn.csv
+ARM1_llama2_yarn_128k_s123,0.1184,0.11842105263157894,0.32384562190711264,2.1052631578935554e-05,True,,arm1_llama2_yarn.csv
+ARM1_llama2_yarn_128k_s456,0.0625,0.0625,0.20025765323483197,0.0,True,,arm1_llama2_yarn.csv
+ARM1_llama2_yarn_128k_targetonly_s42,0.0,,,,,no trace (target-only run?),arm1_llama2_yarn.csv
+ARM1_llama2_yarn_128k_targetonly_s123,0.0,,,,,no trace (target-only run?),arm1_llama2_yarn.csv
+ARM1_llama2_yarn_128k_targetonly_s456,0.0,,,,,no trace (target-only run?),arm1_llama2_yarn.csv
+ARM2_llama3_native_128k_cap4k_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+ARM2_llama3_native_128k_cap4k_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+ARM2_llama3_native_128k_cap4k_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+ARM3_llama3_native_128k_nativedraft_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+ARM3_llama3_native_128k_nativedraft_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+ARM3_llama3_native_128k_nativedraft_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+BFTD_ctx64k_draftbf16_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+BFTD_ctx64k_draftbf16_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+BFTD_ctx64k_draftbf16_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+BFTD_ctx64k_draftnf4_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+BFTD_ctx64k_draftnf4_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+BFTD_ctx64k_draftnf4_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx128k_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx128k_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx1M_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx1M_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx256k_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx256k_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx512k_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+M4_ctx512k_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+PG19_ctx1M_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+PG19_ctx1M_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+PG19_ctx4k_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+PG19_ctx4k_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+PG19_ctx8k_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+PG19_ctx8k_s456,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+RASD_ctx4k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+RASD_ctx8k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+SHAKEDOWN_ctx4k_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+mlsys_arm2_canary_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+mlsys_arm3_canary_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+mlsys_bf16_draft_canary_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+mlsys_matrix_multiseed_canary_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+mlsys_pg19_multiseed_canary_s123,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+shakedown_canary_s42,,,,,,"trace present, no CSV row",arm1_llama2_yarn.csv
+mlsys_arm2_canary_s42,0.75,0.75,0.88817966758531,0.0,True,,arm2_native_cappeddraft.csv
+ARM2_llama3_native_128k_cap4k_s42,0.8667,0.8666666666666667,0.943571294004794,3.333333333332966e-05,True,,arm2_native_cappeddraft.csv
+ARM2_llama3_native_128k_cap4k_s123,0.9286,0.9285714285714286,0.9705754290679709,2.8571428571377844e-05,True,,arm2_native_cappeddraft.csv
+ARM2_llama3_native_128k_cap4k_s456,0.875,0.875,0.9472945702352835,0.0,True,,arm2_native_cappeddraft.csv
+ARM2_llama3_native_128k_targetonly_s42,0.0,,,,,no trace (target-only run?),arm2_native_cappeddraft.csv
+ARM2_llama3_native_128k_targetonly_s123,0.0,,,,,no trace (target-only run?),arm2_native_cappeddraft.csv
+ARM2_llama3_native_128k_targetonly_s456,0.0,,,,,no trace (target-only run?),arm2_native_cappeddraft.csv
+ARM1_llama2_yarn_128k_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+ARM1_llama2_yarn_128k_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+ARM1_llama2_yarn_128k_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+ARM3_llama3_native_128k_nativedraft_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+ARM3_llama3_native_128k_nativedraft_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+ARM3_llama3_native_128k_nativedraft_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+BFTD_ctx64k_draftbf16_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+BFTD_ctx64k_draftbf16_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+BFTD_ctx64k_draftbf16_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+BFTD_ctx64k_draftnf4_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+BFTD_ctx64k_draftnf4_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+BFTD_ctx64k_draftnf4_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx128k_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx128k_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx1M_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx1M_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx256k_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx256k_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx512k_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+M4_ctx512k_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+PG19_ctx1M_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+PG19_ctx1M_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+PG19_ctx4k_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+PG19_ctx4k_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+PG19_ctx8k_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+PG19_ctx8k_s456,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+RASD_ctx4k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+RASD_ctx8k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+SHAKEDOWN_ctx4k_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+mlsys_arm1_canary_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+mlsys_arm3_canary_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+mlsys_bf16_draft_canary_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+mlsys_matrix_multiseed_canary_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+mlsys_pg19_multiseed_canary_s123,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+shakedown_canary_s42,,,,,,"trace present, no CSV row",arm2_native_cappeddraft.csv
+mlsys_arm3_canary_s42,0.75,0.75,0.88817966758531,0.0,True,,arm3_native_nativedraft.csv
+ARM3_llama3_native_128k_nativedraft_s42,0.8667,0.8666666666666667,0.943571294004794,3.333333333332966e-05,True,,arm3_native_nativedraft.csv
+ARM3_llama3_native_128k_nativedraft_s123,0.9286,0.9285714285714286,0.9705754290679709,2.8571428571377844e-05,True,,arm3_native_nativedraft.csv
+ARM3_llama3_native_128k_nativedraft_s456,0.9107,0.9107142857142857,0.9629373402380439,1.4285714285744433e-05,True,,arm3_native_nativedraft.csv
+ARM3_llama3_native_128k_targetonly_s42,0.0,,,,,no trace (target-only run?),arm3_native_nativedraft.csv
+ARM3_llama3_native_128k_targetonly_s123,0.0,,,,,no trace (target-only run?),arm3_native_nativedraft.csv
+ARM3_llama3_native_128k_targetonly_s456,0.0,,,,,no trace (target-only run?),arm3_native_nativedraft.csv
+ARM1_llama2_yarn_128k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+ARM1_llama2_yarn_128k_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+ARM1_llama2_yarn_128k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+ARM2_llama3_native_128k_cap4k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+ARM2_llama3_native_128k_cap4k_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+ARM2_llama3_native_128k_cap4k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+BFTD_ctx64k_draftbf16_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+BFTD_ctx64k_draftbf16_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+BFTD_ctx64k_draftbf16_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+BFTD_ctx64k_draftnf4_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+BFTD_ctx64k_draftnf4_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+BFTD_ctx64k_draftnf4_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx128k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx128k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx1M_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx1M_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx256k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx256k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx512k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+M4_ctx512k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+PG19_ctx1M_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+PG19_ctx1M_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+PG19_ctx4k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+PG19_ctx4k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+PG19_ctx8k_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+PG19_ctx8k_s456,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+RASD_ctx4k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+RASD_ctx8k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+SHAKEDOWN_ctx4k_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+mlsys_arm1_canary_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+mlsys_arm2_canary_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+mlsys_bf16_draft_canary_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+mlsys_matrix_multiseed_canary_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+mlsys_pg19_multiseed_canary_s123,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+shakedown_canary_s42,,,,,,"trace present, no CSV row",arm3_native_nativedraft.csv
+ARM1_llama2_yarn_128k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM1_llama2_yarn_128k_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM1_llama2_yarn_128k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM2_llama3_native_128k_cap4k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM2_llama3_native_128k_cap4k_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM2_llama3_native_128k_cap4k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM3_llama3_native_128k_nativedraft_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM3_llama3_native_128k_nativedraft_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+ARM3_llama3_native_128k_nativedraft_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+BFTD_ctx64k_draftbf16_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+BFTD_ctx64k_draftbf16_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+BFTD_ctx64k_draftbf16_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+BFTD_ctx64k_draftnf4_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+BFTD_ctx64k_draftnf4_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+BFTD_ctx64k_draftnf4_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx128k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx128k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx1M_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx1M_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx256k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx256k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx512k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+M4_ctx512k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+PG19_ctx1M_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+PG19_ctx1M_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+PG19_ctx4k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+PG19_ctx4k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+PG19_ctx8k_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+PG19_ctx8k_s456,,,,,,"trace present, no CSV row",gpu_hours.csv
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+RASD_ctx4k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+RASD_ctx8k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+SHAKEDOWN_ctx4k_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_arm1_canary_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_arm2_canary_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_arm3_canary_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_bf16_draft_canary_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_matrix_multiseed_canary_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_pg19_multiseed_canary_s123,,,,,,"trace present, no CSV row",gpu_hours.csv
+shakedown_canary_s42,,,,,,"trace present, no CSV row",gpu_hours.csv
+mlsys_matrix_multiseed_canary_s123,0.0577,0.057692307692307696,0.18768924320100955,7.692307692305778e-06,True,,llama2_matrix_multiseed.csv
+M4_ctx128k_s123,0.1184,0.11842105263157894,0.32384562190711264,2.1052631578935554e-05,True,,llama2_matrix_multiseed.csv
+M4_ctx128k_s456,0.0625,0.0625,0.20025765323483197,0.0,True,,llama2_matrix_multiseed.csv
+M4_ctx256k_s123,0.2143,0.21428571428571427,0.47448891730231624,1.4285714285716677e-05,True,,llama2_matrix_multiseed.csv
+M4_ctx256k_s456,0.125,0.125,0.33619669316309375,0.0,True,,llama2_matrix_multiseed.csv
+M4_ctx512k_s123,0.1944,0.19444444444444445,0.447606596258337,4.444444444445805e-05,True,,llama2_matrix_multiseed.csv
+M4_ctx512k_s456,0.1437,0.14375,0.3694495001311192,4.999999999999449e-05,True,,llama2_matrix_multiseed.csv
+M4_ctx1M_s123,0.2132,0.21323529411764705,0.4731097354637761,3.529411764705004e-05,True,,llama2_matrix_multiseed.csv
+M4_ctx1M_s456,0.2,0.2,0.45531601036803193,0.0,True,,llama2_matrix_multiseed.csv
+ARM1_llama2_yarn_128k_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM1_llama2_yarn_128k_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM1_llama2_yarn_128k_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM2_llama3_native_128k_cap4k_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM2_llama3_native_128k_cap4k_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM2_llama3_native_128k_cap4k_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM3_llama3_native_128k_nativedraft_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM3_llama3_native_128k_nativedraft_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+ARM3_llama3_native_128k_nativedraft_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+BFTD_ctx64k_draftbf16_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+BFTD_ctx64k_draftbf16_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+BFTD_ctx64k_draftbf16_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+BFTD_ctx64k_draftnf4_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+BFTD_ctx64k_draftnf4_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+BFTD_ctx64k_draftnf4_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+PG19_ctx1M_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+PG19_ctx1M_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+PG19_ctx4k_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+PG19_ctx4k_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+PG19_ctx8k_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+PG19_ctx8k_s456,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+RASD_ctx4k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+RASD_ctx8k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+SHAKEDOWN_ctx4k_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+mlsys_arm1_canary_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+mlsys_arm2_canary_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+mlsys_arm3_canary_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+mlsys_bf16_draft_canary_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+mlsys_pg19_multiseed_canary_s123,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+shakedown_canary_s42,,,,,,"trace present, no CSV row",llama2_matrix_multiseed.csv
+shakedown_canary_s42,0.0385,0.038461538461538464,0.1333699047090492,3.846153846153583e-05,True,,shakedown.csv
+SHAKEDOWN_ctx4k_s42,1.0,1.0,1.0,0.0,True,,shakedown.csv
+ARM1_llama2_yarn_128k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+ARM1_llama2_yarn_128k_s42,,,,,,"trace present, no CSV row",shakedown.csv
+ARM1_llama2_yarn_128k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+ARM2_llama3_native_128k_cap4k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+ARM2_llama3_native_128k_cap4k_s42,,,,,,"trace present, no CSV row",shakedown.csv
+ARM2_llama3_native_128k_cap4k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+ARM3_llama3_native_128k_nativedraft_s123,,,,,,"trace present, no CSV row",shakedown.csv
+ARM3_llama3_native_128k_nativedraft_s42,,,,,,"trace present, no CSV row",shakedown.csv
+ARM3_llama3_native_128k_nativedraft_s456,,,,,,"trace present, no CSV row",shakedown.csv
+BFTD_ctx64k_draftbf16_s123,,,,,,"trace present, no CSV row",shakedown.csv
+BFTD_ctx64k_draftbf16_s42,,,,,,"trace present, no CSV row",shakedown.csv
+BFTD_ctx64k_draftbf16_s456,,,,,,"trace present, no CSV row",shakedown.csv
+BFTD_ctx64k_draftnf4_s123,,,,,,"trace present, no CSV row",shakedown.csv
+BFTD_ctx64k_draftnf4_s42,,,,,,"trace present, no CSV row",shakedown.csv
+BFTD_ctx64k_draftnf4_s456,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx128k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx128k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx1M_s123,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx1M_s456,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx256k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx256k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx512k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+M4_ctx512k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+PG19_ctx1M_s123,,,,,,"trace present, no CSV row",shakedown.csv
+PG19_ctx1M_s456,,,,,,"trace present, no CSV row",shakedown.csv
+PG19_ctx4k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+PG19_ctx4k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+PG19_ctx8k_s123,,,,,,"trace present, no CSV row",shakedown.csv
+PG19_ctx8k_s456,,,,,,"trace present, no CSV row",shakedown.csv
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row",shakedown.csv
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row",shakedown.csv
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row",shakedown.csv
+RASD_ctx4k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",shakedown.csv
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row",shakedown.csv
+RASD_ctx8k_pg19_phaseD_s42,,,,,,"trace present, no CSV row",shakedown.csv
+mlsys_arm1_canary_s42,,,,,,"trace present, no CSV row",shakedown.csv
+mlsys_arm2_canary_s42,,,,,,"trace present, no CSV row",shakedown.csv
+mlsys_arm3_canary_s42,,,,,,"trace present, no CSV row",shakedown.csv
+mlsys_bf16_draft_canary_s42,,,,,,"trace present, no CSV row",shakedown.csv
+mlsys_matrix_multiseed_canary_s123,,,,,,"trace present, no CSV row",shakedown.csv
+mlsys_pg19_multiseed_canary_s123,,,,,,"trace present, no CSV row",shakedown.csv

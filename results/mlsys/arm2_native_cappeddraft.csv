@@ -1,0 +1,8 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error,draft_window_cap,draft_dtype
+mlsys_arm2_canary_s42,canary,mlsys_arm2_canary_s42,42,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,4,2048,1,,bfloat16,17,10.7089,1.59,0.75,629.938,4915.536,9107.3,4,ok,,4096,
+ARM2_llama3_native_128k_cap4k_s42,ARM2_SPEC,ARM2_llama3_native_128k_cap4k,42,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,4,2048,1,131072,bfloat16,68,51.6786,1.32,0.8667,759.98,10160.004,10028.6,15,ok,,4096,
+ARM2_llama3_native_128k_cap4k_s123,ARM2_SPEC,ARM2_llama3_native_128k_cap4k,123,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,4,2048,1,131072,bfloat16,67,45.3389,1.48,0.9286,676.7,9144.917,10028.5,14,ok,,4096,
+ARM2_llama3_native_128k_cap4k_s456,ARM2_SPEC,ARM2_llama3_native_128k_cap4k,456,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,4,2048,1,131072,bfloat16,64,46.1038,1.39,0.875,720.372,9216.408,10028.4,14,ok,,4096,
+ARM2_llama3_native_128k_targetonly_s42,ARM2_TARGET_ONLY,ARM2_llama3_native_128k_targetonly,42,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,0,2048,1,131072,bfloat16,64,232.7241,0.28,0.0,3636.315,10657.066,8157.9,63,ok,,4096,
+ARM2_llama3_native_128k_targetonly_s123,ARM2_TARGET_ONLY,ARM2_llama3_native_128k_targetonly,123,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,0,2048,1,131072,bfloat16,64,233.5701,0.27,0.0,3649.532,9342.246,8157.9,63,ok,,4096,
+ARM2_llama3_native_128k_targetonly_s456,ARM2_TARGET_ONLY,ARM2_llama3_native_128k_targetonly,456,meta-llama/Llama-3.1-8B,meta-llama/Llama-3.2-1B,0,2048,1,131072,bfloat16,64,230.1061,0.28,0.0,3595.408,9132.751,8157.9,63,ok,,4096,

@@ -1,0 +1,15 @@
+{"round_idx": 0, "global_pos_start": 124800, "spec_steps": 4, "n_acc": 0, "draft_tokens": [63488, 279, 5829, 315], "accepted": [false, true, false, true]}
+{"round_idx": 1, "global_pos_start": 124801, "spec_steps": 4, "n_acc": 4, "draft_tokens": [578, 2768, 374, 264], "accepted": [true, true, true, true]}
+{"round_idx": 2, "global_pos_start": 124806, "spec_steps": 4, "n_acc": 4, "draft_tokens": [11156, 6492, 315, 4332], "accepted": [true, true, true, true]}
+{"round_idx": 3, "global_pos_start": 124811, "spec_steps": 4, "n_acc": 4, "draft_tokens": [6975, 6067, 13, 22249], "accepted": [true, true, true, true]}
+{"round_idx": 4, "global_pos_start": 124816, "spec_steps": 4, "n_acc": 4, "draft_tokens": [20682, 1317, 64733, 45478], "accepted": [true, true, true, true]}
+{"round_idx": 5, "global_pos_start": 124821, "spec_steps": 4, "n_acc": 4, "draft_tokens": [559, 29510, 279, 8668], "accepted": [true, true, true, true]}
+{"round_idx": 6, "global_pos_start": 124826, "spec_steps": 4, "n_acc": 4, "draft_tokens": [71503, 13, 11197, 22948], "accepted": [true, true, true, true]}
+{"round_idx": 7, "global_pos_start": 124831, "spec_steps": 4, "n_acc": 4, "draft_tokens": [14511, 988, 9659, 555], "accepted": [true, true, true, true]}
+{"round_idx": 8, "global_pos_start": 124836, "spec_steps": 4, "n_acc": 4, "draft_tokens": [264, 9333, 10165, 1646], "accepted": [true, true, true, true]}
+{"round_idx": 9, "global_pos_start": 124841, "spec_steps": 4, "n_acc": 4, "draft_tokens": [578, 2768, 374, 264], "accepted": [true, true, true, true]}
+{"round_idx": 10, "global_pos_start": 124846, "spec_steps": 4, "n_acc": 0, "draft_tokens": [11156, 6492, 315, 4332], "accepted": [false, true, true, true]}
+{"round_idx": 11, "global_pos_start": 124847, "spec_steps": 4, "n_acc": 4, "draft_tokens": [315, 4244, 1697, 20414], "accepted": [true, true, true, true]}
+{"round_idx": 12, "global_pos_start": 124852, "spec_steps": 4, "n_acc": 4, "draft_tokens": [18682, 6975, 25, 578], "accepted": [true, true, true, true]}
+{"round_idx": 13, "global_pos_start": 124857, "spec_steps": 4, "n_acc": 4, "draft_tokens": [55725, 323, 86281, 264], "accepted": [true, true, true, true]}
+{"round_idx": 14, "global_pos_start": 124862, "spec_steps": 4, "n_acc": 4, "draft_tokens": [12914, 1701, 1317, 31608], "accepted": [true, true, true, true]}
