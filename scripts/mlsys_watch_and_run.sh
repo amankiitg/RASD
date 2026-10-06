@@ -73,6 +73,51 @@ say "absolute deadline epoch=$DEADLINE ($(date -u -r "$DEADLINE" +%FT%TZ 2>/dev/
 # --------------------------------------------------------------------------
 rm -f "$FOUND"
 INSTANCE_ID=""
+TERMINATED=0
+
+# Terminate and poll to ZERO. Idempotent and safe to call from a trap, so it can
+# run on every exit path. Without the trap, Ctrl-C, a dropped session or any
+# early exit left the instance running and billing with nobody watching it.
+interruptible_sleep() {        # a plain `sleep` defers the trap until it ends
+  # The child must not inherit stdout: an orphaned `sleep` holding the pipe open
+  # would block anything reading our output until it expired on its own.
+  sleep "$1" </dev/null >/dev/null 2>&1 &
+  wait $! 2>/dev/null || true
+}
+
+terminate_and_confirm() {
+  [ "$TERMINATED" = "1" ] && return 0
+  [ -z "$INSTANCE_ID" ] && return 0
+  say "TERMINATING $INSTANCE_ID"
+  curl -sS --max-time 60 -u "$KEY:" -X POST \
+    "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
+    -H 'Content-Type: application/json' \
+    -d "{\"instance_ids\":[\"$INSTANCE_ID\"]}" >>"$LOG" 2>&1
+  say "confirming termination by polling to ZERO instances (stderr visible)"
+  local confirmed=0 resp rc n
+  for i in $(seq 1 40); do
+    resp=$(api_get instances 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then
+      say "  attempt $i: api rc=$rc :: $(printf '%s' "$resp" | head -c 120)"
+      interruptible_sleep 15; continue
+    fi
+    n=$(printf '%s' "$resp" | python3 -c \
+      "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>&1)
+    say "  attempt $i: instances=$n"
+    if [ "$n" = "0" ]; then confirmed=1; break; fi
+    interruptible_sleep 15
+  done
+  TERMINATED=1
+  [ "$confirmed" = "1" ] && say "CONFIRMED TERMINATED (0 instances)" \
+                         || say "!!! COULD NOT CONFIRM TERMINATION — CHECK THE DASHBOARD"
+}
+
+# EXIT covers normal completion and explicit `exit`; INT/TERM cover Ctrl-C and a
+# dropped session. TERMINATED makes the double-fire a no-op.
+trap terminate_and_confirm EXIT
+trap 'terminate_and_confirm; exit 130' INT
+trap 'terminate_and_confirm; exit 143' TERM
+
 attempt=0
 while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
   attempt=$((attempt+1))
@@ -109,7 +154,7 @@ except Exception: print('')" 2>/dev/null)
       "import json,sys;d=json.load(sys.stdin)['data'];print(d[0]['id'] if d else '')")
     break
   fi
-  sleep $(( 90 + RANDOM % 510 ))
+  interruptible_sleep $(( 90 + RANDOM % 510 ))
 done
 
 if [ -z "$INSTANCE_ID" ]; then
@@ -131,14 +176,14 @@ for x in d:
 else: print('gone','-')")"
   if [ "$status" = "active" ] && [ "$ip" != "-" ]; then IP=$ip; break; fi
   [ "$status" = "gone" ] && { say "instance disappeared during boot"; exit 4; }
-  sleep 20
+  interruptible_sleep 20
 done
-[ -z "$IP" ] && { say "instance never became active"; exit 4; }
+[ -z "$IP" ] && { say "instance never became active"; terminate_and_confirm; exit 4; }
 say "instance active at $IP"
 
 for i in $(seq 1 30); do
   ssh $SSH_OPTS "$SSH_USER@$IP" true 2>/dev/null && break
-  sleep 10
+  interruptible_sleep 10
 done
 
 say "staging repository + PG-19 data (metadata AND the chunks it names)"
@@ -175,6 +220,7 @@ say "starting the manifest"
 ssh $SSH_OPTS "$SSH_USER@$IP" \
   "cd ~/RASD && NODE_RATE_PER_HOUR=$RATE \
    MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \
+   MLSYS_MAX_HOURS=${MLSYS_MAX_HOURS:-20} \
    MLSYS_APPROVED_STAGES='${MLSYS_APPROVED_STAGES:-}' \
    nohup bash scripts/mlsys_manifest.sh > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
 
@@ -184,7 +230,7 @@ while true; do
     break
   fi
   if [ "$(date -u +%s)" -gt "$DEADLINE" ]; then say "deadline hit mid-manifest"; break; fi
-  sleep 120
+  interruptible_sleep 120
 done
 
 # --------------------------------------------------------------------------
@@ -216,25 +262,10 @@ say "  merged into results/mlsys (additive)"
 # 60-minute grace, then terminate and CONFIRM
 # --------------------------------------------------------------------------
 say "waiting ${MLSYS_GRACE_MINUTES:-60} min for operator input before terminating"
-sleep $(( ${MLSYS_GRACE_MINUTES:-60} * 60 ))
+interruptible_sleep $(( ${MLSYS_GRACE_MINUTES:-60} * 60 ))
 
 uptime_s=$(( $(date -u +%s) - DEADLINE ))
-say "TERMINATING $INSTANCE_ID (reason=manifest-finished)"
-curl -sS --max-time 60 -u "$KEY:" -X POST \
-  "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
-  -H 'Content-Type: application/json' -d "{\"instance_ids\":[\"$INSTANCE_ID\"]}" >>"$LOG" 2>&1
-
-say "confirming termination by polling to ZERO instances (stderr visible)"
-confirmed=0
-for i in $(seq 1 40); do
-  resp=$(api_get instances 2>&1); rc=$?
-  if [ $rc -ne 0 ]; then say "  attempt $i: api rc=$rc :: $(printf '%s' "$resp" | head -c 120)"; sleep 15; continue; fi
-  n=$(printf '%s' "$resp" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>&1)
-  say "  attempt $i: instances=$n"
-  if [ "$n" = "0" ]; then confirmed=1; break; fi
-  sleep 15
-done
-[ "$confirmed" = "1" ] && say "CONFIRMED TERMINATED (0 instances)" \
-                       || say "!!! COULD NOT CONFIRM TERMINATION — CHECK THE DASHBOARD"
+say "manifest finished (reason=manifest-finished)"
+terminate_and_confirm
 
 say "results in $STAGE; session dir $SESSION_DIR"

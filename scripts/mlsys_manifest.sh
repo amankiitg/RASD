@@ -31,6 +31,34 @@ mkdir -p "$OUT"
 
 spend() { awk -F, 'NR>1{c+=$5} END{printf "%.2f", c+0}' "$COST_LOG"; }
 
+# ---- wall-clock watchdog -------------------------------------------------
+# Without this a run that hangs still bills until someone notices; the only
+# mention of a watchdog before was a comment. The clock starts when the manifest
+# does. A stage may declare a larger `watchdog_hours` (the 512k rung needs 40h
+# and runs in its own session), which raises the limit from that stage onward.
+_manifest_field() {   # $1=stage id (or __meta__)  $2=field
+  python3 - "$MANIFEST" "$1" "$2" <<'PYW'
+import sys, yaml
+m = yaml.safe_load(open(sys.argv[1]))
+want, field = sys.argv[2], sys.argv[3]
+if want == "__meta__":
+    print(m["meta"].get(field) or "")
+    raise SystemExit
+for s in m["stages"]:
+    if s["id"] == want:
+        v = s.get(field)
+        print("" if v is None else v)
+        raise SystemExit
+print("")
+PYW
+}
+
+START_EPOCH=$(date -u +%s)
+WATCHDOG_SKIPS=0
+WATCHDOG=${MLSYS_MAX_HOURS:-$(_manifest_field __meta__ max_hours)}
+WATCHDOG=${WATCHDOG:-20}
+elapsed_hours() { awk -v n="$(date -u +%s)" -v s="$START_EPOCH" 'BEGIN{printf "%.3f", (n-s)/3600.0}'; }
+
 interim() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$OUT/RUN_LOG.txt"; }
 
 # Projected cost per stage, read from the manifest so the number the guard uses
@@ -64,9 +92,37 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
     echo "SKIP $name (projected \$$est > \$$ASK_OVER, not in MLSYS_APPROVED_STAGES)"
     return 9
   fi
+  # A stage may raise the watchdog for this session (own-session stages).
+  local wd est_h el
+  wd=$(_manifest_field "$name" watchdog_hours)
+  if [ -n "$wd" ] && awk -v a="$wd" -v b="$WATCHDOG" 'BEGIN{exit !(a>b)}'; then
+    WATCHDOG=$wd
+    interim "WATCHDOG raised to ${wd}h for stage $name"
+  fi
+
+  # Finish-before-watchdog guard: refuse to START a stage whose projection would
+  # run past the watchdog. Starting it and being killed mid-stage loses the whole
+  # stage's wall time, which is the cost the guard exists to avoid.
+  est_h=$(_manifest_field "$name" est_hours)
+  el=$(elapsed_hours)
+  if [ -n "$est_h" ] && awk -v e="$el" -v h="$est_h" -v w="$WATCHDOG" \
+       'BEGIN{exit !(e + h > w)}'; then
+    interim "WATCHDOG_REFUSED name=$name elapsed=${el}h projected=${est_h}h limit=${WATCHDOG}h"
+    echo "REFUSE $name: ${el}h elapsed + ${est_h}h projected > ${WATCHDOG}h watchdog"
+    # Skip this stage but let shorter ones still run; the ledger below turns the
+    # skip into a non-zero exit so the run is never reported as clean.
+    WATCHDOG_SKIPS=$((WATCHDOG_SKIPS + 1))
+    return 9
+  fi
+  if awk -v e="$el" -v w="$WATCHDOG" 'BEGIN{exit !(e > w)}'; then
+    interim "WATCHDOG_TRIPPED elapsed=${el}h limit=${WATCHDOG}h; stopping the ladder"
+    echo "WATCHDOG: ${el}h elapsed exceeds ${WATCHDOG}h; stopping"
+    exit 3
+  fi
+
   local t0 t1 wall cost rc
   t0=$(date -u +%s)
-  echo "=== stage $name (projected \$$est) ==="
+  echo "=== stage $name (projected \$$est, ${est_h}h; watchdog ${WATCHDOG}h) ==="
   # `if cmd; then rc=0; else rc=$?; fi` — NOT `cmd; rc=$?`, which under
   # `set -e` never reaches the guard because the shell exits first. The command
   # must be run EXACTLY ONCE here; running it a second time to capture rc would
@@ -123,7 +179,7 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
 }
 
 DOCS=${MLSYS_DOCUMENTS_JSON:-data/processed/pg19_docs/documents.json}
-interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER approved='$APPROVED' ==="
+interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDOG}h approved='$APPROVED' ==="
 echo "spend before manifest: \$$(spend)"
 
 # ---- S0: calibrate the gate on real weights. MUST be first. ---------------
@@ -276,5 +332,11 @@ stage vllm_ladder 21600 python3 scripts/mlsys_vllm_baseline.py \
   --out "$OUT/vllm_baseline.csv" \
   --context-lengths 131072 262144 524288 --max-new-tokens 1024
 
+if [ "$WATCHDOG_SKIPS" -gt 0 ]; then
+  interim "=== MANIFEST INCOMPLETE watchdog_skips=$WATCHDOG_SKIPS spend=\$$(spend) ==="
+  echo "MANIFEST INCOMPLETE: $WATCHDOG_SKIPS stage(s) refused by the watchdog"
+  echo "total node cost: \$$(spend)"
+  exit 4
+fi
 interim "=== MANIFEST END spend=\$$(spend) ==="
 echo "total node cost: \$$(spend)"

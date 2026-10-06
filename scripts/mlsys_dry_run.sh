@@ -578,6 +578,63 @@ PYEOF
 else bad "document bootstrap script failed"; tail -5 "$WORK/doc_boot.log"; fi
 
 # --------------------------------------------------------------------------
+step "12  the run guards: watchdog, ledger and terminate-on-every-exit"
+# These guards live in the shell around the pipeline, so the dry run checks the
+# wiring structurally AND exercises the arithmetic on the manifest's real values.
+# A guard that silently no-ops is exactly the failure mode worth catching here.
+python3 - scripts/mlsys_manifest.sh scripts/mlsys_watch_and_run.sh <<'PYDRY'
+import sys, yaml
+man = open(sys.argv[1]).read()
+watch = open(sys.argv[2]).read()
+m = yaml.safe_load(open("configs/mlsys_manifest.yml"))
+stages = {s["id"]: s for s in m["stages"]}
+fails = []
+
+# --- the watchdog must stop the ladder, not merely log ------------------------
+if "_manifest_field __meta__ max_hours" not in man:
+    fails.append("the watchdog never reads meta.max_hours")
+if "WATCHDOG_SKIPS=$((WATCHDOG_SKIPS + 1))" not in man:
+    fails.append("a watchdog refusal does not reach the ledger")
+if "MANIFEST INCOMPLETE" not in man or "exit 4" not in man:
+    fails.append("a refused stage cannot produce a non-zero exit")
+if "WATCHDOG_TRIPPED" not in man or "exit 3" not in man:
+    fails.append("an elapsed-time trip does not stop the ladder")
+if not stages["natural_spec_gated_512k"].get("watchdog_hours"):
+    fails.append("the 512k stage declares no watchdog override")
+
+# --- the finish-before-watchdog arithmetic, on the manifest's real numbers ----
+def refuse(elapsed, stage, limit):
+    return elapsed + stages[stage]["est_hours"] > limit
+
+if not refuse(3.0, "natural_spec_gated_512k", 20):
+    fails.append("512k was not refused under a 20h watchdog")
+if refuse(0.0, "natural_spec_gated_512k", 40):
+    fails.append("512k was refused even with its own 40h watchdog")
+if not refuse(19.0, "natural_f1_128k", 20):
+    fails.append("a stage projecting past the watchdog was allowed to start")
+if refuse(1.0, "gate_calibration", 20):
+    fails.append("a short early stage was refused")
+
+# --- every exit path must terminate the instance ------------------------------
+if "trap terminate_and_confirm EXIT" not in watch:
+    fails.append("no EXIT trap: an early exit would orphan the instance")
+if "exit 130" not in watch or "exit 143" not in watch:
+    fails.append("SIGINT/SIGTERM would not terminate the instance")
+if "terminate_and_confirm; exit 4" not in watch:
+    fails.append("the never-became-active path does not terminate")
+# a plain sleep defers the trap until it expires, so none may remain
+for line in watch.splitlines():
+    t = line.strip()
+    if t.startswith("sleep ") and "</dev/null" not in t:
+        fails.append("plain sleep would defer the trap: " + t)
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYDRY
+  [ $? -eq 0 ] && ok "watchdog, ledger and terminate-on-every-exit are wired" \
+               || bad "a run guard is missing or its arithmetic is wrong"
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."

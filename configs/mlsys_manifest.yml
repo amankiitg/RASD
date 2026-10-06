@@ -379,4 +379,8 @@ guards:
   - never write into results/mlsys while a pull is in progress
   - terminate the instance on every exit path and CONFIRM via the API (poll to
     zero instances, never accept "terminating")
+  - a wall-clock WATCHDOG (meta.max_hours, overridable per stage) stops the
+    ladder; a stage whose projection would run past it is REFUSED BEFORE it
+    starts, and every refusal forces a non-zero exit so a shortened run is never
+    reported as a clean one
   - never print API keys
