@@ -1,0 +1,4 @@
+{"round_idx": 0, "global_pos_start": 65536, "spec_steps": 4, "n_acc": 0, "draft_tokens": [23291, 400, 1627, 12], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 65537, "spec_steps": 4, "n_acc": 4, "draft_tokens": [5953, 4703, 27358, 315], "accepted": [true, true, true, true]}
+{"round_idx": 2, "global_pos_start": 65542, "spec_steps": 4, "n_acc": 4, "draft_tokens": [6492, 315, 4332, 5780], "accepted": [true, true, true, true]}
+{"round_idx": 3, "global_pos_start": 65547, "spec_steps": 4, "n_acc": 4, "draft_tokens": [6067, 18955, 4221, 4211], "accepted": [true, true, true, true]}

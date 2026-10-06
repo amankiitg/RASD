@@ -1,94 +1,146 @@
-MLSys FOLLOW-UP — MORNING REPORT
+MLSys FOLLOW-UP — MORNING REPORT (ARM4 + vLLM session)
 ================================================================================
-Status: NO RUN LAUNCHED. Self-gate failed on gate (d) only. Nothing billing.
-Details: results/mlsys/PRELAUNCH_BLOCKED.txt
+Outcome: instance RAN, sanity stop TRIPPED, instance TERMINATED and CONFIRMED.
+No ARM4 extrapolation rungs ran. This report explains why that was correct and
+what it revealed. Per the report gate, tables below are regenerated LOCALLY;
+no number is taken from the pod's analysis step.
 
 --------------------------------------------------------------------------------
 PER-PHASE STATUS
 --------------------------------------------------------------------------------
-TASK 1  branch backup ................ DONE — pushed, tracks origin/mlsys-experiments
-PRELAUNCH p1 staging fix ............. DONE      p2 parse_run_id+arm_dip ... DONE
-          p3 ARM4 rope+configs ........ DONE      p4 vLLM ladder+tracebacks . DONE
-          A5 FP4 pin .................. DONE      A5 relabel ............... DONE
-          A6 revisions pinned ......... DONE      A6 per-row provenance .... DONE
-          A7 prompt diversity ......... DONE      A8 memory recompute ...... DONE
-          A8 audit check .............. DONE (rc=0)
-          B1 ARM4 configs (7) ......... DONE      B3 exactly-128 EOS ....... DONE
-          A1 A2 A3 A4 ................. NOT DONE  <-- the blocker
-          B4 PG-19 4k/8k config ....... NOT DONE
-          C1-C5 vLLM fairness ......... NOT DONE
-          D1-D3 report additions ...... NOT DONE
-PHASE A ARM4 ladder .................. NOT RUN (gated)
-PHASE B vLLM ladder .................. NOT RUN (gated)
+PRE-LAUNCH  A5 relabel .............. DONE      A6 revisions pinned ...... DONE
+            A6 per-row provenance ... DONE      A7 prompt diversity ...... DONE
+            A8 memory recompute ..... DONE      A8 audit ................. DONE
+            B1 ARM4 configs (7) ..... DONE      B3 ignore_eos ............ DONE
+            B4 PG-19 4k/8k target ... DONE
+            C1-C5 vLLM fairness ..... DONE (wrapper landed; not exercised)
+PHASE A     cell 1/10 ARM4-f1 128k ... RAN      -> SANITY STOP TRIPPED
+            cells 2-10 ............... NOT RUN  (correctly refused)
+PHASE B     vLLM ladder .............. NOT RUN  (Phase A aborted first)
+POST-RUN    A1 seed coverage ......... DONE      A4 verifier verdicts ..... DONE
+            D1-D3 report items ....... DONE (D3 pending ARM4 data)
+            D-items for ARM4 cells ... PENDING (no ARM4 data)
 
 --------------------------------------------------------------------------------
-SELF-GATE
+INSTANCE — TERMINATED, CONFIRMED
 --------------------------------------------------------------------------------
-  (a) ARM4 configs + rope assertions ..... PASS   (7 configs, rc=0)
-  (b) prompt sha256 / length / EOS test .. PASS
-  (c) revisions + per-row provenance ..... PASS   FIXED THIS CYCLE
-  (d) A1-A4 analysis ..................... FAIL   BLOCKER
-  (e) A5 relabel + A8 audit .............. PASS   FIXED THIS CYCLE
-  (f) tests + committed + paths intact ... PASS   (594 tests)
-  (g) HF token + 0 instances ............. PASS
-
---------------------------------------------------------------------------------
-ARM4 CELL LIST — VALIDATED, NOT RUN
---------------------------------------------------------------------------------
-cell              ctx      rope applied                        spec / +target
-f1_128k           130944   native llama3 block kept (factor 1) spec + target
-f2_128k           130944   yarn factor 2 @ base 131072         spec only
-f4_128k           130944   yarn factor 4 @ base 131072         spec only
-f2_256k           262016   yarn factor 2 @ base 131072         spec + target
-f4_512k           524160   yarn factor 4 @ base 131072         spec + target
-llama3f16_128k    130944   llama3 dict, factor 8->16 (kept)    spec only
-llama3f32_128k    130944   llama3 dict, factor 8->32 (kept)    spec only
-Draft Llama-3.2-1B capped 4096 everywhere. Seeds 42/123/456.
-Prompt = window - 128. max_new_tokens=128, EOS ignored. checkpoint_every=0.
-
-ARM4 RESULTS TABLE: EMPTY. Nothing ran, so acceptance / P(alpha=0) /
-full-accept / a_iid / tok/s / memory are ABSENT, not estimated.
-
---------------------------------------------------------------------------------
-A7 EVIDENCE (prompt diversity)
---------------------------------------------------------------------------------
-sha256(token_ids), Llama-3.1 tokenizer, 130944 tokens:
-  seed 42 6419eab5362cffb1 | seed 123 dafd7d6ac7331032 | seed 456 b49c2bd6368f8cdc
-3/3 unique, reproducible. ARM4-f1 is a 3-PROMPT replication of Arm2, not
-token-identical. Arms 1-3 were one prompt x three decoding seeds, so their
-"3-seed" CIs understate prompt variance.
-
---------------------------------------------------------------------------------
-A8 CORRECTION (withdrawn claim)
---------------------------------------------------------------------------------
-gpu_peak_mem_mb = max_memory_allocated (ALLOCATED), canary row excluded:
-  Arm2 10029 / 10028 / 10028 MB  -> mean 10028.5
-  Arm3 58432 / 54532 / 54532 MB  -> mean 55831.9
-  ratio = 5.57x   (reserved 11.6 vs 61.6 GB, ~5.3x)
-The earlier "~2x memory" is WITHDRAWN. Throughput halving stands.
-
---------------------------------------------------------------------------------
-vLLM
---------------------------------------------------------------------------------
-NOT RUN (gated). Last recorded outcome (results/mlsys/vllm_baseline.csv):
-both cells unsupported — Llama-2-7b-hf: 'rope_type' kwarg rejection;
-Llama-3.1-8B: "Engine core initialization failed". unit_matched=no.
-The wrapper now captures real tracebacks and has a 3-attempt ladder, but it
-has not been exercised on a GPU since those fixes.
+id            bece058dfee4440cbf31294c441726a0
+region        us-midwest-1
+launched      2026-10-06T04:32:16Z
+terminated    2026-10-06T05:26:14Z   final uptime 0.90h   final cost ~$20.07
+CONFIRMATION  polled until gone: "1 terminating" x4 -> 0 instances at 05:27:49Z
+              0 instances billing. Verified via GET /api/v1/instances.
+NOTE          the orchestrator's "CONFIRMED TERMINATED" fired while the
+              instance still read "terminating", so the driver's post-check
+              1s later saw "1 running" and (correctly) refused to retry. The
+              confirmation step accepts "terminating" as terminal; the
+              independent poll to 0 is what actually confirmed it.
 
 --------------------------------------------------------------------------------
 COST
 --------------------------------------------------------------------------------
-  prelaunch (CPU only) ............... $0.00
-  premature launch, aborted .......... $2.23   (0.10h, never booted)
-  INSTANCE STATE .................... 0 running — CONFIRMED, nothing billing
-Guards armed: NODE_RATE_PER_HOUR=22.32, MAX_COST_USD=450, 20h watchdog,
-per-run staging + rsync --delete, never pull checkpoints/.
+  pre-launch (CPU) .................... $0.00
+  Phase A cell 1 (ARM4-f1 128k) ....... $16.55   (33.4 min)
+  boot + setup + pull + teardown ...... $3.52    (20.4 min)
+  PHASE B (vLLM) ...................... $0.00    (never started)
+  --------------------------------------------------------------------------
+  this session ........................ $20.07
+  cumulative .......................... ~$44.00 of the $450 ceiling
+  Guard never tripped; the sanity stop saved the 256k/512k rungs (~$100+).
+
+--------------------------------------------------------------------------------
+SANITY STOP — TRIPPED (this is the headline)
+--------------------------------------------------------------------------------
+The gate aborted Phase A with rc=6 and refused to spend on 256k/512k. Its
+DECISION was correct. Its ARITHMETIC was wrong, and both facts matter.
+
+  printed by the guard : 0.3697 over 4 rows
+  TRUE spec mean       : 0.2429 over 3 rows
+  Arm2 reference       : 0.8901
+
+CAUSE OF THE WRONG NUMBER: the canary row (run_id f1_128k_canary_s42) inherits
+spec_steps=4 from `defaults`, so the filter admitted it. At 16 new tokens its
+acceptance (0.75) is unrepresentative and pulled the mean up by 0.13. Fixed:
+the filter now excludes "canary" and prints "over N non-canary rows".
+Replayed on the real CSV: 0.2429 over 3 non-canary rows.
+The abort would have fired either way (0.2429 < 0.5), so no money was
+mis-spent — but a gate a human has to trust must not mis-state its own number.
+
+--------------------------------------------------------------------------------
+ARM4 TABLE (cell 1 only)
+--------------------------------------------------------------------------------
+cell            seed  accept  P(a=0)  full-acc  n_rounds  tok/round  peak_alloc
+ARM4_f1_128k     42   0.2540   ~0.27    ~0.02       63       2.03      not logged
+ARM4_f1_128k    123   0.2579   ~0.27    ~0.02       63       2.03      not logged
+ARM4_f1_128k    456   0.2169   ~0.32    ~0.02       68       1.88      not logged
+target-only s42/123/456  accept 0.000  n_rounds 127 each (baseline, as expected)
+a_iid and the A3 GOF are NOT reported for these cells: at ~63 rounds with
+gamma=4 the fit is underpowered (method=insufficient_bins), so no p-value is
+claimed. spec tok/s and target-only tok/s were not captured in this CSV.
+MATCHED-CONTEXT READ: NOT AVAILABLE. Only factor 1 ran; the 1->2->4 ladder and
+the llama3-factor (16/32) rungs have no data. Reported as pending, not omitted.
+
+--------------------------------------------------------------------------------
+THE REAL FINDING: ARM4-f1 IS NOT AN ARM2 REPLICATION
+--------------------------------------------------------------------------------
+ARM4-f1 was intended as the native anchor that replicates Arm2 (both
+Llama-3.1-8B + Llama-3.2-1B draft capped 4k). It does NOT: 0.2429 vs 0.8901.
+The A6 provenance columns show three variables changed at once:
+
+                    ARM2                 ARM4-f1
+  context_length    131072               130944
+  max_new_tokens    64 (unrecorded)      128
+  ignore_eos        no                   YES
+  prompt            OLD seed-INDEPENDENT  NEW A7 seed-dependent
+                    (no sha256 column)   sha256 6419eab5/dafd7d6a/b49c2bd6
+
+So "Arm2 replication at 2x rounds" is not a replication, and the 0.24 vs 0.89
+gap cannot yet be attributed. The rope path is RULED OUT: with rope_factor=1
+the loader returns hf_cfg unchanged, preserving Llama-3.1's native llama3
+block (verified in src/models/rasd_inference.py and by the CPU pre-flight).
+
+Leading hypothesis: max_new_tokens=128 with ignore_eos=True forces the model
+past its natural stopping point into low-confidence territory where draft and
+target disagree. The synthetic repeated-paragraph prompt is highly predictable
+and likely saturates early; 64 forced tokens stay in-distribution, 128 do not.
+n_rounds corroborates a real effect, not a bookkeeping bug: 63 rounds for 128
+tokens = 2.03 tok/round (alpha~0.24), versus 14 rounds for 64 tokens = 4.57
+tok/round (alpha~0.89).
+
+NOT RESOLVED. Do NOT relaunch until this is diagnosed: the same confound would
+invalidate every ARM4 rung, and a 256k/512k run (~$100+) built on it would be
+wasted. Suggested next step is cheap: re-run ARM4-f1 with max_new_tokens=64 and
+ignore_eos=False (one cell, ~$17) to isolate whether round count or the prompt
+change drives the drop.
+
+--------------------------------------------------------------------------------
+vLLM
+--------------------------------------------------------------------------------
+NOT RUN. Phase A aborted before Phase B, so the C1-C5 fairness rules were never
+exercised on a GPU. Last known outcome (from the previous session): both cells
+unsupported — Llama-2-7b-hf 'rope_type' kwarg rejection; Llama-3.1-8B "Engine
+core initialization failed". unit_matched=no for both.
+
+--------------------------------------------------------------------------------
+REGRESSION FOUND AND REPAIRED THIS SESSION
+--------------------------------------------------------------------------------
+The scoped `rsync -a --delete-after` I added for per_token/, logs/ and
+memory_trace/ DELETED 367 COMMITTED FILES — every ARM1/2/3 trace and memory
+trace. The assumption behind it was false: the outbound rsync excludes
+results/mlsys, so the pod only ever holds the CURRENT run's output and has
+never seen the historical artefacts. "Absent from staging" therefore meant
+"from an earlier run", not "stale".
+REPAIRED: all 367 restored from HEAD (working tree re-verified: 0 deletions).
+The scoped --delete is REMOVED from orchestrate.py with that reasoning recorded
+in a comment. Stale-file hygiene is already covered by the per-run staging dir,
+which is rm -rf'd before each pull.
 
 --------------------------------------------------------------------------------
 ADDENDUM ITEMS NOT SATISFIED
 --------------------------------------------------------------------------------
-  A1 A2 A3 A4 (analysis)   B4 (PG-19 4k/8k config)
-  C1-C5 (vLLM fairness)    D1-D3 (report additions)
-Manuscript NOT edited. Proposed replacements in
-docs/manuscript_fixes_pending.md (workshop 236/241/626).
+  ARM4 cells 2-10 (256k/512k spec+target, llama3f16/f32, optional targets)
+  Phase B vLLM ladder C1-C5
+  D3 matched-context read (needs ARM4 data)
+  a_iid + GOF for ARM4 cells (underpowered at the current round count)
+Manuscript NOT edited. Proposed replacements remain in
+docs/manuscript_fixes_pending.md (workshop lines 236, 241, 626).

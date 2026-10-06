@@ -1,16 +1,2 @@
 stage,wall_seconds,nproc,gpu_hours,node_cost_usd
-p0_env,9,8,0.0200,0.06
-p0_transformers,13,8,0.0289,0.08
-p0_ring_binding,15,8,0.0333,0.09
-p0_tokenizer,5,8,0.0111,0.03
-p1_arm1,1378,8,3.0622,8.54
-p1_arm2,1179,8,2.6200,7.31
-p1_arm3,1309,8,2.9089,8.12
-p2_pg19_spec,4140,8,9.2000,25.67
-p2_pg19_1m_target,7417,8,16.4822,45.99
-p2_matrix_traces,5458,8,12.1289,33.84
-p3_bf16_draft,1137,8,2.5267,7.05
-p4_analysis,1,8,0.0022,0.01
-p5_vllm,238,8,0.5289,1.48
-p4_analysis_final,1,8,0.0022,0.01
-report,0,8,0.0000,0.00
+arm4_f1_128k,2669,8,5.9311,16.55
