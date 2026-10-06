@@ -50,6 +50,12 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+# The pass tolerance, FIXED by the 2026-10-06 plan revision ("the gate tolerance
+# is FIXED at 1.5x, not derived"). The earlier rule that derived it from the
+# positive controls' measured spread was withdrawn before any run: three
+# single-context measurements do not estimate the gate's noise, and every
+# available estimator can only loosen the gate. This constant and the plan must
+# agree; the dry run asserts it.
 PPL_TOLERANCE = 1.5          # candidate PPL must be within this x native
 EARLY_EOS_TOKENS = 16        # EOS inside the first N generated tokens = fail
 MAX_BLANK_SHARE = 0.30       # blank-line share of a passing generation
@@ -185,7 +191,16 @@ def _declared_reference(intended: dict, model_name: str, anchor_override=None):
     if anchor is None:
         anchor = intended.get("rope_anchor_base")
     if anchor is None:
-        anchor = native_max
+        # No declared anchor: use the model's SHIPPED
+        # `original_max_position_embeddings`, not `max_position_embeddings`.
+        # Llama-3.1-8B ships original_max_position_embeddings = 8192 while
+        # max_position_embeddings = 131072, so taking the window as the anchor
+        # rebuilt the historical mis-anchoring INSIDE the reference: the
+        # reference then agreed with a wrongly anchored model, and the
+        # assertion passed for exactly the bug it exists to catch.
+        shipped_anchor = (getattr(cfg, "rope_scaling", None) or {}).get(
+            "original_max_position_embeddings")
+        anchor = native_max if shipped_anchor is None else shipped_anchor
     anchor = int(anchor)
 
     # Start from the model's SHIPPED rope dict, not a minimal one. Some rope

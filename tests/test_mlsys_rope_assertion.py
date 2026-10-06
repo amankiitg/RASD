@@ -88,5 +88,36 @@ def test_rope_assertion_rejects_the_context_anchored_build():
     assert refs is not None
 
 
+@pytest.mark.skipif(
+    not (REPO / "configs").exists(), reason="repo layout changed")
+def test_undeclared_anchor_uses_the_shipped_original_max_positions():
+    """With no declared anchor the reference must anchor where the model ships.
+
+    Llama-3.1-8B ships `original_max_position_embeddings = 8192` while
+    `max_position_embeddings = 131072`. Falling back to the window rebuilt the
+    historical mis-anchoring inside the reference, so the reference agreed with
+    a wrongly anchored model and the assertion passed for exactly the bug it
+    exists to catch.
+    """
+    gate = _load_gate()
+    model = "meta-llama/Llama-3.1-8B"
+    undeclared = gate._declared_reference(
+        {"rope_type": "llama3", "rope_factor": 16}, model)
+    at_8192 = gate._declared_reference(
+        {"rope_type": "llama3", "rope_factor": 16, "rope_anchor_base": 8192}, model)
+    at_131072 = gate._declared_reference(
+        {"rope_type": "llama3", "rope_factor": 16, "rope_anchor_base": 131072}, model)
+
+    # If the anchor did not move inv_freq, this test would pass either way.
+    assert float((at_8192 - at_131072).abs().max()) > 1e-6, (
+        "anchoring at 8192 and at 131072 give the same inv_freq, so this test "
+        "cannot distinguish them"
+    )
+    assert float((undeclared - at_8192).abs().max()) < 1e-12, (
+        "an undeclared anchor did not fall back to the shipped 8192"
+    )
+    assert float((undeclared - at_131072).abs().max()) > 1e-6
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
