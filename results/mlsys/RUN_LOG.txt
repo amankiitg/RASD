@@ -353,3 +353,25 @@ SPEND AFTER THIS ATTEMPT: ~$26.62 cumulatively of the $300 ceiling.
 [2026-10-06T00:54:05Z] remote status (final): state=complete step=final rc=0 ts=2026-10-06T00:53:04Z
 [2026-10-06T01:00:33Z] terminate(run-finished): instance 812329c3be7b4faa8b90ef64da2e2ba3, uptime 6.49h, ~$144.75
 [2026-10-06T01:00:47Z] CONFIRMED TERMINATED: status=terminating, uptime=6.49h, cost ~$144.84
+[2026-10-06T01:04:19Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-06T01:04:23Z] launched gpu_8x_a100_80gb_sxm4 id=2583245a7c6846fdb6aef52b1d666b80 region=us-east-1
+[2026-10-06T01:11:49Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-06T01:11:54Z] on-instance self-terminate watchdog armed for 1.5h (independent of the local orchestrator); installed=True
+[2026-10-06T01:13:35Z] remote MLSys run started (detached, verified running)
+[2026-10-06T01:16:38Z] remote status (20261006T011636Z): state=partial step=vllm_no_ok_cells rc=0 ts=2026-10-06T01:15:29Z
+[2026-10-06T01:16:38Z] remote run outcome: partial
+[2026-10-06T01:16:39Z] remote status (final): state=partial step=vllm_no_ok_cells rc=0 ts=2026-10-06T01:15:29Z
+[2026-10-06T01:16:40Z] terminate(run-finished): instance 2583245a7c6846fdb6aef52b1d666b80, uptime 0.20h, ~$4.57
+[2026-10-06T01:16:55Z] CONFIRMED TERMINATED: status=terminating, uptime=0.21h, cost ~$4.67
+[2026-10-06T01:39:51Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-06T01:39:55Z] launched gpu_8x_a100_80gb_sxm4 id=beb405b847a5407fbea973b9d872caaa region=us-east-1
+[2026-10-06T01:45:49Z] terminate(run-finished): instance beb405b847a5407fbea973b9d872caaa, uptime 0.10h, ~$2.19
+[2026-10-06T01:45:55Z] terminate(signal-15): instance beb405b847a5407fbea973b9d872caaa, uptime 0.10h, ~$2.23
