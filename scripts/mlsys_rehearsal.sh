@@ -393,25 +393,70 @@ for b in bad:
 sys.exit(1 if bad else 0)
 PY
 
-# The negative control: a row in the shape the pre-fix code produced for a
-# 128-token baseline -- the PLANNED sequence (prompt + 1 + the rung's 1024)
-# instead of the sequence it actually built.
-"$PY" - "$SANDBOX" "$WORK" <<'PY' && ok "the identity check rejects a planned-sequence row" \
-  || bad "the identity check accepts a row whose sequence is not the sum of its parts"
-import csv, pathlib, subprocess, sys
+# The negative controls. The checker compares three INDEPENDENTLY obtained
+# numbers -- the prompt length, the sidecar's id count, and the engine's measured
+# sequence length -- so each of these fixtures must fail for the right reason:
+# a sidecar is present in every one of them, and the divergence is in the engine's
+# number.
+"$PY" - "$SANDBOX" "$WORK" <<'PY' && ok "the identity check rejects an engine length that disagrees" \
+  || bad "the identity check accepts a row whose three sources disagree"
+import csv, json, pathlib, subprocess, sys
 sandbox, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-p = work / "planned_sequence.csv"
+checker = sandbox / "scripts" / "mlsys_row_identity_check.py"
 fields = ["run_id", "status", "prompt_tokens", "tokens_generated",
           "sequence_tokens", "context_length"]
-with p.open("w", newline="") as fh:
+
+
+def run(case, prompt, gen, seq):
+    d = work / f"identity_{case}"; (d / "tokens").mkdir(parents=True, exist_ok=True)
+    csv_path = d / "stage.csv"
+    with csv_path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields); w.writeheader()
+        w.writerow({"run_id": "r", "status": "ok", "prompt_tokens": prompt,
+                    "tokens_generated": gen, "sequence_tokens": seq,
+                    "context_length": 131072})
+    (d / "tokens" / "r.json").write_text(json.dumps(
+        {"run_id": "r", "generated_token_ids": list(range(gen))}))
+    return subprocess.run([sys.executable, str(checker), "--results",
+                           str(csv_path)], capture_output=True, text=True)
+
+
+# 1. the engine held ONE TOKEN MORE than the prompt, BOS and emitted ids add up
+#    to: the shape a double-counted BOS produces.
+one_long = run("one_long", 131072 - 1024 - 1, 128,
+               131072 - 1024 - 1 + 1 + 128 + 1)
+# 2. the pre-fix runner's shape: the PLANNED sequence (prompt + 1 + the rung's
+#    1024) for a 128-token generation.
+planned = run("planned", 131072 - 1024 - 1, 128, 131072)
+# 3. the CSV's emitted count disagreeing with the sidecar's ids.
+mismatch = run("count_mismatch", 131072 - 1024 - 1, 128,
+               131072 - 1024 - 1 + 1 + 128)
+
+results = {"engine_one_long": one_long, "planned_sequence": planned}
+for name, r in results.items():
+    print(f"  | {name}: rc={r.returncode} {r.stdout.strip().splitlines()[0][:90]}")
+sys.exit(0 if all(r.returncode == 1 for r in results.values()) else 1)
+PY
+
+# The CSV's own count must agree with the ids that were saved.
+"$PY" - "$SANDBOX" "$WORK" <<'PY' && ok "a CSV count that disagrees with the sidecar is rejected" \
+  || bad "a CSV count that disagrees with the sidecar passed"
+import csv, json, pathlib, subprocess, sys
+sandbox, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+d = work / "count_mismatch"; (d / "tokens").mkdir(parents=True, exist_ok=True)
+fields = ["run_id", "status", "prompt_tokens", "tokens_generated",
+          "sequence_tokens"]
+with (d / "stage.csv").open("w", newline="") as fh:
     w = csv.DictWriter(fh, fieldnames=fields); w.writeheader()
-    w.writerow({"run_id": "short_arm", "status": "ok",
-                "prompt_tokens": 131072 - 1024 - 1, "tokens_generated": 128,
-                "sequence_tokens": 131072, "context_length": 131072})
+    w.writerow({"run_id": "r", "status": "ok", "prompt_tokens": 100,
+                "tokens_generated": 64, "sequence_tokens": 165})
+(d / "tokens" / "r.json").write_text(json.dumps(
+    {"run_id": "r", "generated_token_ids": list(range(65))}))
 r = subprocess.run([sys.executable,
                     str(sandbox / "scripts" / "mlsys_row_identity_check.py"),
-                    "--results", str(p)], capture_output=True, text=True)
-print("  | " + r.stdout.strip().splitlines()[0])
+                    "--results", str(d / "stage.csv")],
+                   capture_output=True, text=True)
+print("  | " + r.stdout.strip().splitlines()[1][:100])
 sys.exit(0 if r.returncode == 1 else 1)
 PY
 

@@ -54,6 +54,7 @@ CSV_FIELDS = real.CSV_FIELDS
 # Vocabulary ceiling for the synthetic ids; only has to be a legal token index
 # for the models in the campaign.
 VOCAB = 128256
+BOS_ID = 128000          # Llama-3's <|begin_of_text|>
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +150,60 @@ class _Row(list):
         return list(self)
 
 
+def engine_input_ids(prompt_ids: list[int]) -> list[int]:
+    """The engine's own prompt tensor: the runner's prompt ids WITH the BOS.
+
+    The engine sees `tokenizer(prompt)` (special tokens added) while the runner
+    records `prompt_tokens` from `tokenizer(prompt, add_special_tokens=False)`.
+    The two differ by exactly the BOS, which is why the identity has a `+ 1` in
+    it and why the check can fail.
+    """
+    return [BOS_ID] + list(prompt_ids)
+
+
+def engine_held_sequence(run: dict, prompt_ids: list[int], cap: int,
+                         trace: list[dict], gen_ids: list[int]) -> list[int]:
+    """The final token sequence the stub's engine-side loop holds.
+
+    Mirrors `generated_ids = torch.cat([input_ids] + generated, dim=1)`: the
+    engine's prompt tensor, then whatever the loop appended -- the seed the first
+    round verifies, then each round's accepted prefix and, when the round was not
+    cut short by the budget, its bonus token. Returned as an OBJECT so its length
+    is MEASURED, exactly as the engine measures `int(generated_ids.shape[1])`.
+
+    The sequence is NOT the trace's final `kv_len_after`. The KV covers the
+    positions that have been forwarded, which is one fewer than the tokens
+    emitted: the last emitted token's keys and values are computed by the next
+    forward, and there is no next forward. Taking the KV length as the sequence
+    length is an off-by-one, and the identity check is what caught it.
+    """
+    base = engine_input_ids(prompt_ids)
+    held = list(base)
+    consumed = 0
+    held.append(int(gen_ids[consumed]))                 # the seed
+    consumed += 1
+    if not trace:
+        # TARGET-ONLY: no verify rounds, so the loop is a plain decode -- one
+        # token per step until the cap. Same held object, same measurement.
+        held.extend(int(x) for x in gen_ids[consumed:int(cap)])
+        consumed = int(cap)
+    for p in trace:
+        n_emit = int(p["n_emitted"])
+        held.extend(int(x) for x in gen_ids[consumed:consumed + n_emit])
+        consumed += n_emit
+        if not p["round_truncated"]:
+            held.append(int(gen_ids[consumed]))         # the bonus token
+            consumed += 1
+    emitted = len(held) - len(base)
+    if emitted != int(cap):
+        # The loop and the cap disagree. The measurement is returned as it is:
+        # the identity check reports it, and inventing a value here would hide
+        # exactly the defect the check exists for.
+        print(f"  [stub] WARNING {run['run_id']}: the loop held {emitted} "
+              f"tokens, the cap is {cap}", flush=True)
+    return held
+
+
 def build_trace(run: dict, prompt_tokens: int, cap: int) -> list[dict]:
     k = max(1, int(run.get("spec_steps") or 0))
     plan = round_plan(cap, k)
@@ -216,11 +271,6 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
         "rope_arm": str(run.get("rope_arm", "") or ""),
         "status": "ok", "error": "",
     })
-    # The sequence the engine built: prompt + leading BOS + generated.
-    row["sequence_tokens"] = len(prompt_ids) + 1 + cap
-    row["generated_tokens_sha256"] = hashlib.sha256(
-        ",".join(str(i) for i in gen_ids).encode()).hexdigest()
-
     # Pairing identity from the real helpers, so it cannot drift from what the
     # analysis code expects.
     row["pair_id"] = f"{ctx}:{row['doc_id']}" if row["doc_id"] else ""
@@ -228,6 +278,17 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
 
     trace = build_trace(run, len(prompt_ids), cap) if is_spec else []
     n_rounds = len(trace)
+    # From the engine-side OBJECT, never from the row's arithmetic.
+    held = engine_held_sequence(run, prompt_ids, cap, trace, gen_ids)
+    row["sequence_tokens"] = len(held)
+    # The sidecar is the engine's own slice of the same object:
+    # `generated_ids[0, input_ids.shape[1]:]`, i.e. everything after the
+    # engine's prompt tensor. The checker compares the CSV's count against THIS.
+    emitted_ids = held[len(engine_input_ids(prompt_ids)):]
+    # The hash of the ids the engine emitted -- its own slice of the held object,
+    # so it cannot disagree with the sidecar written from the same list.
+    row["generated_tokens_sha256"] = hashlib.sha256(
+        ",".join(str(i) for i in emitted_ids).encode()).hexdigest()
 
     # A plausible steady state: speculation decodes faster than the target
     # alone, which is the effect the campaign exists to measure.
@@ -266,7 +327,7 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
         real.write_per_token_sidecar(trace, output_csv, run["run_id"])
     if save_tokens:
         real.write_generated_tokens_sidecar(
-            output_csv, run["run_id"], gen_ids,
+            output_csv, run["run_id"], emitted_ids,
             {"doc_id": row["doc_id"], "prompt_tokens": row["prompt_tokens"],
              # The exact ids the engine fed. run_experiment's pg19_document path
              # records these from the document pool, and the vLLM comparison

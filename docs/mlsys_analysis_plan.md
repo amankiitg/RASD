@@ -838,3 +838,39 @@ treated as a success by a check that only knew how to recognise a refusal.
 `correction_note_evidence` now measures 11 candidates rather than 10: its
 projection is **$45** (2.1h), and the approved nine-stage total is **$779**
 against the $850 session ceiling, headroom **$71**.
+
+### Revision: `sequence_tokens` is measured by the engine, not reconstructed (2026-10-06)
+
+*Before any of these stages has run; no data seen.*
+
+The identity every row must satisfy is unchanged:
+
+```
+prompt_tokens + 1 (BOS) + tokens_generated == sequence_tokens
+```
+
+What changes is WHERE the right-hand side comes from. It was written by the
+runner as `prompt_tokens + 1 + tokens_generated` and asserted by the checker as
+the same expression, so the check was a restatement of the row's own arithmetic:
+it could not fail, and it therefore verified nothing. The three numbers are now
+obtained independently:
+
+| number | source |
+|---|---|
+| `prompt_tokens` | the runner, from the prompt's token ids |
+| `tokens_generated` | the run's token SIDECAR (`tokens/<run_id>.json`), cross-checked against the CSV's count |
+| `sequence_tokens` | the ENGINE: `int(generated_ids.shape[1])`, the length of the final sequence tensor the generation loop holds |
+
+The check is therefore a cross-check between the runner's tokenizer, the ids the
+engine emitted, and the engine's own tensor -- including the BOS accounting,
+which is the quantity that has been wrong on this project before. A divergence
+is a real defect: a BOS counted twice, a prompt that is not the prompt the engine
+saw, or a loop that stopped somewhere other than where it reported.
+
+The stub measures the same object: it builds the held sequence by running its
+loop (the seed the first round verifies, then each round's accepted prefix and
+bonus token) and takes its length, and the sidecar is that same object's slice
+after the engine's prompt tensor. A first attempt used the trace's final
+`kv_len_after`, which is ONE LESS than the emitted count -- the last token's keys
+and values are computed by a forward that never happens -- and the identity check
+caught it, which is the evidence that the check now has power.

@@ -1476,8 +1476,15 @@ class RASDInference:
             tokens_gen    = generated_ids.shape[1] - S
             elapsed       = t_end - t_start
 
+            # Same measurement as the speculative path, from the same object and
+            # for the same reason: the identity check compares it against the
+            # prompt length and the sidecar's id count, so it must not be
+            # computed FROM them.
+            sequence_len = int(generated_ids.shape[1])
+
             metrics = {
                 "tokens_generated":  tokens_gen,
+                "sequence_tokens":   sequence_len,
                 "time_sec":          elapsed,
                 "throughput_tps":    tokens_gen / elapsed if elapsed > 0 else 0.0,
                 "acceptance_rate":   0.0,  # no spec decoding
@@ -1804,8 +1811,22 @@ class RASDInference:
         tokens_gen    = generated_ids.shape[1] - S
         elapsed       = t_end - t_start
 
+        # THE SEQUENCE THE ENGINE ACTUALLY HOLDS, measured off the tensor rather
+        # than reconstructed from its parts. `generated_ids` is the final
+        # sequence: the prompt it was given, the leading BOS it prepended, and
+        # every token it emitted. Recording `prompt + 1 + generated` here would
+        # make the row's sequence a RESTATEMENT of the numbers that are supposed
+        # to check it, and the identity check on every stage would then be a
+        # tautology: it could not fail, so it would verify nothing. Read from the
+        # tensor, the identity becomes a real cross-check between three
+        # independently obtained numbers -- the prompt length (from the
+        # tokenizer), the emitted ids (from the sidecar) and this length (from
+        # the engine). Measured on every rank`, identical on every rank.
+        sequence_len = int(generated_ids.shape[1])
+
         metrics = {
             "tokens_generated":  tokens_gen,
+            "sequence_tokens":   sequence_len,
             "time_sec":          elapsed,
             "throughput_tps":    tokens_gen / elapsed if elapsed > 0 else 0.0,
             # == mean over non-truncated rounds of (n_acc / gamma), which is

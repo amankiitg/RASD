@@ -1238,19 +1238,25 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # Decode-only rate. The first token arrives at ttft, so the remaining
         # `tokens_generated - 1` tokens are the post-prefill wall's product;
         # either convention is defensible and both arms use this one.
-        # The ACTUAL sequence the engine built: the prompt it was given, the BOS
-        # generate_text prepends, and the tokens it actually emitted. Recorded
-        # for EVERY arm -- spec, target-full and target-short -- because it is
-        # the same quantity in each, and `mlsys_row_identity_check.py` asserts
-        # prompt_tokens + 1 + tokens_generated == sequence_tokens on every row of
-        # every stage.
-        try:
-            row["sequence_tokens"] = (int(row["prompt_tokens"]) + 1
-                                      + int(metrics["tokens_generated"]))
-        except (KeyError, TypeError, ValueError):       # noqa: BLE001
-            # prompt provenance failed earlier; leave the planned value and let
-            # the identity check fail the stage rather than inventing a number.
-            pass
+        # The sequence the engine actually held, as the ENGINE measured it --
+        # `int(generated_ids.shape[1])`, the length of the final sequence tensor.
+        #
+        # It is deliberately NOT `prompt_tokens + 1 + tokens_generated`. That
+        # expression is the identity the row is supposed to be checked AGAINST,
+        # so writing it here made the check a restatement of the row's own
+        # arithmetic: it could not fail, and it verified nothing. Taken from the
+        # engine, the check compares three independently obtained numbers -- the
+        # prompt length (from the tokenizer), the emitted ids (from the
+        # sidecar) and this one (from the tensor).
+        seq = metrics.get("sequence_tokens")
+        if seq is None:
+            # An engine that does not report it leaves the planned value in
+            # place, which the identity check will reject. Inventing a number
+            # here is what the check exists to prevent.
+            log.warning("engine reported no sequence_tokens for %s; the identity "
+                        "check will fail this row", run["run_id"])
+        else:
+            row["sequence_tokens"] = int(seq)
         row.update({
             "tokens_generated": metrics["tokens_generated"],
             "time_sec":         round(metrics["time_sec"], 4),

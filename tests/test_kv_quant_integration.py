@@ -335,9 +335,12 @@ class TestTargetOnlyBaseline:
         """The metrics dict in the target-only branch must record
         acceptance_rate=0.0 and spec_steps=0 (not cfg.spec_steps,
         though that's also 0). Reviewers will sanity-check these."""
-        # Find the target-only metrics dict
+        # Find the target-only metrics dict. The window is generous on purpose:
+        # it is a fixed character budget, so a comment added anywhere in the
+        # branch used to push the dict out of range and fail this test for a
+        # reason that has nothing to do with what it checks.
         m = re.search(
-            r"if cfg\.spec_steps == 0:[\s\S]{0,2500}metrics\s*=\s*\{([\s\S]{0,1000}?)\}",
+            r"if cfg\.spec_steps == 0:[\s\S]{0,6000}?metrics\s*=\s*\{([\s\S]{0,2000}?)\}",
             RASD_INF_SRC,
         )
         assert m is not None, "Couldn't locate target-only metrics dict"

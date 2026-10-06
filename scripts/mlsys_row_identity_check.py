@@ -3,40 +3,57 @@
 
     prompt_tokens + 1 (leading BOS) + tokens_generated == sequence_tokens
 
-`sequence_tokens` is the number of positions the engine actually built and
-attended over: the prompt the run was given, the BOS `generate_text` prepends,
-and the tokens that were ACTUALLY emitted. It is what makes `context_length` and
-"the rung" mean the same thing across tables, and it is the number a reader
-compares against the native window.
+`sequence_tokens` is the number of positions the engine actually held and
+attended over: the prompt it was given, the BOS `generate_text` prepends, and the
+tokens it emitted. It is what makes `context_length` and "the rung" mean the same
+thing across tables, and it is the number a reader compares against the native
+window.
 
-It has been wrong in two ways on this project, both silent:
+THE THREE NUMBERS MUST COME FROM THREE PLACES
+---------------------------------------------
+An identity is only a check if its two sides are obtained independently. Written
+as `sequence_tokens = prompt_tokens + 1 + tokens_generated` inside the runner,
+and then asserted here as the same expression, it is a tautology: it cannot fail,
+so it verifies nothing. The three sources are therefore:
 
-  * it was recorded from the DOCUMENT PLAN (`len(prompt) + 1 + gen_tokens`),
-    where `gen_tokens` is the rung's generation length. An arm that stops early,
-    or a short arm that generates 128 tokens into the rung's prompt, therefore
-    claimed a sequence length it never produced;
-  * nothing checked it, so a row whose sequence disagreed with its own parts was
-    reported as a normal rung.
+  * `prompt_tokens`     -- recorded by the runner from the prompt's token ids;
+  * `tokens_generated`  -- taken HERE from the run's token SIDECAR
+    (`<results>/tokens/<run_id>.json`), the list of ids the engine emitted, and
+    cross-checked against the CSV's own count;
+  * `sequence_tokens`   -- recorded by the ENGINE, from the length of the final
+    sequence tensor (`int(generated_ids.shape[1])`), before any slicing.
 
-This runs on every stage's CSV, not just the cap smoke, because the identity
-holds for every arm: a target-only row and a speculative row at the same rung
-must agree, and a short baseline must say what it really did.
+A divergence between them is a real defect: a BOS counted twice, a prompt that is
+not the prompt the engine saw, or a generation loop that stopped somewhere other
+than where it reported.
 
-Exit codes: 0 all rows satisfy the identity; 1 at least one row does not, or a
-row is missing the fields needed to check it; 2 the CSV could not be read.
+Exit codes: 0 the identity holds for every checked row; 1 at least one row does
+not, or a row lacks the evidence to be checked; 2 the CSV could not be read.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
 INITIAL_TOKEN = 1          # the leading BOS generate_text adds
 
 
-def check(path: Path) -> tuple[list[str], int]:
+def _sidecar(tokens_dir: Path, run_id: str):
+    p = tokens_dir / f"{run_id}.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
+def check(path: Path, tokens_dir: Path | None = None) -> tuple[list[str], int]:
     rows = list(csv.DictReader(path.open()))
+    tokens_dir = tokens_dir or (path.resolve().parent / "tokens")
     problems: list[str] = []
     checked = 0
     for r in rows:
@@ -48,7 +65,7 @@ def check(path: Path) -> tuple[list[str], int]:
             continue
         try:
             prompt = int(str(r.get("prompt_tokens", "")).strip())
-            gen = int(str(r.get("tokens_generated", "")).strip())
+            gen_csv = int(str(r.get("tokens_generated", "")).strip())
             seq = int(str(r.get("sequence_tokens", "")).strip())
         except (TypeError, ValueError):
             problems.append(
@@ -58,11 +75,31 @@ def check(path: Path) -> tuple[list[str], int]:
                 f"{r.get('sequence_tokens')!r}")
             continue
         checked += 1
+
+        # The emitted count comes from the sidecar, not from the CSV: the CSV
+        # number is one of the things being checked.
+        side = _sidecar(tokens_dir, rid)
+        if side is None:
+            problems.append(
+                f"{rid}: no token sidecar in {tokens_dir}, so the emitted count "
+                f"is not independently available and the identity cannot be "
+                f"checked")
+            continue
+        ids = side.get("generated_token_ids")
+        if ids is None:
+            problems.append(f"{rid}: the sidecar has no generated_token_ids")
+            continue
+        gen = len(ids)
+        if gen != gen_csv:
+            problems.append(
+                f"{rid}: the CSV reports tokens_generated={gen_csv} but the "
+                f"sidecar holds {gen} ids")
+
         want = prompt + INITIAL_TOKEN + gen
         if seq != want:
             problems.append(
-                f"{rid}: sequence_tokens={seq} but prompt {prompt} + "
-                f"{INITIAL_TOKEN} BOS + generated {gen} = {want} "
+                f"{rid}: sequence_tokens={seq} (engine) vs prompt {prompt} + "
+                f"{INITIAL_TOKEN} BOS + {gen} emitted (sidecar) = {want} "
                 f"({seq - want:+d})")
     return problems, checked
 
@@ -70,22 +107,25 @@ def check(path: Path) -> tuple[list[str], int]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True)
+    ap.add_argument("--tokens-dir", default=None,
+                    help="Default: <results dir>/tokens")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
     path = Path(args.results)
     if not path.exists():
         print(f"no CSV at {path}", file=sys.stderr)
         return 2
-    problems, checked = check(path)
+    problems, checked = check(path,
+                              Path(args.tokens_dir) if args.tokens_dir else None)
     if problems:
-        print(f"SEQUENCE IDENTITY FAILED in {path}: {len(problems)} row(s) of "
-              f"{checked} checked")
+        print(f"SEQUENCE IDENTITY FAILED in {path}: {len(problems)} problem(s) "
+              f"among {checked} checked row(s)")
         for p in problems[:20]:
             print(f"  {p}")
         return 1
     if not args.quiet:
         print(f"  sequence identity holds for all {checked} ok row(s) in "
-              f"{path.name}")
+              f"{path.name} (engine length vs prompt + BOS + sidecar ids)")
     return 0
 
 

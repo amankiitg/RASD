@@ -1208,8 +1208,20 @@ if "NF>=4 && $3 ~ /^[0-9]+$/" not in man:
                  "trailer, so every expected count is one too high")
 if "mlsys_row_identity_check.py" not in man:
     fails.append("the sequence identity is not checked on every stage's rows")
-if 'row["sequence_tokens"] = (int(row["prompt_tokens"]) + 1' not in rexp:
-    fails.append("the row does not record the sequence it actually built")
+if 'seq = metrics.get("sequence_tokens")' not in rexp:
+    fails.append("the row does not take the ENGINE's measurement of the "
+                 "sequence length")
+if 'row["sequence_tokens"] = (int(row["prompt_tokens"]) + 1' in rexp:
+    fails.append("the row computes sequence_tokens from the fields the identity "
+                 "check compares it against, which makes the check a tautology")
+engine_src = read("src/models/rasd_inference.py")
+if engine_src.count("sequence_len = int(generated_ids.shape[1])") != 2:
+    fails.append("the engine does not measure the sequence length off the final "
+                 "sequence tensor in both generation paths")
+if "from the sidecar" not in read("scripts/mlsys_row_identity_check.py") \
+        and "no token sidecar" not in read("scripts/mlsys_row_identity_check.py"):
+    fails.append("the identity check does not take the emitted count from the "
+                 "sidecar ids")
 
 # --- 3. the allowlist is consulted before any gate filtering ---------------
 for tag in ("natural rungs", "synthetic rungs"):
