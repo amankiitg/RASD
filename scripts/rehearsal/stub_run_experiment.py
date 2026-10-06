@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import random
 import sys
@@ -45,7 +46,8 @@ import _real_run_experiment as real          # noqa: E402
 # The trace record builder lives with the engine, which is where the record is
 # produced during a real run. Importing it (rather than copying the dict) means
 # a schema change there reaches this stub.
-from src.models.rasd_inference import _build_per_token_record   # noqa: E402
+from src.models.rasd_inference import (                          # noqa: E402
+    _build_per_token_record, _round_commit_plan)
 
 CSV_FIELDS = real.CSV_FIELDS
 
@@ -108,31 +110,31 @@ def _ids_sha(ids: list[int]) -> str:
 # ---------------------------------------------------------------------------
 
 def round_plan(cap: int, k: int) -> list[dict]:
-    """Per-round commitments that account for exactly `cap` generated tokens.
+    """Per-round commitments, produced BY THE ENGINE'S OWN PLANNER.
 
-    `generated` holds ONE token before the verify loop starts (the seed
-    `cur_token`), and an untruncated round commits its `k` accepted drafts plus
-    one bonus token. The budget therefore spends `k + 1` per full round, and any
-    leftover is a final round cut short: it emits `leftover` and gets no bonus.
+    This used to be a local reimplementation of the cap arithmetic, which is
+    exactly the kind of copy a rehearsal must not have: the stub would have been
+    checking its own arithmetic instead of the engine's, and a change to
+    `_round_commit_plan` would have been rehearsed as green.
 
-        1 + sum(n_emitted) + (rounds without truncation) == cap
-
-    Each round's KV then grows by exactly what that round committed, which is
-    what the cap smoke checks against the engine's real bookkeeping. The
-    truncated round carries `n_acc > n_emitted`: the verified-but-uncommitted
-    tail, which is exactly the round the acceptance estimand must exclude.
+    Each round proposes `k` accepted drafts (`n_acc = k`); the real planner says
+    how many of them fit in the remaining budget and whether that cut the round
+    short, and the loop advances by what was committed. The result satisfies
+    `1 + sum(committed) == cap` by construction, with the seed token counted
+    once, because the budget is exhausted exactly.
     """
     if cap < 1:
         return []
-    budget = cap - 1
-    full = budget // (k + 1)
-    leftover = budget - full * (k + 1)
     out: list[dict] = []
-    for _ in range(full):
-        out.append({"n_acc": k, "n_emitted": k, "round_truncated": False})
-    if leftover:
-        out.append({"n_acc": max(k, leftover), "n_emitted": leftover,
-                    "round_truncated": True})
+    generated = 1                      # the seed `cur_token` is emitted first
+    while generated < cap:
+        n_emit, committed, with_bonus, truncated = _round_commit_plan(
+            cap - generated, k, k)
+        out.append({"n_acc": k, "n_emitted": int(n_emit),
+                    "n_committed": int(committed),
+                    "round_truncated": bool(truncated),
+                    "with_bonus": bool(with_bonus)})
+        generated += int(committed)
     return out
 
 
@@ -164,8 +166,7 @@ def build_trace(run: dict, prompt_tokens: int, cap: int) -> list[dict]:
             draft_seq=[_Row(rng.randrange(0, VOCAB) for _ in range(k))],
             accepted=[_Row([True] * n_acc + [False] * (k - n_acc))],
         )
-        committed = (int(p["n_emitted"]) if p["round_truncated"]
-                     else int(p["n_emitted"]) + 1)
+        committed = int(p["n_committed"])
         rec["n_emitted"] = int(p["n_emitted"])
         rec["round_truncated"] = bool(p["round_truncated"])
         rec["n_committed"] = int(committed)
@@ -307,42 +308,6 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
 
 # ---------------------------------------------------------------------------
 
-def _propagate(args, runs: list[dict]) -> None:
-    """Copy the real main's CLI-to-run propagation.
-
-    Kept in step with run_experiment by hand: it is a handful of flags, and a
-    stub that propagated them differently would be rehearsing itself.
-    """
-    if args.log_per_token:
-        for r in runs:
-            r["log_per_token"] = True
-    if args.save_generated_text:
-        for r in runs:
-            r["save_generated_text"] = True
-    if args.save_generated_tokens:
-        for r in runs:
-            r["save_generated_tokens"] = True
-    if args.prompt_source != "synthetic":
-        for r in runs:
-            r["prompt_source"] = args.prompt_source
-            if args.prompt_pg19_meta:
-                r["prompt_pg19_meta"] = args.prompt_pg19_meta
-    if args.memory_trace:
-        for r in runs:
-            r["memory_trace"] = True
-            r.setdefault("memory_trace_dir",
-                         str(pathlib.Path(args.output).parent / "memory_trace"))
-    if args.checkpoint_every > 0:
-        for r in runs:
-            r.setdefault("checkpoint_every", args.checkpoint_every)
-    if args.draft_window_cap is not None:
-        for r in runs:
-            r.setdefault("draft_window_cap", args.draft_window_cap)
-    if args.draft_dtype != "auto":
-        for r in runs:
-            r.setdefault("draft_dtype", args.draft_dtype)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
@@ -384,21 +349,17 @@ def main() -> int:
     cfg = real.load_config(args.config)
     runs = real.build_run_configs(cfg, args.groups, args.debug,
                                   seed_filter=args.seeds)
-    _propagate(args, runs)
+    # The real propagation, not a copy of it: --profile,
+    # prompt-source validation and the RULER setup all live there.
+    real.apply_cli_to_runs(args, runs)
 
     if args.dry_run:
-        # Delegate the plan to the real printer's format: `expected_rows` counts
-        # these lines, so a stub that formatted them differently would make the
-        # row check agree with itself and nothing else.
-        for r in runs:
-            cs = (f"draft={r['draft_model_name'].split('/')[-1]}  "
-                  f"k={r['spec_steps']}  block={r['kv_block_size']}  "
-                  f"prefetch={r['prefetch_depth']}  "
-                  f"target={r['target_model_name'].split('/')[-1]}  "
-                  f"dwindow={r.get('draft_window_cap') or 'native'}  "
-                  f"ddtype={r.get('draft_dtype', 'auto')}")
-            print(f"{r['run_id']:<35}  {r['group']:<5}  {r['seed']:>5}  {cs}")
-        print(f"\n{len(runs)} runs total.")
+        # THE REAL PRINTER, character for character. `expected_rows` in the
+        # manifest counts the run lines of this output; a second printer that
+        # differed by one space in the separator would make the manifest's row
+        # check agree with the stub and with nothing else -- it would pass while
+        # the real run's plan was never examined.
+        print(real.format_dry_run(runs))
         return 0
 
     output_csv = pathlib.Path(args.output)
@@ -407,11 +368,54 @@ def main() -> int:
     real._guard_output_collision(                       # noqa: SLF001
         output_csv, args.stage_id or "unnamed", overwrite=args.overwrite_stage)
 
+    # ---- rehearsal-only fault injection ---------------------------------
+    # Two knobs, read from the environment so the MANIFEST is unchanged: the
+    # failure has to arrive through the same channel a real failure would (a
+    # non-zero exit and an error row), or the rehearsal would be testing its own
+    # shortcut instead of the runner's abort path.
+    #
+    #   MLSYS_REHEARSAL_FAIL_RUN=<substring>   that run is recorded as an error
+    #   MLSYS_REHEARSAL_SLOW_RUN=<substring>   that run's simulated wall exceeds
+    #                                          --timeout-per-run-s, so it times out
+    fail_pat = os.environ.get("MLSYS_REHEARSAL_FAIL_RUN", "")
+    slow_pat = os.environ.get("MLSYS_REHEARSAL_SLOW_RUN", "")
+    wrote = 0
     for run in runs:
+        rid = run["run_id"]
+        if fail_pat and fail_pat in rid:
+            row = {f: "" for f in CSV_FIELDS}
+            row.update({"run_id": rid, "group": run.get("group", ""),
+                        "level_id": run.get("level_id", ""),
+                        "seed": run.get("seed", 42),
+                        "context_length": run.get("context_length", ""),
+                        "spec_steps": run.get("spec_steps", 0),
+                        "max_new_tokens": run.get("max_new_tokens", 0),
+                        "status": "error",
+                        "error": "rehearsal-injected failure"})
+            real.append_csv(output_csv, row)
+            wrote += 1
+            print(f"  stub run {rid}: INJECTED FAILURE")
+            if args.abort_on_failure:
+                print("--abort-on-failure: stopping at the first error row", flush=True)
+                return 1
+            continue
         row = emit_run(run, output_csv, args.log_per_token, args.memory_trace,
                        args.save_generated_text, args.save_generated_tokens)
+        if slow_pat and slow_pat in rid:
+            # Honour --timeout-per-run-s the way the real runner does: a run
+            # whose wall exceeds the budget is a timeout, not a result. The stub
+            # does not actually sleep -- the point is that the timeout PATH is
+            # exercised, not that a CPU stands in for an A100.
+            row["status"] = "error"
+            row["error"] = (f"timeout after {args.timeout_per_run_s}s "
+                            f"(simulated wall {args.timeout_per_run_s + 60}s)")
+            print(f"  stub run {rid}: TIMEOUT at {args.timeout_per_run_s}s")
         real.append_csv(output_csv, row)
-    print(f"stub wrote {len(runs)} rows to {output_csv}")
+        wrote += 1
+        if row["status"] != "ok" and args.abort_on_failure:
+            print("--abort-on-failure: stopping at the first error row", flush=True)
+            return 1
+    print(f"stub wrote {wrote} rows to {output_csv}")
     return 0
 
 

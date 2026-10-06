@@ -115,6 +115,9 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: pathlib.Path):
         "native_baseline": bool(cand.get("native_baseline", False)),
         "role": cand.get("role", ""),
         "expect": cand.get("expect", ""),
+        # Carried through so the CSV says WHICH KIND of reference a row is: the
+        # unscaled 32k/128k rows are OOD references, not in-distribution ones.
+        "reference_role": cand.get("reference_role", ""),
         # The builder's audit trail, as run_candidate records it.
         "config_max_position_embeddings": cand.get("rope_anchor_base") or ctx,
         "config_rope_scaling": json.dumps(

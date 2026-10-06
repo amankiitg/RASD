@@ -764,3 +764,77 @@ rather than across two.
 **Cost.** The two extra rows raise this stage's projection from $33 to $41
 (8 -> 10 measured candidates, 1.5h -> 1.9h), so the approved nine-stage total is
 **$775** against the $850 session ceiling, headroom **$75**.
+
+### Revision: the correction-note ratios are against an unscaled-OOD reference (2026-10-06)
+
+*Before the stage has run; no data seen. Supersedes the labels introduced by the
+previous correction-note revision.*
+
+**What the ratios measure.** Each YaRN candidate is scored against the unscaled
+Llama-2 at the SAME context, so the ratio isolates the effect of the ANCHORING
+CHOICE for a model that is already being shown a context far outside the 4096
+tokens it was trained on. It is *not* a quality comparison against an
+in-distribution model: at 32k and 128k no anchoring choice puts Llama-2 back in
+distribution, so no such comparison exists to make.
+
+**Labels.** The reference rows are therefore named and labelled
+`unscaled_ood_reference`, not `native`:
+
+| row | context | role |
+|---|---|---|
+| `B_llama2_native_4096` | 4096 (the training window) | `in_distribution_reference` |
+| `B_llama2_unscaled_ood_32k` | 32768 | `unscaled_ood_reference` |
+| `B_llama2_unscaled_ood_128k` | 131072 | `unscaled_ood_reference` |
+
+The gate's CSV carries `role`, `reference_role` and `baseline_role`, so every
+ratio row states which kind of reference it was divided by. `native_baseline`
+remains the mechanical flag the baseline lookup uses, and reading it as a claim
+of in-distribution validity is the misreading this revision exists to prevent.
+
+**The in-distribution measurement is reported DESCRIPTIVELY, beside the ratios**
+and never as their denominator. It answers "what does this model's perplexity
+look like where it is valid", and with n = 1 context and n = 1 seed the answer is
+a single number to quote alongside the table, not a baseline.
+
+Consequence for the correction note's wording: the claim it can support is
+"correct anchoring removes most of the perplexity damage *at these
+out-of-distribution lengths*", not "correct anchoring restores quality".
+
+### Revision: a stage's outputs belong to the attempt that wrote them (2026-10-06)
+
+*Before any of these stages has run; no data seen.*
+
+Three contract changes, all of which make "the stage passed" a statement about
+THIS run rather than about the filesystem:
+
+1. **Fresh attempt.** Every stage archives its own outputs (CSV, helper CSVs,
+   partials) into `attempts/<utc>/<stage>/` before it runs, and marks the attempt
+   with a fresh-attempt file. Prerequisite checks — the calibration, the cap
+   smoke, the coherence gate — read the stage's recorded exit code and its
+   attempt marker, never a file that a previous attempt may have left. A
+   prerequisite that was refused or failed is a HARD STOP for its dependents.
+   `attempts/` is excluded from the results pull: it is diagnostic, and a
+   previous attempt's CSV in the delivered corpus would be indistinguishable
+   from this run's.
+
+2. **Row counts.** `expected_rows` counts the planner's RUN lines (the "N runs
+   total." trailer is not a run, and counting it made every expectation one too
+   high), and a plan that yields zero runs is a stage FAILURE, never a reason to
+   skip the row check. A stage is complete only if it wrote exactly the planned
+   number of `status=ok` rows.
+
+3. **The sequence identity, on every stage's rows.** Every row must satisfy
+   `prompt_tokens + 1 (BOS) + tokens_generated == sequence_tokens`, where
+   `sequence_tokens` is the sequence the engine actually built. It is recorded
+   from the metrics, not from the document plan: the plan's value is
+   `prompt + 1 + the rung's generation length`, which is wrong for a 128-token
+   baseline (a shorter generation into the rung's prompt) and for any run that
+   stops early.
+
+A stage's exit code now reaches its caller, so a failure cannot be silently
+treated as a success by a check that only knew how to recognise a refusal.
+
+**Cost (updated).** The in-distribution row is a third reference measurement, so
+`correction_note_evidence` now measures 11 candidates rather than 10: its
+projection is **$45** (2.1h), and the approved nine-stage total is **$779**
+against the $850 session ceiling, headroom **$71**.

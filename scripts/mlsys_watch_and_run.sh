@@ -373,7 +373,7 @@ PULL_FAILED=0
 MERGE_OK=0
 say "pulling results to $STAGE (no --delete anywhere)"
 if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-       --exclude 'checkpoints/' \
+       --exclude 'checkpoints/' --exclude 'attempts/' \
        "$SSH_USER@$IP:~/RASD/results/mlsys/" "$STAGE/" >>"$LOG" 2>&1; then
   # A partial pull merged into results/ is indistinguishable from a complete
   # one. Stop before merging anything.

@@ -365,6 +365,162 @@ grep -q "sha256 MISMATCH" "$MV/b.log" && ok "the mismatch was reported as a sha2
   || bad "the mismatch was not reported as a sha256 mismatch"
 
 # ---------------------------------------------------------------------------
+hdr "14  the row identity holds on every stage's rows"
+# ---------------------------------------------------------------------------
+# The manifest runs this on every stage via check_stage_rows; the rehearsal
+# asserts it independently, and against the shape the PRE-FIX code wrote, so the
+# check is shown to be capable of failing rather than merely present.
+"$PY" - "$OUT" "$SANDBOX" <<'PY' && ok "sequence identity holds on every stage CSV" \
+  || bad "a stage CSV violates the sequence identity"
+import csv, pathlib, subprocess, sys
+out, sandbox = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+checker = sandbox / "scripts" / "mlsys_row_identity_check.py"
+# Only the run_experiment schema has a sequence identity. The gate and vLLM
+# CSVs are different tables with different columns, and demanding this identity
+# of them is a category error, not a check.
+csvs = sorted(p for p in out.glob("*.csv")
+              if p.name != "gpu_hours.csv"
+              and "sequence_tokens" in p.open().readline())
+bad = []
+for c in csvs:
+    r = subprocess.run([sys.executable, str(checker), "--results", str(c)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        bad.append(f"{c.name}: {r.stdout.strip()[:120]}")
+print(f"  | {len(csvs)} stage CSV(s) checked")
+for b in bad:
+    print("  | " + b)
+sys.exit(1 if bad else 0)
+PY
+
+# The negative control: a row in the shape the pre-fix code produced for a
+# 128-token baseline -- the PLANNED sequence (prompt + 1 + the rung's 1024)
+# instead of the sequence it actually built.
+"$PY" - "$SANDBOX" "$WORK" <<'PY' && ok "the identity check rejects a planned-sequence row" \
+  || bad "the identity check accepts a row whose sequence is not the sum of its parts"
+import csv, pathlib, subprocess, sys
+sandbox, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+p = work / "planned_sequence.csv"
+fields = ["run_id", "status", "prompt_tokens", "tokens_generated",
+          "sequence_tokens", "context_length"]
+with p.open("w", newline="") as fh:
+    w = csv.DictWriter(fh, fieldnames=fields); w.writeheader()
+    w.writerow({"run_id": "short_arm", "status": "ok",
+                "prompt_tokens": 131072 - 1024 - 1, "tokens_generated": 128,
+                "sequence_tokens": 131072, "context_length": 131072})
+r = subprocess.run([sys.executable,
+                    str(sandbox / "scripts" / "mlsys_row_identity_check.py"),
+                    "--results", str(p)], capture_output=True, text=True)
+print("  | " + r.stdout.strip().splitlines()[0])
+sys.exit(0 if r.returncode == 1 else 1)
+PY
+
+# ---------------------------------------------------------------------------
+hdr "15  per-attempt freshness: a failed prerequisite stops its dependents"
+# ---------------------------------------------------------------------------
+# Attempt 2 injects a failure into engine_cap_smoke. Everything that depends on
+# it must stop, and nothing may be validated from attempt 1's files -- which are
+# still on disk at this point, so a fallback would be visible.
+B=$WORK/attempt2
+mkdir -p "$B"
+# The run log is APPENDED across attempts, so "did a dependent run?" must read
+# only the lines this attempt added.
+N0=$(wc -l < "$OUT/RUN_LOG.txt" 2>/dev/null | tr -d ' ')
+( cd "$SANDBOX" && \
+  MLSYS_PYTHON="$PY" MLSYS_MAX_COST_USD=850 MLSYS_ASK_OVER_USD=300 \
+  MLSYS_DOCUMENTS_JSON="$DOCS" MLSYS_RAN_DIR="$RAN_DIR" MLSYS_MAX_HOURS=40 \
+  MLSYS_REHEARSAL_FAIL_RUN=CAPS_prefix1024_targetonly \
+  bash scripts/mlsys_manifest.sh ) >"$B/manifest.log" 2>&1
+B_RC=$?
+RUNLOG2=$WORK/attempt2.runlog
+tail -n "+$(( ${N0:-0} + 1 ))" "$OUT/RUN_LOG.txt" > "$RUNLOG2"
+
+[ "$B_RC" != "0" ] && ok "the injected failure made the manifest exit non-zero ($B_RC)" \
+  || bad "the manifest exited 0 despite an injected run failure"
+
+# The failing STAGE is what the reviewer asked to see: a run that fails must
+# fail its stage, not merely appear as a row.
+grep -q "STAGE_FAILED name=engine_cap_smoke" "$RUNLOG2" \
+  && ok "engine_cap_smoke is recorded as FAILED" \
+  || bad "the injected failure is not recorded as a failed stage"
+grep -q "STOP: the cap smoke rc=" "$B/manifest.log" \
+  && ok "the manifest STOPPED at the failed prerequisite" \
+  || bad "the manifest did not stop at the failed prerequisite"
+grep -q "STAGE_OK name=natural_f1_128k" "$RUNLOG2" \
+  && bad "a dependent stage ran on a failed prerequisite" \
+  || ok "no dependent stage ran after the failure"
+
+# And the freshness itself. Attempt 1 wrote four ok rows; attempt 2 wrote three
+# ok rows and then aborted. If the archive did not happen, the live file would
+# still be attempt 1's, or a merge of the two -- which is the failure that looks
+# like a complete stage.
+count_ok() { [ -f "$1" ] && "$PY" -c "
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+print(sum(1 for r in rows if r.get('status') == 'ok'))" "$1" || echo 0; }
+ARCH=$(find "$OUT/attempts" -path '*engine_cap_smoke/engine_cap_smoke.csv' \
+        -print -quit 2>/dev/null)
+if [ -n "$ARCH" ]; then
+  ok "the previous attempt's CSV was archived at ${ARCH#$OUT/}"
+else
+  bad "the previous attempt's CSV was not archived"
+fi
+arch_ok=$(count_ok "$ARCH"); live_ok=$(count_ok "$OUT/engine_cap_smoke.csv")
+if [ "${arch_ok:-0}" = "4" ] && [ "${live_ok:-0}" = "3" ]; then
+  ok "the live file is THIS attempt's (3 ok rows); attempt 1's four are archived"
+else
+  bad "freshness: archived ok-rows=${arch_ok:-?} (want 4), live ok-rows=${live_ok:-?} (want 3)"
+fi
+# The earlier results are still there for the operator: attempt 2 never reached
+# them, so their archive was never taken.
+if [ -s "$OUT/natural_f1_128k.csv" ] && [ -d "$OUT/tokens" ]; then
+  ok "attempt 1's other outputs are untouched by attempt 2"
+else
+  bad "attempt 2 disturbed attempt 1's other outputs"
+fi
+
+# ---------------------------------------------------------------------------
+hdr "16  the vLLM worker's reported ids decide unit_matched"
+# ---------------------------------------------------------------------------
+# Three outcomes, produced by the engine-side path rather than echoed from the
+# sidecar: match, mismatch and unavailable. Only a match may be unit-matched.
+for mode in match mismatch unavailable; do
+  V=$WORK/vllm_$mode; mkdir -p "$V"
+  # The INSTALLED stub, not the repo source: it resolves `_real_vllm_baseline`
+  # from the directory it sits in, which is where the rehearsal put it.
+  if MLSYS_REHEARSAL_VLLM_IDS=$mode "$PY" \
+       "$SANDBOX/scripts/mlsys_vllm_baseline.py" \
+       --out "$V/out.csv" --prompt-ids-from-sidecars "$OUT/tokens" \
+       --documents pg19_train_0 --context-lengths 131072 \
+       --max-new-tokens 1024 --matched-max-new-tokens 1024 \
+       --models meta-llama/Llama-3.1-8B \
+       --target-revisions "meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b" \
+       >"$V/log" 2>&1; then
+    ok "vLLM stub ran in '$mode' mode"
+  else
+    bad "vLLM stub failed in '$mode' mode"; sed 's/^/  | /' "$V/log" | tail -3
+  fi
+  verdict=$("$PY" - "$V/out.csv" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+print(rows[0]["unit_matched"] if rows else "NO_ROWS")
+print(rows[0].get("prompt_ids_verified", "") if rows else "")
+PY
+)
+  unit=$(echo "$verdict" | head -1); verified=$(echo "$verdict" | tail -1)
+  case "$mode" in
+    match)       want_unit=yes ;;
+    mismatch)    want_unit=no ;;
+    unavailable) want_unit=no ;;
+  esac
+  if [ "$unit" = "$want_unit" ]; then
+    ok "ids '$mode' (verified='$verified') -> unit_matched=$unit"
+  else
+    bad "ids '$mode' (verified='$verified') -> unit_matched=$unit, expected $want_unit"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 hdr "rehearsal summary"
 # ---------------------------------------------------------------------------
 printf '  %d passed, %d failed\n' "$PASS" "$FAIL"

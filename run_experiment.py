@@ -553,6 +553,33 @@ def load_completed_runs(csv_path: Path) -> set:
         return {row["run_id"] for row in reader if row.get("status") == "ok"}
 
 
+def format_dry_run(runs: list[dict]) -> str:
+    """The dry-run table, as text. THE authoritative printer.
+
+    `scripts/mlsys_manifest.sh` counts the run lines of this output to decide how
+    many rows a stage must write (`expected_rows`), and the rehearsal stub prints
+    it instead of a copy of it. A second printer that drifted by a character in
+    the separator would make the manifest's row check agree with the stub and
+    with nothing else -- the check would pass while the real run's plan was never
+    looked at.
+    """
+    lines = [f"\n{'RUN ID':<35}  {'GROUP':<5}  {'SEED':>5}  CONFIG", "-" * 80]
+    for r in runs:
+        config_summary = (
+            f"draft={r['draft_model_name'].split('/')[-1]}  "
+            f"k={r['spec_steps']}  "
+            f"block={r['kv_block_size']}  "
+            f"prefetch={r['prefetch_depth']}  "
+            f"target={r['target_model_name'].split('/')[-1]}  "
+            f"dwindow={r.get('draft_window_cap') or 'native'}  "
+            f"ddtype={r.get('draft_dtype', 'auto')}"
+        )
+        lines.append(
+            f"{r['run_id']:<35}  {r['group']:<5}  {r['seed']:>5}  {config_summary}")
+    lines.append(f"\n{len(runs)} runs total.")
+    return "\n".join(lines)
+
+
 def append_csv(csv_path: Path, row: dict):
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not csv_path.exists()
@@ -1087,6 +1114,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         row["target_revision"] = run.get("target_revision") or ""
         row["draft_revision"] = run.get("draft_revision") or ""
         row["prompt_source"] = prompt_source
+        # PLANNED sequence length, from the document pool: prompt + 1 BOS + the
+        # RUNG's generation length. Correct for an arm that generates the rung's
+        # full length; overwritten below with what the engine actually built,
+        # because the two differ by design for the 128-token baselines (a shorter
+        # generation into the same prompt) and differ by accident whenever a run
+        # stops early.
         if doc_prov.get("sequence_tokens") is not None:
             row["sequence_tokens"] = doc_prov["sequence_tokens"]
         row["doc_id"] = run.get("doc_id", "") or ""
@@ -1205,6 +1238,19 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # Decode-only rate. The first token arrives at ttft, so the remaining
         # `tokens_generated - 1` tokens are the post-prefill wall's product;
         # either convention is defensible and both arms use this one.
+        # The ACTUAL sequence the engine built: the prompt it was given, the BOS
+        # generate_text prepends, and the tokens it actually emitted. Recorded
+        # for EVERY arm -- spec, target-full and target-short -- because it is
+        # the same quantity in each, and `mlsys_row_identity_check.py` asserts
+        # prompt_tokens + 1 + tokens_generated == sequence_tokens on every row of
+        # every stage.
+        try:
+            row["sequence_tokens"] = (int(row["prompt_tokens"]) + 1
+                                      + int(metrics["tokens_generated"]))
+        except (KeyError, TypeError, ValueError):       # noqa: BLE001
+            # prompt provenance failed earlier; leave the planned value and let
+            # the identity check fail the stage rather than inventing a number.
+            pass
         row.update({
             "tokens_generated": metrics["tokens_generated"],
             "time_sec":         round(metrics["time_sec"], 4),
@@ -1370,6 +1416,71 @@ def _wait_gpu_idle(pause: float = 5.0):
 # Main
 # ---------------------------------------------------------------------------
 
+def apply_cli_to_runs(args, runs: list[dict]) -> None:
+    """CLI flags -> the run dicts. One function, so nothing can diverge.
+
+    This block used to live inside `main()`, which meant the rehearsal's stub had
+    to carry its own copy of the same logic. A copy of seven propagation rules is
+    a place for the rehearsal and the real run to disagree -- and the whole point
+    of the rehearsal is that they cannot. Both callers now share this, including:
+
+      * `--profile` (the per-run torch profiler wrap),
+      * prompt-source VALIDATION (`pg19` without `--prompt-pg19-meta` is a
+        configuration error, not a silently synthetic prompt),
+      * the RULER sidecar directory setup, which defaults to a path derived from
+        `--output`.
+    """
+    # Propagate the --log-per-token flag onto every run dict so the
+    # subprocess worker picks it up (each run is serialized via --_worker).
+    if args.log_per_token:
+        for r in runs:
+            r["log_per_token"] = True
+    if args.profile:
+        for r in runs:
+            r["profile"] = True
+    if args.save_generated_text:
+        for r in runs:
+            r["save_generated_text"] = True
+    if args.save_generated_tokens:
+        for r in runs:
+            r["save_generated_tokens"] = True
+    if args.prompt_source != "synthetic":
+        if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
+            raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
+        # Default RULER sidecar dir is <output_csv_dir>/ruler/
+        ruler_dir = (args.ruler_sidecar_dir
+                     or str(Path(args.output).resolve().parent / "ruler"))
+        for r in runs:
+            r["prompt_source"] = args.prompt_source
+            if args.prompt_pg19_meta:
+                r["prompt_pg19_meta"] = args.prompt_pg19_meta
+            if args.prompt_source == "ruler_niah":
+                r["ruler_sidecar_dir"] = ruler_dir
+    if args.memory_trace:
+        for r in runs:
+            r["memory_trace"] = True
+            # Default sidecar dir is alongside the output csv:
+            #   <output_csv>/../memory_trace/<run_id>.rank<r>.json
+            r.setdefault(
+                "memory_trace_dir",
+                str(Path(args.output).parent / "memory_trace"),
+            )
+    if args.checkpoint_every > 0:
+        for r in runs:
+            # Per-run override wins; CLI flag is a default for runs that
+            # don't specify their own checkpoint_every in the YAML
+            r.setdefault("checkpoint_every", args.checkpoint_every)
+    # MLSys Phase 1/3 — draft isolation knobs. `setdefault` so a YAML level
+    # can pin its own value (arm configs are one-YAML-per-arm, so both
+    # routes work); the CLI flag acts as the grid-wide default.
+    if args.draft_window_cap is not None:
+        for r in runs:
+            r.setdefault("draft_window_cap", args.draft_window_cap)
+    if args.draft_dtype != "auto":
+        for r in runs:
+            r.setdefault("draft_dtype", args.draft_dtype)
+
+
 def main():
     parser = argparse.ArgumentParser(description="RASD ablation runner")
     parser.add_argument("--config",   default="configs/ablations.yml", help="Path to YAML config")
@@ -1493,74 +1604,13 @@ def main():
 
     cfg        = load_config(args.config)
     all_runs   = build_run_configs(cfg, args.groups, args.debug, seed_filter=args.seeds)
-    # Propagate the --log-per-token flag onto every run dict so the
-    # subprocess worker picks it up (each run is serialized via --_worker).
-    if args.log_per_token:
-        for r in all_runs:
-            r["log_per_token"] = True
-    if args.profile:
-        for r in all_runs:
-            r["profile"] = True
-    if args.save_generated_text:
-        for r in all_runs:
-            r["save_generated_text"] = True
-    if args.save_generated_tokens:
-        for r in all_runs:
-            r["save_generated_tokens"] = True
-    if args.prompt_source != "synthetic":
-        if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
-            raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
-        # Default RULER sidecar dir is <output_csv_dir>/ruler/
-        ruler_dir = (args.ruler_sidecar_dir
-                     or str(Path(args.output).resolve().parent / "ruler"))
-        for r in all_runs:
-            r["prompt_source"] = args.prompt_source
-            if args.prompt_pg19_meta:
-                r["prompt_pg19_meta"] = args.prompt_pg19_meta
-            if args.prompt_source == "ruler_niah":
-                r["ruler_sidecar_dir"] = ruler_dir
-    if args.memory_trace:
-        for r in all_runs:
-            r["memory_trace"] = True
-            # Default sidecar dir is alongside the output csv:
-            #   <output_csv>/../memory_trace/<run_id>.rank<r>.json
-            r.setdefault(
-                "memory_trace_dir",
-                str(Path(args.output).parent / "memory_trace"),
-            )
-    if args.checkpoint_every > 0:
-        for r in all_runs:
-            # Per-run override wins; CLI flag is a default for runs that
-            # don't specify their own checkpoint_every in the YAML
-            r.setdefault("checkpoint_every", args.checkpoint_every)
-    # MLSys Phase 1/3 — draft isolation knobs. `setdefault` so a YAML level
-    # can pin its own value (arm configs are one-YAML-per-arm, so both
-    # routes work); the CLI flag acts as the grid-wide default.
-    if args.draft_window_cap is not None:
-        for r in all_runs:
-            r.setdefault("draft_window_cap", args.draft_window_cap)
-    if args.draft_dtype != "auto":
-        for r in all_runs:
-            r.setdefault("draft_dtype", args.draft_dtype)
+    apply_cli_to_runs(args, all_runs)
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))
 
     if args.dry_run:
-        print(f"\n{'RUN ID':<35}  {'GROUP':<5}  {'SEED':>5}  CONFIG")
-        print("-" * 80)
-        for r in all_runs:
-            config_summary = (
-                f"draft={r['draft_model_name'].split('/')[-1]}  "
-                f"k={r['spec_steps']}  "
-                f"block={r['kv_block_size']}  "
-                f"prefetch={r['prefetch_depth']}  "
-                f"target={r['target_model_name'].split('/')[-1]}  "
-                f"dwindow={r.get('draft_window_cap') or 'native'}  "
-                f"ddtype={r.get('draft_dtype', 'auto')}"
-            )
-            print(f"{r['run_id']:<35}  {r['group']:<5}  {r['seed']:>5}  {config_summary}")
-        print(f"\n{len(all_runs)} runs total.")
+        print(format_dry_run(all_runs))
         return
 
     # ---- Canary run: execute default config before the full grid ----

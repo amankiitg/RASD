@@ -419,7 +419,14 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
            # worked only because `rows` happened to be built from the same dicts.
            "native_baseline": bool(cand.get("native_baseline", False)),
            "role": cand.get("role", ""),
-           "expect": cand.get("expect", "")}
+           "expect": cand.get("expect", ""),
+           # WHAT KIND of reference this row is. `native_baseline` is the
+           # mechanical flag the ratio machinery looks for; it is NOT a claim
+           # that the row is in-distribution. Llama-2 at 32k with its shipped
+           # rope is the unscaled model at 4x its training window, and calling
+           # that "native" invites reading the ratio as quality against an
+           # in-distribution model, which it is not.
+           "reference_role": cand.get("reference_role", "")}
 
     intended = {}
     try:
@@ -514,6 +521,13 @@ def verdict(row: dict, native_ppl: float) -> dict:
 
 
 FIELDS = ["candidate", "target_model_name", "target_revision",
+          # What this candidate is (positive/negative control, baseline,
+          # candidate) and, for a reference row, WHICH KIND of reference it is.
+          "role", "expect", "reference_role",
+          # The role of the baseline this row was actually judged against, so
+          # the CSV says "this ratio is against an unscaled-OOD reference"
+          # rather than leaving a reader to infer it from the row name.
+          "baseline_role",
           "context_length", "reference_context", "seed",
           "rope_type", "rope_factor", "rope_anchor_base",
           "config_max_position_embeddings", "config_rope_scaling",
@@ -636,6 +650,8 @@ def main() -> int:
         b = _baseline_for(r)
         r["native_ppl_reference"] = b["ppl_continuation"] if b else ""
         r["baseline_context"] = b["context_length"] if b else ""
+        r["baseline_role"] = ((b.get("reference_role") or b.get("role") or "")
+                              if b else "")
         # Which reference this candidate declared. A 256k candidate judged
         # against a 128k baseline and one judged against a 256k baseline are
         # different measurements, and the CSV has to say which happened.

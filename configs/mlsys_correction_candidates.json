@@ -14,11 +14,26 @@
     "anchor explains most of the perplexity damage and NOT the degeneration,",
     "which is read off the numbers rather than off a verdict.",
     "",
-    "A DECLARED BASELINE IS REQUIRED. The gate computes each candidate's ratio against a row flagged `native_baseline`, at the candidate's own context; without one it refuses to write any numbers, so these two native rows are part of the evidence rather than decoration. A mis-anchored row with no baseline is not a measurement of damage -- it is a row nobody can interpret."
+    "A DECLARED BASELINE IS REQUIRED. The gate computes each candidate's ratio against a row flagged `native_baseline`, at the candidate's own context; without one it refuses to write any numbers, so these two native rows are part of the evidence rather than decoration. A mis-anchored row with no baseline is not a measurement of damage -- it is a row nobody can interpret.",
+    "",
+    "WHAT THE RATIOS MEASURE. Each candidate is scored against the unscaled model at the SAME context (32k or 128k), so a ratio isolates the effect of the ANCHORING CHOICE for a model that is already being shown an out-of-distribution context. It is not a quality comparison against an in-distribution model, and the unscaled 32k/128k rows are therefore labelled `unscaled_ood_reference`, not `native`. The one in-distribution measurement -- Llama-2 native at 4096 -- is included as `in_distribution_reference` and reported descriptively beside the others."
   ],
   "candidates": [
     {
-      "name": "B_llama2_native_32k",
+      "name": "B_llama2_native_4096",
+      "expect": "pass",
+      "role": "baseline",
+      "native_baseline": true,
+      "reference_role": "in_distribution_reference",
+      "target_model_name": "meta-llama/Llama-2-7b-hf",
+      "rope_type": "none",
+      "context_length": 4096,
+      "seed": 7,
+      "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9",
+      "_what_it_is": "Llama-2-7B at 4096, the length it was trained on, with its shipped rope. This IS the in-distribution reference, and it is here to be reported BESIDE the ratios rather than as their denominator: it answers 'what does this model's perplexity look like where it is valid', which the 32k and 128k denominators cannot answer because no anchoring choice makes the model in-distribution at those lengths."
+    },
+    {
+      "name": "B_llama2_unscaled_ood_32k",
       "expect": "pass",
       "role": "baseline",
       "native_baseline": true,
@@ -27,10 +42,11 @@
       "context_length": 32768,
       "seed": 7,
       "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9",
-      "_what_it_is": "Native Llama-2-7B at 32k: the reference the 32k rows are scored against. WITHOUT a declared baseline the gate refuses the whole stage ('no candidate is flagged native_baseline=true'), so the stage would spend a GPU window and produce no numbers at all."
+      "_what_it_is": "Llama-2-7B with its SHIPPED rope, shown a 32k context: the unscaled model at an out-of-distribution length. This is the denominator for the anchoring ratios and it is NOT a native reference -- 32k is four times the length the model was trained on. Labelling it 'native' would invite reading a ratio against it as quality relative to an in-distribution model, which is not what the number measures.",
+      "reference_role": "unscaled_ood_reference"
     },
     {
-      "name": "B_llama2_native_128k",
+      "name": "B_llama2_unscaled_ood_128k",
       "expect": "pass",
       "role": "baseline",
       "native_baseline": true,
@@ -39,7 +55,8 @@
       "context_length": 131072,
       "seed": 7,
       "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9",
-      "_what_it_is": "Native Llama-2-7B at 128k: the same role at the other context."
+      "_what_it_is": "The same unscaled reference at 128k: 32x the training window. Included so that every mis-anchored / correctly-anchored pair has a denominator measured at its OWN context.",
+      "reference_role": "unscaled_ood_reference"
     },
     {
       "name": "llama2_f32_misanchored_32k",

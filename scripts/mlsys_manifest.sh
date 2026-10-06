@@ -100,6 +100,20 @@ print("")
 PYW
 }
 
+# `depends_on` as a space-separated list. `_manifest_field` prints a Python list
+# for a YAML list, which is unreadable in shell; this reads it properly.
+prereqs_of() {   # $1=stage id -> space separated ids
+  "$PY" - "$MANIFEST" "$1" <<'PYPR'
+import sys, yaml
+m = yaml.safe_load(open(sys.argv[1]))
+for s in m["stages"]:
+    if s["id"] == sys.argv[2]:
+        print(" ".join(s.get("depends_on") or []))
+        raise SystemExit
+print("")
+PYPR
+}
+
 START_EPOCH=$(date -u +%s)
 WATCHDOG_SKIPS=0
 COST_UNKNOWN=0
@@ -219,13 +233,27 @@ print("0")
 PYB
 }
 
-# A helper may run only when its parent is on the allowlist AND actually ran.
+# A helper may run only when its parent is on the allowlist, has the parent's
+# COST approval where one is required, and actually ran.
+#
+# The cost half is the one that is easy to miss. `MLSYS_ONLY_STAGES` is the
+# campaign plan; `MLSYS_APPROVED_STAGES` is the operator's explicit permission
+# to spend more than `MLSYS_ASK_OVER_USD` on a named stage. A helper inherits its
+# parent's approval, which is right -- the operator approved the stage, not its
+# bookkeeping -- but inheriting only the ALLOWLIST would let a helper run as
+# part of a parent that the cost guard was about to refuse, i.e. spend on the
+# unapproved side of the boundary through a side door.
 helper_allowed() {
-  local name=$1 parent
+  local name=$1 parent prc
   parent=$(helper_parent "$name")
   [ -z "$parent" ] && return 0                # not a helper: no opinion
   if [ "$parent" != "*" ]; then
     on_list "$parent" "$ONLY" || return 1     # parent not approved
+    prc=$(est_cost "$parent" 2>/dev/null) || prc=""
+    if [ -n "$prc" ] && awk -v e="$prc" -v a="$ASK_OVER" 'BEGIN{exit !(e > a)}' \
+         && ! approved "$parent"; then
+      return 3                                # parent over the threshold, unapproved
+    fi
     if [ "$(helper_runs_before_parent "$name")" != "1" ]; then
       [ -f "$RAN_DIR/$parent" ] || return 2   # parent refused or never started
     fi
@@ -266,7 +294,29 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
     interim "SKIPPED_VALIDATION name=$name parent=$(helper_parent "$name") reason=parent_did_not_run"
     echo "SKIP $name: parent $(helper_parent "$name") did not run"
     return 9
+  elif [ "$hrc" = "3" ]; then
+    interim "SKIPPED name=$name parent=$(helper_parent "$name") reason=parent_over_threshold_not_cost_approved"
+    echo "SKIP $name: its parent $(helper_parent "$name") projects above"\
+         "\$$ASK_OVER and is not in MLSYS_APPROVED_STAGES"
+    ONLY_SKIPS=$((ONLY_SKIPS + 1))
+    return 9
   fi
+
+  # DEPENDENCIES. A stage whose prerequisite did not succeed in THIS attempt is
+  # refused, before any money is committed. Without this the dependents ran
+  # anyway and were then checked against files from whenever the prerequisite
+  # last worked -- the failure that looks like a normal result.
+  local dep
+  for dep in $(prereqs_of "$name"); do
+    stage_ok "$dep" || {
+      local drc=$?
+      interim "SKIPPED name=$name reason=prerequisite_not_ok prereq=$dep rc=$drc"
+      echo "SKIP $name: prerequisite $dep did not run in this attempt and"\
+           "succeed (rc=$drc)"
+      ONLY_SKIPS=$((ONLY_SKIPS + 1))
+      return 9
+    }
+  done
 
   # The allowlist outranks the cost guard, and is checked first. An EMPTY
   # allowlist approves nothing: "unset" must not be able to mean "run
@@ -348,10 +398,23 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   fi
 
   local t0 t1 wall cost rc
-  # Proof that this stage STARTED, so its helpers can tell "the parent ran" from
-  # "the parent was refused". Written before the command, removed only if the
-  # stage refuses.
-  : > "$RAN_DIR/$name"
+
+  # ---- FRESH ATTEMPT ------------------------------------------------------
+  # A stage's outputs must not outlive the attempt that wrote them. Without this
+  # a re-run that crashed early left the previous attempt's CSV in place, and
+  # everything downstream -- the prerequisite checks, the row count, the helpers
+  # -- validated files from a run that was no longer the current one. The
+  # failure mode is the worst kind: the numbers look complete and are simply not
+  # from this attempt.
+  #
+  # So the files this stage owns are MOVED ASIDE (never deleted: an earlier
+  # attempt is evidence) into attempts/<utc>/<name>/, and the marker written
+  # below is what says "this stage started in the current attempt". Prerequisite
+  # checks read the marker, not the filesystem: a refused or failed prerequisite
+  # is a hard stop, never a reason to fall back on what a previous attempt left.
+  archive_attempt "$name"
+  : > "$RAN_DIR/$name"          # this stage STARTED in this attempt
+  : > "$RAN_DIR/$name.attempt"  # ... and its outputs are from this attempt
   t0=$(date -u +%s)
   echo "=== stage $name (projected \$$est, ${est_h}h; watchdog ${WATCHDOG}h) ==="
   # `if cmd; then rc=0; else rc=$?; fi` — NOT `cmd; rc=$?`, which under
@@ -363,25 +426,90 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   wall=$((t1-t0))
   cost=$(awk -v w="$wall" -v r="$RATE" 'BEGIN{printf "%.2f", w/3600.0*r}')
   echo "$name,$wall,8,$(awk -v w="$wall" 'BEGIN{printf "%.4f", w/3600.0*8}'),$cost" >> "$COST_LOG"
+  # The exit code is recorded on disk as well as returned: a prerequisite check
+  # runs in a different `if`, and reading the code from a file is the only way
+  # it can know whether the stage it depends on actually succeeded in THIS
+  # attempt rather than in a previous one.
+  echo "$rc" > "$RAN_DIR/$name.rc"
   if [ $rc -eq 0 ]; then
     interim "STAGE_OK name=$name wall=${wall}s cost=\$$cost cumulative=\$$(spend)"
   else
     # A stage that exits zero having written nothing usable is not a success:
-    # rc only says the process did not crash. The row check below is what makes
-    # "the stage passed" a statement about the data.
+    # rc only says the process did not crash. The row check at the call site is
+    # what makes "the stage passed" a statement about the data.
     interim "STAGE_FAILED name=$name rc=$rc wall=${wall}s cost=\$$cost"
     STAGE_FAILURES=$((STAGE_FAILURES + 1))
   fi
   echo "--- $name rc=$rc wall=${wall}s cost=\$$cost cumulative=\$$(spend)"
-  return 0        # a failed stage does not abort the ladder
+  # RETURN THE COMMAND'S CODE. Returning 0 unconditionally told every caller
+  # that a failed stage had succeeded, so a caller that only knew how to check
+  # for a refusal (9) went straight on to validate and report a stage that had
+  # just failed. `stage_ok` is the sanctioned way to read this.
+  return $rc
+}
+
+# The only sanctioned way to ask "may I validate and report this stage?".
+#
+#   0  the stage ran in THIS attempt and exited 0 -> validate its outputs
+#   9  refused (allowlist, cost, watchdog, or its parent's approval)
+#   *  it ran and failed: no validation, no reporting, and its dependents stop
+stage_ok() {   # $1=stage name
+  local name=$1 rc
+  [ -f "$RAN_DIR/$name.attempt" ] || return 2   # did not run in this attempt
+  rc=$(cat "$RAN_DIR/$name.rc" 2>/dev/null || echo 1)
+  [ "$rc" = "0" ] && return 0
+  [ "$rc" = "9" ] && return 9
+  return 1
+}
+
+# Move a stage's own outputs aside, so nothing downstream can read a previous
+# attempt's files. Archived, not deleted: an earlier attempt is evidence about
+# what happened, and deleting it would be the one irreversible choice here.
+#
+# `attempts/` lives under the results dir so the operator can find it on the pod,
+# and is EXCLUDED from the results pull (see the watcher): it is diagnostic, not
+# a deliverable, and a previous attempt's CSVs in the delivered corpus would be
+# indistinguishable from this run's.
+archive_attempt() {   # $1=stage name
+  local name=$1 dest stamp f moved=0
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  dest="$OUT/attempts/$stamp/$name"
+  for f in "$OUT/$name.csv" "$OUT/$name".*.csv; do
+    [ -e "$f" ] || continue
+    [ "$moved" = "0" ] && { mkdir -p "$dest"; moved=1; }
+    mv "$f" "$dest/" 2>/dev/null || true
+  done
+  # `<name>.gated.yml` is deliberately NOT touched here. It is DERIVED: the gate
+  # filter OVERWRITES it immediately before the stage runs, in this attempt, and
+  # a filter failure skips the stage outright -- so a stale copy cannot be used,
+  # and moving or deleting it here (both tried) removes the very config the
+  # stage is about to be launched with.
+  # A stage that crashed mid-run leaves no CSV but may leave a partial file with
+  # a different suffix; those are the ones that make a later validation look
+  # plausible, so they move too.
+  for f in "$OUT/$name"*.partial "$OUT/$name"*.tmp; do
+    [ -e "$f" ] || continue
+    [ "$moved" = "0" ] && { mkdir -p "$dest"; moved=1; }
+    mv "$f" "$dest/" 2>/dev/null || true
+  done
+  [ "$moved" = "1" ] && interim "ATTEMPT_ARCHIVED name=$name dest=$dest"
+  return 0
 }
 
 # Does the stage's CSV hold the rows it was supposed to produce, all ok?
 # `--abort-on-failure` makes run_experiment stop at the first error row, but the
 # row count is what says the stage ran to completion.
-check_stage_rows() {   # $1=stage id  $2=csv  $3=expected rows (0 = skip)
+check_stage_rows() {   # $1=stage id  $2=csv  $3=expected rows
   local name=$1 csv=$2 want=$3
-  [ "$want" = "0" ] && return 0
+  # A stage whose planner says it has runs but whose plan counts zero is broken,
+  # not empty. Treating 0 as "skip the check" was the silent path: every
+  # assertion below was skipped and the stage was reported as fine.
+  if [ -z "$want" ] || [ "$want" = "0" ]; then
+    interim "STAGE_INVALID name=$name reason=expected_rows_zero"
+    echo "INVALID $name: the planner reports 0 runs, so the row count cannot be"
+    echo "  checked and the stage cannot be called complete (want='$want')"
+    STAGE_INVALID=$((STAGE_INVALID + 1)); return 1
+  fi
   [ -f "$csv" ] || {
     interim "STAGE_INVALID name=$name reason=no_csv"
     echo "INVALID $name: no CSV at $csv"; return 1; }
@@ -410,6 +538,20 @@ PY
     echo "INVALID $name: non-ok rows: $ok"
     STAGE_INVALID=$((STAGE_INVALID + 1)); return 1
   fi
+  # Every row of every stage must satisfy the sequence identity
+  # prompt_tokens + 1 BOS + tokens_generated == sequence_tokens. It is checked
+  # here rather than in the cap smoke alone because it is what makes
+  # `context_length` mean the same thing in every table: a row whose sequence
+  # is not the sum of its parts is either mislabelled or measured against a
+  # different prompt than the one recorded.
+  local ident
+  ident=$("$PY" scripts/mlsys_row_identity_check.py --results "$csv" 2>&1)
+  if [ $? -ne 0 ]; then
+    interim "STAGE_INVALID name=$name reason=sequence_identity"
+    echo "INVALID $name: the sequence identity does not hold:"
+    printf '%s\n' "$ident" | head -5 | sed 's/^/    /'
+    STAGE_INVALID=$((STAGE_INVALID + 1)); return 1
+  fi
   return 0
 }
 
@@ -430,9 +572,28 @@ per_run_timeout() {   # $1=context length
 # How many rows the stage is supposed to write: ask the planner, do not guess.
 # A planner failure means the count is unknown, which is a refusal (see the
 # fail-closed note on est_cost) rather than a skipped check.
-expected_rows() {   # $1=config  $2=groups
-  "$PY" run_experiment.py --config "$1" --groups $2 --dry-run 2>/dev/null \
-    | awk 'BEGIN{sep=0} /^-{10,}$/{sep=1; next} sep && NF>=3 {n++} END{print n+0}'
+expected_rows() {   # $1=config  $2=groups  -> count on stdout, non-zero rc if 0
+  local n args=(--config "$1")
+  # `--groups ""` is an argparse error ("expected at least one argument"), not
+  # an empty selection, so an empty group list means the flag is omitted.
+  [ -n "$2" ] && args+=(--groups $2)
+  # Count the RUN LINES, not "every line after the separator". The trailer
+  # ("10 runs total.") also has enough fields to look like a row, so the old
+  # `NF>=3` counted the summary as a run and every stage's expected count was one
+  # too high. A run line is `<run id>  <group>  <seed>  <config>`: at least four
+  # fields, with the third being the numeric seed.
+  n=$("$PY" run_experiment.py "${args[@]}" --dry-run 2>"$RAN_DIR/plan.err" \
+      | awk 'BEGIN{sep=0} /^-{10,}$/{sep=1; next}
+             sep && NF>=4 && $3 ~ /^[0-9]+$/ {n++} END{print n+0}')
+  if [ -z "$n" ] || [ "$n" = "0" ]; then
+    # Either the planner failed or the config/groups select nothing. Both mean
+    # the stage's row count is unknowable, and an unknowable count is a failure
+    # of the stage -- never a reason to skip its row check.
+    echo "planner produced 0 rows for $1 --groups '$2'" >&2
+    [ -s "$RAN_DIR/plan.err" ] && tail -3 "$RAN_DIR/plan.err" >&2
+    return 1
+  fi
+  printf '%s' "$n"
 }
 
 gate_pass() {   # $1=candidate name  $2=gate csv (default: the ladder's gate)
@@ -452,6 +613,23 @@ PY
 # Acceptance accounting + document-level intervals + losslessness for a stage's
 # output. Run after every spec stage, on the pod, so a failure is visible before
 # the next stage starts rather than at report time.
+# Validate and report a speculative stage's output. Runs ONLY for a stage that
+# ran in this attempt and exited 0: validating a stage that was refused, or that
+# failed, reports a defect for something that did not happen -- and reads files
+# from whenever the last successful attempt was.
+validate_and_report() {   # $1=stage id  $2=csv  $3=expected rows
+  local name=$1 csv=$2 want=$3 rc
+  stage_ok "$name"; rc=$?
+  if [ "$rc" != "0" ]; then
+    interim "SKIPPED_VALIDATION name=$name reason=stage_not_ok rc=$rc"
+    echo "SKIP validation of $name: it did not run in this attempt and exit 0 (rc=$rc)"
+    return 1
+  fi
+  check_stage_rows "$name" "$csv" "$want" || return 1
+  report_spec_stage "$csv" "$name"
+  return 0
+}
+
 report_spec_stage() {   # $1=stage csv path  $2=stage id
   local csv=$1 name=$2
   stage "${name}_losslessness" 3600 "$PY" scripts/mlsys_losslessness.py \
@@ -491,8 +669,20 @@ stage gate_calibration 14400 "$PY" scripts/mlsys_coherence_gate.py \
   --pg19-meta "$DOCS" \
   --out "$OUT/gate_calibration.csv" --gen-dir "$OUT/gate_calibration_generated"
 
+# The prerequisite is the STAGE, not the file. An earlier attempt's CSV was
+# moved aside before this stage ran, so its absence here means this attempt
+# produced nothing -- but the reason has to be reported correctly, and a refused
+# or failed calibration must stop the ladder rather than be re-checked against
+# whatever was on disk.
+cal_rc=$(cat "$RAN_DIR/gate_calibration.rc" 2>/dev/null || echo 1)
+if [ "$cal_rc" != "0" ]; then
+  interim "ABORT: gate calibration did not succeed in this attempt rc=$cal_rc"
+  echo "ABORT: gate calibration rc=$cal_rc; the gate is uncalibrated and no"
+  echo "  candidate may be gated from it."
+  exit 1
+fi
 if [ ! -s "$OUT/gate_calibration.csv" ]; then
-  interim "ABORT: gate calibration produced no verdicts; the gate is uncalibrated"
+  interim "ABORT: gate calibration exited 0 but wrote no verdicts"
   echo "ABORT: no calibration verdicts"
   exit 1
 fi
@@ -516,13 +706,22 @@ stage engine_cap_smoke 21600 "$PY" run_experiment.py \
   --output "$OUT/engine_cap_smoke.csv" --stage-id engine_cap_smoke \
   --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
   --log-per-token --save-generated-tokens
+cap_rc=$(cat "$RAN_DIR/engine_cap_smoke.rc" 2>/dev/null || echo 1)
+if [ "$cap_rc" != "0" ]; then
+  interim "STOP: engine_cap_smoke did not succeed in this attempt rc=$cap_rc"
+  echo "STOP: the cap smoke rc=$cap_rc; a stage that failed is not a stage whose"
+  echo "  cap arithmetic was verified, whatever is in its output directory."
+  exit 1
+fi
 if [ ! -s "$OUT/engine_cap_smoke.csv" ]; then
   interim "STOP: engine_cap_smoke produced no results; refusing to start speculative stages"
   echo "STOP: cap smoke produced nothing"
   exit 1
 fi
-check_stage_rows engine_cap_smoke "$OUT/engine_cap_smoke.csv" \
-  "$(expected_rows configs/mlsys_engine_cap_smoke.yml "")" || {
+cap_want=$(expected_rows configs/mlsys_engine_cap_smoke.yml "") || {
+  interim "STOP: the cap smoke's plan could not be counted"
+  echo "STOP: the planner produced no rows for the cap smoke"; exit 1; }
+check_stage_rows engine_cap_smoke "$OUT/engine_cap_smoke.csv" "$cap_want" || {
     interim "STOP: engine_cap_smoke wrote invalid rows; refusing to start speculative stages"
     echo "STOP: the cap smoke's own rows are not all ok"
     exit 1; }
@@ -547,6 +746,13 @@ stage coherence_gate 21600 "$PY" scripts/mlsys_coherence_gate.py \
   --pg19-meta "$DOCS" \
   --out "$OUT/coherence_gate.csv" --gen-dir "$OUT/gate_generated"
 
+cg_rc=$(cat "$RAN_DIR/coherence_gate.rc" 2>/dev/null || echo 1)
+if [ "$cg_rc" != "0" ]; then
+  interim "ABORT: the coherence gate did not succeed in this attempt rc=$cg_rc"
+  echo "ABORT: the coherence gate rc=$cg_rc; no >128k stage may run on verdicts"
+  echo "  from an attempt that did not produce them."
+  exit 1
+fi
 if [ ! -s "$OUT/coherence_gate.csv" ]; then
   interim "ABORT: the coherence gate produced no verdicts; refusing to run any >128k stage"
   echo "ABORT: no gate verdicts"
@@ -570,29 +776,29 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
   # --abort-on-failure: stop at the first error row rather than producing a CSV
   # that looks complete. --timeout-per-run-s: the target-only arms at this rung
   # take ~4505 s each, and the default 3600 s would kill every one of them.
+  # The row count is a PREREQUISITE, not an afterthought: an uncountable plan
+  # means the stage cannot be called complete, so it never starts. Previously a
+  # 0 here was passed along and check_stage_rows treated it as "skip the check".
   if [ -n "$grp" ]; then
-    want=$(expected_rows "$cfg" "$grp")
+    want=$(expected_rows "$cfg" "$grp") || {
+      interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
+      echo "INVALID $name: the planner produced 0 rows for groups '$grp'"
+      STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
     stage "$name" 43200 "$PY" run_experiment.py --config "$cfg" --groups $grp \
       --output "$OUT/${name}.csv" --stage-id "$name" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
-    src_rc=$?
   else
-    want=$(expected_rows "$cfg" "")
+    want=$(expected_rows "$cfg" "") || {
+      interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
+      echo "INVALID $name: the planner produced 0 rows"
+      STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
     stage "$name" 43200 "$PY" run_experiment.py --config "$cfg" \
       --output "$OUT/${name}.csv" --stage-id "$name" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
-    src_rc=$?
   fi
-  if [ "$src_rc" = "9" ]; then
-    # Refused. Its validation and reporting are skipped too: checking rows that
-    # were never produced reports a failure for something that did not happen.
-    interim "SKIPPED_VALIDATION name=$name reason=stage_refused"
-    continue
-  fi
-  check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
-  report_spec_stage "$OUT/${name}.csv" "$name"
+  validate_and_report "$name" "$OUT/${name}.csv" "$want"
 done
 
 # ---- S1: implementation validation, vLLM-only against S4's own rows ------
@@ -621,6 +827,17 @@ for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
     interim "SKIPPED name=$name reason=config-missing path=$cfg"
     continue
   fi
+  # ALLOWLIST FIRST. Filtering a config for a stage that may not run is wasted
+  # work, and when the filter then found nothing to keep it recorded
+  # STAGE_INVALID against a stage the operator had simply not approved -- an
+  # invalid for a stage that was never scheduled, which is neither a defect nor
+  # the operator's decision to make. Excluded is excluded, before any work.
+  if ! on_list "$name" "$ONLY"; then
+    interim "SKIPPED name=$name reason=needs_approval (before gate filter)"
+    echo "SKIP $name (not in MLSYS_ONLY_STAGES; no gate filtering done)"
+    ONLY_SKIPS=$((ONLY_SKIPS + 1))
+    continue
+  fi
   # ENFORCE the gate: keep only levels whose rope configuration passed.
   # NO --allow-empty: a gate that clears no candidate is a HARD FAILURE for this
   # stage, not a skip. Skipping was the silent path -- the ladder moved on and
@@ -634,19 +851,17 @@ for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
     STAGE_INVALID=$((STAGE_INVALID + 1))
     continue
   fi
-  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT")
+  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT") || {
+    interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
+    echo "INVALID $name: the gate filtered the rung down to nothing runnable"
+    STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
   stage "$name" "$tmo" "$PY" run_experiment.py --config "$filtered" \
     --groups ${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT \
     --output "$OUT/${name}.csv" --stage-id "$name" \
     --timeout-per-run-s "$(per_run_timeout "$(_manifest_field "$name" rung)")" \
     --abort-on-failure \
     --log-per-token --memory-trace --save-generated-text --save-generated-tokens
-  if [ "$?" = "9" ]; then
-    interim "SKIPPED_VALIDATION name=$name reason=stage_refused"
-    continue
-  fi
-  check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
-  report_spec_stage "$OUT/${name}.csv" "$name"
+  validate_and_report "$name" "$OUT/${name}.csv" "$want"
 done
 
 # ---- S6: synthetic arm, per rung, secondary ------------------------------
@@ -655,6 +870,14 @@ for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
   name=${syn%%:*}; rest=${syn#*:}; prefix=${rest%%:*}; tmo=${rest##*:}
   cfg=configs/mlsys_synthetic_gated.yml
   [ -f "$cfg" ] || { interim "SKIPPED name=$name reason=config-missing"; continue; }
+  # ALLOWLIST FIRST, same reason as the natural rungs: no filtering work, and no
+  # invalid recorded, for a stage that was never approved.
+  if ! on_list "$name" "$ONLY"; then
+    interim "SKIPPED name=$name reason=needs_approval (before gate filter)"
+    echo "SKIP $name (not in MLSYS_ONLY_STAGES; no gate filtering done)"
+    ONLY_SKIPS=$((ONLY_SKIPS + 1))
+    continue
+  fi
   filtered="$OUT/${name}.gated.yml"
   # NO --allow-empty here either: a gate that clears no candidate is a hard
   # failure, not a silent skip. Note synthetic_spec_gated_128k needs no verdict
@@ -666,19 +889,17 @@ for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
     STAGE_INVALID=$((STAGE_INVALID + 1))
     continue
   fi
-  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT")
+  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT") || {
+    interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
+    echo "INVALID $name: the gate filtered the rung down to nothing runnable"
+    STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
   stage "$name" "$tmo" "$PY" run_experiment.py --config "$filtered" \
     --groups ${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT \
     --output "$OUT/${name}.csv" --stage-id "$name" \
     --timeout-per-run-s "$(per_run_timeout "$(_manifest_field "$name" rung)")" \
     --abort-on-failure \
     --log-per-token --memory-trace --save-generated-text --save-generated-tokens
-  if [ "$?" = "9" ]; then
-    interim "SKIPPED_VALIDATION name=$name reason=stage_refused"
-    continue
-  fi
-  check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
-  report_spec_stage "$OUT/${name}.csv" "$name"
+  validate_and_report "$name" "$OUT/${name}.csv" "$want"
 done
 
 # ---- S6b: rope_intervention_128k ----------------------------------------
@@ -743,18 +964,28 @@ if on_list rope_intervention_128k "$ONLY"; then
     echo "  whose coherence is unknown."
   else
 
-  want=$(expected_rows configs/mlsys_rope_intervention_128k.yml "$RI_GROUPS")
+  want=$(expected_rows configs/mlsys_rope_intervention_128k.yml "$RI_GROUPS") || {
+    interim "STAGE_INVALID name=rope_intervention_128k reason=planner_produced_no_rows"
+    echo "INVALID rope_intervention_128k: the planner produced 0 rows for '$RI_GROUPS'"
+    STAGE_INVALID=$((STAGE_INVALID + 1)); want=""; }
+  if [ -n "$want" ]; then
   stage rope_intervention_128k 43200 "$PY" run_experiment.py \
     --config configs/mlsys_rope_intervention_128k.yml \
     --groups $RI_GROUPS \
     --output "$OUT/rope_intervention_128k.csv" --stage-id rope_intervention_128k \
     --timeout-per-run-s 9000 --abort-on-failure \
     --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  # Only a stage that ran in THIS attempt and exited 0 has outputs worth
+  # checking or comparing. A refusal and a failure are both "no result", and
+  # neither may be turned into a comparison against whatever the last attempt
+  # left behind.
+  stage_ok rope_intervention_128k
   ri_rc=$?
-  if [ "$ri_rc" = "9" ]; then
-    interim "SKIPPED_VALIDATION name=rope_intervention_128k reason=stage_refused"
-  elif [ "$ri_rc" = "0" ]; then
-  check_stage_rows rope_intervention_128k "$OUT/rope_intervention_128k.csv" "${want:-0}"
+  if [ "$ri_rc" != "0" ]; then
+    interim "SKIPPED_VALIDATION name=rope_intervention_128k reason=stage_not_ok rc=$ri_rc"
+    echo "SKIP validation/reporting of rope_intervention_128k (rc=$ri_rc)"
+  else
+  check_stage_rows rope_intervention_128k "$OUT/rope_intervention_128k.csv" "$want"
   # Native vs each treated arm, paired by document, difference in alpha_round
   # with the pre-registered 0.05 equivalence margin. An arm whose gate failed
   # has no rows, so its contrast is simply absent -- which is the recorded
@@ -764,6 +995,7 @@ if on_list rope_intervention_128k "$ONLY"; then
     --results "$OUT/rope_intervention_128k.csv" \
     --out "$OUT/rope_intervention_128k_comparison.csv" \
     --metric acceptance_rate --margin 0.05
+  fi
   fi
   fi
 else

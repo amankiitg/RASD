@@ -5,15 +5,29 @@ identity (`prompt_sha256` recomputed from the ids the sidecar supplies), the
 `unit_matched` verdict and the CSV schema all come from the real module, so a
 missing revision pin or a mismatched prompt id is decided by production code.
 
-The one thing simulated honestly: this stub cannot consume the ids through vLLM,
-so it records them as verified after checking them against the sidecar itself --
-which is the same equality the real worker asserts on `prompt_token_ids`.
+The one thing it must NOT do is take the verdict for granted. The real worker
+records the ids vLLM REPORTED consuming -- `outs[0].prompt_token_ids`, a value
+that comes back from the engine -- and the row is unit-matched only when those
+equal the ids supplied. A stub that simply echoed the sidecar would make
+`prompt_ids_verified` a restatement of its own input and the rehearsal would
+pass on a check that can never fail.
+
+So the reported ids come from a SEPARATE code path here, controlled by
+`MLSYS_REHEARSAL_VLLM_IDS`, which the rehearsal uses to exercise all three
+outcomes the real worker can produce:
+
+  match        the engine reported exactly the ids it was given
+  mismatch     the engine reported something else (a dropped final token)
+  unavailable  the engine reported nothing at all
+
+Only the first may be unit-matched.
 """
 from __future__ import annotations
 
 import csv
 import importlib.util
 import json
+import os
 import pathlib
 import random
 import sys
@@ -31,6 +45,27 @@ def _load_real():
 
 
 vb = _load_real()
+
+
+def _reported_ids(given):
+    """The ids the engine "reported", from a path independent of the input.
+
+    `mlsys_vllm_baseline.worker_main` compares vLLM's own
+    `outs[0].prompt_token_ids` against the ids it was handed, so this stands in
+    for that check rather than restating it.
+    """
+    mode = os.environ.get("MLSYS_REHEARSAL_VLLM_IDS", "match")
+    if given is None:
+        return None
+    if mode == "match":
+        return list(given)
+    if mode == "mismatch":
+        # A decode/re-encode round trip is not injective; the realistic failure
+        # is a prompt that differs by a token or two.
+        return list(given[:-1]) + [7]
+    if mode == "unavailable":
+        return None
+    raise SystemExit(f"unknown MLSYS_REHEARSAL_VLLM_IDS={mode!r}")
 
 
 def main() -> int:
@@ -89,6 +124,9 @@ def main() -> int:
                 wall = ttft + (toks - 1) / tps
                 tgt_rev = tmap.get(model) or args.target_revision
                 drf_rev = dmap.get(model) or args.draft_revision
+                given = (list(cell["prompt_ids"])
+                         if cell["prompt_ids"] is not None else None)
+                reported = _reported_ids(given)
                 row = {f: "" for f in vb.CSV_FIELDS}
                 row.update({
                     "model": model, "context_length": ctx,
@@ -103,11 +141,16 @@ def main() -> int:
                     "prompt_ids_from": cell["sidecar"],
                     # The equality the real worker asserts on vLLM's own
                     # prompt_token_ids; here it is the sidecar's own ids.
+                    # What the ENGINE reported consuming, produced
+                    # independently of the ids handed to it. Never echo the
+                    # input: `prompt_ids_verified` would then be a tautology.
                     "prompt_ids_used_sha256": (
-                        vb._ids_sha(cell["prompt_ids"])
-                        if cell["prompt_ids"] else ""),
-                    "prompt_ids_verified": ("yes" if cell["prompt_ids"]
-                                            else "unavailable"),
+                        vb._ids_sha(reported) if reported else ""),
+                    "prompt_ids_verified": (
+                        "" if cell["prompt_ids"] is None
+                        else ("yes" if reported == list(cell["prompt_ids"])
+                              else ("no" if reported is not None
+                                    else "unavailable"))),
                     "target_revision": tgt_rev, "draft_revision": drf_rev,
                     "output_tokens": toks,
                     "end_to_end_wall_s": round(wall, 4),

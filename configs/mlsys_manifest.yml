@@ -263,8 +263,8 @@ stages:
     order: 4
     script: scripts/mlsys_coherence_gate.py
     candidates: configs/mlsys_correction_candidates.json
-    est_hours: 1.9
-    est_cost_usd: 41
+    est_hours: 2.1
+    est_cost_usd: 45
     output: results/mlsys/correction_note_evidence.csv
     why: >
       The correction note claims the anchor explains most of the perplexity

@@ -1042,12 +1042,22 @@ for h in m.get("helpers", []):
 # bookkeeping, and the call sites `continue` on 9.
 if 'SKIPPED_VALIDATION name=$name' not in man:
     fails.append("a refused stage does not skip its validation")
-# Every stage call site whose stage writes artifacts must consult the refusal
-# code: a refused stage that then validates or reports generates a failure for
-# something that never ran.
-for var in ("$src_rc", "$ri_rc", '"$?"'):
-    if f'if [ "{var}" = "9" ]' not in man and f"if [ {var} = \"9\" ]" not in man:
-        fails.append(f"no call site checks {var} for the refusal code 9")
+# Every spec stage's validation must be gated on the stage having RUN and
+# SUCCEEDED in this attempt. The earlier shape only recognised a refusal (exit
+# 9), so a stage that failed -- any other non-zero code -- went straight on to
+# be validated and reported.
+if "validate_and_report() {" not in man:
+    fails.append("there is no validate_and_report() gate for spec stages")
+if man.count("  validate_and_report ") < 3:
+    fails.append("not every spec stage routes its validation through the gate")
+if "stage_ok rope_intervention_128k" not in man:
+    fails.append("the rope-intervention stage is not gated on stage_ok")
+for var in ('"$src_rc" = "9"', '"$ri_rc" = "9"', '"$?" = "9"'):
+    if var in man:
+        fails.append(f"a call site still recognises only the refusal code "
+                     f"({var}), so a failed stage would be validated anyway")
+if 'stage_ok "$name"' not in man:
+    fails.append("stage_ok is not used by the validation gate")
 
 # --- the gate reference policy --------------------------------------------
 for f in ("configs/mlsys_rope_candidates.json", "configs/mlsys_gate_controls.json",
@@ -1131,6 +1141,168 @@ else
   grep '^  FAIL' "$WORK/rehearsal.log" | head -10 | sed 's/^/  | /'
   tail -5 "$WORK/rehearsal.log" | sed 's/^/  | /'
 fi
+
+# --------------------------------------------------------------------------
+step "18  freshness, the row identity and the reference labels"
+# --------------------------------------------------------------------------
+"$PY" - scripts/mlsys_manifest.sh scripts/mlsys_watch_and_run.sh \
+       run_experiment.py <<'PYBLK'
+import json, os, re, sys, yaml
+
+
+def read(path: str) -> str:
+    """Read a file that the fix is supposed to have created.
+
+    A missing file is a FAILURE of this check, not a crash: the point of the
+    step is to say what is not in place, and a traceback says nothing.
+    """
+    try:
+        return open(path).read()
+    except OSError:
+        globals().setdefault("_missing", []).append(path)
+        return ""
+
+
+man = read(sys.argv[1])
+watch = read(sys.argv[2])
+rexp = read(sys.argv[3])
+fails = list(f"{p} does not exist" for p in globals().get("_missing", []))
+
+
+def idx(text: str, needle: str) -> int:
+    """Position, or -1. `str.index` raises, and a check script that crashes on
+    the pre-fix tree reports nothing about what is missing."""
+    return text.find(needle)
+
+# --- 1. a stage's exit code reaches its callers, and freshness is tracked ----
+if "  return $rc" not in man:
+    fails.append("stage() does not return the command's exit code")
+if "stage_ok() {" not in man or ".attempt" not in man:
+    fails.append("there is no stage_ok() gate on the per-attempt marker")
+if "archive_attempt() {" not in man:
+    fails.append("stage outputs are not archived per attempt")
+if "  archive_attempt \"$name\"" not in man:
+    fails.append("stage() does not archive before running")
+i_arch = idx(man, "  archive_attempt \"$name\"")
+i_cmd = idx(man, '  if timeout "$tmo" "$@"; then rc=0; else rc=$?; fi')
+if i_arch != -1 and i_cmd != -1 and i_arch > i_cmd:
+    fails.append("the archive happens AFTER the stage runs, which is too late")
+if "--exclude 'attempts/'" not in watch:
+    fails.append("attempts/ is not excluded from the results pull, so a previous "
+                 "attempt's CSVs would enter the delivered corpus")
+# prerequisites read the recorded code, not just the file
+for st in ("gate_calibration", "engine_cap_smoke", "coherence_gate"):
+    if f'cat "$RAN_DIR/{st}.rc"' not in man:
+        fails.append(f"the {st} prerequisite check does not read its exit code")
+# dependencies
+if "prereqs_of() {" not in man or "prerequisite_not_ok" not in man:
+    fails.append("a stage does not refuse when its prerequisite did not succeed")
+
+# --- 2. row counts ---------------------------------------------------------
+if "reason=planner_produced_no_rows" not in man:
+    fails.append("a planner that produces 0 rows is not a stage failure")
+if '[ "$want" = "0" ] && return 0' in man:
+    fails.append("check_stage_rows still treats an expected 0 as 'skip'")
+if "NF>=4 && $3 ~ /^[0-9]+$/" not in man:
+    fails.append("the run-line counter does not exclude the 'N runs total.' "
+                 "trailer, so every expected count is one too high")
+if "mlsys_row_identity_check.py" not in man:
+    fails.append("the sequence identity is not checked on every stage's rows")
+if 'row["sequence_tokens"] = (int(row["prompt_tokens"]) + 1' not in rexp:
+    fails.append("the row does not record the sequence it actually built")
+
+# --- 3. the allowlist is consulted before any gate filtering ---------------
+for tag in ("natural rungs", "synthetic rungs"):
+    pass
+if man.count("reason=needs_approval (before gate filter)") != 2:
+    fails.append("the gated loops do not check the allowlist before gate_filter, "
+                 "so an excluded stage does filtering work and records an invalid")
+i_gated = idx(man, "for gated in ")
+i_filter = idx(man, "mlsys_gate_filter.py", ) if i_gated == -1 else \
+    idx(man[i_gated:], "mlsys_gate_filter.py")
+i_allow = -1 if i_gated == -1 else idx(man[i_gated:], 'on_list "$name" "$ONLY"')
+if i_gated != -1 and i_filter != -1 and i_allow != -1 and i_allow > i_filter:
+    fails.append("the 512k/synthetic allowlist check comes after the gate filter")
+
+# --- 4. helpers need the parent's cost approval ---------------------------
+if "return 3                                # parent over the threshold" not in man:
+    fails.append("a helper does not require its parent's cost approval")
+if "reason=parent_over_threshold_not_cost_approved" not in man:
+    fails.append("the helper cost refusal is not reported")
+
+# --- 5. reference labels --------------------------------------------------
+gate = read("scripts/mlsys_coherence_gate.py")
+if "FIELDS = [" not in gate:
+    fails.append("the gate script has no FIELDS declaration")
+else:
+    fields = gate.split("FIELDS = [")[1].split("]")[0]
+    for col in ("reference_role", "baseline_role", "role", "expect"):
+        if f'"{col}"' not in fields:
+            fails.append(f"the gate CSV has no {col} column")
+try:
+    corr = json.load(open("configs/mlsys_correction_candidates.json"))
+except OSError:
+    corr = {"candidates": []}
+    fails.append("configs/mlsys_correction_candidates.json is missing")
+names = {c["name"]: c for c in corr["candidates"]}
+for n in ("B_llama2_unscaled_ood_32k", "B_llama2_unscaled_ood_128k"):
+    if n not in names:
+        fails.append(f"{n} is missing: the 32k/128k references must be labelled "
+                     f"as unscaled-OOD references")
+    elif names[n].get("reference_role") != "unscaled_ood_reference":
+        fails.append(f"{n} is not labelled unscaled_ood_reference")
+if "B_llama2_native_4096" not in names:
+    fails.append("the in-distribution reference (Llama-2 native at 4096) is "
+                 "missing")
+elif names["B_llama2_native_4096"].get("reference_role") != \
+        "in_distribution_reference":
+    fails.append("the 4096 row is not labelled in_distribution_reference")
+for stale in ("B_llama2_native_32k", "B_llama2_native_128k"):
+    if stale in names:
+        fails.append(f"{stale} still calls an out-of-distribution reference "
+                     f"'native'")
+plan = read("docs/mlsys_analysis_plan.md")
+if "unscaled_ood_reference" not in plan:
+    fails.append("the plan does not state the reference labels")
+
+# --- 6. the stub shares the real code paths -------------------------------
+stub = read("scripts/rehearsal/stub_run_experiment.py")
+if "_round_commit_plan" not in stub:
+    fails.append("the stub does not build traces through the engine's planner")
+if "real.format_dry_run" not in stub:
+    fails.append("the stub prints its own dry-run table instead of the real one")
+if "real.apply_cli_to_runs" not in stub:
+    fails.append("the stub carries its own copy of the CLI propagation")
+if "def _propagate" in stub:
+    fails.append("the stub still has its own propagation copy")
+if "--abort-on-failure" in stub and "abort_on_failure" not in stub:
+    fails.append("the stub ignores --abort-on-failure")
+if "MLSYS_REHEARSAL_FAIL_RUN" not in stub:
+    fails.append("the stub cannot inject a failing run, so the abort path is "
+                 "never exercised")
+vstub = read("scripts/rehearsal/stub_vllm_baseline.py")
+if "MLSYS_REHEARSAL_VLLM_IDS" not in vstub:
+    fails.append("the vLLM stub cannot produce a mismatched or unavailable id "
+                 "report, so unit_matched is never exercised")
+
+# --- 7. the rehearsal keeps the cases that prove the above ---------------
+reh = read("scripts/mlsys_rehearsal.sh")
+for want, why in (
+        ("per-attempt freshness", "the freshness case is missing"),
+        ("the vLLM worker's reported ids", "the vLLM id cases are missing"),
+        ("the row identity holds on every stage's rows",
+         "the row-identity case is missing"),
+        ("MLSYS_REHEARSAL_FAIL_RUN=", "no injected-failure case"),
+):
+    if want not in reh:
+        fails.append(why)
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYBLK
+  [ $? -eq 0 ] && ok "stage freshness, strict row counts, reference labels and the shared stub paths are all in place" \
+               || bad "the second Codex round's contracts are not in place"
 
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
