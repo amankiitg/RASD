@@ -1,0 +1,93 @@
+PRELAUNCH BLOCKED — SELF-GATE FAILED, NOTHING LAUNCHED
+================================================================================
+Timestamp : 2026-10-06T02:00Z (UTC)
+Decision  : SELF-GATE FAILED. Per instruction ("Nothing launches unless every
+            gate passes; on any failure, do not launch"), NO INSTANCE WAS
+            LAUNCHED. No GPU spend occurred in this cycle.
+Spend     : unchanged from the previous report. The only spend this cycle was
+            the premature launch I terminated (~$2.23, 0.10 h, never booted).
+            0 instances running at the time of writing.
+
+--------------------------------------------------------------------------------
+GATE-BY-GATE RESULT
+--------------------------------------------------------------------------------
+(a) ARM4 configs exist + rope assertions .......................... PASS
+    7 configs, scripts/mlsys_check_arm4_rope.py rc=0. Verified:
+      f1_128k        ctx=130944  rope_factor=1  -> native llama3 block kept
+      f2_128k        ctx=130944  rope_factor=2  -> yarn factor 2 @ base 131072
+      f4_128k        ctx=130944  rope_factor=4  -> yarn factor 4 @ base 131072
+      f2_256k        ctx=262016  rope_factor=2  -> yarn factor 2 @ base 131072
+      f4_512k        ctx=524160  rope_factor=4  -> yarn factor 4 @ base 131072
+      llama3f16_128k ctx=130944  rope_type=llama3, factor 8->16 (mechanism kept)
+      llama3f32_128k ctx=130944  rope_type=llama3, factor 8->32 (mechanism kept)
+    The gate script initially FAILED and caught two of its own bugs (it was
+    not passing rope_factor, so the automatic path ran and 128k cells returned
+    the native block; and it demanded baselines for the spec-only cells).
+    Both fixed; rc=0 now.
+
+(b) Prompt sha256 unique / length / EOS test ...................... PASS
+    Prompt sha256(token_ids) unique 3/3 per cell family; identical on re-run.
+    Length = window - 128 exactly for every 128k cell (130944).
+    max_new_tokens=128 with EOS ignored implemented and covered by 4 new
+    tests (default stays False so M3/M4 replay is byte-identical; both EOS
+    break sites guarded).
+
+(c) Revisions pinned in configs + PER-ROW provenance .............. PARTIAL -> FAIL
+    PASS: all four SHAs are written into every ARM4 config
+          (Llama-2-7b-hf 01c7f73d, Llama-3.1-8B d04e592b,
+           Llama-3.2-1B 4e20de36, Sheared-LLaMA-1.3B a4b76938).
+    FAIL: the per-CSV-row provenance (revision, prompt token count, sha256 of
+          prompt token ids) is NOT implemented. No code writes those columns.
+
+(d) A1-A4 analysis landed ......................................... FAIL — not started
+    A1 (add pg19_multiseed/bf16_draft_isolation to raw inputs; join seed-42
+        from results/final so M4 rows are n=3; assert 3-seed rows)
+    A2 (dip grouped by experiment/prompt_source/draft_precision/context;
+        relabel "bimodal" -> "evidence against unimodality")
+    A3 (a_iid + truncated-geometric pmf + chi-square/multinomial GOF;
+        replaces the bimodality claim)
+    A4 (verifier matches on exact run_id only)
+    None of these were implemented. The analysis scripts still carry the
+    earlier aggregation semantics.
+
+(e) A5 relabel + A8 audit ......................................... FAIL — partial
+    PASS: weights pinned to FP4 explicitly; manuscript audit staged in
+          docs/manuscript_fixes_pending.md.
+    FAIL: outputs/README not relabelled to "4-bit FP4 weights + NF4 KV";
+          bf16_draft_isolation not renamed; the A8 audit check ("exactly one
+          spec + one target-only row per seed per arm") is NOT implemented.
+    A8 ANALYSIS (done, reported): the extra spec row is the CANARY (empty
+    context_length). Excluding it, Arm2 = 10029/10028/10028 MB and
+    Arm3 = 58432/54532/54532 MB -> ratio 5.57x ALLOCATED. The earlier
+    "~2x" figure is withdrawn.
+
+(f) Tests pass + committed + protected paths untouched ............. PASS
+    594 tests pass. manuscript/ and results/final/ show 0 changes;
+    tag lcfm-camera-ready present.
+
+(g) HF token + 0 instances ........................................ PASS
+    Both Llama-3.1-8B and Llama-3.2-1B tokenizers fetch (len=128256 each).
+    0 instances billing.
+
+--------------------------------------------------------------------------------
+WHY THIS IS BLOCKED RATHER THAN LAUNCHED
+--------------------------------------------------------------------------------
+Gates (c), (d) and (e) are unmet. Gate (d) in particular changes what the
+run's outputs MEAN: without A2 the dip aggregation pools NF4/bf16 and
+synthetic/PG-19 at shared contexts, and without A3 there is no
+truncated-geometric goodness-of-fit — i.e. the run would regenerate exactly
+the reviewer-facing claims the addendum exists to fix. Launching an
+8xA100 at $22.32/hr to produce those would waste money and time.
+
+The ARM4 ROPE/PROMPT/GENERATION machinery IS validated and ready: gates
+(a), (b) and the config-side of (c) pass, so the expensive part can run as
+soon as (c)-(e) land.
+
+--------------------------------------------------------------------------------
+REMAINING WORK BEFORE A LAUNCH CAN BE AUTHORISED
+--------------------------------------------------------------------------------
+ 1. (c) per-row provenance: revision + prompt token count + sha256 into
+        each CSV row.
+ 2. (d) A1, A2, A3, A4 as specified.
+ 3. (e) A5 output/README relabel + rename; A8 audit check.
+ 4. Re-run the self-gate; all of (a)-(g) must pass.

@@ -36,15 +36,21 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-# (config file, context, expected factor, expected rope_type)
+# (config file, expected context, expected factor, rope_type, expectation)
+# expectation: "native" = shipped block preserved; "yarn" = yarn over base;
+#              "llama3" = Meta's own dict with only factor overridden
 LADDER = [
-    ("configs/mlsys_arm4_llama3_yarn_128k.yml", 131072, 1, "none"),
-    ("configs/mlsys_arm4_llama3_yarn_256k.yml", 262144, 2, "yarn"),
-    ("configs/mlsys_arm4_llama3_yarn_512k.yml", 524288, 4, "yarn"),
+    ("configs/mlsys_arm4_f1_128k.yml",       130944, 1,  "yarn",   "native"),
+    ("configs/mlsys_arm4_f2_128k.yml",       130944, 2,  "yarn",   "yarn"),
+    ("configs/mlsys_arm4_f4_128k.yml",       130944, 4,  "yarn",   "yarn"),
+    ("configs/mlsys_arm4_f2_256k.yml",       262016, 2,  "yarn",   "yarn"),
+    ("configs/mlsys_arm4_f4_512k.yml",       524160, 4,  "yarn",   "yarn"),
+    ("configs/mlsys_arm4_llama3f16_128k.yml", 130944, 16, "llama3", "llama3"),
+    ("configs/mlsys_arm4_llama3f32_128k.yml", 130944, 32, "llama3", "llama3"),
 ]
 NATIVE_WINDOW = 131072      # Llama-3.1-8B max_position_embeddings
 EXPECTED_DRAFT_CAP = 4096
-EXPECTED_MAX_NEW = 128
+EXPECTED_MAX_NEW = 128      # B3: exactly this many tokens, EOS ignored
 
 
 def header(msg: str) -> None:
@@ -82,7 +88,7 @@ def main() -> int:
     engine = object.__new__(RASDInference)
     all_ok = True
 
-    for cfg_path, ctx, want_factor, want_type in LADDER:
+    for cfg_path, ctx, want_factor, want_type, expect in LADDER:
         header(f"{cfg_path}  (ctx={ctx})")
         p = REPO / cfg_path
         if not p.exists():
@@ -106,8 +112,10 @@ def main() -> int:
         # had failed.
         rung_ok = True
 
+        level_ids = sorted({r["level_id"] for r in spec})
+        base_id = level_ids[0] if level_ids else ""
         # (1) shape
-        want_ids = [f"ARM4_llama3_yarn_{ctx // 1024}k_s{s}" for s in (42, 123, 456)]
+        want_ids = [f"{base_id}_s{s}" for s in (42, 123, 456)]
         # Compare as SETS: `sorted()` is lexical, so the seed suffixes come
         # out as _s123, _s42, _s456 and an order-sensitive compare would
         # reject a perfectly good config.
@@ -116,11 +124,14 @@ def main() -> int:
             rung_ok = False
         else:
             print("  [PASS] run_ids and 3 seeds match the expected pattern")
-        if not tgt:
-            print("  [FAIL] no matched spec_steps=0 target-only baseline")
+        declares_baseline = "ARM4_TARGET_ONLY" in cfg
+        if declares_baseline and not tgt:
+            print("  [FAIL] config declares ARM4_TARGET_ONLY but no rows")
             rung_ok = False
-        else:
+        elif tgt:
             print(f"  [PASS] matched target-only baseline present ({len(tgt)} run(s))")
+        else:
+            print("  [OK] spec-only cell (baseline optional per addendum)")
         if {r["context_length"] for r in runs} != {ctx}:
             print(f"  [FAIL] context mismatch (want {ctx})")
             rung_ok = False
@@ -145,12 +156,13 @@ def main() -> int:
         hf = engine._build_hf_config(
             args.target, None, ctx, "target",
             apply_rope_scaling=True, rope_type=want_type,
+            rope_factor=want_factor,
         )
         rs = getattr(hf, "rope_scaling", None)
         print(f"  applied rope_scaling : {rs}")
         print(f"  applied max_pos      : {hf.max_position_embeddings}")
 
-        if want_type == "none":
+        if expect == "native":
             if rs != native_rope:
                 print("  [FAIL] rope_type='none' modified the model's native "
                       "rope block — the 128k rung would not replicate Arm2")
@@ -158,6 +170,15 @@ def main() -> int:
             else:
                 print(f"  [PASS] factor 1: native block untouched "
                       f"(= Arm2, in-distribution anchor)")
+        elif expect == "llama3":
+            if not isinstance(rs, dict) or rs.get("rope_type") != "llama3":
+                print(f"  [FAIL] expected Meta's llama3 dict, got {rs}")
+                rung_ok = False
+            elif rs.get("factor") != float(want_factor):
+                print(f"  [FAIL] llama3 factor {rs.get('factor')} != {want_factor}")
+                rung_ok = False
+            else:
+                print(f"  [PASS] llama3 mechanism kept, factor == {want_factor}")
         elif not isinstance(rs, dict) or rs.get("type") != "yarn":
             # No `continue` here: it would skip the accumulator below and
             # let a broken rung still report an overall PASS.
@@ -177,11 +198,14 @@ def main() -> int:
                 rung_ok = False
             else:
                 print(f"  [PASS] base == {native_max} (model-native, not 4096)")
-            if hf.max_position_embeddings != ctx:
-                print(f"  [FAIL] max_position_embeddings not raised to {ctx}")
+            # The window must COVER the prompt (B2). For the matched-context
+            # cells ctx = native - 128, so the window correctly stays at the
+            # native 131072 rather than being lowered to ctx.
+            if hf.max_position_embeddings < ctx:
+                print(f"  [FAIL] window {hf.max_position_embeddings} < ctx {ctx}")
                 rung_ok = False
             else:
-                print(f"  [PASS] max_position_embeddings raised to {ctx}")
+                print(f"  [PASS] window {hf.max_position_embeddings} covers ctx {ctx}")
 
         all_ok &= rung_ok
 

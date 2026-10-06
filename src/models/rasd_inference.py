@@ -132,6 +132,13 @@ class RASDConfig:
 
     # Generation
     max_new_tokens: int = 256
+
+    # MLSys B3 — generate EXACTLY max_new_tokens, ignoring EOS.
+    # ARM4 sets this so every cell produces the same number of rounds and
+    # throughput ratios are comparable within the ladder. Acceptance is a
+    # per-round quantity and is unaffected. Default False -> M3/M4 replay
+    # behaviour (stop at EOS) is byte-identical.
+    ignore_eos: bool = False
     dtype: str = "bfloat16"             # "float16" | "bfloat16"
 
     # Context length — used to decide RoPE scaling at model load.
@@ -570,10 +577,26 @@ class RASDInference:
                     label, f, native_max,
                 )
                 return hf_cfg
-            hf_cfg.rope_scaling = _build_rope_scaling_dict(
-                rope_type if rope_type not in ("none",) else "yarn",
-                f, native_max,
-            )
+            if rope_type == "llama3":
+                # Robustness rung: stay INSIDE Meta's own mechanism and vary
+                # only the factor, so a change here cannot be attributed to
+                # swapping the rope implementation. Copy the model's shipped
+                # llama3 dict and override only `factor`.
+                base = getattr(hf_cfg, "rope_scaling", None)
+                if not isinstance(base, dict) or base.get("rope_type") != "llama3":
+                    raise ValueError(
+                        f"rope_type='llama3' requested for {model_name} but its "
+                        f"shipped rope_scaling is {base!r}; this rung requires a "
+                        f"model that ships a llama3 rope block."
+                    )
+                d = dict(base)
+                d["factor"] = f
+                hf_cfg.rope_scaling = d
+            else:
+                hf_cfg.rope_scaling = _build_rope_scaling_dict(
+                    rope_type if rope_type not in ("none",) else "yarn",
+                    f, native_max,
+                )
             # target_length may stay <= native_max; the window is what the
             # scaled frequencies are valid for, so raise it to at least the
             # scaled span for bookkeeping.
@@ -1257,7 +1280,7 @@ class RASDInference:
 
                 _nvtx_pop()  # close autoregressive_step_NNN
 
-                if (cur_token == self.tokenizer.eos_token_id).all():
+                if (not cfg.ignore_eos) and (cur_token == self.tokenizer.eos_token_id).all():
                     break
 
             # Skip the spec-decoding loop entirely.
@@ -1523,8 +1546,8 @@ class RASDInference:
 
             _nvtx_pop()  # close verify_round_NNN NVTX range
 
-            # Early stop on EOS
-            if (cur_token == self.tokenizer.eos_token_id).all():
+            # Early stop on EOS (suppressed when B3 ignore_eos is set)
+            if (not cfg.ignore_eos) and (cur_token == self.tokenizer.eos_token_id).all():
                 break
 
         # ---- Finalize ----

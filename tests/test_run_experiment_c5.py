@@ -708,3 +708,42 @@ class TestRulerScorer:
         (tmp_path / "TEST_r4.ruler_niah.json").write_text(json.dumps(needle_meta))
         result = mod.score_one(tmp_path / "TEST_r4.ruler_niah.json")
         assert result["found"] == -1
+
+
+class TestIgnoreEosB3:
+    """MLSys B3 — ARM4 generates EXACTLY max_new_tokens, EOS ignored.
+
+    Without this every ARM4 cell would stop at a different round, and the
+    spec-vs-target throughput ratios inside the ladder would not be
+    comparable. Acceptance is per-round and unaffected either way.
+    """
+
+    def test_ignore_eos_defaults_off(self):
+        """Default must stay False so M3/M4 replay is byte-identical."""
+        import inspect
+        from src.models.rasd_inference import RASDConfig
+        assert inspect.signature(RASDConfig).parameters["ignore_eos"].default is False
+
+    def test_run_experiment_propagates_ignore_eos(self):
+        import re
+        src = (REPO_ROOT / "run_experiment.py").read_text()
+        assert re.search(r'ignore_eos\s*=\s*bool\(run\.get\("ignore_eos",\s*False\)\)', src), \
+            "ignore_eos not propagated from the run dict into RASDConfig"
+
+    def test_both_eos_break_sites_are_guarded(self):
+        """There are two EOS early-stops (target-only and spec paths); B3
+        must suppress BOTH or one mode still truncates."""
+        src = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
+        guarded = src.count("not cfg.ignore_eos")
+        assert guarded == 2, f"expected 2 guarded EOS breaks, found {guarded}"
+
+    def test_every_arm4_config_sets_ignore_eos_and_128(self):
+        import glob
+        import yaml
+        files = (glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_f*.yml"))
+                 + glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_llama3*.yml")))
+        assert files, "no ARM4 configs found"
+        for f in files:
+            d = yaml.safe_load(Path(f).read_text())["defaults"]
+            assert d.get("max_new_tokens") == 128, f"{f}: max_new_tokens != 128"
+            assert d.get("ignore_eos") is True, f"{f}: ignore_eos not set"

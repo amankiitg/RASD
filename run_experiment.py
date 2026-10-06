@@ -554,6 +554,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # MLSys B1 — explicit extrapolation factor (None = automatic).
             rope_factor       = (float(run["rope_factor"])
                                  if run.get("rope_factor") is not None else None),
+            # MLSys B3 — exact-length generation (EOS ignored).
+            ignore_eos        = bool(run.get("ignore_eos", False)),
             # C11 NF4 KV-cache. Default False -> M3 byte-identical.
             # Phase C P3.5 final matrix uses kv_quant=true at all contexts.
             kv_quant          = bool(run.get("kv_quant", False)),
