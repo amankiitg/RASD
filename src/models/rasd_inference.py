@@ -231,6 +231,13 @@ class RASDConfig:
     # (acceptance rate vs token position).
     log_per_token: bool = False
 
+    # MLSys analysis-plan — return the raw generated token IDs in the metrics
+    # dict so the caller can persist them. Losslessness is a token-level claim
+    # and decoded text is not injective, so the IDs must survive the run.
+    # Default off: keeps M3/M4 replay byte-identical, and the metrics dict is
+    # logged to wandb, which cannot take a non-scalar.
+    save_generated_tokens: bool = False
+
     # M4 C6 — generation checkpoint/resume.
     # checkpoint_every == 0 disables (M3 byte-identical default).
     # When > 0, save verify-loop state every N rounds to
@@ -1438,6 +1445,14 @@ class RASDInference:
                 metrics["per_token_trace"] = (
                     per_token_trace if self._rank == 0 else None
                 )
+            if cfg.save_generated_tokens and self._rank == 0:
+                # Raw generated token IDs for the losslessness check. Sliced by
+                # the LOCAL prompt width: under sequence-parallel sharding
+                # `input_ids` is this rank's shard while `generated` is the
+                # replicated output, so slicing by the global prompt length
+                # would cut the wrong place.
+                metrics["generated_token_ids"] = generated_ids[
+                    0, input_ids.shape[1]:].tolist()
             if mem_tracer is not None:
                 mem_tracer.snapshot("end", n_rounds=n_rounds)
                 sidecar_path = mem_tracer.write()
@@ -1717,6 +1732,11 @@ class RASDInference:
             metrics["per_token_trace"] = (
                 per_token_trace if self._rank == 0 else None
             )
+        if cfg.save_generated_tokens and self._rank == 0:
+            # Raw generated token IDs for the losslessness check. Sliced by the
+            # LOCAL prompt width (see the target-only path for why).
+            metrics["generated_token_ids"] = generated_ids[
+                0, input_ids.shape[1]:].tolist()
 
         if mem_tracer is not None:
             mem_tracer.snapshot("end", n_rounds=n_rounds)

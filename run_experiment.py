@@ -124,6 +124,17 @@ CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     # cannot be checked against an old CSV later.
     "target_revision", "draft_revision",
     "prompt_tokens", "prompt_sha256",
+    # MLSys analysis-plan fields. Appended for the same --resume alignment
+    # reason as above. `doc_id` names the PG-19 book a row belongs to, which
+    # the plan makes the unit of independence; the decoding contract is
+    # recorded because losslessness is only defined under greedy +
+    # ignore_eos, and a row from a different contract must not be compared
+    # against one from this one.
+    "prompt_source", "doc_id", "temperature", "top_p", "ignore_eos",
+    "generated_tokens_sha256",
+    # Target quality beside acceptance (plan 4.3). Blank when not measured,
+    # which is distinguishable from a measured zero.
+    "target_ppl", "ppl_tokens",
 ]
 
 
@@ -156,6 +167,155 @@ def write_per_token_sidecar(
         for record in trace:
             f.write(json.dumps(record) + "\n")
     return path
+
+
+def _generated_tokens_dir(output_csv: str | Path) -> Path:
+    return Path(output_csv).resolve().parent / "tokens"
+
+
+def write_generated_tokens_sidecar(
+    output_csv: str | Path, run_id: str, token_ids: list[int] | None,
+    provenance: dict | None = None,
+) -> Path | None:
+    """Write the raw generated token IDs for a run.
+
+    Losslessness is a token-level claim, so the token IDs must survive the run.
+    Only decoded text was saved before, and text is not injective: a decode then
+    re-encode need not round-trip, so a text comparison could neither prove nor
+    disprove token-level agreement.
+
+    One JSON file per run, including the provenance needed to pair it with its
+    counterpart (prompt hash, context, generation length, decoding contract).
+    The pairing fields are duplicated here rather than looked up from the CSV so
+    that a sidecar is self-describing and cannot be silently paired with the
+    wrong row after a CSV is regenerated.
+    """
+    if token_ids is None:
+        return None
+    path = _generated_tokens_dir(output_csv) / f"{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"run_id": run_id, "generated_token_ids": [int(t) for t in token_ids]}
+    payload.update(provenance or {})
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def _build_pg19_document_prompt(documents_json: str, context_length: int,
+                                doc_id: str, tokenizer, gen_tokens: int = 1024):
+    """Build one rung's prompt from a single PG-19 book.
+
+    Returns `(prompt_text, continuation_ids, provenance)`.
+
+    The document is one book, not an offset into a concatenated stream, so the
+    plan's unit of independence is real. Windows, from one contiguous span:
+
+        prompt        [0, C - gen_tokens - 1)
+        continuation  [C - gen_tokens - 1, C - 1)
+
+    The `- 1` is the engine's leading BOS: `generate_text` calls the tokenizer
+    without `add_special_tokens=False`, so the model sees one token more than
+    the prompt ids counted here. Without it the sequence would be C + 1, one
+    position past the native 128k window, which is exactly the kind of silent
+    off-by-one that turns a rung into an extrapolation measurement.
+
+    The continuation is what the runs generate into and what perplexity is
+    scored on. It has to be contiguous with the prompt: a continuation placed
+    after a generation-length gap would need a forward of more than C, which at
+    native 128k would again measure extrapolation rather than the rung.
+    """
+    import numpy as np
+    meta = json.loads(Path(documents_json).read_text())
+    docs = {d["doc_id"]: d for d in meta["documents"]}
+    if doc_id not in docs:
+        raise ValueError(
+            f"{documents_json}: unknown doc_id {doc_id!r}; "
+            f"available: {sorted(docs)[:5]}..."
+        )
+    d = docs[doc_id]
+    prompt_len = context_length - gen_tokens - 1
+    if prompt_len < 1:
+        raise ValueError(
+            f"context {context_length} leaves no room for a prompt after "
+            f"{gen_tokens} generated tokens and the leading BOS"
+        )
+    if d["length"] < context_length:
+        raise RuntimeError(
+            f"{doc_id}: {d['length']} tokens, need {context_length} for "
+            f"context {context_length} (prompt {prompt_len} + continuation "
+            f"{gen_tokens})"
+        )
+    arr = np.memmap(d["file"], dtype="int32", mode="r")
+    pids = arr[:prompt_len].astype(int).tolist()
+    cont = arr[prompt_len:prompt_len + gen_tokens].astype(int).tolist()
+    text = tokenizer.decode(pids)
+    got = tokenizer.encode(text, add_special_tokens=False)
+    provenance = {
+        "doc_id": doc_id,
+        "doc_title": d.get("title"),
+        "doc_url": d.get("url"),
+        "prompt_tokens": len(got),
+        "prompt_sha256": hashlib.sha256(
+            ",".join(map(str, got)).encode()).hexdigest(),
+        "continuation_sha256": hashlib.sha256(
+            ",".join(map(str, cont)).encode()).hexdigest(),
+    }
+    if len(got) != prompt_len:
+        # The engine takes a prompt STRING and re-tokenises it, so the tokens
+        # that reach the model are `got`, not the `prompt_len` we sliced. A
+        # silent difference would put the continuation at the wrong offset and
+        # make the losslessness pairing unsound.
+        log.warning(
+            "document prompt round-trip %s: requested %d tokens, engine will "
+            "see %d (delta %+d)", doc_id, prompt_len, len(got),
+            len(got) - prompt_len,
+        )
+    return text, cont, provenance
+
+
+def _measure_target_ppl(engine, prompt: str, continuation_ids: list[int],
+                        world_size: int, local_rank: int):
+    """Perplexity of the target on a held-out continuation after the prompt.
+
+    Returns `(ppl, scored_tokens)` on every rank (the all-reduce is inside), so
+    the caller does not have to reason about which rank holds the total.
+
+    The sequence is encoded exactly as `generate_text` encodes it, i.e. with the
+    tokenizer's default special tokens, so the count that reaches the model here
+    is the same one the generation used. Scoring only the continuation means the
+    prompt contributes context without contributing loss.
+    """
+    import torch
+    import torch.distributed as dist
+    from src.analysis.target_quality import continuation_nll, perplexity_from_sums
+
+    model = engine.target_model
+    prompt_ids = engine.tokenizer(prompt)["input_ids"]
+    ids = torch.tensor([list(prompt_ids) + list(continuation_ids)],
+                       dtype=torch.long, device=model.device)
+    n_total = int(ids.shape[1])
+    if world_size > 1 and n_total % world_size != 0:
+        raise RuntimeError(
+            f"target-quality sequence {n_total} is not divisible by "
+            f"world_size {world_size}; shard bounds would not match the "
+            f"engine's contiguous layout"
+        )
+
+    def _forward(local_ids, abs_pos):
+        return model.model(
+            input_ids=local_ids, position_ids=abs_pos, use_cache=False,
+            past_key_values=None,
+        ).last_hidden_state
+
+    total, n, _ = continuation_nll(
+        model, ids, score_from=len(prompt_ids), forward=_forward,
+        rank=local_rank, world_size=world_size,
+    )
+    if world_size > 1:
+        buf = torch.tensor([total, float(n)], dtype=torch.float64,
+                           device=model.device)
+        dist.all_reduce(buf, op=dist.ReduceOp.SUM)
+        total, n = float(buf[0]), int(buf[1])
+    return perplexity_from_sums(total, n), n
 
 
 def _profiler_sidecar_path(output_csv: str | Path, run_id: str) -> Path:
@@ -221,6 +381,12 @@ def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
     for group_id in ablation_keys:
         group = cfg[group_id]
         for level in group["levels"]:
+            # MLSys analysis plan: the document is the unit of independence, so
+            # a level may name a list of documents and expand into one run per
+            # document. Seeds are NOT an expansion axis for these runs — greedy
+            # decoding makes a seed change a no-op — but the suffix is kept so
+            # run ids stay unique and sortable against the older rows.
+            documents = level.get("documents")
             for seed in seeds:
                 run = deepcopy(defaults)
                 run.update({k: v for k, v in level.items() if k not in ("notes",)})
@@ -228,8 +394,15 @@ def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
                 run["group"]    = group_id
                 run["level_id"] = level["id"]
                 run["debug"]    = debug
-                run["run_id"]   = f"{level['id']}_s{seed}"
-                runs.append(run)
+                if documents:
+                    for doc_id in documents:
+                        r = deepcopy(run)
+                        r["doc_id"] = doc_id
+                        r["run_id"] = f"{level['id']}_{doc_id}_s{seed}"
+                        runs.append(r)
+                else:
+                    run["run_id"] = f"{level['id']}_s{seed}"
+                    runs.append(run)
 
     return runs
 
@@ -704,6 +877,9 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C13 per-position trace (M4 Phase A2). Default off so M3
             # replay is byte-identical when --log-per-token is unset.
             log_per_token     = bool(run.get("log_per_token", False)),
+            # MLSys analysis plan (a) — return raw generated token IDs so the
+            # losslessness check can compare token streams, not decoded text.
+            save_generated_tokens = bool(run.get("save_generated_tokens", False)),
             # C6 generation checkpoint/resume (Phase C blocker #2 from
             # 2026-05-10 third-pass review). Default 0 -> disabled.
             # 1M cells set checkpoint_every>=1 to recover from crashes
@@ -718,15 +894,37 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             run_id            = run["run_id"],
         )
         engine = RASDInference(cfg)
-        prompt = build_prompt(
-            int(run.get("context_length", 65536)),
-            engine.tokenizer,
-            source=run.get("prompt_source", "synthetic"),
-            pg19_meta=run.get("prompt_pg19_meta"),
-            seed=int(run.get("seed", 42)),
-            ruler_sidecar_dir=run.get("ruler_sidecar_dir"),
-            run_id=run["run_id"],
-        )
+        prompt_source = run.get("prompt_source", "synthetic")
+        continuation_ids: list[int] = []
+        doc_prov: dict = {}
+        if prompt_source == "pg19_document":
+            doc_json = run.get("prompt_documents_json")
+            if not doc_json:
+                raise ValueError(
+                    "prompt_source='pg19_document' requires prompt_documents_json"
+                )
+            doc_id = run.get("doc_id")
+            if not doc_id:
+                raise ValueError(
+                    "prompt_source='pg19_document' requires doc_id"
+                )
+            prompt, continuation_ids, doc_prov = _build_pg19_document_prompt(
+                doc_json,
+                int(run.get("context_length", 65536)),
+                doc_id,
+                engine.tokenizer,
+                gen_tokens=int(run.get("max_new_tokens", 1024)),
+            )
+        else:
+            prompt = build_prompt(
+                int(run.get("context_length", 65536)),
+                engine.tokenizer,
+                source=prompt_source,
+                pg19_meta=run.get("prompt_pg19_meta"),
+                seed=int(run.get("seed", 42)),
+                ruler_sidecar_dir=run.get("ruler_sidecar_dir"),
+                run_id=run["run_id"],
+            )
 
         # MLSys A6 — per-row prompt provenance. Record the exact prompt
         # token count and a content hash so a result can be tied to the
@@ -743,6 +941,21 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             log.warning("prompt provenance failed: %r", _e)
         row["target_revision"] = run.get("target_revision") or ""
         row["draft_revision"] = run.get("draft_revision") or ""
+        row["prompt_source"] = prompt_source
+        row["doc_id"] = run.get("doc_id", "") or ""
+        row["temperature"] = run.get("temperature", 1.0)
+        row["top_p"] = run.get("top_p", 1.0)
+        row["ignore_eos"] = bool(run.get("ignore_eos", False))
+        if doc_prov:
+            # The pool builder hashed the same token IDs this row just hashed.
+            # If they disagree the row is not the document it claims to be, and
+            # pairing it with its target-only counterpart would be unsound.
+            if doc_prov["prompt_sha256"] != row["prompt_sha256"]:
+                log.warning(
+                    "document prompt hash mismatch for %s: pool=%s engine=%s",
+                    doc_prov["doc_id"], doc_prov["prompt_sha256"],
+                    row["prompt_sha256"],
+                )
 
         # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
         # run["profile"] = True (set from --profile CLI flag below).
@@ -781,9 +994,25 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # wandb logging — it's a list-of-dicts, not a wandb-loggable
         # scalar. Only rank 0 receives a non-None trace (others get
         # None per RASDInference.generate's rank-0 guard).
+        gen_ids = metrics.pop("generated_token_ids", None)
         trace = metrics.pop("per_token_trace", None)
         prof_summary = metrics.pop("_profiler_summary", None)
         if local_rank == 0:
+            tok_sidecar = write_generated_tokens_sidecar(
+                output_csv, run["run_id"], gen_ids, {
+                    **doc_prov,
+                    "prompt_tokens": row.get("prompt_tokens"),
+                    "prompt_sha256": row.get("prompt_sha256"),
+                    "context_length": run.get("context_length"),
+                    "max_new_tokens": run.get("max_new_tokens"),
+                    "spec_steps": run.get("spec_steps"),
+                    "temperature": run.get("temperature", 1.0),
+                    "top_p": run.get("top_p", 1.0),
+                    "ignore_eos": bool(run.get("ignore_eos", False)),
+                })
+            if tok_sidecar is not None:
+                log.info("Wrote generated token ids: %s (%d tokens)",
+                         tok_sidecar, len(gen_ids))
             sidecar = write_per_token_sidecar(trace, output_csv, run["run_id"])
             if sidecar is not None:
                 log.info("Wrote per-position trace: %s (%d records)",
@@ -797,6 +1026,28 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                          prof_summary["comm_us"]    / 1000,
                          prof_summary["idle_us"]    / 1000)
 
+        # Target quality beside acceptance (plan 4.3). Measured after the
+        # generation so a quality number always ships with its acceptance
+        # number; an acceptance figure alone cannot distinguish a healthy
+        # target from a broken one.
+        if run.get("measure_target_ppl") and continuation_ids:
+            try:
+                ppl, n_ppl = _measure_target_ppl(
+                    engine, prompt, continuation_ids, world_size, local_rank,
+                )
+                row["target_ppl"] = round(ppl, 6)
+                row["ppl_tokens"] = n_ppl
+            except Exception as _pe:  # noqa: BLE001
+                # A failed quality measurement must not discard an otherwise
+                # good generation, but it must be visible rather than blank.
+                row["target_ppl"] = ""
+                row["ppl_tokens"] = ""
+                row["error"] = f"target_ppl failed: {type(_pe).__name__}: {_pe}"
+                log.warning("target_ppl failed: %r", _pe)
+        row["generated_tokens_sha256"] = (
+            hashlib.sha256(",".join(str(i) for i in gen_ids).encode()).hexdigest()
+            if gen_ids else ""
+        )
         row.update({
             "tokens_generated": metrics["tokens_generated"],
             "time_sec":         round(metrics["time_sec"], 4),

@@ -182,12 +182,14 @@ class TestIntegrationPoints:
     def test_sidecar_written_only_on_rank_zero(self):
         """Only rank 0 should write the sidecar file; otherwise we'd
         get 8x duplicate writes per run."""
-        assert re.search(
-            r"if local_rank == 0:[\s\S]{0,200}write_per_token_sidecar\(",
-            RUN_EXP_SRC,
-        ), (
+        from tests.source_guard_utils import calls_under_rank0_guard
+        assert calls_under_rank0_guard(RUN_EXP_SRC, "write_per_token_sidecar"), (
             "C5 regression: write_per_token_sidecar not gated by "
             "`if local_rank == 0:` — would duplicate writes 8x"
+        )
+        # The generated-token sidecar is subject to the same rule.
+        assert calls_under_rank0_guard(RUN_EXP_SRC, "write_generated_tokens_sidecar"), (
+            "losslessness sidecar not gated by `if local_rank == 0:`"
         )
 
 
@@ -245,10 +247,8 @@ class TestProfileFlag:
 
     def test_profiler_sidecar_written_only_on_rank_zero(self):
         """Profiler sidecar gated by `if local_rank == 0:` like per-token trace."""
-        assert re.search(
-            r"if local_rank == 0:[\s\S]{0,400}write_profiler_sidecar\(",
-            RUN_EXP_SRC,
-        ), (
+        from tests.source_guard_utils import calls_under_rank0_guard
+        assert calls_under_rank0_guard(RUN_EXP_SRC, "write_profiler_sidecar"), (
             "C7 regression: write_profiler_sidecar not gated by rank-0"
         )
 
@@ -475,11 +475,17 @@ class TestPromptSource:
         """The worker (_run_single_worker) must read prompt_source from
         the run dict and pass it to build_prompt — the missing link
         between CLI flag and the actual prompt content."""
+        # The flag must reach build_prompt. The worker now reads it into a
+        # local first (a second source, pg19_document, is served by a different
+        # builder), so assert the two links rather than their adjacency.
+        assert re.search(r"run\.get\([\"\']prompt_source[\"\']", RUN_EXP_SRC), (
+            "p35d wiring gap: worker never reads run['prompt_source']"
+        )
         assert re.search(
-            r"build_prompt\([\s\S]{0,400}source=run\.get\([\"\']prompt_source[\"\']",
+            r"build_prompt\([\s\S]{0,600}source=prompt_source",
             RUN_EXP_SRC,
         ), (
-            "p35d wiring gap: worker doesn't pass run['prompt_source'] "
+            "p35d wiring gap: worker doesn't pass the prompt source "
             "into build_prompt(); CLI flag has no effect on actual run."
         )
 

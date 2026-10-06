@@ -63,37 +63,56 @@ CONTINUATION_TOKENS = 1024   # scored continuation after the full-length prompt
 # --------------------------------------------------------------------------
 
 def load_pg19_window(meta_path: str, context_length: int, seed: int):
-    """Return (prompt_ids, continuation_ids) from held-out PG-19.
+    """Return (prompt_ids, continuation_ids) from held-out natural text.
 
-    Deterministic per seed: the chunk and the offset inside it are both drawn
-    from `seed`, so three seeds are three different documents, not one text
-    decoded three times. Prompt and continuation are contiguous slices of the
-    same chunk so the continuation is a genuine held-out continuation OF the
-    prompt, which is what makes it a coherence test rather than a raw-text
-    perplexity.
+    Deterministic per seed: the document and the offset inside it are both drawn
+    from `seed`.
 
-    The chunk must be long enough for prompt + continuation; if none is, the
-    caller's own context is too long for the staged data and we fail loudly
-    rather than silently evaluating on a shorter prompt.
+    Budget. The two consumers of this window are a teacher-forced perplexity over
+    prompt + continuation and a generation of GENERATE_TOKENS after the prompt.
+    Both must fit inside `context_length`, so the prompt is
+    `context_length - max(CONTINUATION_TOKENS, GENERATE_TOKENS)` and the
+    continuation fills the rest. An earlier version used a full-length prompt
+    plus a continuation on top, i.e. `context_length + 1024` positions. For a
+    candidate whose window *is* `context_length` that measures extrapolation:
+    the native positive control at 128k would have been scored 1024 positions
+    past its own window, which would flatter every candidate it is there to
+    calibrate against.
+
+    Two metadata shapes are accepted. `documents.json` (one memmap per book) is
+    preferred because a document is then a real book; the older chunk metadata
+    concatenates books and a slice can straddle a boundary.
     """
     meta = json.loads(Path(meta_path).read_text())
-    need = context_length + CONTINUATION_TOKENS
-    suitable = sorted(
-        (c for c in meta["chunks"] if c["length"] >= need),
-        key=lambda c: c["file"],
-    )
-    if not suitable:
-        longest = max(c["length"] for c in meta["chunks"])
+    prompt_len = context_length - max(CONTINUATION_TOKENS, GENERATE_TOKENS)
+    if prompt_len < 1:
         raise RuntimeError(
-            f"no PG-19 chunk holds {need} tokens (longest is {longest}); the "
-            f"gate cannot run at {context_length} on this staged data"
+            f"context_length {context_length} leaves no room for a prompt after "
+            f"{max(CONTINUATION_TOKENS, GENERATE_TOKENS)} continuation tokens"
+        )
+    need = context_length
+
+    if "documents" in meta:
+        pool = [{"file": d["file"], "length": d["length"],
+                 "doc_id": d["doc_id"]} for d in meta["documents"]]
+    else:
+        pool = [{"file": c["file"], "length": c["length"],
+                 "doc_id": Path(c["file"]).stem} for c in meta["chunks"]]
+
+    suitable = sorted((c for c in pool if c["length"] >= need),
+                      key=lambda c: c["doc_id"])
+    if not suitable:
+        longest = max(c["length"] for c in pool)
+        raise RuntimeError(
+            f"no document holds {need} tokens (longest is {longest}); the gate "
+            f"cannot run at {context_length} on this staged data"
         )
     rng = np.random.default_rng(seed)
     c = suitable[int(rng.integers(0, len(suitable)))]
     arr = np.memmap(c["file"], dtype="int32", mode="r")
     off = int(rng.integers(0, c["length"] - need + 1))
-    ids = arr[off:off + need].astype(int).tolist()
-    return ids[:context_length], ids[context_length:]
+    ids = arr[off:off + prompt_len + CONTINUATION_TOKENS].astype(int).tolist()
+    return ids[:prompt_len], ids[prompt_len:]
 
 
 # --------------------------------------------------------------------------
@@ -199,28 +218,25 @@ def assert_effective_rope(model, model_name: str, intended: dict) -> dict:
 def continuation_perplexity(model, prompt_ids, cont_ids) -> float:
     """Perplexity of `cont_ids` conditioned on `prompt_ids`.
 
-    Chunked over positions: transformers' own loss upcasts the full logit
-    tensor to fp32, which is several GiB at 128k positions on top of the KV
-    cache and OOMs. Applying lm_head in position chunks is the same shifted
-    cross-entropy with bounded memory.
+    Delegates to `src.analysis.target_quality` so the gate and the per-rung
+    target-quality measurement score perplexity with the *same* code. Two
+    implementations of the same quantity would eventually disagree, and the
+    gate's whole job is to predict what the runs will measure.
     """
-    ids = torch.tensor([prompt_ids + cont_ids], dtype=torch.long, device=model.device)
-    start = len(prompt_ids) - 1        # first scored target is cont_ids[0]
-    stop = len(prompt_ids) + len(cont_ids) - 1
-    total, n = torch.zeros((), dtype=torch.float64, device=ids.device), 0
+    from src.analysis.target_quality import continuation_nll, perplexity_from_sums
+
+    ids = torch.tensor([prompt_ids + cont_ids], dtype=torch.long,
+                       device=model.device)
+
+    def _forward(local_ids, abs_pos):
+        return model.model(input_ids=local_ids, use_cache=False,
+                           past_key_values=None).last_hidden_state
+
     with torch.no_grad():
-        hidden = model.model(input_ids=ids).last_hidden_state
-        chunk = 1024
-        for i in range(start, stop, chunk):
-            j = min(i + chunk, stop)
-            logits = model.lm_head(hidden[:, i:j, :]).float()
-            tgt = ids[:, i + 1:j + 1]
-            total += torch.nn.functional.cross_entropy(
-                logits.reshape(-1, logits.shape[-1]), tgt.reshape(-1),
-                reduction="sum").double()
-            n += int(tgt.numel())
-            del logits
-    return float(torch.exp(total / max(1, n)).item())
+        total, n, _ = continuation_nll(
+            model, ids, score_from=len(prompt_ids), forward=_forward,
+        )
+    return perplexity_from_sums(total, n)
 
 
 @torch.no_grad()

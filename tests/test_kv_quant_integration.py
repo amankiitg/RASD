@@ -322,11 +322,11 @@ class TestTargetOnlyBaseline:
             "Target-only baseline branch missing"
         )
         # The branch must early-return so the spec-decoding while loop
-        # below it is bypassed cleanly.
-        assert re.search(
-            r"if cfg\.spec_steps == 0:[\s\S]{0,4000}return generated_ids, metrics",
-            RASD_INF_SRC,
-        ), (
+        # below it is bypassed cleanly. Asserted by position rather than by a
+        # character budget: the property is ordering, and a budget reports a
+        # regression whenever an unrelated line is added in between.
+        from tests.source_guard_utils import target_only_branch_returns_before_spec_loop
+        assert target_only_branch_returns_before_spec_loop(RASD_INF_SRC), (
             "Target-only branch must early-return generated_ids+metrics "
             "before reaching the spec-decoding loop"
         )

@@ -75,16 +75,16 @@ Source: PG-19 train split (`emozilla/pg19`), streamed; books pre-screened at
 ≥600,000 characters before tokenizing (a character screen is free, `encode` is
 not). First 3,000 books scanned → **535 books tokenized**.
 
-A document at context `C` must supply `C - 1024` prompt tokens, 1024 generated
-tokens, and a separate 1024-token held-out continuation, i.e. **≥ C + 1024
-tokens**. Eligible books:
+A document at context `C` must supply **≥ C tokens**: `C - 1024` prompt tokens
+plus 1024 continuation tokens, which is a single contiguous forward of exactly
+`C`. Eligible books (streamed and tokenized; `book_lengths_train.json`):
 
 | rung `C` | tokens needed | eligible books | 10 available? |
 |---|---:|---:|---|
-| 128k | 132,096 | 534 | yes |
-| 256k | 263,168 | 109 | yes |
-| 512k | 525,312 | **14** | yes, but only by taking 10 of 14 |
-| 1M | 1,049,600 | **6** | **no** |
+| 128k | 131,072 | 534 | yes |
+| 256k | 262,144 | 109 | yes |
+| 512k | 524,288 | **14** | yes, but only by taking 10 of 14 |
+| 1M | 1,048,576 | **6** | **no** |
 
 Two limitations are therefore structural and are reported with the results
 rather than worked around:
@@ -163,34 +163,41 @@ because a saturated rung cannot show a difference between configurations.
 
 ### 4.3 Target quality beside every acceptance figure
 
-Perplexity of the **target** on a held-out 1024-token continuation, at that
-rung's context. Reported per document, with the document-bootstrap interval,
-beside the acceptance figure for the same document — acceptance without target
-quality is not interpretable, because a degenerate target can accept *or* reject
-a great deal and this project has observed both.
+Perplexity of the **target** on a held-out continuation, at that rung's context.
+Reported per document, with the document-bootstrap interval, beside the
+acceptance figure for the same document — acceptance without target quality is
+not interpretable, because a degenerate target can accept *or* reject a great
+deal and this project has observed both.
 
-Windows inside one book (the book supplies ≥ `C + 1024` tokens):
+Windows inside one book (the book supplies ≥ `C` tokens):
 
 | window | tokens | used for |
 |---|---|---|
 | prompt | `[0, C - 1024)` | both the speculative run and the perplexity measurement |
-| generation | `[C - 1024, C)` | the speculative and target-only runs generate here |
-| continuation | `[C, C + 1024)` | teacher-forced perplexity, conditioned on the prompt |
+| continuation | `[C - 1024, C)` | scored teacher-forced, **and** the window the runs generate into |
 
-So the sequence scored for perplexity is exactly `C` tokens (prompt +
-continuation), inside the configured context. The continuation is **not** the
-window the model generates, so perplexity and generation quality are measured on
-different held-out text; it sits one generation-length past the prompt, which
-makes it a test that the context carries forward across the whole span rather
-than a local next-token continuation.
+The scored sequence is exactly `C` tokens, contiguous, so it is one forward
+inside the configured context. The continuation must be contiguous with the
+prompt for a single forward to score it; a continuation placed *after* a
+generation-length gap would need a forward of `C + 1024`, which at native 128k
+would measure extrapolation rather than the rung.
+
+Consequence, stated because it is a design choice a reader will question:
+perplexity and generation cover the **same window**. They are different
+measurements of it — perplexity is teacher-forced on the **book's own human
+text**, while the run generates the model's greedy continuation. Measuring
+perplexity on human text rather than on the model's own output is deliberate: it
+cannot be flattered by degenerate self-repetition.
 
 * "Held out" means the scored continuation is never part of the prompt.
 * Computed with head-chunked cross-entropy. `ForCausalLMLoss` upcasts the full
   logit tensor to fp32 (4.2 GiB at 32k) and OOMs at long context; applying the
   LM head in position chunks is the identical shifted cross-entropy with bounded
   memory.
-* Prompt and continuation are contiguous slices of **one** book, so the
-  continuation is a genuine continuation of that book's text.
+* Under sequence-parallel sharding the NLL is computed per rank over the
+  positions that rank owns and all-reduced, because no single rank holds the
+  full sequence. Each rank carries one extra left-context token so that the
+  hidden state predicting its first owned token is local.
 
 ## 5. Interval method
 

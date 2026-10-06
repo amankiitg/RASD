@@ -1,0 +1,272 @@
+{
+  "tokenizer": "meta-llama/Llama-3.1-8B",
+  "dataset": "emozilla/pg19",
+  "split": "train",
+  "gen_tokens": 1024,
+  "rungs": [
+    131072,
+    262144,
+    524288
+  ],
+  "selection": "10 longest books with >= 525,312 tokens (required: context + 1024)",
+  "documents": [
+    {
+      "doc_id": "pg19_train_0",
+      "slot": 0,
+      "book_index": 0,
+      "title": "The Bible Both Testaments King James Version",
+      "url": "http://www.gutenberg.org/ebooks/10",
+      "file": "data/processed/pg19_docs/doc_000.dat",
+      "length": 525312,
+      "book_tokens": 1152439
+    },
+    {
+      "doc_id": "pg19_train_1",
+      "slot": 1,
+      "book_index": 1,
+      "title": "The Complete Works of William Shakespeare",
+      "url": "http://www.gutenberg.org/ebooks/100",
+      "file": "data/processed/pg19_docs/doc_001.dat",
+      "length": 525312,
+      "book_tokens": 1469935
+    },
+    {
+      "doc_id": "pg19_train_115",
+      "slot": 2,
+      "book_index": 115,
+      "title": "The Book of Household Management by Mrs. Isabella Beeton",
+      "url": "http://www.gutenberg.org/ebooks/10136",
+      "file": "data/processed/pg19_docs/doc_002.dat",
+      "length": 525312,
+      "book_tokens": 800945
+    },
+    {
+      "doc_id": "pg19_train_537",
+      "slot": 3,
+      "book_index": 537,
+      "title": "The Anatomy of Melancholy by Democritus Junior",
+      "url": "http://www.gutenberg.org/ebooks/10800",
+      "file": "data/processed/pg19_docs/doc_003.dat",
+      "length": 525312,
+      "book_tokens": 968232
+    },
+    {
+      "doc_id": "pg19_train_915",
+      "slot": 4,
+      "book_index": 915,
+      "title": "The Anti-Slavery Examiner Omnibus by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11275",
+      "file": "data/processed/pg19_docs/doc_004.dat",
+      "length": 525312,
+      "book_tokens": 1392970
+    },
+    {
+      "doc_id": "pg19_train_1404",
+      "slot": 5,
+      "book_index": 1404,
+      "title": "Les Miserables by Victor Hugo",
+      "url": "http://www.gutenberg.org/ebooks/135",
+      "file": "data/processed/pg19_docs/doc_005.dat",
+      "length": 525312,
+      "book_tokens": 801623
+    },
+    {
+      "doc_id": "pg19_train_1726",
+      "slot": 6,
+      "book_index": 1726,
+      "title": "The Holy Bible Douay-Rheims Version Both Testaments by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1581",
+      "file": "data/processed/pg19_docs/doc_006.dat",
+      "length": 525312,
+      "book_tokens": 1555412
+    },
+    {
+      "doc_id": "pg19_train_1981",
+      "slot": 7,
+      "book_index": 1981,
+      "title": "Mother's Remedies by T. J. Ritter",
+      "url": "http://www.gutenberg.org/ebooks/17439",
+      "file": "data/processed/pg19_docs/doc_007.dat",
+      "length": 525312,
+      "book_tokens": 682007
+    },
+    {
+      "doc_id": "pg19_train_2204",
+      "slot": 8,
+      "book_index": 2204,
+      "title": "The History of England in Three Volumes Vol.II by Tobias Smollett",
+      "url": "http://www.gutenberg.org/ebooks/19217",
+      "file": "data/processed/pg19_docs/doc_008.dat",
+      "length": 525312,
+      "book_tokens": 1098080
+    },
+    {
+      "doc_id": "pg19_train_2768",
+      "slot": 9,
+      "book_index": 2768,
+      "title": "The Complete Shakespeare's First Folio [35 Plays]",
+      "url": "http://www.gutenberg.org/ebooks/2270",
+      "file": "data/processed/pg19_docs/doc_009.dat",
+      "length": 525312,
+      "book_tokens": 1327934
+    }
+  ],
+  "per_rung": {
+    "131072": {
+      "pg19_train_0": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "658dbd311a9ebe5f8569fd3470e6829fd8f7af3f9e4d1b70e26c439bd2208849",
+        "continuation_sha256": "81456bcea431b78d7f230ecfb32111b5ee9ad1a8a7cde092a77cac369fd93ca3"
+      },
+      "pg19_train_1": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "7eeb06236ec4512c34a709b52358c99b9e0daa2f9abf9aa5a506da87fc8dd43c",
+        "continuation_sha256": "cca6ddfbb2c22a4db9c7be862fae89a5526f946dedf4b99e4569884bdc0c9e1f"
+      },
+      "pg19_train_115": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "57a4369aab9eda97a3eeb95afaf1332bb61e45aa7bdd5bc06183c59c53772b4a",
+        "continuation_sha256": "43db5c44ef84166879aa08ccc0ae7561cf80b3d0f7bcb5e02798cfc64d7fba06"
+      },
+      "pg19_train_537": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "b4fe8a32828af051c68c70aed570daa2c5d9d39d3857b4db29034d6a71234a36",
+        "continuation_sha256": "97ffcdbda52079c3014c2fc72e0f49adaeced6b70f04137dabdc8924fb9a0dbb"
+      },
+      "pg19_train_915": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "3acbeed8725a7804585a009356d9676a3ec95919a2408ad4abf6e6517d949796",
+        "continuation_sha256": "2d138a3f65af2ed80276e2063d561942cd4a3383edad622abed3fb6a781d8438"
+      },
+      "pg19_train_1404": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "9ed23ba368b967102f496363546832286e3ac52713a735fa4a6e6ec61ebed393",
+        "continuation_sha256": "6af835d8f2981393037bfe5a91102f97785ff24577e0390754f05f7c557b2da6"
+      },
+      "pg19_train_1726": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "59da67611a9e669dfab72eefabadddceced2634ef6c04bd9b298b56081b6e51c",
+        "continuation_sha256": "743463a2353f359ab60333a0a35477c7bb1f0083b42caee107b64c5b8b5bf5d6"
+      },
+      "pg19_train_1981": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "68b1d30cbc47a12be9da20bbfd2a0a386e0a7120d13ea4166d85beccd1717dc0",
+        "continuation_sha256": "23b06f376238c53d8b8ebd0d2c6eb630433de1e290ceb76f5b5081f352502379"
+      },
+      "pg19_train_2204": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "0c3ec22eb3358f5aceb6874b20e7289701669c213a8d792357c0fd4dfe0140c8",
+        "continuation_sha256": "9daf1cd610cbd863a0131ec02421065ad1f39c06a20aedfc9c178ba78f8a31a8"
+      },
+      "pg19_train_2768": {
+        "prompt_tokens": 130048,
+        "prompt_sha256": "e2cafb158301ddea8a9aa8074b4f30d1979aa575f2432c8c8f80168c3b6599d3",
+        "continuation_sha256": "4d1d97c3524a64e906c809d538cc6b6190387485c44189d0c93cf1bb0967b019"
+      }
+    },
+    "262144": {
+      "pg19_train_0": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "f5e9bd89e024afbf1ec78d6015b4b6e9b51d2d9d07bd84ef4dfbd49d2945830c",
+        "continuation_sha256": "8c2e209b9551dc954cf2e8c5e87c6cc05ba927f2de76389dde9bc5ea80744222"
+      },
+      "pg19_train_1": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "2708c3981d8261fa16c2613f1cc2e7093749010a8625302764737f97e7e39b26",
+        "continuation_sha256": "2e385838942b7cb90d4113284da6d88ff884907b9ad6ca9e9a0a6bcebc728dba"
+      },
+      "pg19_train_115": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "a47a13608b5dd5b2b118e84f8debe9c9b14cd79b1351f8e0f8d1990ba6fed996",
+        "continuation_sha256": "713b137b60f37061697f2567a07bf327a23493b65f9577a4b2a643b0a2fcbd05"
+      },
+      "pg19_train_537": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "bd5cd07016ec7dd7fdd7324811f569ecb38a6d898b97485152138e333b1fb014",
+        "continuation_sha256": "49d1bebb345a9c48c0190faa38e7267195ab8ed86982732c822290705ab8ecad"
+      },
+      "pg19_train_915": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "d1ac6045a54437c8a2b5f5a019809ced35e3bacb4208d1c16b1e09ca62f8f649",
+        "continuation_sha256": "a6e5a7b0a410a268fedb90e53d93b10b0b56ff093a5aeee69f548c60149ba154"
+      },
+      "pg19_train_1404": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "fff2fbfd91c289e4bd7353c4c2e52cc80bc45fe754169f018cb701724c6024b6",
+        "continuation_sha256": "1830e5cca8a428af66feb04800c3fdde0f5f79976f0b701d565f1da82d0ce4e6"
+      },
+      "pg19_train_1726": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "0b1d0e5b6cb69580b9eb142bbb1d6e797b2983c59f500cd8fc4282b705ed3262",
+        "continuation_sha256": "2af7eb32b11f3d452609631547933e535a47e2b0913748c4425c69d9a75dcbb5"
+      },
+      "pg19_train_1981": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "e41a437ae863e605a6f88dcd5efe42702e79bb3dc5032e8e71bf688daace8e6c",
+        "continuation_sha256": "51d3caaf4a124d37e32cfe28ef64b75eb912ba165c1859ef2d742e8ab96dfc27"
+      },
+      "pg19_train_2204": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "56269fdb30633f7bab22cf2ac89c1b8495a4b0baee19401bc9625668dfe07d29",
+        "continuation_sha256": "5a4284006aa0322c4de13bf16438313a442f0804c2906ff257783feaa24a0a7d"
+      },
+      "pg19_train_2768": {
+        "prompt_tokens": 261120,
+        "prompt_sha256": "3313c3a66e43f3d9508eb9958b26b7d9611c0bd01bb7b5716600e030ab10a8a6",
+        "continuation_sha256": "46befd7a7119d2cb9ff7800644033b7c605fb8eaeafe538ec3db7a9b598fd347"
+      }
+    },
+    "524288": {
+      "pg19_train_0": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "224c779f23b8273c3f28d054375cad8c23cf9dc7bfdf3dd5d8552a200ee6986b",
+        "continuation_sha256": "ac300a93777d53035eb5561c62d9473de1abda7b0984051442c47cb2c44e4215"
+      },
+      "pg19_train_1": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "e7d8a87bc8130893cb009f3be774f041d163cb6558b4cc0c8e2d2ed57c22f0c5",
+        "continuation_sha256": "d19336335b393b749690fbeb2d4ebdaf91b9b21ddb2ddbb24ff9585a5953019b"
+      },
+      "pg19_train_115": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "84d045656682959904f4172d85f1f88ba88450efbe3013f00505de5887fdc64c",
+        "continuation_sha256": "b5ed8dbdf8f958ca73e8b48a96113a77faf8e4c67cf7d10159da27aca3b356a9"
+      },
+      "pg19_train_537": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "a11a1ea059dc737d86bed04e3f4e2636359ccc91fffb0f6548df46c391e35336",
+        "continuation_sha256": "a27c78ab2d52550d727afda9b64b52b8c448bbbe179e346c661815762bdc5170"
+      },
+      "pg19_train_915": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "cac850b4b4217ee2009e8a0df5f1543bab6d1a3dd6daf5fb3693737dcf4656ad",
+        "continuation_sha256": "622d6358a12e7002ca7a38ea56350407be53342699f672ef3d8bb67752506875"
+      },
+      "pg19_train_1404": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "afee98058d717dd12ca2f6bd6b2bdf525d9016eac3db39779f419831c7543d29",
+        "continuation_sha256": "c9d70674c7753231394180faf1763c71b6779a67a5efedc6848c092280ae04d4"
+      },
+      "pg19_train_1726": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "df7066ad0c7a537157e56e54fe0984f0030306584e6fc2d515a50b9486e01d65",
+        "continuation_sha256": "a3c0f5c02c6e4dc92b3b2e9e4bca3c4379f2718f07beb0e5a380511d5891a8b2"
+      },
+      "pg19_train_1981": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "86ac4cdc7b5305942e4d5b8ff1f4b908c353aac3ec17eaf37c975bd5cfc2e87b",
+        "continuation_sha256": "1acf7926dd10d3fac1f0991c24c1b5d403a2a41422d23d8b8a9337cd49fe1c2c"
+      },
+      "pg19_train_2204": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "5ca9db54e4cbc627f700059eb85a916bb66f5af044a258acb03849e15782ed99",
+        "continuation_sha256": "db07d7601e27cc90a15c946186dbd6c926ade50793ea2bf592b4e48a67ebeb58"
+      },
+      "pg19_train_2768": {
+        "prompt_tokens": 523264,
+        "prompt_sha256": "af3509c5ef2f01369602747eb0bd33c2d0d3c363cf3de3cd8a245ea991630132",
+        "continuation_sha256": "e3ac3bc248c24cba383fa378393cfd158f1021713a316a15fc3a2ce243e5802a"
+      }
+    }
+  }
+}
