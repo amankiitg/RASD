@@ -843,6 +843,25 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int,
     print(f"[TRACE peer rank={local_rank}] all {max_rounds} rounds done", flush=True)
 
 
+def decode_rate_tps(tokens_generated, time_sec, ttft_ms) -> float:
+    """Decode-only tokens/second: `(tokens_generated - 1) / (time_sec - ttft)`.
+
+    The first token is the product of prefill, not of the decode loop: it is
+    already available at ttft. The remaining `tokens_generated - 1` tokens are
+    what the post-prefill wall actually produced, so dividing the FULL token
+    count by the decode wall overstates the decode rate by one token's worth.
+
+    Both arms use this same helper, because the paired ratio is a comparison of
+    two decode rates: computing it one way for the spec arm and another for the
+    target-only arm would put the difference into the ratio.
+    """
+    n = int(tokens_generated)
+    if n < 1:
+        return 0.0
+    wall = max(float(time_sec) - (ttft_ms or 0.0) / 1000.0, 1e-9)
+    return (n - 1) / wall
+
+
 def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     """Worker executed in a subprocess — full isolation, fresh CUDA context.
 
@@ -1124,13 +1143,13 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # Decode-only rate. The first token arrives at ttft, so the remaining
         # `tokens_generated - 1` tokens are the post-prefill wall's product;
         # either convention is defensible and both arms use this one.
-        _ttft_s = (metrics.get("ttft_ms") or 0.0) / 1000.0
-        _decode_wall = max(float(metrics["time_sec"]) - _ttft_s, 1e-9)
         row.update({
             "tokens_generated": metrics["tokens_generated"],
             "time_sec":         round(metrics["time_sec"], 4),
             "throughput_tps":   round(metrics["throughput_tps"], 2),
-            "decode_tps":       round(metrics["tokens_generated"] / _decode_wall, 3),
+            "decode_tps":       round(decode_rate_tps(metrics["tokens_generated"],
+                                                      metrics["time_sec"],
+                                                      metrics.get("ttft_ms")), 3),
             "acceptance_rate":  round(metrics["acceptance_rate"], 4),
             "mean_latency_ms":  round(metrics["mean_latency_ms"], 3),
             "ttft_ms":          round(metrics["ttft_ms"], 3),
