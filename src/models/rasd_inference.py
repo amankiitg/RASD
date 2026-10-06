@@ -148,6 +148,26 @@ class RASDConfig:
     #   "dynamic"  — NTK-aware dynamic scaling
     rope_type: str = "linear"
 
+    # MLSys B1 — EXPLICIT extrapolation factor, independent of context length.
+    #
+    # The automatic path only scales when context_length exceeds the model's
+    # native window, which cannot express "hold the context at 128k but vary
+    # the RoPE scaling 1 -> 2 -> 4". That matched-context control is the one
+    # that separates RoPE extrapolation from context length within a FIXED
+    # model, so the factor is settable directly.
+    #
+    # Semantics:
+    #   None  -> automatic (factor = ceil(ctx / native)); default, unchanged
+    #   <=1.0 -> NO scaling applied; the model's own rope block is preserved.
+    #            YaRN at factor 1 is the mathematical identity, and leaving
+    #            Llama-3.1's native 'llama3' block in place is the only
+    #            reading of "factor 1" that means "no extrapolation". This is
+    #            what makes the ARM4 128k f1 cell a faithful Arm2 replication
+    #            in RoPE terms.
+    #   >1.0  -> YaRN over the model's native window with exactly this factor,
+    #            regardless of context length.
+    rope_factor: Optional[float] = None
+
     # Quantisation (to fit draft + target on same GPUs)
     quantize_draft: bool = True          # 4-bit NF4 via bitsandbytes
     quantize_target: bool = False
@@ -479,7 +499,8 @@ class RASDInference:
     def _build_hf_config(self, model_name: str, revision: Optional[str],
                          context_length: int, label: str,
                          apply_rope_scaling: bool = True,
-                         rope_type: str = "linear"):
+                         rope_type: str = "linear",
+                         rope_factor: Optional[float] = None):
         """Load the model's HF config and apply RoPE scaling if needed.
 
         Llama-2 ships with max_position_embeddings=4096. To run at longer
@@ -532,6 +553,38 @@ class RASDInference:
                 label, context_length, hf_cfg.max_position_embeddings,
             )
             return hf_cfg
+        # MLSys B1 — explicit factor, independent of context length. Handled
+        # BEFORE the automatic branch so a fixed-context ladder (128k at
+        # factor 1/2/4) is expressible.
+        if apply_rope_scaling and rope_factor is not None:
+            native_max = hf_cfg.max_position_embeddings
+            f = float(rope_factor)
+            if f <= 1.0:
+                # Factor 1 == identity == no extrapolation. Preserve the
+                # model's OWN rope block (Llama-3.1's 'llama3') rather than
+                # replacing it with an identity YaRN dict, so this cell is a
+                # faithful in-distribution anchor.
+                logger.info(
+                    "[RoPE] %s: rope_factor=%.3g <= 1 — native rope block "
+                    "preserved (no scaling), native_max=%d",
+                    label, f, native_max,
+                )
+                return hf_cfg
+            hf_cfg.rope_scaling = _build_rope_scaling_dict(
+                rope_type if rope_type not in ("none",) else "yarn",
+                f, native_max,
+            )
+            # target_length may stay <= native_max; the window is what the
+            # scaled frequencies are valid for, so raise it to at least the
+            # scaled span for bookkeeping.
+            if context_length and context_length > native_max:
+                hf_cfg.max_position_embeddings = context_length
+            logger.info(
+                "[RoPE] %s: EXPLICIT rope_factor=%.3g over native_max=%d "
+                "-> %s (ctx=%d)",
+                label, f, native_max, hf_cfg.rope_scaling, context_length,
+            )
+            return hf_cfg
         if (apply_rope_scaling and context_length
                 and context_length > hf_cfg.max_position_embeddings):
             # native_max is the LOADED model's own window, so the ladder
@@ -578,14 +631,29 @@ class RASDInference:
         target_hf_config = self._build_hf_config(
             cfg.target_model_name, cfg.target_revision, cfg.context_length,
             label="target", rope_type=cfg.rope_type,
+            rope_factor=cfg.rope_factor,
         )
 
         logger.info("Loading target model: %s  [device=%s]", cfg.target_model_name, self._device)
+        # MLSys A5 — weight precision is pinned EXPLICITLY to "fp4".
+        # bitsandbytes already defaults to fp4 when bnb_4bit_quant_type is
+        # unset, so this changes no behaviour; it stops the default from
+        # drifting silently, which matters because the papers describe these
+        # weights as "NF4" (they are FP4). Do NOT switch this to "nf4": the
+        # Arm1/2/3 results were produced under fp4 weights and changing it
+        # would make the new arms incomparable.
+        # NOTE the two distinct 4-bit mechanisms in this codebase:
+        #   * WEIGHTS  -> bitsandbytes 4-bit FP4 (this config)
+        #   * KV CACHE -> NF4 via the custom chunked codec (kv_quant=True)
         target_bnb = None
         if cfg.quantize_target and self._caps.supports_quantization:
-            target_bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=cfg.torch_dtype)
+            target_bnb = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=cfg.torch_dtype,
+                bnb_4bit_quant_type="fp4",
+            )
         elif cfg.quantize_target:
-            logger.warning("quantize_target=True ignored — 4-bit NF4 requires CUDA (current: %s)",
+            logger.warning("quantize_target=True ignored — 4-bit requires CUDA (current: %s)",
                            self._caps.device_type)
 
         self.target_model = AutoModelForCausalLM.from_pretrained(
@@ -669,10 +737,15 @@ class RASDInference:
             )
         draft_bnb = None
         if want_nf4_draft and self._caps.supports_quantization:
-            draft_bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=cfg.torch_dtype)
+            # Same explicit FP4 pin as the target (see the note above).
+            draft_bnb = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=cfg.torch_dtype,
+                bnb_4bit_quant_type="fp4",
+            )
         elif want_nf4_draft:
-            logger.warning("draft NF4 requested (draft_dtype=%s) but ignored — "
-                           "4-bit NF4 requires CUDA (current: %s)",
+            logger.warning("draft 4-bit requested (draft_dtype=%s) but ignored — "
+                           "4-bit requires CUDA (current: %s)",
                            cfg.draft_dtype, self._caps.device_type)
 
         self.draft_model = AutoModelForCausalLM.from_pretrained(

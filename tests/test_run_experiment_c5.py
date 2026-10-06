@@ -310,22 +310,44 @@ class TestPromptSource:
         sig = inspect.signature(build_prompt)
         assert sig.parameters["source"].default == "synthetic"
 
-    def test_build_prompt_synthetic_unchanged(self):
-        """Synthetic path produces the same repeated-paragraph prompt
-        regardless of seed/source kwargs."""
+    def test_build_prompt_synthetic_is_seed_dependent(self):
+        """A7: the synthetic path MUST vary with seed.
+
+        It previously ignored `seed` entirely, which meant "3 seeds" was
+        really "1 prompt x 3 decoding seeds" — the exact weakness the
+        prompt-diversity fix exists to remove. Three seeds must now give
+        three different prompts, and the same seed must be reproducible.
+        """
         from run_experiment import build_prompt
 
         class _StubTok:
-            def encode(self, s):
-                return list(range(len(s.split())))
+            """Content-preserving stub: a word always maps to the same id,
+            so a different sentence ORDER yields different token ids (a
+            position-based stub would decode every order identically and
+            make this test vacuous)."""
+            def __init__(self):
+                self._vocab = {}
+            def _id(self, w):
+                if w not in self._vocab:
+                    self._vocab[w] = len(self._vocab)
+                return self._vocab[w]
+            def encode(self, s, add_special_tokens=False):
+                return [self._id(w) for w in s.split()]
             def decode(self, ids):
-                return " ".join(f"tok{i}" for i in ids)
+                inv = {v: k for k, v in self._vocab.items()}
+                return " ".join(inv.get(i, f"?{i}") for i in ids)
 
         tok = _StubTok()
-        p1 = build_prompt(64, tok)
-        p2 = build_prompt(64, tok, source="synthetic", seed=42)
-        p3 = build_prompt(64, tok, source="synthetic", seed=999)
-        assert p1 == p2 == p3, "synthetic prompt must be seed-independent"
+        p42 = build_prompt(64, tok)
+        p42b = build_prompt(64, tok, source="synthetic", seed=42)
+        p123 = build_prompt(64, tok, source="synthetic", seed=123)
+        p456 = build_prompt(64, tok, source="synthetic", seed=456)
+
+        # default seed is 42 -> identical to an explicit 42
+        assert p42 == p42b, "same seed must be reproducible"
+        # distinct seeds -> distinct prompts
+        assert len({p42, p123, p456}) == 3, (
+            "synthetic prompt must differ across seeds (A7)")
 
     def test_build_prompt_pg19_requires_meta(self):
         """source='pg19' without a meta_path must raise — silently

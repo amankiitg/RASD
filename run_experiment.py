@@ -32,6 +32,7 @@ import itertools
 import json
 import logging
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -266,18 +267,53 @@ def build_prompt(context_length: int, tokenizer,
             context_length, tokenizer, seed,
             sidecar_dir=ruler_sidecar_dir, run_id=run_id,
         )
-    # Default: synthetic repeated-paragraph
-    base = (
-        "The following is a detailed technical analysis of distributed machine learning systems. "
-        "Ring attention enables long-context inference by sharding the sequence across GPUs. "
-        "Speculative decoding accelerates generation by using a smaller draft model. "
+    # Default: synthetic repeated-paragraph.
+    # A7 — the sentence ORDER is derived from `seed`, so three seeds produce
+    # three genuinely different prompts (different token ids), not one prompt
+    # decoded three times. Before this the builder ignored `seed` entirely
+    # and "3 seeds" was really "1 prompt x 3 decoding seeds".
+    #
+    # NOTE: Arm1 and Arm2 share this TEMPLATE but not the same token ids —
+    # they use different tokenizers (Llama-2 BPE vs the Llama-3 tiktoken-style
+    # vocabulary), so even the same seed yields different token sequences
+    # across arms. Cross-arm prompt identity was never achievable; what is
+    # required is that each arm's seeds differ from each other.
+    _SYNTHETIC_SENTENCES = (
+        "The following is a detailed technical analysis of distributed machine learning systems. ",
+        "Ring attention enables long-context inference by sharding the sequence across GPUs. ",
+        "Speculative decoding accelerates generation by using a smaller draft model. ",
+        "Key-value cache compression reduces the memory footprint of long sequences. ",
+        "Rotary position embeddings interpolate smoothly across extended contexts. ",
+        "Pipeline parallelism partitions layers while tensor parallelism splits weights. ",
+        "Memory bandwidth, not compute, usually bounds decoding throughput. ",
+        "Interconnect latency determines how well ring rotation overlaps with attention. ",
     )
-    tokens = tokenizer.encode(base)
-    repeats = max(1, context_length // len(tokens))
-    full_text = base * repeats
-    # Trim to exactly context_length tokens
-    full_tokens = tokenizer.encode(full_text)[:context_length]
-    return tokenizer.decode(full_tokens)
+    rng = random.Random(int(seed))
+    order = list(_SYNTHETIC_SENTENCES)
+    rng.shuffle(order)
+    block = "".join(order)
+    block_tokens = tokenizer.encode(block)
+    if not block_tokens:
+        block_tokens = tokenizer.encode(
+            "The following is a detailed technical analysis. ")
+    # Over-provision so we can trim DOWN to hit the target exactly. The
+    # engine takes a prompt STRING and re-tokenises it, so the id count can
+    # drift across decode->encode; B2 requires prompt+output to fit inside
+    # the native window, so we converge on the requested count rather than
+    # hoping the round-trip is lossless.
+    reps = context_length // max(1, len(block_tokens)) + 2
+    pool = block_tokens * reps
+    n = context_length
+    text = tokenizer.decode(pool[:n])
+    for _ in range(8):
+        if len(pool) < n or n <= 0:
+            break
+        text = tokenizer.decode(pool[:n])
+        re_ids = tokenizer.encode(text, add_special_tokens=False)
+        if len(re_ids) == context_length:
+            break
+        n -= (len(re_ids) - context_length)
+    return text
 
 
 def _build_ruler_niah_prompt(context_length: int, tokenizer, seed: int,
@@ -515,6 +551,9 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C2b RoPE strategy. Default "linear" preserves M3 behavior.
             # Use "yarn" for M4 1M context (factor=256 over Llama-2's 4k).
             rope_type         = str(run.get("rope_type", "linear")),
+            # MLSys B1 — explicit extrapolation factor (None = automatic).
+            rope_factor       = (float(run["rope_factor"])
+                                 if run.get("rope_factor") is not None else None),
             # C11 NF4 KV-cache. Default False -> M3 byte-identical.
             # Phase C P3.5 final matrix uses kv_quant=true at all contexts.
             kv_quant          = bool(run.get("kv_quant", False)),
