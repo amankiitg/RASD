@@ -46,11 +46,37 @@ def normalise(group_name: str) -> str:
     return g
 
 
+NATIVE_WINDOW = 131072        # Llama-3.1-8B's shipped window
+
+
+def needs_gate(val: dict) -> bool:
+    """True if any level asks for rope scaling above the native window.
+
+    A configuration that applies no scaling and sits inside the native window
+    needs no gate, by definition — the gate exists to validate an EXTENSION. It
+    must still be checked rather than assumed: a native config placed ABOVE the
+    window is exactly the extrapolation case the gate is for, and is gated.
+    """
+    for level in val.get("levels", []):
+        ctx = int(level.get("context_length", 0) or 0)
+        rope = level.get("rope_type", val.get("rope_type"))
+        scaled = rope not in (None, "none", "") or level.get("rope_factor")
+        if scaled or ctx > NATIVE_WINDOW:
+            return True
+    return False
+
+
 def filter_config(config_path: Path, verdicts: dict):
     cfg = yaml.safe_load(config_path.read_text())
     kept, dropped = {}, []
     for key, val in cfg.items():
         if key in NON_GROUP:
+            kept[key] = val
+            continue
+        if not needs_gate(val):
+            # Native window, no scaling: no verdict required, and requiring one
+            # would drop the 128k stages for lack of a candidate that does not
+            # need to exist.
             kept[key] = val
             continue
         norm = normalise(str(key))

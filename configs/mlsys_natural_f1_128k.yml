@@ -2,21 +2,29 @@
 #
 # TARGET POLICY: Llama-3.1-8B. At 128k it runs its NATIVE shipped `llama3` rope block, untouched; `rope_type: none` asserts that.
 #
-# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy,
-# 1024 generated tokens, ignore_eos true, prompt = context - 1024 - 1 so the
-# sequence the engine builds (prompt + leading BOS + generation) is EXACTLY the
-# rung context. The builder derives the prompt from `context_length`, so the
-# value here is the rung, not the prompt length.
+# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy, ignore_eos
+# true, prompt = context - max_new_tokens - 1, so the engine's sequence
+# (prompt + leading BOS + generation) is EXACTLY the rung. The builder derives
+# the prompt from `context_length`, so the value here is the rung.
 #
 # UNITS OF INDEPENDENCE: the DOCUMENT (one PG-19 book). `seeds: [42]` because
 # greedy decoding is deterministic, so a second seed would repeat a run rather
-# than replicate it; replication is the 10 documents below, identical at every
-# rung so the rung comparison is paired (same book, different context).
+# than replicate it; replication is the documents, identical at every rung so the
+# rung comparison is paired.
 #
-# REPORTED LIMITATION: only 14 PG-19 train books reach 512k tokens, so this set
-# is 2 Bibles, 2 Shakespeare volumes and an omnibus. The composition is constant
-# across rungs and cancels in the paired comparison, but it limits
-# generalisation — which is what the separate `diverse` arm checks at 128k.
+# TARGET-ONLY BASELINE DESIGN (plan revision, 2026-10-06):
+#   3 documents x 1024 tokens -> losslessness, and the end-to-end paired ratio
+#   7 documents x  128 tokens -> decode-only tok/s for the paired ratio
+# The paired ratio is reported on decode-only tok/s for all 10 documents, with
+# the end-to-end ratio beside it for the 3 full pairs. Losslessness is an
+# implementation property and needs a same-length target-only partner; a
+# throughput RATE needs a steady state, not an equal token count. Prefill is
+# identical across arms and under 5% of the decode wall (measured 0.22% at 128k,
+# 0.54% at 512k), so the end-to-end ratio is a prefill-weighted restatement of
+# the decode ratio rather than an independent quantity.
+# REPORTED LIMITATION: only 14 PG-19 train books reach 512k, so the core-10
+# is 2 Bibles, 2 Shakespeare volumes and an omnibus. Constant across rungs,
+# so it cancels in the paired comparison; the diverse arm checks it at 128k.
 defaults:
   target_model_name: meta-llama/Llama-3.1-8B
   draft_model_name: meta-llama/Llama-3.2-1B
@@ -30,35 +38,46 @@ defaults:
   quantize_draft: true
   quantize_target: true
   draft_window_cap: 4096
-  max_new_tokens: 1024
   ignore_eos: true
-  temperature: 0.0        # GREEDY, per plan section 2. Sampling would make
-                          # the seed-dependent-prompt claim false and the
-                          # token-identity losslessness check invalid.
+  temperature: 0.0        # GREEDY, per plan section 2
   top_p: 1.0
   seeds: [42]
   log_per_token: true
   save_generated_text: true
-  save_generated_tokens: true     # losslessness compares token ids, not text
-  measure_target_ppl: true        # target quality beside every acceptance figure
+  save_generated_tokens: true
+  measure_target_ppl: true
   prompt_source: pg19_document
   prompt_documents_json: data/processed/pg19_docs/documents.json
-NATURAL_F1_SPEC:
+NATURAL_f1_128k_SPEC:
   name: natural_f1_128k
   factor: context_length
   levels:
   - id: NATURAL_f1_128k
     context_length: 131072
     documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 1024
     checkpoint_every: 0
-    notes: 'Natural-text f1, native window, 10 paired documents.'
-NATURAL_F1_TARGET_ONLY:
-  name: natural_f1_128k_target_only
+    notes: 'speculative arm, 10 documents, 1024 tokens, native window'
+NATURAL_f1_128k_TARGET_FULL:
+  name: natural_f1_128k_target_full
   factor: context_length
   levels:
-  - id: NATURAL_f1_128k_targetonly
+  - id: NATURAL_f1_128k_targetfull
     context_length: 131072
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115]
+    max_new_tokens: 1024
     spec_steps: 0
     checkpoint_every: 0
-    notes: 'Paired target-only baseline: same documents, same prompt, same length.'
+    notes: 'FULL target-only: losslessness + end-to-end paired ratio (3 docs)'
+NATURAL_f1_128k_TARGET_SHORT:
+  name: natural_f1_128k_target_short
+  factor: context_length
+  levels:
+  - id: NATURAL_f1_128k_targetshort
+    context_length: 131072
+    documents: [pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 128
+    spec_steps: 0
+    checkpoint_every: 0
+    measure_target_ppl: false
+    notes: 'SHORT target-only: decode-only rate for the paired ratio (7 docs)'

@@ -19,7 +19,6 @@
     "the constructions the ARM4 ladder actually used, and the gate is only",
     "trustworthy if it rejects them."
   ],
-
   "coherence_gate": [
     {
       "name": "native_128k",
@@ -81,6 +80,26 @@
       "seed": 42,
       "expected": "fail",
       "why": "NEGATIVE CONTROL: YaRN replacing llama3 with the anchor left on config.max_position_embeddings (= the context length, 262144), i.e. exactly what the engine did on 4.47.1 before rope_anchor_base existed."
+    },
+    {
+      "name": "llama3_f32_512k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "context_length": 524288,
+      "rope_type": "llama3",
+      "rope_factor": 32,
+      "rope_anchor_base": null,
+      "seed": 42,
+      "note": "Native mechanism, only the factor moves 8 -> 32. This is the 512k candidate the approved rung needs; without it the 512k stage has no configuration that can pass the gate, so it would always be skipped."
+    },
+    {
+      "name": "yarn_base8192_f64_512k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "context_length": 524288,
+      "rope_type": "yarn",
+      "rope_factor": 64,
+      "rope_anchor_base": 8192,
+      "seed": 42,
+      "note": "YaRN over the true 8192 pretraining base; the alternative at 512k."
     }
   ]
 }

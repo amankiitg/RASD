@@ -140,6 +140,12 @@ CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     # trusted, since the plan and the manifest previously disagreed about
     # whether the BOS was inside `context_length`.
     "sequence_tokens",
+    # Pre-registered decode rate: generated tokens over the post-prefill wall.
+    # The same definition is used in both arms, so any convention cancels in
+    # the paired ratio. Preferred over the end-to-end rate for the primary
+    # metric because prefill is identical across arms and under 5% of the
+    # decode wall (measured 0.22% at 128k, 0.54% at 512k).
+    "decode_tps",
 ]
 
 
@@ -1115,10 +1121,16 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             hashlib.sha256(",".join(str(i) for i in gen_ids).encode()).hexdigest()
             if gen_ids else ""
         )
+        # Decode-only rate. The first token arrives at ttft, so the remaining
+        # `tokens_generated - 1` tokens are the post-prefill wall's product;
+        # either convention is defensible and both arms use this one.
+        _ttft_s = (metrics.get("ttft_ms") or 0.0) / 1000.0
+        _decode_wall = max(float(metrics["time_sec"]) - _ttft_s, 1e-9)
         row.update({
             "tokens_generated": metrics["tokens_generated"],
             "time_sec":         round(metrics["time_sec"], 4),
             "throughput_tps":   round(metrics["throughput_tps"], 2),
+            "decode_tps":       round(metrics["tokens_generated"] / _decode_wall, 3),
             "acceptance_rate":  round(metrics["acceptance_rate"], 4),
             "mean_latency_ms":  round(metrics["mean_latency_ms"], 3),
             "ttft_ms":          round(metrics["ttft_ms"], 3),

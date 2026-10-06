@@ -1,22 +1,31 @@
 # MLSys — SYNTHETIC-prompt speculative runs across the rungs.
 #
-# TARGET POLICY: Llama-3.1-8B. At 128k it runs its NATIVE shipped `llama3` rope
-# block, untouched. Above 128k ONLY a rope configuration that PASSED
-# results/mlsys/coherence_gate.csv may be used.
+# TARGET POLICY: Llama-3.1-8B. At 128k the native shipped `llama3` block, untouched; above 128k only a gate-passing rope.
 #
-# This is the SECONDARY arm. The synthetic prompt is the repeated-paragraph
-# builder, which historically produced LOWER acceptance than natural text, and
-# its own saturation (92.6-96.3% fully-accepted rounds) is part of what the
-# natural arm exists to test. Running both at the SAME configurations makes the
-# paired difference a measure of prompt content rather than of the system.
+# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy, ignore_eos
+# true, prompt = context - max_new_tokens - 1, so the engine's sequence
+# (prompt + leading BOS + generation) is EXACTLY the rung. The builder derives
+# the prompt from `context_length`, so the value here is the rung.
 #
-# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy, 1024
-# generated tokens, ignore_eos true. The document builder derives the prompt so
-# the sequence the engine builds is EXACTLY `context_length`.
+# UNITS OF INDEPENDENCE: the DOCUMENT (one PG-19 book). `seeds: [42]` because
+# greedy decoding is deterministic, so a second seed would repeat a run rather
+# than replicate it; replication is the documents, identical at every rung so the
+# rung comparison is paired.
 #
-# UNITS OF INDEPENDENCE: the DOCUMENT. The synthetic prompt does not depend on
-# the book's text, but the run is still paired to the natural arm by document so
-# the two arms are compared on the same 10 units.
+# TARGET-ONLY BASELINE DESIGN (plan revision, 2026-10-06):
+#   3 documents x 1024 tokens -> losslessness, and the end-to-end paired ratio
+#   7 documents x  128 tokens -> decode-only tok/s for the paired ratio
+# The paired ratio is reported on decode-only tok/s for all 10 documents, with
+# the end-to-end ratio beside it for the 3 full pairs. Losslessness is an
+# implementation property and needs a same-length target-only partner; a
+# throughput RATE needs a steady state, not an equal token count. Prefill is
+# identical across arms and under 5% of the decode wall (measured 0.22% at 128k,
+# 0.54% at 512k), so the end-to-end ratio is a prefill-weighted restatement of
+# the decode ratio rather than an independent quantity.
+# SECONDARY arm: the same configurations as the natural arm, so a
+# paired difference isolates prompt content from rope/context. Dropped
+# from the primary claim if it does not run; the payoff rule is
+# evaluated on the natural arm alone.
 defaults:
   target_model_name: meta-llama/Llama-3.1-8B
   draft_model_name: meta-llama/Llama-3.2-1B
@@ -30,11 +39,8 @@ defaults:
   quantize_draft: true
   quantize_target: true
   draft_window_cap: 4096
-  max_new_tokens: 1024
   ignore_eos: true
-  temperature: 0.0        # GREEDY, per plan section 2. Sampling would make
-                          # the seed-dependent-prompt claim false and the
-                          # token-identity losslessness check invalid.
+  temperature: 0.0        # GREEDY, per plan section 2
   top_p: 1.0
   seeds: [42]
   log_per_token: true
@@ -42,53 +48,77 @@ defaults:
   save_generated_tokens: true
   measure_target_ppl: true
   prompt_source: synthetic
-
-SYNTHETIC_CTX128K:
-  name: synthetic_ctx128k
+NATIVE_synth_128k_SPEC:
+  name: synth_128k
   factor: context_length
   levels:
-  - id: SYNTHETIC_ctx128k
+  - id: SYNTH_128k
     context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 1024
     checkpoint_every: 0
-    notes: 'synthetic prompt at the native 128k rung'
-  - id: SYNTHETIC_ctx128k_targetonly
+    notes: 'speculative arm, 10 documents, 1024 tokens, synthetic, native window'
+NATIVE_synth_128k_TARGET_FULL:
+  name: synth_128k_target_full
+  factor: context_length
+  levels:
+  - id: SYNTH_128k_targetfull
     context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115]
+    max_new_tokens: 1024
     spec_steps: 0
     checkpoint_every: 0
-    notes: 'Paired target-only baseline for the synthetic 128k rung.'
-
-SYNTHETIC_CTX256K:
-  name: synthetic_ctx256k
+    notes: 'FULL target-only: losslessness + end-to-end paired ratio (3 docs)'
+NATIVE_synth_128k_TARGET_SHORT:
+  name: synth_128k_target_short
   factor: context_length
   levels:
-  - id: SYNTHETIC_ctx256k
+  - id: SYNTH_128k_targetshort
+    context_length: 131072
+    documents: [pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 128
+    spec_steps: 0
+    checkpoint_every: 0
+    measure_target_ppl: false
+    notes: 'SHORT target-only: decode-only rate for the paired ratio (7 docs)'
+GATED_llama3_f16_256k_SYNTH_SPEC:
+  name: synth_256k
+  factor: context_length
+  levels:
+  - id: SYNTH_256k
     context_length: 262144
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     rope_type: llama3
     rope_factor: 16
+    max_new_tokens: 1024
     checkpoint_every: 0
-    notes: 'synthetic prompt at the gated 256k rung'
-  - id: SYNTHETIC_ctx256k_targetonly
-    context_length: 262144
-    spec_steps: 0
-    rope_type: llama3
-    rope_factor: 16
-    checkpoint_every: 0
-    notes: 'Paired target-only baseline for the synthetic 256k rung.'
-
-SYNTHETIC_CTX512K:
-  name: synthetic_ctx512k
+    notes: 'speculative arm, 10 documents, 1024 tokens, synthetic 256k'
+GATED_llama3_f16_256k_SYNTH_TARGET_FULL:
+  name: synth_256k_target_full
   factor: context_length
   levels:
-  - id: SYNTHETIC_ctx512k
-    context_length: 524288
-    rope_type: llama3
-    rope_factor: 32
-    checkpoint_every: 0
-    notes: 'synthetic prompt at the gated 512k rung'
-  - id: SYNTHETIC_ctx512k_targetonly
-    context_length: 524288
+  - id: SYNTH_256k_targetfull
+    context_length: 262144
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115]
+    max_new_tokens: 1024
     spec_steps: 0
-    rope_type: llama3
-    rope_factor: 32
     checkpoint_every: 0
-    notes: 'Paired target-only baseline for the synthetic 512k rung.'
+    rope_type: llama3
+    rope_factor: 16
+
+    notes: 'FULL target-only: losslessness + end-to-end paired ratio (3 docs)'
+GATED_llama3_f16_256k_SYNTH_TARGET_SHORT:
+  name: synth_256k_target_short
+  factor: context_length
+  levels:
+  - id: SYNTH_256k_targetshort
+    context_length: 262144
+    documents: [pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 128
+    spec_steps: 0
+    checkpoint_every: 0
+    measure_target_ppl: false
+    rope_type: llama3
+    rope_factor: 16
+
+    notes: 'SHORT target-only: decode-only rate for the paired ratio (7 docs)'

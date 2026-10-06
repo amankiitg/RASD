@@ -1,26 +1,35 @@
-# MLSys — natural-text speculative runs on GATE-PASSING rope configurations.
+# MLSys — natural-text speculative runs at 256k and 512k.
 #
 # TARGET POLICY: Llama-3.1-8B. Above 128k ONLY a rope configuration that PASSED results/mlsys/coherence_gate.csv may be used.
 #
-# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy,
-# 1024 generated tokens, ignore_eos true, prompt = context - 1024 - 1 so the
-# sequence the engine builds (prompt + leading BOS + generation) is EXACTLY the
-# rung context. The builder derives the prompt from `context_length`, so the
-# value here is the rung, not the prompt length.
+# DECODING CONTRACT (docs/mlsys_analysis_plan.md section 2): greedy, ignore_eos
+# true, prompt = context - max_new_tokens - 1, so the engine's sequence
+# (prompt + leading BOS + generation) is EXACTLY the rung. The builder derives
+# the prompt from `context_length`, so the value here is the rung.
 #
 # UNITS OF INDEPENDENCE: the DOCUMENT (one PG-19 book). `seeds: [42]` because
 # greedy decoding is deterministic, so a second seed would repeat a run rather
-# than replicate it; replication is the 10 documents below, identical at every
-# rung so the rung comparison is paired (same book, different context).
+# than replicate it; replication is the documents, identical at every rung so the
+# rung comparison is paired.
 #
-# REPORTED LIMITATION: only 14 PG-19 train books reach 512k tokens, so this set
-# is 2 Bibles, 2 Shakespeare volumes and an omnibus. The composition is constant
-# across rungs and cancels in the paired comparison, but it limits
-# generalisation — which is what the separate `diverse` arm checks at 128k.
-# Every level must correspond to a candidate the CALIBRATED gate
-# passed. A failed candidate is REMOVED, never re-run with adjusted
-# settings until it passes; the manifest re-checks each level against
-# the gate output at run time and skips any that did not pass.
+# TARGET-ONLY BASELINE DESIGN (plan revision, 2026-10-06):
+#   3 documents x 1024 tokens -> losslessness, and the end-to-end paired ratio
+#   7 documents x  128 tokens -> decode-only tok/s for the paired ratio
+# The paired ratio is reported on decode-only tok/s for all 10 documents, with
+# the end-to-end ratio beside it for the 3 full pairs. Losslessness is an
+# implementation property and needs a same-length target-only partner; a
+# throughput RATE needs a steady state, not an equal token count. Prefill is
+# identical across arms and under 5% of the decode wall (measured 0.22% at 128k,
+# 0.54% at 512k), so the end-to-end ratio is a prefill-weighted restatement of
+# the decode ratio rather than an independent quantity.
+# Severable per rung so the 256k and 512k sessions can be approved
+# and run separately; 512k needs its own instance session because it
+# is ~26 h at this baseline design.
+# A candidate the gate failed is REMOVED, never re-run with adjusted
+# settings until it passes.
+# REPORTED LIMITATION: only 14 PG-19 train books reach 512k, so the core-10
+# is 2 Bibles, 2 Shakespeare volumes and an omnibus. Constant across rungs,
+# so it cancels in the paired comparison; the diverse arm checks it at 128k.
 defaults:
   target_model_name: meta-llama/Llama-3.1-8B
   draft_model_name: meta-llama/Llama-3.2-1B
@@ -34,66 +43,95 @@ defaults:
   quantize_draft: true
   quantize_target: true
   draft_window_cap: 4096
-  max_new_tokens: 1024
   ignore_eos: true
-  temperature: 0.0        # GREEDY, per plan section 2. Sampling would make
-                          # the seed-dependent-prompt claim false and the
-                          # token-identity losslessness check invalid.
+  temperature: 0.0        # GREEDY, per plan section 2
   top_p: 1.0
   seeds: [42]
   log_per_token: true
   save_generated_text: true
-  save_generated_tokens: true     # losslessness compares token ids, not text
-  measure_target_ppl: true        # target quality beside every acceptance figure
+  save_generated_tokens: true
+  measure_target_ppl: true
   prompt_source: pg19_document
   prompt_documents_json: data/processed/pg19_docs/documents.json
-GATED_LLAMA3_F16_256K:
-  name: gated_llama3_f16_256k
+GATED_llama3_f16_256k_SPEC:
+  name: natural_256k
   factor: context_length
   levels:
-  - id: GATED_llama3_f16_256k
+  - id: NATURAL_256k
     context_length: 262144
     documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     rope_type: llama3
     rope_factor: 16
+    max_new_tokens: 1024
     checkpoint_every: 0
-    notes: 'gate candidate llama3_f16_256k (native mechanism; only the factor moves)'
-  - id: GATED_llama3_f16_256k_targetonly
+    notes: 'speculative arm, 10 documents, 1024 tokens, 256k gated rung'
+GATED_llama3_f16_256k_TARGET_FULL:
+  name: natural_256k_target_full
+  factor: context_length
+  levels:
+  - id: NATURAL_256k_targetfull
     context_length: 262144
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115]
+    max_new_tokens: 1024
     spec_steps: 0
+    checkpoint_every: 0
     rope_type: llama3
     rope_factor: 16
-    checkpoint_every: 0
-    notes: 'Paired target-only baseline at 256k.'
-GATED_LLAMA3_F32_512K:
-  name: gated_llama3_f32_512k
+
+    notes: 'FULL target-only: losslessness + end-to-end paired ratio (3 docs)'
+GATED_llama3_f16_256k_TARGET_SHORT:
+  name: natural_256k_target_short
   factor: context_length
   levels:
-  - id: GATED_llama3_f32_512k
-    context_length: 524288
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
-    rope_type: llama3
-    rope_factor: 32
-    checkpoint_every: 0
-    notes: 'gate candidate llama3_f32_512k (native mechanism; only the factor moves)'
-  - id: GATED_llama3_f32_512k_targetonly
-    context_length: 524288
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
-    spec_steps: 0
-    rope_type: llama3
-    rope_factor: 32
-    checkpoint_every: 0
-    notes: 'Paired target-only baseline at 512k.'
-GATED_YARN_B8192_F32_256K:
-  name: gated_yarn_b8192_f32_256k
-  factor: context_length
-  levels:
-  - id: GATED_yarn_b8192_f32_256k
+  - id: NATURAL_256k_targetshort
     context_length: 262144
-    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
-    rope_type: yarn
-    rope_factor: 32
-    rope_anchor_base: 8192
+    documents: [pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 128
+    spec_steps: 0
     checkpoint_every: 0
-    notes: 'gate candidate yarn_base8192_f32_256k (YaRN over the true 8192 base)'
+    measure_target_ppl: false
+    rope_type: llama3
+    rope_factor: 16
+
+    notes: 'SHORT target-only: decode-only rate for the paired ratio (7 docs)'
+GATED_llama3_f32_512k_SPEC:
+  name: natural_512k
+  factor: context_length
+  levels:
+  - id: NATURAL_512k
+    context_length: 524288
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    rope_type: llama3
+    rope_factor: 32
+    max_new_tokens: 1024
+    checkpoint_every: 0
+    notes: 'speculative arm, 10 documents, 1024 tokens, 512k gated rung'
+GATED_llama3_f32_512k_TARGET_FULL:
+  name: natural_512k_target_full
+  factor: context_length
+  levels:
+  - id: NATURAL_512k_targetfull
+    context_length: 524288
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115]
+    max_new_tokens: 1024
+    spec_steps: 0
+    checkpoint_every: 0
+    rope_type: llama3
+    rope_factor: 32
+
+    notes: 'FULL target-only: losslessness + end-to-end paired ratio (3 docs)'
+GATED_llama3_f32_512k_TARGET_SHORT:
+  name: natural_512k_target_short
+  factor: context_length
+  levels:
+  - id: NATURAL_512k_targetshort
+    context_length: 524288
+    documents: [pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    max_new_tokens: 128
+    spec_steps: 0
+    checkpoint_every: 0
+    measure_target_ppl: false
+    rope_type: llama3
+    rope_factor: 32
+
+    notes: 'SHORT target-only: decode-only rate for the paired ratio (7 docs)'

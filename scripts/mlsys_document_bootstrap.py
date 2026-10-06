@@ -92,7 +92,8 @@ def group_rows(rows: list[dict], keys: list[str]) -> dict[tuple, list[dict]]:
 
 def summarise(rows: list[dict], keys: list[str], metrics: list[str],
               arm_column: str, spec_arm: str, target_arm: str,
-              seed: int = 20261006) -> list[dict]:
+              seed: int = 20261006,
+              ratio_metric: str = "decode_tps") -> list[dict]:
     out: list[dict] = []
     for gkey, grows in sorted(group_rows(rows, keys).items()):
         label = dict(zip(keys, gkey))
@@ -119,8 +120,11 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
         # the LAST row, so with more than one row per document the paired
         # speedup silently used an arbitrary subset while the marginal means
         # above averaged them all.
-        spec = _per_document_first(grows, "throughput_tps", arm_column, spec_arm)
-        targ = _per_document_first(grows, "throughput_tps", arm_column, target_arm)
+        # Primary ratio on the pre-registered decode-only rate; the end-to-end
+        # ratio is reported beside it for the documents that have a full-length
+        # target-only partner. See the plan's revision block.
+        spec = _per_document_first(grows, ratio_metric, arm_column, spec_arm)
+        targ = _per_document_first(grows, ratio_metric, arm_column, target_arm)
         paired = sorted(set(spec) & set(targ))
         if not paired:
             continue
@@ -133,7 +137,7 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
         v_boot, v_t = clears(pr, 1.0), clears(tr, 1.0)
         verdict = v_boot if v_boot == v_t else "inconclusive"
         out.append({
-            **label, "estimate": "paired_speedup", "metric": "throughput_tps",
+            **label, "estimate": "paired_speedup", "metric": ratio_metric,
             "point": round(pr["point"], 6),
             "ci_lo": round(pr["lo"], 6), "ci_hi": round(pr["hi"], 6),
             "t_ci_lo": round(tr["lo"], 6), "t_ci_hi": round(tr["hi"], 6),
@@ -153,7 +157,11 @@ def main() -> int:
     p.add_argument("--spec-arm", default="4")
     p.add_argument("--target-arm", default="0")
     p.add_argument("--metrics", nargs="+",
-                   default=["acceptance_rate", "throughput_tps", "target_ppl"])
+                   default=["acceptance_rate", "decode_tps", "throughput_tps",
+                            "target_ppl"])
+    p.add_argument("--ratio-metric", default="decode_tps",
+                   help="Pre-registered primary metric for the paired ratio "
+                        "(decode_tps; throughput_tps for the end-to-end view)")
     p.add_argument("--seed", type=int, default=20261006)
     p.add_argument("--out", default=None)
     args = p.parse_args()
@@ -163,7 +171,18 @@ def main() -> int:
         rows = [r for r in csv.DictReader(fh) if r.get("status") == "ok"]
 
     res = summarise(rows, args.group_by, args.metrics, args.spec_arm_column,
-                    args.spec_arm, args.target_arm, seed=args.seed)
+                    args.spec_arm, args.target_arm, seed=args.seed,
+                    ratio_metric=args.ratio_metric)
+    # The end-to-end ratio is reported BESIDE the primary one, so a reader can
+    # see the prefill weighting rather than take it on trust.
+    other = "throughput_tps" if args.ratio_metric != "throughput_tps" else "decode_tps"
+    for r in summarise(rows, args.group_by, args.metrics, args.spec_arm_column,
+                       args.spec_arm, args.target_arm, seed=args.seed,
+                       ratio_metric=other):
+        if r["estimate"] == "paired_speedup":
+            r["estimate"] = f"paired_speedup_{other}"
+            r["verdict"] = ""
+            res.append(r)
 
     out_path = Path(args.out) if args.out else path.with_name(
         path.stem + "_doc_intervals.csv")

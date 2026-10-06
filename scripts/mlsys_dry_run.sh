@@ -426,7 +426,11 @@ for doc in ("d0", "d1"):
         rows.append({"run_id": rid, "doc_id": doc, "context_length": 2048,
                      "max_new_tokens": 5, "spec_steps": ss, "status": "ok",
                      "prompt_sha256": "h" + doc, "prompt_tokens": 1024,
-                     "acceptance_rate": 0.9, "throughput_tps": 10.0})
+                     "acceptance_rate": 0.9,
+                     # decode_tps is the pre-registered primary ratio metric;
+                     # the end-to-end rate is reported beside it.
+                     "decode_tps": 10.0, "throughput_tps": 8.0,
+                     "full_accept_share": 0.75})
         (tw / f"{rid}.json").write_text(json.dumps(
             {"run_id": rid, "generated_token_ids": ids,
              "doc_id": doc, "prompt_sha256": "h" + doc,

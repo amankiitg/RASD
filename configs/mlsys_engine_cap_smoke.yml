@@ -1,0 +1,69 @@
+# MLSys — engine_cap_smoke: the FIRST stage after gate calibration.
+#
+# WHY THIS EXISTS. The generation cap was changed in the engine so that a verify
+# round cannot overshoot `max_new_tokens` (previously a round committed up to
+# n_acc + 1 tokens, so a run landed anywhere in [cap, cap + gamma]). That change
+# has NEVER EXECUTED ON A GPU. If it is wrong it does not fail loudly: it
+# silently changes the generated length, which breaks the
+# `prompt + BOS + generated == context` identity, invalidates the losslessness
+# comparison (the target-only arm stops exactly on the cap), and makes the
+# acceptance denominator a function of acceptance itself.
+#
+# So it is validated first, on ONE document, at a context small enough to be
+# cheap, at two caps (64 and 1024) so the code path where the final round is cut
+# short is exercised at a different remainder than the one the campaign uses.
+#
+# The manifest STOPS before natural_f1_128k if any assertion fails.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false          # not what this stage is for
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+
+CAP_SMOKE:
+  name: engine_cap_smoke
+  factor: context_length
+  levels:
+  - id: CAPS_prefix64
+    context_length: 131072
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    checkpoint_every: 0
+    notes: 'cap=64: the truncated final round has a different remainder than 1024'
+  - id: CAPS_prefix64_targetonly
+    context_length: 131072
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'target-only partner at cap=64'
+  - id: CAPS_prefix1024
+    context_length: 131072
+    documents: [pg19_train_1]
+    max_new_tokens: 1024
+    checkpoint_every: 0
+    notes: 'the cap the campaign actually uses'
+  - id: CAPS_prefix1024_targetonly
+    context_length: 131072
+    documents: [pg19_train_1]
+    max_new_tokens: 1024
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'target-only partner at cap=1024; the losslessness reference'

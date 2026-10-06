@@ -23,7 +23,9 @@ ASK_OVER=${MLSYS_ASK_OVER_USD:-300}
 # Comma-separated stage ids the operator has explicitly approved to run while
 # projected above ASK_OVER. Empty means "approve nothing": the run stops and
 # reports rather than spending on a stage nobody signed off.
-APPROVED=${MLSYS_APPROVED_STAGES:-}
+# Defaults to the operator's 2026-10-06 approval. Override with
+# MLSYS_APPROVED_STAGES at launch; an empty value means "approve nothing".
+APPROVED=${MLSYS_APPROVED_STAGES:-gate_calibration,engine_cap_smoke,natural_f1_128k,impl_validation,coherence_gate,correction_note_evidence,natural_spec_gated_256k}
 mkdir -p "$OUT"
 [ -f "$COST_LOG" ] || echo "stage,wall_seconds,nproc,gpu_hours,node_cost_usd" > "$COST_LOG"
 
@@ -108,8 +110,10 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
   # Group by level_id, NOT context_length: the speculative and target-only arms
   # share a context_length, so grouping by it pooled them and averaged the
   # target-only acceptance (hard-coded 0.0) into the speculative number.
+  # Primary paired ratio on decode_tps (pre-registered); the end-to-end ratio is
+  # written beside it by the same script.
   stage "${name}_doc_intervals" 1800 python3 scripts/mlsys_document_bootstrap.py \
-    --results "$csv" --group-by level_id \
+    --results "$csv" --group-by level_id --ratio-metric decode_tps \
     --out "$(dirname "$csv")/${name}_doc_intervals.csv"
   # --window: the plan compares rungs over a common window of rounds so cells
   # with different output lengths are on equal footing.
@@ -142,13 +146,28 @@ if ! python3 scripts/mlsys_gate_calibration_check.py "$OUT/gate_calibration.csv"
   exit 1
 fi
 
-# ---- S1: implementation validation (RASD vs vLLM, native 128k) -----------
-# The RASD/target-only sides of this cross-check come from the S4 128k stage's
-# own rows and token sidecars; the vLLM side is measured here. Both are then
-# compared by scripts/mlsys_losslessness.py at report time, so a disagreement
-# between two implementations is visible rather than averaged away.
-stage impl_validation 21600 python3 scripts/mlsys_vllm_baseline.py \
-  --out "$OUT/impl_validation.csv" --attempts 3
+# ---- engine_cap_smoke: the FIRST speculative-dependent check ------------
+# Runs BEFORE any speculative stage. The engine's generation cap has never
+# executed on a GPU, and if it is wrong it fails QUIETLY: the generated length
+# changes, which invalidates the losslessness comparison and makes the
+# acceptance denominator a function of acceptance. So failure here STOPS the run
+# rather than being recorded and skipped.
+stage engine_cap_smoke 21600 python3 run_experiment.py \
+  --config configs/mlsys_engine_cap_smoke.yml \
+  --output "$OUT/engine_cap_smoke.csv" --stage-id engine_cap_smoke \
+  --log-per-token --save-generated-tokens
+if [ ! -s "$OUT/engine_cap_smoke.csv" ]; then
+  interim "STOP: engine_cap_smoke produced no results; refusing to start speculative stages"
+  echo "STOP: cap smoke produced nothing"
+  exit 1
+fi
+if ! python3 scripts/mlsys_cap_smoke_check.py --results "$OUT/engine_cap_smoke.csv"; then
+  interim "STOP: engine_cap_smoke assertions FAILED; refusing to start natural_f1_128k"
+  echo "STOP: the generation cap is not enforced; not starting speculative stages"
+  exit 1
+fi
+interim "engine_cap_smoke PASSED: cap enforced and the pair is lossless"
+
 
 # ---- S2: correction-note evidence ----------------------------------------
 # Reuses the gate's measurement path with Llama-2 candidates, so the numbers the
@@ -178,32 +197,44 @@ for r in csv.DictReader(open(sys.argv[1])):
 PY
 
 # ---- S4: natural-text f1 at the native 128k window ----------------------
-for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml" \
-                  "natural_f1_128k_diverse:configs/mlsys_natural_f1_128k_diverse.yml"; do
-  name=${spec_stage%%:*}; cfg=${spec_stage##*:}
+for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
+                  "natural_f1_128k_diverse:configs/mlsys_natural_f1_128k_diverse.yml:"; do
+  name=${spec_stage%%:*}; rest=${spec_stage#*:}; cfg=${rest%%:*}; grp=${rest##*:}
   if [ ! -f "$cfg" ]; then
     interim "SKIPPED name=$name reason=config-missing path=$cfg"
     continue
   fi
-  stage "$name" 43200 python3 run_experiment.py \
-    --config "$cfg" --output "$OUT/${name}.csv" --stage-id "$name" \
-    --log-per-token --memory-trace --save-generated-text \
-    --save-generated-tokens
+  if [ -n "$grp" ]; then
+    stage "$name" 43200 python3 run_experiment.py --config "$cfg" --groups $grp \
+      --output "$OUT/${name}.csv" --stage-id "$name" \
+      --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  else
+    stage "$name" 43200 python3 run_experiment.py --config "$cfg" \
+      --output "$OUT/${name}.csv" --stage-id "$name" \
+      --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  fi
   report_spec_stage "$OUT/${name}.csv" "$name"
 done
 
-# ---- S5/S6: only configurations the gate cleared -------------------------
-for spec_stage in "natural_spec_gated:configs/mlsys_natural_gated.yml" \
-                  "synthetic_spec_gated:configs/mlsys_synthetic_gated.yml"; do
-  name=${spec_stage%%:*}; cfg=${spec_stage##*:}
+# ---- S1: implementation validation, vLLM-only against S4's own rows ------
+# No RASD runs here: the comparison uses natural_f1_128k's rows and token
+# sidecars, so this stage adds no RASD wall time.
+stage impl_validation 21600 python3 scripts/mlsys_vllm_baseline.py \
+  --out "$OUT/impl_validation.csv" \
+  --context-lengths 131072 --max-new-tokens 1024
+
+# ---- S5: the gated rungs, one stage per rung -----------------------------
+# Each is severable so the 512k session can be approved and run on its own
+# instance. 512k needs a 40h watchdog: at ~26h the default 20h would kill it.
+for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
+             "natural_spec_gated_512k:GATED_llama3_f32_512k:144000"; do
+  name=${gated%%:*}; rest=${gated#*:}; prefix=${rest%%:*}; tmo=${rest##*:}
+  cfg=configs/mlsys_natural_gated.yml
   if [ ! -f "$cfg" ]; then
     interim "SKIPPED name=$name reason=config-missing path=$cfg"
     continue
   fi
-  # ENFORCE the gate. `require_gate_verdict: pass` was declared in the manifest
-  # and never implemented: a gate that failed every candidate still let every
-  # >128k stage run. The filter writes a config containing only the levels whose
-  # configuration actually passed; a level with no matching verdict is dropped.
+  # ENFORCE the gate: keep only levels whose rope configuration passed.
   filtered="$OUT/${name}.gated.yml"
   if ! python3 scripts/mlsys_gate_filter.py --gate "$OUT/coherence_gate.csv" \
         --config "$cfg" --out "$filtered" --allow-empty; then
@@ -211,16 +242,39 @@ for spec_stage in "natural_spec_gated:configs/mlsys_natural_gated.yml" \
     echo "SKIP $name (no configuration passed the gate)"
     continue
   fi
-  stage "$name" 86400 python3 run_experiment.py \
-    --config "$filtered" --output "$OUT/${name}.csv" --stage-id "$name" \
-    --log-per-token --memory-trace --save-generated-text \
-    --save-generated-tokens
+  stage "$name" "$tmo" python3 run_experiment.py --config "$filtered" \
+    --groups ${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT \
+    --output "$OUT/${name}.csv" --stage-id "$name" \
+    --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  report_spec_stage "$OUT/${name}.csv" "$name"
+done
+
+# ---- S6: synthetic arm, per rung, secondary ------------------------------
+for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
+           "synthetic_spec_gated_256k:GATED_llama3_f16_256k_SYNTH:64800"; do
+  name=${syn%%:*}; rest=${syn#*:}; prefix=${rest%%:*}; tmo=${rest##*:}
+  cfg=configs/mlsys_synthetic_gated.yml
+  [ -f "$cfg" ] || { interim "SKIPPED name=$name reason=config-missing"; continue; }
+  filtered="$OUT/${name}.gated.yml"
+  if ! python3 scripts/mlsys_gate_filter.py --gate "$OUT/coherence_gate.csv" \
+        --config "$cfg" --out "$filtered" --allow-empty; then
+    interim "SKIPPED name=$name reason=no_gate_passing_config"
+    continue
+  fi
+  stage "$name" "$tmo" python3 run_experiment.py --config "$filtered" \
+    --groups ${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT \
+    --output "$OUT/${name}.csv" --stage-id "$name" \
+    --log-per-token --memory-trace --save-generated-text --save-generated-tokens
   report_spec_stage "$OUT/${name}.csv" "$name"
 done
 
 # ---- S7: vLLM baseline ---------------------------------------------------
+# Plain (non-speculative) decode at every rung: the production-stack reference
+# where the payoff boundary is claimed. impl_validation covers only 128k and
+# only speculative decoding.
 stage vllm_ladder 21600 python3 scripts/mlsys_vllm_baseline.py \
-  --out "$OUT/vllm_baseline.csv" --attempts 3
+  --out "$OUT/vllm_baseline.csv" \
+  --context-lengths 131072 262144 524288 --max-new-tokens 1024
 
 interim "=== MANIFEST END spend=\$$(spend) ==="
 echo "total node cost: \$$(spend)"
