@@ -127,6 +127,7 @@ trap 'terminate_and_confirm; exit 143' TERM
 attempt=0
 while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
   attempt=$((attempt+1))
+  nap=$(( 90 + RANDOM % 510 ))
   n=$(count_instances)
   if [ "$n" = "0" ]; then
     avail=$(api_get instance-types 2>/dev/null | python3 -c "
@@ -152,7 +153,10 @@ except Exception: print('')" 2>/dev/null)
       fi
       say "  launch refused: $(printf '%s' "$resp" | head -c 160) — retrying"
     else
-      [ $((attempt % 10)) -eq 0 ] && say "still waiting (attempt $attempt, 0 instances)"
+      # Heartbeat on EVERY attempt, not every tenth: over an 18h wait "polling,
+      # no capacity" must be distinguishable at a glance from "hung", and the
+      # next poll time makes the gap itself a liveness signal.
+      say "attempt $attempt: no capacity for $INSTANCE_TYPE; next poll in ~${nap}s"
     fi
   else
     say "instances already running ($n) — not launching a second one"
@@ -160,7 +164,7 @@ except Exception: print('')" 2>/dev/null)
       "import json,sys;d=json.load(sys.stdin)['data'];print(d[0]['id'] if d else '')")
     break
   fi
-  interruptible_sleep $(( 90 + RANDOM % 510 ))
+  interruptible_sleep $nap
 done
 
 if [ -z "$INSTANCE_ID" ]; then
