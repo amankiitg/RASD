@@ -587,6 +587,82 @@ figure. The earlier "$35" was an arithmetic slip in this revision (3.2h was
 costed as if each hour were ~$11); it is corrected here BEFORE the stage runs,
 and the correction is the reason the number is stated with its derivation.
 
+### Revision: session ceiling raised to $850 (2026-10-06)
+
+*Before the affected stages run; no data seen.*
+
+The reviewed cost projections for the approved set totalled **$729** against the
+$700 session ceiling, so the aggregate guard would have refused the LAST
+approved stage (`vllm_ladder`, $56) on arithmetic alone -- a production-stack
+baseline dropped by a ceiling rather than by a judgement about its value.
+
+Two things changed the total since the ceiling was set:
+
+* `gate_calibration` rose from $13 to $22, because every control now carries a
+  declared native baseline at its own context (9 rows instead of 5, three of
+  them at 128k). A control with no baseline cannot be measured, so the extra
+  rows are the price of the verdicts meaning anything.
+* `rope_intervention_128k` was added at $82, and gains a third arm below, taking
+  it to ~$120.
+
+**The ceiling is now $850**, which covers the approved set (~$767) with ~$83 of
+headroom. Recorded here before the stages run. The per-stage approval threshold
+($300) is unchanged: the ceiling bounds the session, it does not authorise any
+single stage that has not been approved by name.
+
+### Revision: rope_intervention_128k gains a factor-32 arm (2026-10-06)
+
+*Before the arm exists in any config; no data seen.*
+
+The stage compares the shipped `llama3` rope against interventions that change
+only its `factor`. With one treated arm, a difference (or an equivalence) is a
+statement about factor 16 alone, and cannot be read as a property of the
+intervention -- factor 16 may sit close enough to the shipped 8 that nothing
+moves, or far enough that coherence breaks, and one point cannot tell those
+apart.
+
+**Three arms, the same 10 core documents, paired by document, spec-only, at
+128k, greedy, 1024 tokens, `ignore_eos=true`:**
+
+| arm | target rope |
+|---|---|
+| `R_native` | the shipped `llama3` block, untouched |
+| `R_llama3_f16` | shipped dict, only `factor` 8 -> 16 |
+| `R_llama3_f32` | shipped dict, only `factor` 8 -> 32 |
+
+The shipped dict is spread and one key overridden, so `factor` is the only
+difference in each treated arm. The anchor stays where the model ships it
+(`original_max_position_embeddings = 8192`); moving it as well would confound
+the factor with the anchor, which is the error the correction note documents.
+
+**Primary comparisons.** `R_native` vs `R_llama3_f16` and `R_native` vs
+`R_llama3_f32`, each a paired difference in `alpha_round` (treated minus native)
+with a document-bootstrap 95% interval, `n_boot = 10000`, resampling documents.
+The `f16` vs `f32` difference is reported as a secondary contrast and is NOT
+part of the primary claim.
+
+**Equivalence margin: 0.05, unchanged and as pre-registered for this stage.** The
+three-way decision applies to each primary comparison independently:
+
+* interval entirely inside [-0.05, +0.05] -> **equivalent** at that factor;
+* interval entirely outside -> **a rope effect exists**, reported with direction;
+* interval overlapping a boundary -> **inconclusive**, never rounded.
+
+"Equivalent at factor 16" and "equivalent at factor 32" are separate findings.
+Absence of a detected difference is not evidence of equivalence, and with
+n = 10 documents an inconclusive result is likely at one or both factors; it is
+reported as inconclusive and is not a failure of the stage.
+
+**Gate.** Each treated arm must pass the coherence gate at **128k** on its own
+before it runs. **A gate failure is recorded as THAT ARM's result**: the failing
+arm is not run and is reported as "a llama3 factor-N intervention at 128k does
+not produce a coherent target", while the remaining arms still run. The
+threshold is never relaxed to make an arm agree -- a threshold adjusted to admit
+the thing it excluded is no longer a gate.
+
+**Cost.** ~$120: 30 speculative runs (3 arms x 10 documents) x ~570 s = 4.75h =
+$106, plus 3 gate rows at 128k ~= $13.
+
 ### Losslessness verdicts
 
 `losslessness: required` on a stage means, exactly:
