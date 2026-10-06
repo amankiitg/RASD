@@ -44,8 +44,14 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -i $SSH_KEY"
 mkdir -p "$SESSION_DIR"
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 
-KEY=$(sed -n '14p' runpod_creds.md 2>/dev/null | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]')
-if [ -z "${KEY:-}" ]; then say "FATAL: no Lambda API key found"; exit 2; fi
+# Look the key up by label, not by line number: an edit anywhere above it would
+# otherwise hand us another variable's value and fail only as a 401 mid-wait.
+KEY=$(grep -E '^[[:space:]]*LAMBDA_API_KEY[[:space:]]*=' runpod_creds.md 2>/dev/null \
+      | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]')
+if [ -z "${KEY:-}" ]; then
+  say "FATAL: no LAMBDA_API_KEY line found in runpod_creds.md (looked up by label)"
+  exit 2
+fi
 
 api_get() { curl -sS --max-time 60 -u "$KEY:" "https://cloud.lambda.ai/api/v1/$1"; }
 
