@@ -476,9 +476,16 @@ done
 # ---- S1: implementation validation, vLLM-only against S4's own rows ------
 # No RASD runs here: the comparison uses natural_f1_128k's rows and token
 # sidecars, so this stage adds no RASD wall time.
+# vLLM spec decoding on the SAME three documents as natural_f1_128k, given the
+# EXACT prompt ids those RASD runs fed (from their token sidecars), greedy, at
+# the matched 1024-token generation. Anything less and the row is not comparable
+# and is flagged unit_matched=no rather than averaged into a ratio.
 stage impl_validation 21600 "$PY" scripts/mlsys_vllm_baseline.py \
   --out "$OUT/impl_validation.csv" \
-  --context-lengths 131072 --max-new-tokens 1024
+  --prompt-ids-from-sidecars "$OUT/tokens" \
+  --documents pg19_train_0,pg19_train_1,pg19_train_115 \
+  --context-lengths 131072 --max-new-tokens 1024 --matched-max-new-tokens 1024 \
+  --models meta-llama/Llama-3.1-8B
 
 # ---- S5: the gated rungs, one stage per rung -----------------------------
 # Each is severable so the 512k session can be approved and run on its own
@@ -549,7 +556,10 @@ done
 # only speculative decoding.
 stage vllm_ladder 21600 "$PY" scripts/mlsys_vllm_baseline.py \
   --out "$OUT/vllm_baseline.csv" \
-  --context-lengths 131072 262144 524288 --max-new-tokens 1024
+  --prompt-ids-from-sidecars "$OUT/tokens" \
+  --context-lengths 131072 262144 524288 --max-new-tokens 1024 \
+  --matched-max-new-tokens 1024 \
+  --models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf
 
 if [ "$WATCHDOG_SKIPS" -gt 0 ] || [ "$COST_UNKNOWN" -gt 0 ] \
    || [ "$BUDGET_SKIPS" -gt 0 ] || [ "$STAGE_INVALID" -gt 0 ] \

@@ -325,6 +325,11 @@ def _build_pg19_document_prompt(documents_json: str, context_length: int,
         )
     provenance = {
         "doc_id": doc_id,
+        # The exact ids the engine will feed. Saved so a second implementation
+        # can be given THIS prompt rather than one rebuilt from the same book:
+        # a rebuilt prompt is a different prompt, and an acceptance or
+        # throughput comparison against it is not like-for-like.
+        "prompt_token_ids": [int(t) for t in got],
         "doc_title": d.get("title"),
         "doc_url": d.get("url"),
         "prompt_tokens": len(got),

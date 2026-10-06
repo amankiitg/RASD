@@ -37,12 +37,26 @@ class _Args:
         self.matched_max_new_tokens = mn
 
 
-def _ok_row(w):
-    return {
+def _ok_row(w, **overrides):
+    """A row that satisfies EVERY fairness condition, C1-C5.
+
+    `max_new_tokens` must equal the matched RASD cell's, which the caller sets
+    on _Args; the hash must be the one _ids_sha produces for the ids the test
+    passes in, and the row must name its document so it can be paired. A
+    fixture missing any of these is not an "ok" row any more -- the contract
+    was widened to include the sampling rule, the pin and the prompt's
+    provenance, so the fixture follows.
+    """
+    row = {
         "eos_policy": w.EOS_POLICY,
         "tensor_parallel_size": 8,
         "max_new_tokens": 128,
+        "temperature": 0.0,                 # the RASD cells are greedy
+        "vllm_version": w.VLLM_PIN,         # the pinned release
+        "doc_id": "pg19_train_0",           # so the pair can be formed
     }
+    row.update(overrides)
+    return row
 
 
 class TestC1VersionPin:
@@ -66,7 +80,9 @@ class TestC2PromptIds:
         assert "C2" in why
 
     def test_exact_prompt_ids_qualify(self, wrapper):
-        ok, why = wrapper._unit_match_verdict(_ok_row(wrapper), [1, 2, 3], _Args())
+        ids = [1, 2, 3]
+        row = _ok_row(wrapper, prompt_sha256=wrapper._ids_sha(ids))
+        ok, why = wrapper._unit_match_verdict(row, ids, _Args())
         assert ok is True, why
 
     def test_lookup_accepts_several_key_spellings(self, wrapper):
@@ -115,7 +131,9 @@ class TestC4BothPrecisions:
 
 class TestC5UnitMatching:
     def test_all_four_conditions_together(self, wrapper):
-        ok, why = wrapper._unit_match_verdict(_ok_row(wrapper), [1], _Args())
+        ids = [1]
+        row = _ok_row(wrapper, prompt_sha256=wrapper._ids_sha(ids))
+        ok, why = wrapper._unit_match_verdict(row, ids, _Args())
         assert ok is True, why
 
     def test_tensor_parallelism_must_be_8(self, wrapper):

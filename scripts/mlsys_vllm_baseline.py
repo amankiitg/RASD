@@ -59,6 +59,10 @@ CSV_FIELDS = [
     # which EOS policy, and — most importantly — WHICH PROMPT.
     "vllm_version", "quantization", "eos_policy", "prompt_source",
     "prompt_sha256",
+    # Which RASD cell this vLLM cell is the counterpart of. The comparison is
+    # paired per document, so a row that does not name its document cannot be
+    # paired with anything.
+    "doc_id", "temperature", "prompt_ids_from",
 ]
 
 # C1: pin vLLM. A speedup ratio is only meaningful against a named release;
@@ -227,7 +231,17 @@ def worker_main(spec_path: Path) -> int:
         return 1
 
     # C1: record the ACTUAL vLLM that ran, not the pin we hoped for.
-    vllm_version = getattr(_vllm, "__version__", "") or VLLM_PIN
+    # ENFORCE the pin. The previous line fell back to reporting the pin when the
+    # installed version was unreadable, so a row could claim the pinned release
+    # while running something else -- and the pin is the one thing that makes a
+    # speedup ratio citable. Refuse instead.
+    vllm_version = getattr(_vllm, "__version__", "") or ""
+    if vllm_version != VLLM_PIN:
+        raise SystemExit(
+            f"vLLM version is {vllm_version!r}, pin is {VLLM_PIN!r}. "
+            f"A throughput ratio is only comparable against a named release; "
+            f"install the pin or update VLLM_PIN deliberately."
+        )
 
     model = spec["model"]
     ctx = spec["context_length"]
@@ -294,7 +308,10 @@ def worker_main(spec_path: Path) -> int:
             prompt_source = "synthetic_same_paragraph_NOT_rasd_ids"
         prompt_sha = hashlib.sha256(
             json.dumps(list(ids)).encode()).hexdigest()[:16]
-        params = SamplingParams(temperature=1.0, top_p=1.0,
+        # GREEDY. The RASD cells run at temperature 0.0; sampling here would
+        # make the two systems answer different questions, and the acceptance
+        # comparison would be between a sampled path and a greedy one.
+        params = SamplingParams(temperature=0.0, top_p=1.0,
                                 max_tokens=max_new, ignore_eos=True)
 
         # No warm-up: a cold first call is what the RASD number includes too.
@@ -326,7 +343,11 @@ def worker_main(spec_path: Path) -> int:
             "ttft_s": (round(ttft, 4) if ttft is not None else ""),
             "throughput_tps_end_to_end": (round(out_tokens / end_to_end, 4)
                                           if end_to_end > 0 else ""),
-            "throughput_tps_decode_only": (round(out_tokens / decode_only, 4)
+            # Same convention as RASD's decode_tps: the first token is a
+            # prefill product, so the decode wall produces out_tokens - 1.
+            # Using out_tokens here would bias the ratio toward 1.0.
+            "throughput_tps_decode_only": (round(rasd_decode_rate(out_tokens,
+                                                                  decode_only), 4)
                                            if decode_only else ""),
             "unit_matched": "yes" if unit_ok else "no",
             "peak_mem_mb": (round(torch.cuda.max_memory_allocated() / 1024 ** 2, 1)
@@ -418,8 +439,68 @@ def run_attempt(spec: dict, log_path: Path, timeout_s: int) -> tuple[int, str]:
     return proc.returncode, "".join(chunks)
 
 
+def rasd_decode_rate(tokens: int, decode_wall_s) -> float:
+    """RASD's decode-only rate: (tokens - 1) / decode wall."""
+    if tokens < 1 or decode_wall_s is None:
+        return 0.0
+    return (int(tokens) - 1) / max(float(decode_wall_s), 1e-9)
+
+
 def _ids_sha(ids) -> str:
-    return hashlib.sha256(json.dumps(list(ids)).encode()).hexdigest()[:16]
+    """sha256 of a prompt id list, in RASD's spelling.
+
+    run_experiment hashes prompt ids as sha256(",".join(str(i) for i in ids))
+    and records that in the sidecar's `prompt_sha256`. Hashing them differently
+    here (json.dumps, truncated to 16 hex) meant an equality test between the
+    two could NEVER hold: every row would have been flagged "not the RASD ids"
+    while looking like a genuine prompt mismatch, and the one check that
+    establishes the two systems saw the same prompt would have been inert.
+    """
+    return hashlib.sha256(
+        ",".join(str(int(i)) for i in ids).encode()).hexdigest()
+
+
+def load_rasd_cells(tokens_dir) -> list[dict]:
+    """One cell per (context, document) from the RASD token sidecars.
+
+    The sidecars are written by run_experiment for every run that ran with
+    --save-generated-tokens. They carry the EXACT prompt ids the engine fed and
+    the sha256 of those ids, so vLLM can be given the same prompt rather than a
+    rebuilt one -- a rebuilt prompt is a different prompt.
+
+    A sidecar whose ids do not hash to its own recorded sha256 is a corrupt
+    sidecar; it is reported and skipped, never used.
+    """
+    cells: list[dict] = []
+    d = Path(tokens_dir)
+    if not d.is_dir():
+        raise SystemExit(f"--prompt-ids-from-sidecars: no such directory: {d}")
+    for f in sorted(d.glob("*.json")):
+        try:
+            sc = json.loads(f.read_text())
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] unreadable sidecar {f.name}: {exc}")
+            continue
+        ids = sc.get("prompt_token_ids")
+        if not ids:
+            continue
+        if _ids_sha(ids) != (sc.get("prompt_sha256") or ""):
+            print(f"[warn] sidecar {f.name}: prompt ids do not match the "
+                  f"recorded sha256; skipping")
+            continue
+        cells.append({
+            "doc_id": sc.get("doc_id") or "",
+            "context_length": int(sc.get("context_length") or 0),
+            "prompt_ids": [int(i) for i in ids],
+            "prompt_sha256": sc.get("prompt_sha256"),
+            "sidecar": f.name,
+        })
+    if not cells:
+        raise SystemExit(
+            f"--prompt-ids-from-sidecars: no usable sidecar in {d}. The vLLM "
+            f"rows would be compared against prompts the RASD runs never used."
+        )
+    return cells
 
 
 def _lookup_prompt_ids(mapping: dict, model: str, ctx: int):
@@ -448,6 +529,10 @@ def _unit_match_verdict(row: dict, prompt_ids, args) -> tuple[bool, str]:
     why: list[str] = []
     if not prompt_ids:
         why.append("prompt token ids are not the RASD ids (C2)")
+    elif _ids_sha(prompt_ids) != (row.get("prompt_sha256") or ""):
+        # The ids must be the ones the row says it used, or "we passed the RASD
+        # prompt" is an assertion about a variable, not about the run.
+        why.append("prompt sha256 does not match the ids actually used (C2)")
     if row.get("eos_policy") != EOS_POLICY:
         why.append(f"eos policy {row.get('eos_policy')!r} != {EOS_POLICY!r} (C3)")
     if int(row.get("tensor_parallel_size") or 0) != 8:
@@ -455,6 +540,18 @@ def _unit_match_verdict(row: dict, prompt_ids, args) -> tuple[bool, str]:
     if int(row.get("max_new_tokens") or 0) != args.matched_max_new_tokens:
         why.append("max_new_tokens != the matched RASD cell's "
                    f"{args.matched_max_new_tokens} (C5)")
+    # NOTE the explicit None/"" test: `row.get("temperature") or -1` reads a
+    # correct 0.0 as -1, because 0.0 is falsy, so every greedy row would have
+    # been reported as a temperature mismatch.
+    temp = row.get("temperature")
+    if temp in ("", None) or float(temp) != 0.0:
+        why.append(f"temperature {temp!r} != 0.0: the RASD cells are greedy, so "
+                   f"a sampled vLLM row answers a different question (C5)")
+    if (row.get("vllm_version") or "") != VLLM_PIN:
+        why.append(f"vllm_version {row.get('vllm_version')!r} != pin "
+                   f"{VLLM_PIN!r} (C1)")
+    if not row.get("doc_id"):
+        why.append("no doc_id, so the row cannot be paired with its RASD cell")
     return (not why), "; ".join(why)
 
 
@@ -474,6 +571,14 @@ def main() -> int:
     ap.add_argument("--quantizations", nargs="+",
                     default=["bitsandbytes", "bfloat16"],
                     help="C4: emit a 4-bit bitsandbytes row AND a bf16 row")
+    ap.add_argument("--documents", default=None,
+                    help="comma list of doc_ids to run; the paired comparison "
+                         "is per document, and a subset keeps a cross-check "
+                         "cheap without silently dropping documents from a "
+                         "larger stage")
+    ap.add_argument("--prompt-ids-from-sidecars", default=None,
+                    help="directory of RASD token sidecars; gives vLLM the "
+                         "EXACT prompt ids the RASD cells fed, per document")
     ap.add_argument("--prompt-ids",
                     help="C2: JSON of the EXACT token ids RASD used. A flat "
                          "list, or a map keyed '<model>@<ctx>'. Without it "
@@ -498,6 +603,27 @@ def main() -> int:
         raw = json.loads(Path(args.prompt_ids).read_text())
         prompt_ids_map = raw if isinstance(raw, dict) else {"*": raw}
 
+    # The paired comparison is per document, so the cells are per document too.
+    # A single prompt shared by every cell cannot be paired with anything.
+    rasd_cells: list[dict] = []
+    if args.prompt_ids_from_sidecars:
+        rasd_cells = load_rasd_cells(args.prompt_ids_from_sidecars)
+        if args.documents:
+            want = [d.strip() for d in args.documents.split(",") if d.strip()]
+            have = {c["doc_id"] for c in rasd_cells}
+            missing = [d for d in want if d not in have]
+            if missing:
+                raise SystemExit(
+                    f"--documents names {missing}, which have no sidecar in "
+                    f"{args.prompt_ids_from_sidecars}; refusing to substitute "
+                    f"a different document")
+            rasd_cells = [c for c in rasd_cells if c["doc_id"] in want]
+        ctxs = sorted({c["context_length"] for c in rasd_cells})
+        docs = sorted({c["doc_id"] for c in rasd_cells})
+        print(f"  RASD cells from sidecars: {len(rasd_cells)} "
+              f"({len(docs)} documents x {len(ctxs)} context(s)): "
+              f"{', '.join(docs)}")
+
     if args.gpu_memory_utilization != 0.90:
         print("[warn] --gpu-memory-utilization only overrides attempt 1")
 
@@ -506,13 +632,24 @@ def main() -> int:
         for ctx in args.context_lengths:
             rope = DEFAULT_ROPE.get(model)
             for quant in args.quantizations:
-                quant_label = quant or "bfloat16"
+              quant_label = quant or "bfloat16"
+              # One iteration per document when the sidecars are available.
+              cells_here = [c for c in rasd_cells if c["context_length"] == ctx]
+              if not cells_here:
+                  cells_here = [{"doc_id": "", "prompt_ids": None,
+                                 "prompt_sha256": None, "sidecar": ""}]
+              for _cell in cells_here:
+                doc_id = _cell["doc_id"]
                 print(f"\n=== {model} @ {ctx} tokens "
-                      f"(TP={args.tensor_parallel_size}, {quant_label}) ===")
-                prompt_ids = _lookup_prompt_ids(prompt_ids_map, model, ctx)
+                      f"(TP={args.tensor_parallel_size}, {quant_label}, "
+                      f"doc={doc_id or '<none>'}) ===")
+                prompt_ids = _cell["prompt_ids"]
+                if prompt_ids is None:
+                    prompt_ids = _lookup_prompt_ids(prompt_ids_map, model, ctx)
                 if prompt_ids:
                     print(f"    prompt: {len(prompt_ids)} exact RASD token ids "
-                          f"(sha256 {_ids_sha(prompt_ids)})")
+                          f"(sha256 {_ids_sha(prompt_ids)}) "
+                          f"from {_cell['sidecar'] or '--prompt-ids'}")
                 else:
                     print("    prompt: synthetic, NOT the RASD ids — row will "
                           "be ineligible for unit_matched=yes")
@@ -537,7 +674,11 @@ def main() -> int:
                         "kwargs": kwargs, "env": att["env"], "rope": rope,
                         "quantization": quant,
                         "prompt_ids": prompt_ids,
-                        "prompt_source": "rasd_token_ids",
+                        "prompt_source": ("rasd_token_ids"
+                                          if prompt_ids else "synthetic"),
+                        "doc_id": doc_id,
+                        "prompt_ids_from": _cell["sidecar"],
+                        "prompt_sha256": _ids_sha(prompt_ids) if prompt_ids else "",
                         "result_path": str(log_path.with_suffix(".result.json")),
                     }
                 print(f"  attempt {idx} ({att['name']}): {att['note']}")
@@ -565,6 +706,14 @@ def main() -> int:
                     "log_path": str(log_path.relative_to(REPO)),
                     **{k: v for k, v in result.items() if k in CSV_FIELDS},
                 })
+                # Authoritative pairing identity, set AFTER the worker's result
+                # so a worker that did not report it cannot leave the row
+                # un-pairable.
+                row["doc_id"] = doc_id
+                row["prompt_ids_from"] = _cell["sidecar"]
+                row["temperature"] = 0.0
+                if prompt_ids:
+                    row["prompt_sha256"] = _ids_sha(prompt_ids)
                 # C5: downgrade unless EVERY fairness criterion holds. A row
                 # that merely ran successfully is not a comparable row.
                 if row["status"] == "ok":
