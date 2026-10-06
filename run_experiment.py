@@ -450,7 +450,18 @@ def _build_pg19_prompt(context_length: int, tokenizer,
         start = int(rng.integers(0, c["length"] - context_length + 1))
         ids = list(arr[start:start + context_length].astype(int))
     else:
-        # Concatenate chunks if no single chunk is long enough
+        # Concatenate chunks if no single chunk is long enough.
+        #
+        # WARNING (not exercised by any published cell): stitching chunks
+        # concatenates independently-tokenised id arrays, so every chunk
+        # boundary carries whatever special token its preprocessing prepended
+        # (a BOS, typically). That would inject one BOS per boundary — the
+        # same failure mode as the synthetic-prompt BOS bug, though via a
+        # different route. It does NOT affect the published PG-19 results:
+        # the dose-response used the `suitable` branch above, which takes one
+        # contiguous slice from a single chunk and so has at most one leading
+        # BOS. Any future PG-19 run with chunks shorter than the target length
+        # lands here and MUST strip boundary specials before concatenating.
         joined = []
         for c in chunks:
             arr = np.memmap(c["file"], dtype="int32", mode="r")

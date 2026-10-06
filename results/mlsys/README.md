@@ -55,3 +55,39 @@ assumption is decisively rejected. Do not substitute one for the other.
   single-seed cell is not multi-seed evidence.
 - `unit_matched=no` rows in `vllm_baseline.csv` must be excluded from any
   speedup ratio against RASD's `throughput_tps`.
+
+## Nominal vs actual prompt length for synthetic cells
+
+`nominal_vs_actual_context.csv` records a discrepancy that predates ARM4.
+
+The pre-A7 synthetic prompt builder computed its repetition count from
+`len(tokenizer.encode(base))`, which includes the tokenizer's leading BOS. The
+repeated string was therefore under-provisioned, and the `[:context_length]`
+trim never reached its cap. The engine consequently received ~95.6% of the
+nominal prompt length:
+
+| tokenizer | nominal | actual | ratio |
+|---|---|---|---|
+| Llama-2-7b-hf | 65536 | 62660 | 0.9561 |
+| Llama-2-7b-hf | 131072 | 125360 | 0.9564 |
+| Llama-2-7b-hf | 262144 | 250716 | 0.9564 |
+| Llama-2-7b-hf | 524288 | 501472 | 0.9565 |
+| Llama-2-7b-hf | 1048576 | 1002984 | 0.9565 |
+| Llama-3.1-8B | 131072 | 124803 | 0.9522 |
+
+**Consequence for interpretation.** The `context_length` column in every
+committed synthetic-cell CSV is NOMINAL, not the number of tokens the model
+actually attended to. The shortfall is a near-constant fraction (0.952-0.957),
+so it is a uniform scale factor, not a length-dependent distortion.
+
+**Why the comparisons stand.** Every paired comparison is unaffected, because
+the spec cell and its target-only baseline are built by the same builder with
+the same nominal `context_length` and therefore share the same ACTUAL length.
+The ratio `spec_throughput / target_only_throughput` divides two runs of equal
+real length. Likewise the dose-response ladder is monotone in actual length for
+the same reason it is monotone in nominal length.
+
+**What must not be said.** Do not describe these cells as running at exactly
+128k/256k/512k/1M tokens. Quote them as nominal. The ARM4 cells are not
+affected: the corrected builder converges on the exact engine-visible length
+(130944 = 131072 - 128) and is verified by gate (b).

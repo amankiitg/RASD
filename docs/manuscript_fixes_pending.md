@@ -80,3 +80,32 @@ ALSO FLAGGED (not staged — judgement calls)
 CONFIRMED CORRECT (KV cache, no change needed):
   workshop 69, 169, 178, 256, 261, 277, 585
   arxiv    96, 138, 165, 177, 229, 364, 366
+
+---
+
+## Proposed footnote: nominal vs actual synthetic prompt length
+
+**Applies to BOTH papers** (workshop and LCFM). One sentence, placed wherever
+context lengths are first quoted for synthetic-prompt cells.
+
+Proposed text:
+
+> Context lengths for synthetic prompts are nominal; the prompt builder
+> produced ~95% of nominal (e.g. ~125k tokens for the 128k cell, and ~0.956x
+> at every length from 64k to 1M), and all cells are shortened by the same
+> factor, so no paired comparison is affected.
+
+More explicit variant, if the venue wants the mechanism:
+
+> Context lengths for synthetic prompts are nominal rather than exact: the
+> builder's repetition count included the tokenizer's leading BOS, so the
+> engine received ~95.6% of the nominal length (Llama-2-7B: 62660/125360/
+> 250716/501472/1002984 for 64k/128k/256k/512k/1M; Llama-3.1-8B: 124803 for
+> 128k). The shortfall is a near-constant factor (0.952-0.957) that each spec
+> cell shares with its paired target-only baseline, so throughput ratios and
+> the dose-response ladder are unaffected.
+
+Numbers are reproducible from `results/mlsys/nominal_vs_actual_context.csv`.
+
+**Do NOT** describe the synthetic cells as running at exactly 128k/256k/512k/1M
+tokens. The ARM4 cells are exact (130944 = 131072 - 128) and need no footnote.
