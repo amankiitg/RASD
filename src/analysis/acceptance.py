@@ -162,14 +162,18 @@ def per_round_alpha(trace: Iterable[dict]) -> np.ndarray:
     """Per-round alpha_r = n_acc_r / gamma, one value per verify round.
 
     This is the sample the dip test and the bimodality analysis consume.
-    Rounds with gamma == 0 are skipped.
+
+    Skipped:
+      * rounds with gamma == 0 (target-only runs carry no acceptance signal);
+      * rounds flagged `round_truncated`, i.e. cut short by the generation cap.
+        Such a round had its accepted prefix verified but only partially
+        emitted, so its n_acc/gamma is not a draw from the same distribution as
+        the rest and averaging it in biases the primary metric. The engine
+        excludes the same rounds when it writes the CSV `acceptance_rate`, so
+        the CSV and everything computed here agree on one estimator.
     """
-    out = []
-    for rec in trace:
-        gamma = int(rec.get("spec_steps", 0))
-        if gamma > 0:
-            out.append(int(rec["n_acc"]) / gamma)
-    return np.asarray(out, dtype=float)
+    return np.asarray([int(rec["n_acc"]) / int(rec["spec_steps"])
+                       for rec in included_rounds(trace)], dtype=float)
 
 
 def iid_alpha_for_mean(mean_n_acc: float, gamma: int) -> float:
@@ -334,13 +338,35 @@ def _multinomial_gof_pvalue(obs, probs, n, stat, n_bins, n_draw=20000,
     return (hits + 1) / (n_draw + 1)
 
 
+def included_rounds(trace: Iterable[dict]) -> list[dict]:
+    """The rounds that carry an acceptance signal.
+
+    ONE definition, used by every acceptance quantity: `per_round_alpha`, the
+    trace summariser (so alpha_round, alpha_iid, the GOF and the total/proposed
+    identity all rest on the same sample), the cluster bootstrap and the dip
+    test. When the sample differed between them, `alpha_iid` and `alpha_round`
+    were computed over different sets of rounds and the CSV matched only one of
+    them.
+
+    Excluded: rounds with gamma == 0 (target-only runs), and rounds flagged
+    `round_truncated` -- cut short by the generation cap, so their accepted
+    prefix was verified but only partly emitted and their n_acc/gamma is not a
+    draw from the same distribution as the rest.
+    """
+    return [r for r in trace
+            if not r.get("round_truncated") and int(r.get("spec_steps", 0)) > 0]
+
+
 def summarize_trace(trace: list[dict]) -> dict:
     """Both acceptance conventions plus the round / zero structure.
 
-    Target-only runs have no rounds; every field is then nan / 0 so the
-    row stays visible in an aggregate rather than being dropped.
+    Every field is computed from `included_rounds(trace)`, so the row describes
+    one sample. Target-only runs have no rounds; every field is then nan / 0 so
+    the row stays visible in an aggregate rather than being dropped.
     """
-    alpha_r = per_round_alpha(trace)
+    rows = included_rounds(trace)
+    alpha_r = np.asarray([int(r["n_acc"]) / int(r["spec_steps"]) for r in rows],
+                         dtype=float)
     n_rounds = int(alpha_r.size)
     if n_rounds == 0:
         return {
@@ -354,8 +380,8 @@ def summarize_trace(trace: list[dict]) -> dict:
             "gof_p_value": float("nan"), "gof_method": "no_rounds",
         }
 
-    gamma = int(trace[0].get("spec_steps", 0))
-    n_acc = np.asarray([int(r["n_acc"]) for r in trace], dtype=float)
+    gamma = int(rows[0]["spec_steps"])
+    n_acc = np.asarray([int(r["n_acc"]) for r in rows], dtype=float)
     a_iid = iid_alpha_for_mean(float(n_acc.mean()), gamma)
     gof = truncated_geometric_gof(n_acc, gamma, a_iid)
 
@@ -377,6 +403,9 @@ def summarize_trace(trace: list[dict]) -> dict:
         "total_accepted":      int(n_acc.sum()),
         # denominator that makes alpha_round = total_accepted / total_proposed
         "total_proposed":      gamma * n_rounds,
+        # how many rounds this row dropped and why, so a reader can see the
+        # sample the rest of the row was computed over
+        "n_excluded_truncated": sum(1 for r in trace if r.get("round_truncated")),
         # A3: formal GOF of the fitted i.i.d. model. Small p => the i.i.d.
         # geometric cannot explain the accepted-length distribution, which is
         # the defensible form of "bimodal" (see truncated_geometric_gof).

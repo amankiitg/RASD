@@ -1329,6 +1329,15 @@ class RASDInference:
             total_accepted   = 0
             total_draft_toks = 0
             n_rounds         = 0
+            # Acceptance is measured over NON-TRUNCATED rounds only. A round cut
+            # short by the budget had its accepted prefix verified but only
+            # partially emitted, so its accepted/gamma is not a draw from the
+            # same distribution as the others: keeping it in the mean biases the
+            # primary metric, and it biases it in the direction of the observed
+            # result rather than randomly.
+            acc_rounds       = 0     # rounds included in the acceptance mean
+            acc_verified     = 0     # sum of n_acc over those rounds
+            n_truncated      = 0
             # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
             per_token_trace: List[Dict] = []
         else:
@@ -1370,6 +1379,16 @@ class RASDInference:
             if self._world_size > 1:
                 from src.models.ring_llama_attention import set_prefill_len
                 set_prefill_len(self.target_model, prefill_len=prefill_len)
+            # Rebuild the acceptance accumulators from the restored trace so a
+            # resumed run measures acceptance exactly as an uninterrupted one.
+            # Checkpoints are disabled in this campaign (checkpoint_every = 0),
+            # so this keeps the invariant true rather than assumed.
+            acc_rounds   = sum(1 for r in per_token_trace
+                               if not r.get("round_truncated"))
+            acc_verified = sum(int(r.get("n_acc", 0)) for r in per_token_trace
+                               if not r.get("round_truncated"))
+            n_truncated  = sum(1 for r in per_token_trace
+                               if r.get("round_truncated"))
             # Recompute S from saved state — global_seqlen at checkpoint
             # time = S + (sum of per-round contributions). Total tokens
             # in `generated` = 1 (initial cur_token) + sum of contributions.
@@ -1659,10 +1678,22 @@ class RASDInference:
                 # round instead of silently averaging a partial one.
                 rec["n_emitted"] = int(n_emit)
                 rec["round_truncated"] = bool(round_truncated)
+                # KV geometry. A truncated round commits ONLY the verified
+                # prefix it actually emitted: no bonus, and nothing for the
+                # verified-but-unemitted tail. Recorded so the cap smoke can
+                # assert it rather than trust it.
+                rec["n_committed"] = int(committed)
+                rec["kv_len_before"] = int(prior_target_len)
+                rec["kv_len_after"] = int(prior_target_len + committed)
                 per_token_trace.append(rec)
 
             total_accepted   += n_emit
             total_draft_toks += cfg.spec_steps
+            if round_truncated:
+                n_truncated += 1
+            else:
+                acc_rounds   += 1
+                acc_verified += n_acc
             n_rounds         += 1
 
             if mem_tracer is not None and n_rounds in (1, 2, 4, 8):
@@ -1777,7 +1808,15 @@ class RASDInference:
             "tokens_generated":  tokens_gen,
             "time_sec":          elapsed,
             "throughput_tps":    tokens_gen / elapsed if elapsed > 0 else 0.0,
-            "acceptance_rate":   total_accepted / max(total_draft_toks, 1),
+            # == mean over non-truncated rounds of (n_acc / gamma), which is
+            # exactly `alpha_round` as the analysis modules compute it. The
+            # previous numerator summed n_emit, which is n_acc only for
+            # untruncated rounds, so the CSV and the cluster bootstrap
+            # disagreed on the same run.
+            "acceptance_rate":   (acc_verified / (acc_rounds * cfg.spec_steps)
+                                  if acc_rounds > 0 else 0.0),
+            "acceptance_rounds": acc_rounds,
+            "rounds_excluded_truncated": n_truncated,
             "mean_latency_ms":   elapsed * 1000 / max(tokens_gen, 1),
             "ttft_ms":           (t_first_token - t_start) * 1000,
             "gpu_peak_mem_mb":   torch.cuda.max_memory_allocated(device) / 1024 ** 2,

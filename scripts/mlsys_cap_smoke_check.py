@@ -110,10 +110,60 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
         if int(last.get("n_emitted", last["n_acc"])) + (
                 0 if last.get("round_truncated") else 1) < 1:
             problems.append(f"{rid}: final round committed nothing")
+
+        # KV geometry. The context the next round reads must cover exactly the
+        # tokens this round emitted -- no less (the next cur_token would then sit
+        # at the wrong positional offset, silently corrupting every later round)
+        # and no more (it would keep the verified-but-unemitted tail). A
+        # truncated round is where this can go wrong, which is why it is
+        # asserted here rather than assumed: the engine needs CUDA, so this is
+        # the only place the arithmetic is ever checked end to end.
+        kv_expected_prev = None
+        for i, x in enumerate(tr):
+            if "kv_len_after" not in x:
+                problems.append(
+                    f"{rid}: round {i} records no kv_len_after, so the KV "
+                    f"length cannot be verified"
+                )
+                break
+            kb, ka = int(x.get("kv_len_before", -1)), int(x["kv_len_after"])
+            committed = int(x.get("n_committed", -1))
+            emitted_i = int(x.get("n_emitted", x["n_acc"]))
+            truncated_i = bool(x.get("round_truncated"))
+            if committed < 0:
+                problems.append(f"{rid}: round {i} records no n_committed")
+                continue
+            if ka != kb + committed:
+                problems.append(
+                    f"{rid}: round {i} KV {kb} -> {ka} but committed "
+                    f"{committed} tokens"
+                )
+            # A truncated round commits nothing for the unemitted tail and gets
+            # no bonus; an untruncated round commits the emitted prefix plus one
+            # bonus token.
+            want = emitted_i if truncated_i else emitted_i + 1
+            if committed != want:
+                problems.append(
+                    f"{rid}: round {i} committed {committed}, expected {want} "
+                    f"(emitted {emitted_i}, truncated={truncated_i})"
+                )
+            if truncated_i and ka - kb != emitted_i:
+                problems.append(
+                    f"{rid}: truncated round {i} covers {ka - kb} positions but "
+                    f"emitted {emitted_i}; the KV must cover exactly the "
+                    f"verified emitted prefix"
+                )
+            if kv_expected_prev is not None and kb != kv_expected_prev:
+                problems.append(
+                    f"{rid}: round {i} starts at KV {kb} but the previous round "
+                    f"left {kv_expected_prev}"
+                )
+            kv_expected_prev = ka
         notes.append(
             f"{rid}: {len(tr)} rounds, {emitted} accepted + {bonuses} bonus = {cap}, "
             f"final round n_acc={last['n_acc']} n_emitted={last.get('n_emitted')} "
-            f"truncated={last.get('round_truncated')}"
+            f"truncated={last.get('round_truncated')} "
+            f"kv {tr[0].get('kv_len_before')}->{kv_expected_prev}"
         )
 
     # Losslessness between each spec row and its target-only partner.

@@ -37,15 +37,22 @@ sys.path.insert(0, str(REPO))
 
 import numpy as np  # noqa: E402
 
-from src.analysis.acceptance import load_trace, parse_run_id, run_family  # noqa: E402
+from src.analysis.acceptance import (per_round_alpha, load_trace,  # noqa: E402
+                                    parse_run_id, run_family)
 
 FIELDS = ["arm", "seed", "n_rounds", "spec_steps", "alpha_mean", "p_zero",
           "frac_full_accept", "dip", "p_value", "rejects_005", "pooled"]
 
 
 def _alpha(trace: list[dict]) -> np.ndarray:
-    """Per-round acceptance = n_acc / spec_steps for each round."""
-    return np.array([r["n_acc"] / r["spec_steps"] for r in trace], dtype=float)
+    """Per-round acceptance, from the SHARED estimator.
+
+    Recomputed inline here it would keep the truncated final round (whose
+    accepted prefix was verified but only partly emitted), so the dip test would
+    run on a different sample from the alpha it is reported beside. Same helper
+    as the cluster bootstrap and the CSV metric.
+    """
+    return per_round_alpha(trace)
 
 
 def main() -> int:

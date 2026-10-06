@@ -56,15 +56,27 @@ def read_rounds(path: Path) -> list[dict]:
     return rows
 
 
-def round_accepted(rows: list[dict], upto: int | None = None) -> np.ndarray:
-    """Per-round accepted counts, optionally truncated to the first `upto`."""
+def _window(rows: list[dict], upto: int | None) -> list[dict]:
+    """The first `upto` rounds, then the truncated round dropped.
+
+    Order matters. `upto` implements the window-matched comparison ("the first N
+    rounds", N = the shortest generation among the runs compared), so it must be
+    applied to the rounds as they happened; dropping the partial round first
+    would let a short run contribute fewer than N rounds to a window it was
+    supposed to fill.
+    """
     sel = rows if upto is None else rows[:upto]
-    return np.asarray([int(r["n_acc"]) for r in sel], dtype=float)
+    return [r for r in sel if not r.get("round_truncated")]
+
+
+def round_accepted(rows: list[dict], upto: int | None = None) -> np.ndarray:
+    """Per-round accepted counts over the window, excluding the partial round."""
+    return np.asarray([int(r["n_acc"]) for r in _window(rows, upto)], dtype=float)
 
 
 def round_drafted(rows: list[dict], upto: int | None = None) -> np.ndarray:
-    sel = rows if upto is None else rows[:upto]
-    return np.asarray([int(r.get("spec_steps", 0)) for r in sel], dtype=float)
+    return np.asarray([int(r.get("spec_steps", 0))
+                       for r in _window(rows, upto)], dtype=float)
 
 
 def cluster_bootstrap_ci(acc: np.ndarray, drafted: np.ndarray,
