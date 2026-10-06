@@ -1,113 +1,94 @@
-MLSys FOLLOW-UP — MORNING REPORT (overnight cycle)
+MLSys FOLLOW-UP — MORNING REPORT
 ================================================================================
-Status: NO RUN LAUNCHED. Self-gate failed on 3 of 7 gates. Nothing is billing.
-Reason for stopping is in results/mlsys/PRELAUNCH_BLOCKED.txt.
+Status: NO RUN LAUNCHED. Self-gate failed on gate (d) only. Nothing billing.
+Details: results/mlsys/PRELAUNCH_BLOCKED.txt
 
 --------------------------------------------------------------------------------
 PER-PHASE STATUS
 --------------------------------------------------------------------------------
-PRELAUNCH  p1 orchestrator staging fix ......... DONE (earlier commit)
-           p2 parse_run_id + arm_dip .......... DONE (21386da)
-           p3 ARM4 rope + configs ............. DONE, REVISED for the B1 design
-           p4 vLLM ladder + tracebacks ........ DONE (3556237)
-           A5 FP4 pin ......................... DONE (weights were already fp4)
-           A6 revisions resolved + in configs . PARTIAL (no per-row provenance)
-           A7 prompt diversity ................ DONE (exact lengths too)
-           A8 memory ratio recomputed ......... DONE (5.57x, not ~2x)
-           B1 ARM4 matched-context ladder ..... DONE (7 configs, gate rc=0)
-           B3 exactly-128 EOS-ignored ......... DONE (+4 tests)
-           A1 A2 A3 A4 ........................ NOT DONE
-           A5 relabel / A8 audit check ........ NOT DONE
-           C1-C5 vLLM fairness ................ NOT DONE
-           docs/manuscript_fixes_pending.md ... DONE
-PHASE A    ARM4 ladder ........................ NOT RUN (gated)
-PHASE B    vLLM ladder ........................ NOT RUN (gated)
+TASK 1  branch backup ................ DONE — pushed, tracks origin/mlsys-experiments
+PRELAUNCH p1 staging fix ............. DONE      p2 parse_run_id+arm_dip ... DONE
+          p3 ARM4 rope+configs ........ DONE      p4 vLLM ladder+tracebacks . DONE
+          A5 FP4 pin .................. DONE      A5 relabel ............... DONE
+          A6 revisions pinned ......... DONE      A6 per-row provenance .... DONE
+          A7 prompt diversity ......... DONE      A8 memory recompute ...... DONE
+          A8 audit check .............. DONE (rc=0)
+          B1 ARM4 configs (7) ......... DONE      B3 exactly-128 EOS ....... DONE
+          A1 A2 A3 A4 ................. NOT DONE  <-- the blocker
+          B4 PG-19 4k/8k config ....... NOT DONE
+          C1-C5 vLLM fairness ......... NOT DONE
+          D1-D3 report additions ...... NOT DONE
+PHASE A ARM4 ladder .................. NOT RUN (gated)
+PHASE B vLLM ladder .................. NOT RUN (gated)
 
 --------------------------------------------------------------------------------
-SELF-GATE RESULT (this is what stopped the launch)
+SELF-GATE
 --------------------------------------------------------------------------------
-  (a) ARM4 configs + rope assertions ......... PASS  (check script rc=0)
-  (b) prompt sha256 / length / EOS test ...... PASS
-  (c) revisions pinned + PER-ROW provenance .. FAIL  (configs yes, CSV no)
-  (d) A1-A4 analysis landed .................. FAIL  (not started)
-  (e) A5 relabel + A8 audit .................. FAIL  (partial)
-  (f) tests pass + committed + paths intact .. PASS  (594 tests)
-  (g) HF token + 0 instances ................. PASS
+  (a) ARM4 configs + rope assertions ..... PASS   (7 configs, rc=0)
+  (b) prompt sha256 / length / EOS test .. PASS
+  (c) revisions + per-row provenance ..... PASS   FIXED THIS CYCLE
+  (d) A1-A4 analysis ..................... FAIL   BLOCKER
+  (e) A5 relabel + A8 audit .............. PASS   FIXED THIS CYCLE
+  (f) tests + committed + paths intact ... PASS   (594 tests)
+  (g) HF token + 0 instances ............. PASS
 
 --------------------------------------------------------------------------------
-ARM4 CELL LIST (validated, ready to run, NOT RUN)
+ARM4 CELL LIST — VALIDATED, NOT RUN
 --------------------------------------------------------------------------------
-cell                ctx      rope applied                          max_new
-f1_128k             130944   native llama3 block kept (factor 1)   128, EOS ignored
-f2_128k             130944   yarn factor 2 over base 131072        128, EOS ignored
-f4_128k             130944   yarn factor 4 over base 131072        128, EOS ignored
-f2_256k             262016   yarn factor 2 over base 131072        128, EOS ignored
-f4_512k             524160   yarn factor 4 over base 131072        128, EOS ignored
-llama3f16_128k      130944   llama3 dict, factor 8->16 (kept)      128, EOS ignored
-llama3f32_128k      130944   llama3 dict, factor 8->32 (kept)      128, EOS ignored
-draft = Llama-3.2-1B capped 4096 for every cell. Seeds 42/123/456.
-Spec+target-only: f1_128k, f2_256k, f4_512k. Spec-only: f2_128k, f4_128k,
-llama3f16, llama3f32 (baselines optional per addendum).
-Prompt length = window - 128 for every cell (B2).
+cell              ctx      rope applied                        spec / +target
+f1_128k           130944   native llama3 block kept (factor 1) spec + target
+f2_128k           130944   yarn factor 2 @ base 131072         spec only
+f4_128k           130944   yarn factor 4 @ base 131072         spec only
+f2_256k           262016   yarn factor 2 @ base 131072         spec + target
+f4_512k           524160   yarn factor 4 @ base 131072         spec + target
+llama3f16_128k    130944   llama3 dict, factor 8->16 (kept)    spec only
+llama3f32_128k    130944   llama3 dict, factor 8->32 (kept)    spec only
+Draft Llama-3.2-1B capped 4096 everywhere. Seeds 42/123/456.
+Prompt = window - 128. max_new_tokens=128, EOS ignored. checkpoint_every=0.
 
-Arm4 table (acceptance etc.) is EMPTY because nothing ran. No numbers were
-synthesized: acceptance, P(alpha=0), full-accept, a_iid, tok/s, memory are
-all absent rather than estimated.
+ARM4 RESULTS TABLE: EMPTY. Nothing ran, so acceptance / P(alpha=0) /
+full-accept / a_iid / tok/s / memory are ABSENT, not estimated.
 
 --------------------------------------------------------------------------------
-A7 EVIDENCE (the one empirical result this cycle)
+A7 EVIDENCE (prompt diversity)
 --------------------------------------------------------------------------------
-Prompt sha256(token_ids) per seed, Llama-3.1 tokenizer, 130944 tokens:
-  seed 42  -> 6419eab5362cffb1
-  seed 123 -> dafd7d6ac7331032
-  seed 456 -> b49c2bd6368f8cdc
-3/3 unique; seed 42 reproducible. ARM4-f1 is therefore a 3-PROMPT replication
-of Arm2, not token-identical. Arms 1-3 were one prompt x three decoding
-seeds, so their "3-seed" CIs understate prompt variance.
+sha256(token_ids), Llama-3.1 tokenizer, 130944 tokens:
+  seed 42 6419eab5362cffb1 | seed 123 dafd7d6ac7331032 | seed 456 b49c2bd6368f8cdc
+3/3 unique, reproducible. ARM4-f1 is a 3-PROMPT replication of Arm2, not
+token-identical. Arms 1-3 were one prompt x three decoding seeds, so their
+"3-seed" CIs understate prompt variance.
 
 --------------------------------------------------------------------------------
 A8 CORRECTION (withdrawn claim)
 --------------------------------------------------------------------------------
-Per-arm memory, gpu_peak_mem_mb = torch.cuda.max_memory_allocated (ALLOCATED):
-  Arm2 seed cells: 10029, 10028, 10028 MB        mean 10028.5
-  Arm3 seed cells: 58432, 54532, 54532 MB        mean 55831.9
-  ratio Arm3/Arm2 = 5.57x   (reserved: 11.6 vs 61.6 GB, ~5.3x)
-The extra spec row in each arm CSV is the CANARY (empty context_length).
-The earlier "~2x memory" claim is WITHDRAWN. Throughput halving stands.
+gpu_peak_mem_mb = max_memory_allocated (ALLOCATED), canary row excluded:
+  Arm2 10029 / 10028 / 10028 MB  -> mean 10028.5
+  Arm3 58432 / 54532 / 54532 MB  -> mean 55831.9
+  ratio = 5.57x   (reserved 11.6 vs 61.6 GB, ~5.3x)
+The earlier "~2x memory" is WITHDRAWN. Throughput halving stands.
 
 --------------------------------------------------------------------------------
 vLLM
 --------------------------------------------------------------------------------
-NOT RUN (gated). No attempt outcomes or exception classes to report.
+NOT RUN (gated). Last recorded outcome (results/mlsys/vllm_baseline.csv):
+both cells unsupported — Llama-2-7b-hf: 'rope_type' kwarg rejection;
+Llama-3.1-8B: "Engine core initialization failed". unit_matched=no.
+The wrapper now captures real tracebacks and has a 3-attempt ladder, but it
+has not been exercised on a GPU since those fixes.
 
 --------------------------------------------------------------------------------
 COST
 --------------------------------------------------------------------------------
-  prelaunch work             $0.00  (CPU only)
-  premature launch (aborted) $2.23  (0.10 h, never finished booting)
-  ------------------------------------
-  TOTAL THIS CYCLE           $2.23
-  INSTANCE STATE             0 instances running — CONFIRMED, nothing billing
-Guards armed for the eventual run: NODE_RATE_PER_HOUR=22.32, MAX_COST_USD=450,
-on-instance watchdog 20 h, per-run staging + rsync --delete on pull,
-checkpoints never pulled, checkpoint_every=0 on all ARM4 cells.
+  prelaunch (CPU only) ............... $0.00
+  premature launch, aborted .......... $2.23   (0.10h, never booted)
+  INSTANCE STATE .................... 0 running — CONFIRMED, nothing billing
+Guards armed: NODE_RATE_PER_HOUR=22.32, MAX_COST_USD=450, 20h watchdog,
+per-run staging + rsync --delete, never pull checkpoints/.
 
 --------------------------------------------------------------------------------
 ADDENDUM ITEMS NOT SATISFIED
 --------------------------------------------------------------------------------
-  A1  analysis raw-input set / seed-42 join / n=3 assertion
-  A2  dip grouping by experiment+prompt+precision+context; "bimodal" relabel
-  A3  a_iid + truncated-geometric GOF (replaces the bimodality claim)
-  A4  verifier matching on exact run_id
-  A5  output/README relabel; bf16_draft_isolation rename
-  A6  per-row provenance (revision + prompt tokens + sha256) in the CSVs
-  A8  audit check (one spec + one target-only row per seed per arm)
-  B2  enforced in configs (ctx=window-128) — done; but the runtime assertion
-      that the ACTUAL prompt matched is not wired into the row
-  B4  PG-19 target-only 4k/8k seeds 123/456 — config NOT written
-  C1-C5  vLLM fairness rules
-  D1-D3  report additions (paired bootstrap; a_iid per cell; matched-context read)
-
-Manuscript: NOT edited. Proposed replacements staged in
-docs/manuscript_fixes_pending.md (workshop 236, 241, 626;
-NF4 weights -> 4-bit FP4 weights via bitsandbytes; KV cache stays NF4).
+  A1 A2 A3 A4 (analysis)   B4 (PG-19 4k/8k config)
+  C1-C5 (vLLM fairness)    D1-D3 (report additions)
+Manuscript NOT edited. Proposed replacements in
+docs/manuscript_fixes_pending.md (workshop 236/241/626).
