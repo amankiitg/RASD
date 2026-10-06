@@ -63,6 +63,10 @@ CSV_FIELDS = [
     # paired per document, so a row that does not name its document cannot be
     # paired with anything.
     "doc_id", "temperature", "prompt_ids_from",
+    # vLLM's own ids for the prompt, so "we passed the RASD ids" is checked
+    # against what it actually consumed rather than asserted.
+    "prompt_ids_used_sha256", "prompt_ids_verified",
+    "target_revision", "draft_revision",
 ]
 
 # C1: pin vLLM. A speedup ratio is only meaningful against a named release;
@@ -290,12 +294,17 @@ def worker_main(spec_path: Path) -> int:
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(model)
-        # C2: prefer the EXACT token ids RASD generated with. A prompt of the
-        # right *length*, built from the same paragraph text, is close but not
-        # the same sequence — and removing exactly that doubt is the point.
+        # C2: the EXACT token ids RASD generated with, passed as IDS.
+        #
+        # The previous version decoded them to text and let vLLM re-encode,
+        # which reintroduces the very doubt the ids were meant to remove: decode
+        # is not injective and re-encoding need not return the same sequence, so
+        # "same prompt" was an assumption about the tokenizer rather than a fact
+        # about the run. vLLM takes `prompt_token_ids` directly; use it.
+        prompt_ids_out = None
         if spec.get("prompt_ids"):
             ids = list(spec["prompt_ids"])
-            prompt = tokenizer.decode(ids)
+            prompt = {"prompt_token_ids": [int(i) for i in ids]}
             prompt_tokens = len(ids)
             prompt_source = spec.get("prompt_source", "rasd_token_ids")
         else:
@@ -322,6 +331,14 @@ def worker_main(spec_path: Path) -> int:
         outs = llm.generate([prompt], params, use_tqdm=False)
         t1 = time.perf_counter()
 
+        # Verify the ids vLLM actually consumed are the ids we handed it. If
+        # they are not, the row is not comparable to the RASD cell no matter how
+        # the other flags look, and the failure is silent.
+        try:
+            prompt_ids_out = list(outs[0].prompt_token_ids)
+        except Exception:                              # noqa: BLE001
+            prompt_ids_out = None
+
         end_to_end = t1 - t0
         out_tokens = len(outs[0].outputs[0].token_ids)
         ttft = _ttft_from_metrics(outs[0])
@@ -337,6 +354,17 @@ def worker_main(spec_path: Path) -> int:
             "eos_policy": EOS_POLICY,
             "prompt_source": prompt_source,
             "prompt_sha256": prompt_sha,
+            "prompt_ids_used_sha256": (
+                hashlib.sha256(",".join(str(int(i))
+                                        for i in prompt_ids_out).encode()).hexdigest()
+                if prompt_ids_out else ""),
+            "prompt_ids_verified": (
+                "yes" if prompt_ids_out
+                and [int(i) for i in prompt_ids_out] == [int(i) for i in ids]
+                else ("no" if prompt_ids_out else "unavailable")),
+            # The revisions the comparison is claimed against.
+            "target_revision": spec.get("target_revision") or "",
+            "draft_revision": spec.get("draft_revision") or "",
             "output_tokens": out_tokens,
             "end_to_end_wall_s": round(end_to_end, 4),
             "decode_only_wall_s": (round(decode_only, 4) if decode_only else ""),
@@ -519,7 +547,30 @@ def _lookup_prompt_ids(mapping: dict, model: str, ctx: int):
     return None
 
 
-def _unit_match_verdict(row: dict, prompt_ids, args) -> tuple[bool, str]:
+def _parse_revision_map(spec: str) -> dict:
+    """`model=rev,model=rev` -> {model: rev}.
+
+    A single `--target-revision` cannot describe `vllm_ladder`, which runs two
+    different targets: the pin has to name which model it belongs to, or the row
+    is compared against a revision chosen by position.
+    """
+    out: dict = {}
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise SystemExit(
+                f"revision map entry {part!r} is not 'model=revision'; a bare "
+                f"revision cannot be attributed to a model")
+        model, rev = part.split("=", 1)
+        out[model.strip()] = rev.strip()
+    return out
+
+
+def _unit_match_verdict(row: dict, prompt_ids, args,
+                        target_revision: str = "",
+                        draft_revision: str = "") -> tuple[bool, str]:
     """C2/C3/C5: is this row genuinely comparable to a RASD 128k cell?
 
     All four conditions must hold. Failing any one makes the ratio
@@ -552,6 +603,25 @@ def _unit_match_verdict(row: dict, prompt_ids, args) -> tuple[bool, str]:
                    f"{VLLM_PIN!r} (C1)")
     if not row.get("doc_id"):
         why.append("no doc_id, so the row cannot be paired with its RASD cell")
+    # The ids vLLM consumed must be the ids supplied. "We passed them" is not
+    # the same claim, and only the second one is about the run.
+    if prompt_ids:
+        if row.get("prompt_ids_verified") == "no":
+            why.append("vLLM's prompt ids differ from the ones supplied")
+        elif row.get("prompt_ids_verified") != "yes":
+            why.append("vLLM did not report the prompt ids it consumed, so "
+                       "'same prompt' is unverified")
+    # Which revision was compared against which. A unit match against an
+    # unpinned or different revision is a comparison across two models.
+    for field, want in (("target_revision",
+                         target_revision or args.target_revision),
+                        ("draft_revision",
+                         draft_revision or args.draft_revision)):
+        if not want:
+            continue
+        if (row.get(field) or "") != want:
+            why.append(f"{field} {row.get(field) or '<none>'!r} != the RASD "
+                       f"cell's {want!r}")
     return (not why), "; ".join(why)
 
 
@@ -571,6 +641,17 @@ def main() -> int:
     ap.add_argument("--quantizations", nargs="+",
                     default=["bitsandbytes", "bfloat16"],
                     help="C4: emit a 4-bit bitsandbytes row AND a bf16 row")
+    ap.add_argument("--target-revision", default="",
+                    help="the RASD cell's target revision; a row is not "
+                         "unit-matched unless it ran the same one")
+    ap.add_argument("--draft-revision", default="",
+                    help="the RASD cell's draft revision")
+    ap.add_argument("--target-revisions", default="",
+                    help="'model=rev,model=rev'. Required for a stage that "
+                         "runs more than one target: a bare revision cannot "
+                         "say which model it pins")
+    ap.add_argument("--draft-revisions", default="",
+                    help="'model=rev,model=rev' for the drafts")
     ap.add_argument("--documents", default=None,
                     help="comma list of doc_ids to run; the paired comparison "
                          "is per document, and a subset keeps a cross-check "
@@ -627,6 +708,15 @@ def main() -> int:
     if args.gpu_memory_utilization != 0.90:
         print("[warn] --gpu-memory-utilization only overrides attempt 1")
 
+    target_revisions = _parse_revision_map(args.target_revisions)
+    draft_revisions = _parse_revision_map(args.draft_revisions)
+    missing_rev = [m for m in args.models
+                   if args.target_revisions and m not in target_revisions]
+    if missing_rev:
+        raise SystemExit(
+            f"--target-revisions does not pin {missing_rev}. A row whose model "
+            f"has no declared revision cannot be unit-matched, and defaulting "
+            f"it to another model's pin would compare across revisions.")
     rows: list[dict] = []
     for model in args.models:
         for ctx in args.context_lengths:
@@ -674,6 +764,10 @@ def main() -> int:
                         "kwargs": kwargs, "env": att["env"], "rope": rope,
                         "quantization": quant,
                         "prompt_ids": prompt_ids,
+                        "target_revision": (target_revisions.get(model)
+                                            or args.target_revision),
+                        "draft_revision": (draft_revisions.get(model)
+                                           or args.draft_revision),
                         "prompt_source": ("rasd_token_ids"
                                           if prompt_ids else "synthetic"),
                         "doc_id": doc_id,
@@ -717,7 +811,12 @@ def main() -> int:
                 # C5: downgrade unless EVERY fairness criterion holds. A row
                 # that merely ran successfully is not a comparable row.
                 if row["status"] == "ok":
-                    ok_unit, why = _unit_match_verdict(row, prompt_ids, args)
+                    ok_unit, why = _unit_match_verdict(
+                        row, prompt_ids, args,
+                        target_revision=(target_revisions.get(model)
+                                         or args.target_revision),
+                        draft_revision=(draft_revisions.get(model)
+                                        or args.draft_revision))
                     row["unit_matched"] = "yes" if ok_unit else "no"
                     if not ok_unit:
                         row["error_class"] = "UnitMismatch"

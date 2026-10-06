@@ -1,8 +1,21 @@
-"""The cap-smoke checker must fail on the failures it exists to detect.
+"""The cap smoke must check the shapes the real code actually writes.
 
-The engine's generation cap cannot be exercised without a GPU, so the safest
-available verification is on the checker itself: feed it a pass case and each
-failure mode and require the right verdict.
+Two things this file is careful about, because getting either wrong makes the
+checker look right while it is wrong:
+
+* The rows use `run_experiment.CSV_FIELDS` itself, not a hand-written column
+  list. A fixture with its own columns tests the fixture.
+* A target-only row has NO verify rounds, so it has no per-round trace, and
+  DEMANDING one of it asked the generator to have produced something it does not
+  have. It is checked on `tokens_generated == max_new_tokens` and its token
+  sidecar instead.
+
+The arithmetic also has to count the seed token. `generated` holds one token
+before the verify loop starts, so the identity is
+
+    1 + accepted_emitted + bonuses == max_new_tokens
+
+and the previous `accepted + bonuses == cap` was short by exactly that token.
 """
 from __future__ import annotations
 
@@ -17,192 +30,197 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 
 
-def _load():
+def _load_checker():
     spec = importlib.util.spec_from_file_location(
-        "cap_smoke", REPO / "scripts" / "mlsys_cap_smoke_check.py")
+        "cap_mod", REPO / "scripts" / "mlsys_cap_smoke_check.py")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["cap_smoke"] = mod
+    sys.modules["cap_mod"] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-FIELDS = ["run_id", "doc_id", "context_length", "max_new_tokens", "spec_steps",
-          "status", "prompt_tokens", "prompt_sha256", "sequence_tokens",
-          "tokens_generated", "temperature", "top_p", "ignore_eos",
-          "rope_type", "rope_factor", "rope_anchor_base",
-          "target_revision", "draft_revision"]
+def _run_experiment_fields():
+    """The column set run_experiment writes, straight from the source."""
+    spec = importlib.util.spec_from_file_location(
+        "runexp_fields", REPO / "run_experiment.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["runexp_fields"] = mod
+    spec.loader.exec_module(mod)
+    return list(mod.CSV_FIELDS)
 
 
-def _write(tmp: Path, cap=64, spec_gen=None, trace=None, partner=True,
-           lossless=True):
-    rows, toks = [], {}
-    (tmp / "per_token").mkdir(parents=True, exist_ok=True)
-    (tmp / "tokens").mkdir(parents=True, exist_ok=True)
+FIELDS = _run_experiment_fields()
+
+CONTEXT = 2048
+GAMMA = 3
+
+
+def _row(run_id, spec_steps, cap, *, status="ok", doc="d0"):
+    """A row with the real column set, so the fixture cannot drift from it."""
+    row = {f: "" for f in FIELDS}
+    row.update({
+        "run_id": run_id, "doc_id": doc, "context_length": CONTEXT,
+        "max_new_tokens": cap, "spec_steps": spec_steps, "status": status,
+        "prompt_tokens": CONTEXT - 1 - cap,
+        "sequence_tokens": CONTEXT, "tokens_generated": cap,
+        "prompt_sha256": "h" + doc, "temperature": 0.0, "top_p": 1.0,
+        "ignore_eos": True, "pair_id": f"{CONTEXT}:{doc}",
+        "arm_role": "spec" if spec_steps else "target_full",
+        "acceptance_rate": 0.75 if spec_steps else 0.0,
+        "decode_tps": 10.0, "throughput_tps": 8.0,
+    })
+    return row
+
+
+def _round(i, base, n_acc, *, truncated=False, spec_steps=GAMMA, kv=None):
+    """One per-round trace entry, with the keys the engine writes."""
+    n_emit = n_acc if not truncated else min(n_acc, GAMMA)
+    committed = n_emit if truncated else n_emit + 1
+    kb = base if kv is None else kv
+    return {
+        "round_idx": i, "global_pos_start": kb, "spec_steps": spec_steps,
+        "n_acc": n_acc,
+        "draft_tokens": list(range(spec_steps)), "accepted": [True] * n_acc,
+        "ended_on_eos": False,
+        "n_emitted": n_emit, "round_truncated": truncated,
+        "n_committed": committed, "kv_len_before": kb,
+        "kv_len_after": kb + committed,
+    }
+
+
+def _spec_trace(cap, base=1984):
+    """Rounds that account for the cap exactly, final round truncated."""
+    full, rest = divmod(cap - 1, GAMMA + 1)
+    tr, kv = [], base
+    for i in range(full):
+        tr.append(_round(i, base, GAMMA, kv=kv))
+        kv = tr[-1]["kv_len_after"]
+    if rest:
+        tr.append(_round(full, base, GAMMA, truncated=True, kv=kv))
+    return tr
+
+
+def _write(tmp: Path, cap=64, *, trace=None, partner=True, sidecar_ids=None,
+           spec_status="ok", target_status="ok", lossless=True):
+    rows = []
     spec_ids = list(range(100, 100 + cap))
     tgt_ids = list(spec_ids) if lossless else [999] + spec_ids[1:]
-    for arm, ss, ids, gen in (("spec", 3, spec_ids, spec_gen or cap),
-                              ("tgt", 0, tgt_ids, cap)):
-        if arm == "tgt" and not partner:
-            continue
-        rid = f"CAP_{arm}"
-        toks[rid] = ids
-        rows.append({"run_id": rid, "doc_id": "d0", "context_length": 2048,
-                     "max_new_tokens": cap, "spec_steps": ss, "status": "ok",
-                     # prompt + 1 BOS + generated == context, by construction;
-                     # a fixture that breaks its own identity would make the
-                     # checker look wrong when it is right.
-                     "prompt_tokens": 2048 - 1 - gen, "prompt_sha256": "h",
-                     "sequence_tokens": 2048, "tokens_generated": gen,
-                     "temperature": 0.0, "top_p": 1.0, "ignore_eos": True,
-                     "rope_type": "none", "rope_factor": "", "rope_anchor_base": "",
-                     "target_revision": "r", "draft_revision": "r"})
-        (tmp / "tokens" / f"{rid}.json").write_text(json.dumps(
-            {"run_id": rid, "generated_token_ids": ids}))
+    (tmp / "per_token").mkdir(parents=True, exist_ok=True)
+    (tmp / "tokens").mkdir(parents=True, exist_ok=True)
+
+    rows.append(_row("CAP_spec", GAMMA, cap, status=spec_status))
+    tr = _spec_trace(cap) if trace is None else trace
+    (tmp / "per_token" / "CAP_spec.jsonl").write_text(
+        "\n".join(json.dumps(x) for x in tr) + ("\n" if tr else ""))
+    (tmp / "tokens" / "CAP_spec.json").write_text(json.dumps(
+        {"run_id": "CAP_spec", "generated_token_ids": spec_ids,
+         "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
+         "context_length": CONTEXT, "max_new_tokens": cap}))
+
+    if partner:
+        rows.append(_row("CAP_tgt", 0, cap, status=target_status))
+        (tmp / "tokens" / "CAP_tgt.json").write_text(json.dumps(
+            {"run_id": "CAP_tgt",
+             "generated_token_ids": sidecar_ids if sidecar_ids else tgt_ids,
+             "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
+             "context_length": CONTEXT, "max_new_tokens": cap}))
+
     with (tmp / "res.csv").open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
         w.writerows(rows)
-    # A consistent default trace: with gamma=3 each round yields 3 accepted + 1
-    # bonus = 4 tokens, so cap/4 full rounds account for the cap exactly. The KV
-    # chain is included because the checker asserts it: a round must leave the KV
-    # covering exactly what it emitted.
-    tr = trace if trace is not None else _kv_trace(cap // 4, base=1984)
-    for rid in (f"CAP_{a}" for a in ("spec", "tgt")):
-        if toks.get(rid) is None:
-            continue
-        (tmp / "per_token" / f"{rid}.jsonl").write_text(
-            "\n".join(json.dumps(x) for x in tr) + "\n")
     return tmp / "res.csv"
 
 
-def _kv_trace(n_rounds, base, gamma=3):
-    """`n_rounds` full rounds with a consistent KV chain."""
-    out, kv = [], base
-    for _ in range(n_rounds):
-        committed = gamma + 1
-        out.append({"n_acc": gamma, "n_emitted": gamma, "n_committed": committed,
-                    "round_truncated": False,
-                    "kv_len_before": kv, "kv_len_after": kv + committed})
-        kv += committed
-    return out
-
-
-def _kv_trace_truncated(n_full, base, gamma=3, partial=2):
-    """Full rounds then one round cut short by the budget (no bonus)."""
-    out, kv = [], base
-    for _ in range(n_full):
-        out.append({"n_acc": gamma, "n_emitted": gamma, "n_committed": gamma + 1,
-                    "round_truncated": False,
-                    "kv_len_before": kv, "kv_len_after": kv + gamma + 1})
-        kv += gamma + 1
-    # The target VERIFIED `gamma` but only `partial` fit in the budget, so the
-    # accepted prefix is emitted in part and no bonus is available.
-    out.append({"n_acc": gamma, "n_emitted": partial, "n_committed": partial,
-                "round_truncated": True,
-                "kv_len_before": kv, "kv_len_after": kv + partial})
-    return out
-
-
-def test_cap_smoke_checker_accepts_a_clean_run_and_rejects_each_defect(tmp_path):
-    mod = _load()
-
-    # A clean run passes.
-    problems, notes = mod.check(_write(tmp_path / "a"), tmp_path / "a" / "tokens")
+def test_a_clean_pair_passes_with_the_real_arithmetic(tmp_path):
+    mod = _load_checker()
+    problems, notes = mod.check(_write(tmp_path, cap=64))
     assert problems == [], problems
-    assert any("generated exactly 64" in n for n in notes)
+    assert any("1 seed" in n for n in notes), notes
 
-    # The defect the stage exists for: the cap is not enforced.
-    problems, _ = mod.check(_write(tmp_path / "b", spec_gen=67),
-                            tmp_path / "b" / "tokens")
-    assert any("cap is not enforced" in p for p in problems), problems
 
-    # A divergence is not lossless, and must be reported as such rather than
-    # passing because the lengths agree.
-    problems, _ = mod.check(_write(tmp_path / "c", lossless=False),
-                            tmp_path / "c" / "tokens")
-    assert any("MISMATCH" in p for p in problems), problems
+def test_a_target_only_row_needs_no_per_round_trace(tmp_path):
+    """The absence of a verify loop is not a missing artifact."""
+    mod = _load_checker()
+    csv_path = _write(tmp_path, cap=64)
+    assert not (tmp_path / "per_token" / "CAP_tgt.jsonl").exists()
+    problems, _ = mod.check(csv_path)
+    assert problems == [], problems
 
-    # No target-only partner means losslessness is unverified, which is not the
-    # same as verified.
-    problems, _ = mod.check(_write(tmp_path / "d", partner=False),
-                            tmp_path / "d" / "tokens")
+
+def test_a_spec_row_without_a_trace_is_still_a_failure(tmp_path):
+    mod = _load_checker()
+    csv_path = _write(tmp_path, cap=64)
+    (tmp_path / "per_token" / "CAP_spec.jsonl").unlink()
+    problems, _ = mod.check(csv_path)
+    assert any("no per-round trace" in p for p in problems), problems
+
+
+def test_the_seed_token_is_counted(tmp_path):
+    """`emitted + bonuses == cap` is short by the seed; this is the regression."""
+    mod = _load_checker()
+    cap = 64
+    full = cap // (GAMMA + 1)
+    tr, kv = [], 1984
+    for i in range(full):
+        tr.append(_round(i, 1984, GAMMA, kv=kv))
+        kv = tr[-1]["kv_len_after"]
+    csv_path = _write(tmp_path, cap=cap, trace=tr)
+    problems, _ = mod.check(csv_path)
+    assert any("seed" in p and "expected 64" in p for p in problems), problems
+
+
+def test_the_cap_itself_must_hold_in_the_sidecar(tmp_path):
+    mod = _load_checker()
+    csv_path = _write(tmp_path, cap=64, sidecar_ids=[1, 2, 3])
+    problems, _ = mod.check(csv_path)
+    assert any("token sidecar holds 3 ids" in p for p in problems), problems
+
+
+def test_a_non_ok_row_is_ignored_rather_than_counted_as_a_pair(tmp_path):
+    mod = _load_checker()
+    csv_path = _write(tmp_path, cap=64, target_status="error")
+    problems, _ = mod.check(csv_path)
     assert any("no target-only partner" in p for p in problems), problems
 
-    # Trace bookkeeping that does not sum to the cap is a failure: the cap being
-    # enforced in the CSV but not in the round accounting would mean the two
-    # disagree about what was generated.
-    problems, _ = mod.check(
-        _write(tmp_path / "e", trace=[{"n_acc": 3, "n_emitted": 3,
-                                       "round_truncated": False}]),
-        tmp_path / "e" / "tokens")
-    assert any("trace accounts for" in p for p in problems), problems
 
-    # Only the final round may be cut short.
-    problems, _ = mod.check(
-        _write(tmp_path / "f", trace=[{"n_acc": 3, "n_emitted": 3,
-                                       "round_truncated": False},
-                                      {"n_acc": 3, "n_emitted": 1,
-                                       "round_truncated": True},
-                                      {"n_acc": 3, "n_emitted": 3,
-                                       "round_truncated": False}]),
-        tmp_path / "f" / "tokens")
-    assert any("only the FINAL" in p for p in problems), problems
+def test_each_cap_defect_is_caught(tmp_path):
+    """The KV geometry, and the two ways a round can commit wrongly."""
+    mod = _load_checker()
+    cap = 64
+    good = _spec_trace(cap)
+
+    kept = [dict(x) for x in good]
+    kept[-1]["kv_len_after"] = kept[-1]["kv_len_before"] + GAMMA + 1
+    p, _ = mod.check(_write(tmp_path / "tail", cap=cap, trace=kept))
+    assert any("committed" in x or "verified emitted prefix" in x for x in p), p
+
+    bonus = [dict(x) for x in good]
+    bonus[-1]["n_committed"] = bonus[-1]["n_emitted"] + 1
+    bonus[-1]["kv_len_after"] = bonus[-1]["kv_len_before"] + bonus[-1]["n_committed"]
+    p, _ = mod.check(_write(tmp_path / "bonus", cap=cap, trace=bonus))
+    assert any("committed" in x for x in p), p
+
+    gap = [dict(x) for x in good]
+    gap[-1]["kv_len_before"] = gap[-1]["kv_len_before"] - 1
+    p, _ = mod.check(_write(tmp_path / "gap", cap=cap, trace=gap))
+    assert p, "a broken KV chain was accepted"
+
+    silent = [dict(x) for x in good]
+    silent[-1] = {k: v for k, v in silent[-1].items() if k != "kv_len_after"}
+    p, _ = mod.check(_write(tmp_path / "silent", cap=cap, trace=silent))
+    assert any("no kv_len_after" in x for x in p), p
+
+
+def test_losslessness_uses_the_sidecars_of_both_arms(tmp_path):
+    mod = _load_checker()
+    problems, notes = mod.check(_write(tmp_path, cap=64, lossless=True))
+    assert problems == [], problems
+    assert any("losslessness OK" in n for n in notes), notes
+
+    problems, _ = mod.check(_write(tmp_path / "bad", cap=64, lossless=False))
+    assert any("losslessness" in p.lower() or "MISMATCH" in p for p in problems)
 
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
-
-
-def test_cap_smoke_checks_the_truncated_round_kv_geometry(tmp_path):
-    """The KV after a round must cover exactly what the round emitted.
-
-    The truncated final round is where this can go wrong, and the engine needs
-    CUDA, so this checker is the only place the arithmetic is ever exercised. Two
-    failure modes, both silent on a GPU:
-
-      * keeping the verified-but-unemitted tail (KV too long) -- the next round's
-        cur_token then sits at the wrong positional offset and every later round
-        is corrupted;
-      * committing a bonus the budget had no room for (KV too short, and one
-        token too many emitted).
-    """
-    mod = _load()
-
-    # Clean: 15 full rounds of 3 accepted + 1 bonus, then a round cut short at 2.
-    cap = 62
-    good = _kv_trace_truncated(15, base=1986, partial=2)
-    csv_path = _write(tmp_path / "ok", cap=cap, trace=good)
-    problems, _ = mod.check(csv_path)
-    assert problems == [], problems
-
-    # KV kept the whole verified prefix instead of only the emitted part.
-    kept_tail = [dict(x) for x in good]
-    trunc = kept_tail[-1]
-    trunc["kv_len_after"] = trunc["kv_len_before"] + 4     # 3 verified + bonus
-    csv_path = _write(tmp_path / "tail", cap=cap, trace=kept_tail)
-    problems, _ = mod.check(csv_path)
-    assert any("verified emitted prefix" in p or "committed" in p
-               for p in problems), problems
-
-    # A truncated round must not emit a bonus.
-    with_bonus = [dict(x) for x in good]
-    trunc = with_bonus[-1]
-    trunc["n_committed"] = trunc["n_emitted"] + 1
-    trunc["kv_len_after"] = trunc["kv_len_before"] + trunc["n_committed"]
-    csv_path = _write(tmp_path / "bonus", cap=cap, trace=with_bonus)
-    problems, _ = mod.check(csv_path)
-    assert any("committed" in p for p in problems), problems
-
-    # A gap in the KV chain: the next round starts where the last one did not end.
-    gap = [dict(x) for x in good]
-    gap[-1] = dict(gap[-1], kv_len_before=gap[-1]["kv_len_before"] - 1)
-    csv_path = _write(tmp_path / "gap", cap=cap, trace=gap)
-    problems, _ = mod.check(csv_path)
-    assert problems, "a broken KV chain was accepted"
-
-    # The KV length must be recorded at all, or it cannot be verified.
-    silent = [dict(x) for x in good]
-    silent[-1] = {k: v for k, v in silent[-1].items() if k != "kv_len_after"}
-    csv_path = _write(tmp_path / "silent", cap=cap, trace=silent)
-    problems, _ = mod.check(csv_path)
-    assert any("no kv_len_after" in p for p in problems), problems

@@ -165,9 +165,9 @@ def main() -> int:
     n_pref = sum(1 for r in rows if str(r["verdict"]).startswith("LOSSLESS_PREFIX"))
     print(f"\n{n_loss} full-length LOSSLESS, {n_pref} prefix-verified, "
           f"{len(rows) - n_loss - n_pref} failed; wrote {out_path}")
-    print(f"  requirement: every cell verified over >= {min_prefix} tokens, and "
-          f"all {req['full_length_cells']} full-length pairs LOSSLESS over "
-          f"{full_length}")
+    print(f"  requirement: every cell verified over >= {args.min_prefix} "
+          f"tokens, and all {req['full_length_cells']} full-length pairs "
+          f"LOSSLESS over {args.full_length}")
     if not req["ok"]:
         for f in req["failures"]:
             print(f"  FAIL  {f}")

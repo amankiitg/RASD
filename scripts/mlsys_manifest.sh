@@ -18,6 +18,10 @@ cd "$(dirname "$0")/.."
 OUT=${MLSYS_OUT:-results/mlsys}
 MANIFEST=${MLSYS_MANIFEST:-configs/mlsys_manifest.yml}
 COST_LOG=$OUT/gpu_hours.csv
+# Proof-of-start markers for stages that actually began. Kept OUT of results/:
+# results/ is pulled, merged and published, and a scratch bookkeeping file has
+# no business travelling with the data.
+RAN_DIR=${MLSYS_RAN_DIR:-$(mktemp -d)}
 
 # Interpreter used for every helper call in this file and for every stage. Bare
 # `python3` is whatever is first on PATH, which on the pod is not necessarily the
@@ -127,18 +131,29 @@ try:
     m = yaml.safe_load(open(sys.argv[1]))
 except Exception:
     sys.exit(4)                      # unparseable manifest
+want = sys.argv[2]
 for s in m.get("stages", []):
-    if s["id"] == sys.argv[2]:
-        v = s.get("est_cost_usd")
-        if v is None or str(v).strip() == "":
-            sys.exit(5)              # no projection recorded
-        try:
-            float(v)
-        except (TypeError, ValueError):
-            sys.exit(6)              # unreadable projection
-        print(v)
-        raise SystemExit(0)
-sys.exit(7)                          # stage id not in the manifest
+    if s["id"] == want:
+        break
+else:
+    # Helper stages are priced in `helpers` and keyed either by their exact id
+    # or by a suffix (`_losslessness` and friends, which are named per parent).
+    for h in m.get("helpers", []):
+        hid = h["id"]
+        if want == hid or (hid.startswith("_") and want.endswith(hid)):
+            break
+    else:
+        sys.exit(7)                  # stage id not in the manifest
+    s = h
+v = s.get("est_cost_usd")
+if v is None or str(v).strip() == "":
+    sys.exit(5)                      # no projection recorded
+try:
+    float(v)
+except (TypeError, ValueError):
+    sys.exit(6)                      # unreadable projection
+print(v)
+raise SystemExit(0)
 PY
 }
 
@@ -167,6 +182,59 @@ on_list() {   # $1=name  $2=comma list
 
 approved() { on_list "$1" "$APPROVED"; }
 
+# The parent of a helper stage, or "" if the name is not a helper. `_losslessness`
+# and friends are named per parent, so a suffix match is how they are found.
+helper_parent() {
+  local want=$1
+  "$PY" - "$MANIFEST" "$want" <<'PYH'
+import sys, yaml
+m = yaml.safe_load(open(sys.argv[1]))
+want = sys.argv[2]
+for h in m.get("helpers", []):
+    hid = h["id"]
+    if want == hid or (hid.startswith("_") and want.endswith(hid)):
+        if hid.startswith("_"):
+            print(want[: -len(hid)])          # "<parent><suffix>"
+        else:
+            print(h.get("parent") or "")
+        raise SystemExit
+print("")
+PYH
+}
+
+# Some helpers run BEFORE their parent -- the rope-intervention gate is what
+# decides whether that stage's arms may run at all. For those the requirement is
+# that the parent is APPROVED, not that it has already run.
+helper_runs_before_parent() {
+  "$PY" - "$MANIFEST" "$1" <<'PYB'
+import sys, yaml
+m = yaml.safe_load(open(sys.argv[1]))
+want = sys.argv[2]
+for h in m.get("helpers", []):
+    hid = h["id"]
+    if want == hid or (hid.startswith("_") and want.endswith(hid)):
+        print("1" if h.get("runs_before_parent") else "0")
+        raise SystemExit
+print("0")
+PYB
+}
+
+# A helper may run only when its parent is on the allowlist AND actually ran.
+helper_allowed() {
+  local name=$1 parent
+  parent=$(helper_parent "$name")
+  [ -z "$parent" ] && return 0                # not a helper: no opinion
+  if [ "$parent" != "*" ]; then
+    on_list "$parent" "$ONLY" || return 1     # parent not approved
+    if [ "$(helper_runs_before_parent "$name")" != "1" ]; then
+      [ -f "$RAN_DIR/$parent" ] || return 2   # parent refused or never started
+    fi
+    # A helper that runs BEFORE its parent additionally needs the parent's own
+    # prerequisites met, which the parent's checks handle at its own call site.
+  fi
+  return 0
+}
+
 # Run a stage, recording wall time and cost. Never truncates an existing ledger.
 stage() {   # $1=name  $2=timeout_s  $3..=cmd
   local name=$1 tmo=$2; shift 2
@@ -186,6 +254,20 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   # stages and let the expensive ones run unapproved — the opposite of the
   # declared guard. Test the condition directly instead of through an integer
   # comparison nobody can read.
+  # A helper stage is gated by its PARENT, before anything else. Validating a
+  # stage that was refused or never started reports a failure for something that
+  # never happened, and does it in a way that reads like a real defect.
+  helper_allowed "$name"; local hrc=$?
+  if [ "$hrc" = "1" ]; then
+    interim "SKIPPED_VALIDATION name=$name parent=$(helper_parent "$name") reason=parent_not_approved"
+    echo "SKIP $name: parent $(helper_parent "$name") is not on the allowlist"
+    return 9
+  elif [ "$hrc" = "2" ]; then
+    interim "SKIPPED_VALIDATION name=$name parent=$(helper_parent "$name") reason=parent_did_not_run"
+    echo "SKIP $name: parent $(helper_parent "$name") did not run"
+    return 9
+  fi
+
   # The allowlist outranks the cost guard, and is checked first. An EMPTY
   # allowlist approves nothing: "unset" must not be able to mean "run
   # everything", or a launch that forgot the variable would run the campaign.
@@ -195,9 +277,28 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
     ONLY_SKIPS=$((ONLY_SKIPS + 1))
     return 9
   fi
-  if ! on_list "$name" "$ONLY"; then
-    interim "SKIPPED name=$name reason=needs_approval (not in MLSYS_ONLY_STAGES=$ONLY)"
-    echo "SKIP $name (not in MLSYS_ONLY_STAGES; projected \$$est)"
+  # A helper is allowed by its PARENT's presence on the allowlist, never by its
+  # own name. The allowlist is the operator's campaign plan and it names stages;
+  # requiring an operator to also list `natural_f1_128k_losslessness` -- or
+  # `rope_intervention_gate`, which is what decides whether that stage's arms may
+  # run at all -- would mean the plan has to be edited every time a validation
+  # step is added, and a forgotten entry refuses the check silently.
+  #
+  # The rope-intervention gate was refused this way: the stage id is a real
+  # stage (not a `_suffix` helper), so the wildcard below did not apply, the
+  # gate never ran, and every treated arm was then RECORDED as having failed a
+  # gate that was never measured -- a false result in the results table.
+  local gate_name=$name gate_parent
+  gate_parent=$(helper_parent "$name")
+  [ -n "$gate_parent" ] && [ "$gate_parent" != "*" ] && gate_name=$gate_parent
+  if ! on_list "$gate_name" "$ONLY"; then
+    if [ "$gate_name" != "$name" ]; then
+      interim "SKIPPED name=$name reason=parent_not_in_allowlist parent=$gate_name"
+      echo "SKIP $name: parent $gate_name is not in MLSYS_ONLY_STAGES"
+    else
+      interim "SKIPPED name=$name reason=needs_approval (not in MLSYS_ONLY_STAGES=$ONLY)"
+      echo "SKIP $name (not in MLSYS_ONLY_STAGES; projected \$$est)"
+    fi
     ONLY_SKIPS=$((ONLY_SKIPS + 1))
     return 9
   fi
@@ -247,6 +348,10 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   fi
 
   local t0 t1 wall cost rc
+  # Proof that this stage STARTED, so its helpers can tell "the parent ran" from
+  # "the parent was refused". Written before the command, removed only if the
+  # stage refuses.
+  : > "$RAN_DIR/$name"
   t0=$(date -u +%s)
   echo "=== stage $name (projected \$$est, ${est_h}h; watchdog ${WATCHDOG}h) ==="
   # `if cmd; then rc=0; else rc=$?; fi` — NOT `cmd; rc=$?`, which under
@@ -352,13 +457,16 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
   stage "${name}_losslessness" 3600 "$PY" scripts/mlsys_losslessness.py \
     --results "$csv" --tokens-dir "$(dirname "$csv")/tokens" \
     --out "$(dirname "$csv")/${name}_losslessness.csv"
-  # Group by level_id, NOT context_length: the speculative and target-only arms
-  # share a context_length, so grouping by it pooled them and averaged the
-  # target-only acceptance (hard-coded 0.0) into the speculative number.
-  # Primary paired ratio on decode_tps (pre-registered); the end-to-end ratio is
-  # written beside it by the same script.
+  # Group by the stratum the PAIRED ARMS SHARE, which is the rung
+  # (context_length). Grouping by level_id separated the speculative rows from
+  # their target-only counterparts, so no pair could ever form and the file
+  # contained no `paired_speedup` row at all -- while still looking successful.
+  # The reason level_id was chosen (a single mean over both arms pools the
+  # target-only structural zeros into the speculative number) is now handled
+  # inside the script: the marginal means are computed PER ARM, so the stratum
+  # can be shared for pairing without the estimates being mixtures.
   stage "${name}_doc_intervals" 1800 "$PY" scripts/mlsys_document_bootstrap.py \
-    --results "$csv" --group-by level_id --ratio-metric decode_tps \
+    --results "$csv" --group-by context_length --ratio-metric decode_tps \
     --out "$(dirname "$csv")/${name}_doc_intervals.csv"
   # --window: the plan compares rungs over a common window of rounds so cells
   # with different output lengths are on equal footing.
@@ -368,6 +476,12 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
 }
 
 DOCS=${MLSYS_DOCUMENTS_JSON:-data/processed/pg19_docs/documents.json}
+# The revisions a vLLM row is compared against. `--target-revision` (singular)
+# cannot describe a ladder that runs two targets, and a row pinned to the WRONG
+# model's revision is a comparison across models that looks pinned.
+ALL_TARGET_REVS="meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b,meta-llama/Llama-2-7b-hf=01c7f73d771dfac7d292323805ebc428287df4f9"
+ALL_DRAFT_REVS="meta-llama/Llama-3.2-1B=4e20de362430cd3b72f300e6b0f18e50e7166e08"
+TARGET_REVS_D3="meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
 interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDOG}h only='${ONLY:-<none>}' approved='$APPROVED' ==="
 echo "spend before manifest: \$$(spend)"
 
@@ -462,12 +576,20 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
       --output "$OUT/${name}.csv" --stage-id "$name" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+    src_rc=$?
   else
     want=$(expected_rows "$cfg" "")
     stage "$name" 43200 "$PY" run_experiment.py --config "$cfg" \
       --output "$OUT/${name}.csv" --stage-id "$name" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+    src_rc=$?
+  fi
+  if [ "$src_rc" = "9" ]; then
+    # Refused. Its validation and reporting are skipped too: checking rows that
+    # were never produced reports a failure for something that did not happen.
+    interim "SKIPPED_VALIDATION name=$name reason=stage_refused"
+    continue
   fi
   check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
   report_spec_stage "$OUT/${name}.csv" "$name"
@@ -485,7 +607,8 @@ stage impl_validation 21600 "$PY" scripts/mlsys_vllm_baseline.py \
   --prompt-ids-from-sidecars "$OUT/tokens" \
   --documents pg19_train_0,pg19_train_1,pg19_train_115 \
   --context-lengths 131072 --max-new-tokens 1024 --matched-max-new-tokens 1024 \
-  --models meta-llama/Llama-3.1-8B
+  --models meta-llama/Llama-3.1-8B \
+  --target-revisions "$TARGET_REVS_D3"
 
 # ---- S5: the gated rungs, one stage per rung -----------------------------
 # Each is severable so the 512k session can be approved and run on its own
@@ -518,6 +641,10 @@ for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
     --timeout-per-run-s "$(per_run_timeout "$(_manifest_field "$name" rung)")" \
     --abort-on-failure \
     --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  if [ "$?" = "9" ]; then
+    interim "SKIPPED_VALIDATION name=$name reason=stage_refused"
+    continue
+  fi
   check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
   report_spec_stage "$OUT/${name}.csv" "$name"
 done
@@ -546,6 +673,10 @@ for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
     --timeout-per-run-s "$(per_run_timeout "$(_manifest_field "$name" rung)")" \
     --abort-on-failure \
     --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  if [ "$?" = "9" ]; then
+    interim "SKIPPED_VALIDATION name=$name reason=stage_refused"
+    continue
+  fi
   check_stage_rows "$name" "$OUT/${name}.csv" "${want:-0}"
   report_spec_stage "$OUT/${name}.csv" "$name"
 done
@@ -567,20 +698,50 @@ if on_list rope_intervention_128k "$ONLY"; then
     --pg19-meta "$DOCS" \
     --out "$OUT/rope_intervention_gate.csv" \
     --gen-dir "$OUT/rope_intervention_gate_generated"
+  ri_gate_rc=$?
+  RI_GATE_MEASURED=0
+  if [ "$ri_gate_rc" = "0" ] && [ -s "$OUT/rope_intervention_gate.csv" ]; then
+    RI_GATE_MEASURED=1
+  else
+    # A gate that produced no verdicts has not judged anything. Recording its
+    # arms as "did not pass the gate" would turn a plumbing failure into a
+    # scientific result -- and this is the exact shape of the ARM4 mistake,
+    # where acceptance numbers were published for a target that was broken.
+    interim "STAGE_INVALID name=rope_intervention_gate reason=no_verdicts rc=$ri_gate_rc"
+    echo "INVALID rope_intervention_gate: no verdicts (rc=$ri_gate_rc); no arm's"
+    echo "  fate is known, so none is recorded as a result."
+    STAGE_INVALID=$((STAGE_INVALID + 1))
+  fi
 
   RI_GROUPS="RI_native_128k_SPEC"
   for arm in "factor16:RI_llama3_f16_128k_SPEC:RI_llama3_f16_128k" \
              "factor32:RI_llama3_f32_128k_SPEC:RI_llama3_f32_128k"; do
     label=${arm%%:*}; rest=${arm#*:}; grp=${rest%%:*}; cand=${rest##*:}
-    if gate_pass "$cand" "$OUT/rope_intervention_gate.csv"; then
+    [ "$RI_GATE_MEASURED" = "1" ] || continue
+    gate_pass "$cand" "$OUT/rope_intervention_gate.csv"
+    gp_rc=$?
+    if [ "$gp_rc" = "0" ]; then
       interim "GATE_PASS name=rope_intervention_128k arm=$label candidate=$cand"
       RI_GROUPS="$RI_GROUPS $grp"
-    else
-      # That arm's RESULT. Recorded, not retried, and the round is not refused.
+    elif [ "$gp_rc" = "1" ]; then
+      # That arm's RESULT, MEASURED and failed. Recorded, not retried, and the
+      # round is not refused.
       interim "RESULT name=rope_intervention_128k arm=$label gate=FAIL candidate=$cand note=no_coherent_target_at_128k"
       echo "RESULT rope_intervention_128k arm=$label: did not pass the gate at 128k; that arm is not run"
+    else
+      # The gate ran but has no row for this candidate: a config/candidate
+      # mismatch, not a verdict.
+      interim "STAGE_INVALID name=rope_intervention_128k arm=$label reason=no_gate_row_for_$cand"
+      echo "INVALID rope_intervention_128k arm=$label: the gate has no row for $cand"
+      STAGE_INVALID=$((STAGE_INVALID + 1))
     fi
   done
+  if [ "$RI_GATE_MEASURED" != "1" ]; then
+    interim "SKIPPED name=rope_intervention_128k reason=gate_not_measured"
+    echo "SKIP rope_intervention_128k: the gate was not measured, so the stage"
+    echo "  would spend \$$(_manifest_field rope_intervention_128k est_usd) on arms"
+    echo "  whose coherence is unknown."
+  else
 
   want=$(expected_rows configs/mlsys_rope_intervention_128k.yml "$RI_GROUPS")
   stage rope_intervention_128k 43200 "$PY" run_experiment.py \
@@ -589,6 +750,10 @@ if on_list rope_intervention_128k "$ONLY"; then
     --output "$OUT/rope_intervention_128k.csv" --stage-id rope_intervention_128k \
     --timeout-per-run-s 9000 --abort-on-failure \
     --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  ri_rc=$?
+  if [ "$ri_rc" = "9" ]; then
+    interim "SKIPPED_VALIDATION name=rope_intervention_128k reason=stage_refused"
+  elif [ "$ri_rc" = "0" ]; then
   check_stage_rows rope_intervention_128k "$OUT/rope_intervention_128k.csv" "${want:-0}"
   # Native vs each treated arm, paired by document, difference in alpha_round
   # with the pre-registered 0.05 equivalence margin. An arm whose gate failed
@@ -599,6 +764,8 @@ if on_list rope_intervention_128k "$ONLY"; then
     --results "$OUT/rope_intervention_128k.csv" \
     --out "$OUT/rope_intervention_128k_comparison.csv" \
     --metric acceptance_rate --margin 0.05
+  fi
+  fi
 else
   interim "SKIPPED name=rope_intervention_128k reason=needs_approval"
 fi
@@ -612,7 +779,9 @@ stage vllm_ladder 21600 "$PY" scripts/mlsys_vllm_baseline.py \
   --prompt-ids-from-sidecars "$OUT/tokens" \
   --context-lengths 131072 262144 524288 --max-new-tokens 1024 \
   --matched-max-new-tokens 1024 \
-  --models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf
+  --models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf \
+  --target-revisions "$ALL_TARGET_REVS" \
+  --draft-revisions "$ALL_DRAFT_REVS"
 
 if [ "$WATCHDOG_SKIPS" -gt 0 ] || [ "$COST_UNKNOWN" -gt 0 ] \
    || [ "$BUDGET_SKIPS" -gt 0 ] || [ "$STAGE_INVALID" -gt 0 ] \

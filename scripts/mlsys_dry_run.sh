@@ -602,7 +602,7 @@ step "12  the run guards: watchdog, ledger and terminate-on-every-exit"
 # These guards live in the shell around the pipeline, so the dry run checks the
 # wiring structurally AND exercises the arithmetic on the manifest's real values.
 # A guard that silently no-ops is exactly the failure mode worth catching here.
-python3 - scripts/mlsys_manifest.sh scripts/mlsys_watch_and_run.sh <<'PYDRY'
+"$PY" - scripts/mlsys_manifest.sh scripts/mlsys_watch_and_run.sh <<'PYDRY'
 import sys, yaml
 man = open(sys.argv[1]).read()
 watch = open(sys.argv[2]).read()
@@ -762,6 +762,8 @@ if "no readable cost projection" not in man:
     fails.append("the runner does not refuse a stage with no cost estimate")
 if re.search(r"(?m)^\s*python3 - ", man) or re.search(r"(?m)\bpython3 scripts/", man):
     fails.append("the manifest still calls bare python3")
+if re.search(r"(?m)^\s*python3 ", open("scripts/mlsys_dry_run.sh").read()):
+    fails.append("the dry run itself calls bare python3")
 if m["meta"].get("max_cost_usd") != 850:
     fails.append("no $850 session cap in the manifest")
 if "MAX_COST" not in man:
@@ -881,9 +883,15 @@ if '"$rc" -eq 1' not in watch:
 if "state UNKNOWN" not in watch:
     fails.append("an ssh failure is still treated as the manifest finishing")
 
-# pull integrity
-if "rsync FAILED" not in watch or "NOT merged" not in watch:
+# pull integrity: the merge is delegated to a script that refuses to copy an
+# unverified pull, and the watcher's failure paths mark the result clearly.
+if "rsync FAILED" not in watch or "NOT MERGED" not in watch:
     fails.append("an rsync failure does not stop the merge")
+if "scripts/mlsys_pull_merge.sh" not in watch:
+    fails.append("the merge is not delegated to the verified-pull script, so "
+                 "the rule cannot be exercised without a GPU and an SSH session")
+if 'if [ "$PULL_FAILED" = "0" ]; then' not in watch:
+    fails.append("the merge is not gated on PULL_FAILED")
 if "shasum -a 256" not in watch or "sha256 MISMATCH" not in watch:
     fails.append("the sha256 pull-verify the comment claims is not implemented")
 
@@ -1006,6 +1014,123 @@ sys.exit(1 if fails else 0)
 PYRI
   [ $? -eq 0 ] && ok "rope_intervention_128k is pre-registered, isolated, gated first and approved" \
                || bad "the new stage is not as pre-registered"
+
+# --------------------------------------------------------------------------
+step "17  the Codex round: helper pricing, gate references, grouping, rehearsal"
+# --------------------------------------------------------------------------
+"$PY" - scripts/mlsys_manifest.sh scripts/mlsys_watch_and_run.sh <<'PYBLK'
+import json, re, sys, yaml
+man = open(sys.argv[1]).read()
+watch = open(sys.argv[2]).read()
+m = yaml.safe_load(open("configs/mlsys_manifest.yml"))
+fails = []
+
+# --- helpers are priced, and priced under their parent ---------------------
+helper_ids = [h["id"] for h in m.get("helpers", [])]
+if not helper_ids:
+    fails.append("the manifest declares no helper stages")
+for h in m.get("helpers", []):
+    has_cost = (h.get("est_cost_usd") is not None
+                or h.get("est_usd") is not None)
+    parent_cost = any(s.get("id") == h.get("parent") and s.get("est_cost_usd")
+                      for s in m.get("stages", []))
+    if not (has_cost or parent_cost):
+        fails.append(f"helper {h['id']} has no cost and no priced parent, so it "
+                     f"cannot be refused-or-approved on cost")
+# a helper whose parent was refused must skip its own validation AND not count
+# as an invalid stage: the refusal path returns 9 before any STAGE_INVALID
+# bookkeeping, and the call sites `continue` on 9.
+if 'SKIPPED_VALIDATION name=$name' not in man:
+    fails.append("a refused stage does not skip its validation")
+# Every stage call site whose stage writes artifacts must consult the refusal
+# code: a refused stage that then validates or reports generates a failure for
+# something that never ran.
+for var in ("$src_rc", "$ri_rc", '"$?"'):
+    if f'if [ "{var}" = "9" ]' not in man and f"if [ {var} = \"9\" ]" not in man:
+        fails.append(f"no call site checks {var} for the refusal code 9")
+
+# --- the gate reference policy --------------------------------------------
+for f in ("configs/mlsys_rope_candidates.json", "configs/mlsys_gate_controls.json",
+          "configs/mlsys_rope_intervention_candidates.json",
+          "configs/mlsys_correction_candidates.json"):
+    d = json.load(open(f))
+    key = "candidates" if "candidates" in d else "coherence_gate"
+    for c in d[key]:
+        if not c.get("target_revision"):
+            fails.append(f"{f}: {c['name']} has no pinned target_revision")
+    if "rope_candidates" in f or "correction" in f:
+        for c in d[key]:
+            if int(c["context_length"]) > 131072 and c.get("reference_context") != 131072 \
+                    and not c.get("native_baseline"):
+                fails.append(f"{f}: {c['name']} is an extension with no declared "
+                             f"reference_context, so it would be judged against "
+                             f"its own context")
+    if "correction" in f:
+        if not any(c.get("native_baseline") for c in d[key]):
+            fails.append(f"{f}: no declared baseline, so the stage can produce "
+                         f"no ratio at all")
+# controls keep same-context baselines
+d = json.load(open("configs/mlsys_gate_controls.json"))
+bases = {(c["context_length"], c["target_model_name"])
+         for c in d["candidates"] if c.get("native_baseline")}
+for c in d["candidates"]:
+    if c.get("expect") and c.get("role") != "baseline" \
+            and (c["context_length"], c["target_model_name"]) not in bases:
+        fails.append(f"control {c['name']} has no baseline at its own context")
+
+# --- the campaign clock is one number -------------------------------------
+if "MLSYS_MAX_HOURS=${MLSYS_CAMPAIGN_HOURS:-40}" not in watch:
+    fails.append("MLSYS_MAX_HOURS is not the campaign clock")
+if 'MLSYS_CAMPAIGN_HOURS:-40' not in watch:
+    fails.append("the campaign clock default is not 40h")
+
+# --- the paired bootstrap groups by the SHARED stratum ---------------------
+if "--group-by level_id" in man:
+    fails.append("the bootstrap groups by level_id, which separates the arms "
+                 "so no pair can form")
+if "--group-by context_length" not in man:
+    fails.append("the bootstrap does not group by the shared stratum")
+boot = open("scripts/mlsys_document_bootstrap.py").read()
+if "paired_speedup" not in boot or "no paired" not in boot.lower():
+    fails.append("the bootstrap does not fail when no pair formed")
+
+# --- vLLM rows are pinned per model, and the prompt ids are ids ------------
+vllm = open("scripts/mlsys_vllm_baseline.py").read()
+if "--target-revisions" not in man:
+    fails.append("the manifest does not pin a revision per model for vLLM")
+if '"prompt_token_ids"' not in vllm:
+    fails.append("the vLLM worker does not pass prompt_token_ids directly")
+if "prompt_ids_verified" not in vllm:
+    fails.append("the vLLM row does not record whether it consumed the ids given")
+
+# --- the rehearsal exists and is wired as a dry-run step ------------------
+import os
+for f in ("scripts/mlsys_rehearsal.sh",
+          "scripts/rehearsal/stub_run_experiment.py",
+          "scripts/rehearsal/stub_coherence_gate.py",
+          "scripts/rehearsal/stub_vllm_baseline.py",
+          "scripts/mlsys_pull_merge.sh"):
+    if not os.path.exists(f):
+        fails.append(f"{f} is missing")
+if os.path.exists("scripts/mlsys_rehearsal.sh") and \
+        not os.access("scripts/mlsys_rehearsal.sh", os.X_OK):
+    fails.append("the rehearsal is not executable")
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYBLK
+  [ $? -eq 0 ] && ok "helpers priced, gate references declared, grouping shared, rehearsal present" \
+               || bad "the Codex-round contracts are not in place"
+
+echo "  running the end-to-end rehearsal (stubbed GPU, default allowlist)..."
+if bash scripts/mlsys_rehearsal.sh > "$WORK/rehearsal.log" 2>&1; then
+  ok "the rehearsal passed: $(grep -c '^  ok' "$WORK/rehearsal.log") checks, every approved stage and helper ran"
+else
+  bad "the rehearsal FAILED"
+  grep '^  FAIL' "$WORK/rehearsal.log" | head -10 | sed 's/^/  | /'
+  tail -5 "$WORK/rehearsal.log" | sed 's/^/  | /'
+fi
 
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

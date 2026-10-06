@@ -270,6 +270,26 @@ def _exact_token_window(tokenizer, ids: list[int], prompt_len: int,
     )
 
 
+def _prompt_gen_tokens(run: dict) -> int:
+    """The generation length that defines the PROMPT window for this run.
+
+    Every arm of a rung must be given the SAME prompt, because the plan's
+    losslessness check compares token ids between a speculative run and its
+    target-only partners. The prompt window is `[0, C - gen_tokens - 1)`, so if
+    each arm used its own `max_new_tokens` the 128-token baselines would get a
+    prompt 896 tokens longer than the 1024-token speculative run they are
+    supposed to check -- a different context, over which token equality says
+    nothing. The pairing guard would then report every one of those seven cells
+    as BAD_PAIR, and a stage that declares `losslessness: required` would fail
+    on a defect that only the prompt builder could have caused.
+
+    A level therefore sets `prompt_gen_tokens` to the RUNG's generation length
+    and leaves it equal to `max_new_tokens` for every other arm. Absent, the
+    behaviour is exactly as before.
+    """
+    return int(run.get("prompt_gen_tokens") or run.get("max_new_tokens", 1024))
+
+
 def _build_pg19_document_prompt(documents_json: str, context_length: int,
                                 doc_id: str, tokenizer, gen_tokens: int = 1024):
     """Build one rung's prompt from a single PG-19 book.
@@ -1038,7 +1058,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                 int(run.get("context_length", 65536)),
                 doc_id,
                 engine.tokenizer,
-                gen_tokens=int(run.get("max_new_tokens", 1024)),
+                gen_tokens=_prompt_gen_tokens(run),
             )
         else:
             prompt = build_prompt(

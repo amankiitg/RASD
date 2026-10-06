@@ -28,7 +28,8 @@
       "rope_anchor_base": 8192,
       "context_length": 131072,
       "seed": 42,
-      "_what_it_is": "The intervention arm: the shipped llama3 dict with only factor changed from 8 to 16, at the shipped 8192 anchor, evaluated at 128k."
+      "_what_it_is": "The intervention arm: the shipped llama3 dict with only factor changed from 8 to 16, at the shipped 8192 anchor, evaluated at 128k.",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "RI_llama3_f32_128k",
@@ -40,7 +41,8 @@
       "rope_anchor_base": 8192,
       "context_length": 131072,
       "seed": 42,
-      "_what_it_is": "The second intervention arm: the shipped llama3 dict with only factor changed from 8 to 32, at the shipped 8192 anchor, evaluated at 128k. Gated on its own, because a factor that is incoherent tells us nothing about acceptance and must be recorded as that arm's result rather than inferring the arm's fate from the other factor's."
+      "_what_it_is": "The second intervention arm: the shipped llama3 dict with only factor changed from 8 to 32, at the shipped 8192 anchor, evaluated at 128k. Gated on its own, because a factor that is incoherent tells us nothing about acceptance and must be recorded as that arm's result rather than inferring the arm's fate from the other factor's.",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "B_native_128k_ri",
@@ -50,7 +52,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 131072,
-      "seed": 7
+      "seed": 7,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     }
   ]
 }

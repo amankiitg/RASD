@@ -41,7 +41,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 32768,
-      "seed": 42
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "P2_native_64k",
@@ -50,7 +51,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 65536,
-      "seed": 42
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "P3_native_128k",
@@ -59,7 +61,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 131072,
-      "seed": 42
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "B_native_32k",
@@ -69,7 +72,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 32768,
-      "seed": 7
+      "seed": 7,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "B_native_64k",
@@ -79,7 +83,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 65536,
-      "seed": 7
+      "seed": 7,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "B_native_128k",
@@ -89,7 +94,8 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 131072,
-      "seed": 7
+      "seed": 7,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "B_llama2_yarn8_32k_correct",
@@ -102,7 +108,8 @@
       "rope_anchor_base": 4096,
       "context_length": 32768,
       "seed": 7,
-      "_what_it_is": "Llama-2-7B at 32k with YaRN correctly anchored on the 4096 base. This is the reference the mis-anchored negative is judged against; it measured 14.45 perplexity where the mis-anchored build measured 826.9."
+      "_what_it_is": "Llama-2-7B at 32k with YaRN correctly anchored on the 4096 base. This is the reference the mis-anchored negative is judged against; it measured 14.45 perplexity where the mis-anchored build measured 826.9.",
+      "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9"
     },
     {
       "name": "N1_arm4_f2_construction",
@@ -113,7 +120,8 @@
       "rope_factor": 2,
       "context_length": 131072,
       "seed": 42,
-      "_what_it_reproduces": "The rope dict that replaced Llama-3.1-8B's shipped llama3 block in the ARM4 f2 cell, where the target emitted EOS at token 0."
+      "_what_it_reproduces": "The rope dict that replaced Llama-3.1-8B's shipped llama3 block in the ARM4 f2 cell, where the target emitted EOS at token 0.",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
       "name": "N2_llama2_misanchored",
@@ -124,7 +132,8 @@
       "rope_factor": 8,
       "context_length": 32768,
       "seed": 42,
-      "_what_it_reproduces": "The historical bug: no anchor override, so transformers 4.47.1 routes the YaRN band onto config.max_position_embeddings = the context length. This is the construction that measured 826.9 perplexity at 32k vs 14.45 correctly anchored."
+      "_what_it_reproduces": "The historical bug: no anchor override, so transformers 4.47.1 routes the YaRN band onto config.max_position_embeddings = the context length. This is the construction that measured 826.9 perplexity at 32k vs 14.45 correctly anchored.",
+      "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9"
     }
   ]
 }

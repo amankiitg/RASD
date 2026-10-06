@@ -30,8 +30,13 @@ def wrapper():
     return _load_wrapper()
 
 
+REV = "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+
+
 class _Args:
     matched_max_new_tokens = 128
+    target_revision = REV
+    draft_revision = REV
 
     def __init__(self, mn: int = 128) -> None:
         self.matched_max_new_tokens = mn
@@ -54,6 +59,11 @@ def _ok_row(w, **overrides):
         "temperature": 0.0,                 # the RASD cells are greedy
         "vllm_version": w.VLLM_PIN,         # the pinned release
         "doc_id": "pg19_train_0",           # so the pair can be formed
+        # vLLM must be shown to have consumed the ids it was given, and the
+        # revisions pin WHICH model the comparison is against.
+        "prompt_ids_verified": "yes",
+        "target_revision": REV,
+        "draft_revision": REV,
     }
     row.update(overrides)
     return row

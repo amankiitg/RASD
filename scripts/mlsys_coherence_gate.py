@@ -412,6 +412,8 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
            "rope_type": cand.get("rope_type"),
            "rope_factor": cand.get("rope_factor"),
            "rope_anchor_base": cand.get("rope_anchor_base"),
+           "reference_context": cand.get("reference_context"),
+           "target_revision": cand.get("target_revision"),
            # Carried onto the row because the baseline lookup selects on it.
            # Without this the flag was read from the candidate dict list, which
            # worked only because `rows` happened to be built from the same dicts.
@@ -511,7 +513,8 @@ def verdict(row: dict, native_ppl: float) -> dict:
     return out
 
 
-FIELDS = ["candidate", "target_model_name", "context_length", "seed",
+FIELDS = ["candidate", "target_model_name", "target_revision",
+          "context_length", "reference_context", "seed",
           "rope_type", "rope_factor", "rope_anchor_base",
           "config_max_position_embeddings", "config_rope_scaling",
           "effective_rope_match", "effective_rope_maxerr",
@@ -600,26 +603,51 @@ def main() -> int:
         )
 
     def _baseline_for(r):
-        """The declared baseline at this candidate's context, if one exists."""
-        ctx = r.get("context_length")
+        """The baseline this candidate is to be judged against.
+
+        `reference_context` decides, and it is DECLARED rather than inferred:
+
+          * a candidate that declares one (an EXTENSION: 256k, 512k) is judged
+            against the declared native baseline at that context. The plan
+            states it this way -- the question for an extension is whether
+            extending the window keeps the target coherent, and "coherent" is
+            defined by the native configuration at the native window;
+          * a candidate that declares none is judged against a baseline at its
+            OWN context. That is what a calibration CONTROL needs: its job is to
+            show the gate passes a configuration known to be correct at its own
+            context, so a same-context reference is the right one there.
+
+        A missing reference is reported as `no_baseline`, never substituted:
+        a different context or model is a different reference, and guessing one
+        turns "we did not measure this" into a number.
+        """
+        want_ctx = r.get("reference_context")
+        if want_ctx in ("", None):
+            want_ctx = r.get("context_length")
+        want_ctx = int(want_ctx)
         same = [b for b in baseline_rows
-                if b.get("context_length") == ctx
+                if b.get("context_length") == want_ctx
                 and b.get("target_model_name") == r.get("target_model_name")]
         if same:
             return same[0]
-        # A different model or context is not the same reference. Report no
-        # baseline instead of substituting one, so the row's ratio is blank
-        # rather than wrong.
         return None
 
     for r in rows:
         b = _baseline_for(r)
         r["native_ppl_reference"] = b["ppl_continuation"] if b else ""
         r["baseline_context"] = b["context_length"] if b else ""
+        # Which reference this candidate declared. A 256k candidate judged
+        # against a 128k baseline and one judged against a 256k baseline are
+        # different measurements, and the CSV has to say which happened.
+        r["reference_context"] = (r.get("reference_context")
+                                  or r.get("context_length"))
         if b is None:
             r["gate_pass"] = False
-            r["gate_reason"] = ("no declared native baseline at this context and "
-                                "model; cannot compute a ratio against one")
+            r["gate_reason"] = (
+                f"no declared native baseline at reference context "
+                f"{r.get('reference_context') or r.get('context_length')} for "
+                f"{r.get('target_model_name')}; cannot compute a ratio against "
+                f"one")
             r["status"] = r.get("status") or "no_baseline"
         else:
             r.update(verdict(r, b["ppl_continuation"]))

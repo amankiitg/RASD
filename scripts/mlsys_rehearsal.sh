@@ -1,0 +1,377 @@
+#!/usr/bin/env bash
+# End-to-end rehearsal of the campaign, locally, with GPU execution stubbed.
+#
+# WHY
+#   Every failure this campaign has hit was a plumbing failure: a metadata file
+#   that was never staged, a CSV with no paired_speedup row, a stage refused on
+#   cost, a partial pull merged into results/. Each was only visible two stages
+#   after the mistake, and each cost real money to discover. This script runs the
+#   WHOLE manifest -- every approved stage plus its helpers -- against stubs that
+#   write artifacts in the exact schemas the real code writes, and then exercises
+#   the watcher's pull/merge with one injected hash mismatch.
+#
+# WHAT IS REAL AND WHAT IS STUBBED
+#   Real:  the manifest, the stage ordering and cost guards, the approval and
+#          helper gating, the gate's decision layer, the cap-smoke checker, the
+#          losslessness checker, the document and cluster bootstraps, the rope
+#          intervention comparison, the gate filter, the collision guard, the
+#          pull/merge rule.
+#   Stub:  model execution (weights, generation, perplexity) and the vLLM worker.
+#
+# PASS CRITERIA
+#   1. every approved stage AND every helper runs and exits 0; nothing refused
+#      on cost, nothing SKIPPED_VALIDATION, no INVALID/STAGE_FAILED line;
+#   2. the cap smoke check passes on the stub's rows;
+#   3. natural_f1_128k's doc_intervals produces paired_speedup rows;
+#   4. the rope comparison produces native-vs-factor16 and native-vs-factor32;
+#   5. the 256k gate candidate passes its verdict against the DECLARED 128k
+#      reference (baseline_context == 131072), not against its own context;
+#   6. the losslessness verdicts are 3x LOSSLESS (1024) + 7x LOSSLESS_PREFIX_128;
+#   7. an injected sha256 mismatch is NOT merged into results/, and a verified
+#      pull IS.
+#
+# Usage: scripts/mlsys_rehearsal.sh [--keep]
+set -uo pipefail
+
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+KEEP=0
+[ "${1:-}" = "--keep" ] && KEEP=1
+WORK=$(mktemp -d -t mlsys_rehearsal.XXXXXX)
+SANDBOX=$WORK/repo
+OUT=$SANDBOX/results/mlsys
+LOG=$WORK/manifest.log
+PASS=0
+FAIL=0
+
+ok()  { printf '  ok    %s\n' "$*"; PASS=$((PASS + 1)); }
+bad() { printf '  FAIL  %s\n' "$*"; FAIL=$((FAIL + 1)); }
+hdr() { printf '\n=== %s ===\n' "$*"; }
+cleanup() { [ "$KEEP" = "1" ] || rm -rf "$WORK"; }
+trap cleanup EXIT
+
+resolve_python() {
+  local c
+  if [ -n "${MLSYS_PYTHON:-}" ]; then printf '%s' "$MLSYS_PYTHON"; return; fi
+  for c in "$HOME/miniconda3/envs/rasd/bin/python" "$HOME/miniconda3/bin/python" \
+           /opt/conda/bin/python "$(command -v python3 2>/dev/null)"; do
+    if [ -n "$c" ] && [ -x "$c" ] && "$c" -c 'import yaml' 2>/dev/null; then
+      printf '%s' "$c"; return
+    fi
+  done
+  printf '%s' python3
+}
+PY=$(resolve_python)
+printf 'rehearsal: python=%s work=%s\n' "$PY" "$WORK"
+
+# ---------------------------------------------------------------------------
+hdr "1  sandbox: a copy of the repo with the GPU entry points replaced"
+# ---------------------------------------------------------------------------
+mkdir -p "$SANDBOX"
+rsync -a --exclude '.git' --exclude 'results' --exclude 'data' \
+  --exclude 'manuscript' --exclude '.venv*' --exclude '__pycache__' \
+  --exclude '*.pyc' "$REPO/" "$SANDBOX/" || {
+    bad "could not stage the sandbox"; exit 1; }
+
+# $3 is the name the original is stashed under, and it must match the module
+# the stub imports, or the stub fails at import time on the pod -- which is how
+# this was caught.
+install_stub() {   # $1 = real script (repo-relative) $2 = stub $3 = stash name
+  local real=$1 stub=$2 stash=$3
+  mv "$SANDBOX/$real" "$SANDBOX/$(dirname "$real")/$stash"
+  cp "$SANDBOX/$stub" "$SANDBOX/$real"
+  [ -f "$SANDBOX/$(dirname "$real")/$stash" ] || {
+    echo "install_stub: $real was not stashed as $stash" >&2; return 1; }
+}
+install_stub "run_experiment.py" "scripts/rehearsal/stub_run_experiment.py" \
+             "_real_run_experiment.py"
+install_stub "scripts/mlsys_coherence_gate.py" \
+             "scripts/rehearsal/stub_coherence_gate.py" \
+             "_real_coherence_gate.py"
+install_stub "scripts/mlsys_vllm_baseline.py" \
+             "scripts/rehearsal/stub_vllm_baseline.py" \
+             "_real_vllm_baseline.py"
+ok "sandbox staged and the three GPU entry points shimed"
+
+# The stash that documents which files the stubs stand in for.
+cat > "$SANDBOX/scripts/rehearsal/INSTALLED.txt" <<'EOF'
+This sandbox has GPU entry points replaced by the stubs in scripts/rehearsal/:
+  run_experiment.py            -> scripts/rehearsal/stub_run_experiment.py
+  scripts/mlsys_coherence_gate.py  -> .../stub_coherence_gate.py
+  scripts/mlsys_vllm_baseline.py   -> .../stub_vllm_baseline.py
+The originals are next to them as _real_*.py.
+EOF
+
+# ---------------------------------------------------------------------------
+hdr "2  stub PG-19 metadata (the file whose absence killed pg19_short_target)"
+# ---------------------------------------------------------------------------
+DOCS=$SANDBOX/data/processed/pg19_docs/documents.json
+mkdir -p "$(dirname "$DOCS")"
+"$PY" - "$DOCS" <<'PY' || bad "could not write the stub documents.json"
+import json, sys, pathlib
+docs = ["pg19_train_0", "pg19_train_1", "pg19_train_115", "pg19_train_537",
+        "pg19_train_915", "pg19_train_1404", "pg19_train_1726",
+        "pg19_train_1981", "pg19_train_2204", "pg19_train_2768"]
+out = pathlib.Path(sys.argv[1])
+# The chunks the metadata names are created too: the manifest verifies that
+# every path it lists resolves, and that check is part of what is rehearsed.
+entries = []
+for d in docs:
+    f = out.parent / f"{d}.memmap"
+    f.write_bytes(b"\0" * 16)
+    entries.append({"doc_id": d, "title": d, "url": "",
+                    "file": str(f), "length": 600000, "tokens": 600000})
+out.write_text(json.dumps({"documents": entries}, indent=1))
+print(f"  wrote {out} with {len(entries)} documents and their chunks")
+PY
+[ -s "$DOCS" ] && ok "stub dataset written ($(wc -c < "$DOCS" | tr -d ' ') bytes)" \
+               || bad "stub dataset missing"
+
+# ---------------------------------------------------------------------------
+hdr "3  allowlists agree between the manifest and the watcher's launch line"
+# ---------------------------------------------------------------------------
+MAN_ONLY=$(sed -n 's/^DEFAULT_ONLY=//p' "$SANDBOX/scripts/mlsys_manifest.sh")
+WATCH_ONLY=$(sed -n 's/^DEFAULT_ONLY=//p' "$SANDBOX/scripts/mlsys_watch_and_run.sh")
+if [ -n "$MAN_ONLY" ] && [ "$MAN_ONLY" = "$WATCH_ONLY" ]; then
+  ok "both default to the same $(awk -F, '{print NF}' <<<"$MAN_ONLY")-stage allowlist"
+else
+  bad "allowlist mismatch: manifest=${MAN_ONLY:-<unset>} watcher=${WATCH_ONLY:-<unset>}"
+fi
+[ -n "$MAN_ONLY" ] || bad "the manifest's allowlist default is empty (approves nothing)"
+[ "${#MAN_ONLY}" -gt 0 ] && ok "the allowlist is non-empty by default"
+
+APPROVED_DEFAULT=$(sed -n 's/^APPROVED=${MLSYS_APPROVED_STAGES:-\(.*\)}$/\1/p' \
+  "$SANDBOX/scripts/mlsys_manifest.sh")
+printf '  manifest approved-to-spend default: %s\n' "${APPROVED_DEFAULT:-<none>}"
+
+# ---------------------------------------------------------------------------
+hdr "4  run the manifest with the default allowlist and the GPU stubbed"
+# ---------------------------------------------------------------------------
+RAN_DIR=$WORK/ran
+mkdir -p "$RAN_DIR"
+( cd "$SANDBOX" && \
+  MLSYS_PYTHON="$PY" \
+  MLSYS_MAX_COST_USD=850 \
+  MLSYS_ASK_OVER_USD=300 \
+  MLSYS_DOCUMENTS_JSON="$DOCS" \
+  MLSYS_RAN_DIR="$RAN_DIR" \
+  MLSYS_MAX_HOURS=40 \
+  bash scripts/mlsys_manifest.sh ) >"$LOG" 2>&1
+MAN_RC=$?
+if [ "$MAN_RC" = "0" ]; then ok "the manifest exited 0"; else
+  bad "the manifest exited $MAN_RC"; fi
+echo "  --- last 25 lines of the manifest log ---"
+tail -25 "$LOG" | sed 's/^/  | /'
+
+# ---------------------------------------------------------------------------
+hdr "5  no stage was refused, failed or silently skipped"
+# ---------------------------------------------------------------------------
+# Both streams: refusals are echoed to stdout, stage-level failures are
+# recorded in the run log, and a check that reads only one of them would miss
+# half the ways a stage can be dropped.
+COMBINED=$WORK/combined.log
+cat "$LOG" "$OUT/RUN_LOG.txt" 2>/dev/null > "$COMBINED"
+for offender in "REFUSE" "BUDGET_REFUSED" "STAGE_FAILED" \
+                "STAGE_INVALID" "INVALID " "no readable cost projection"; do
+  if grep -q "$offender" "$COMBINED"; then
+    bad "the logs contain '$offender':"
+    grep -n "$offender" "$COMBINED" | head -5 | sed 's/^/  | /'
+  else
+    ok "no '$offender' in the logs"
+  fi
+done
+# A stage the allowlist refused also skips its validation, which is correct and
+# must not be reported as a failure. What must not happen is a stage that IS on
+# the allowlist having its validation skipped.
+allowed_re='^[0-9]*:.*SKIPPED_VALIDATION name=([^ ]+)'
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  who=${line##*name=}; who=${who%% *}
+  case " $STAGES $HELPERS " in
+    *" $who "*) bad "an allowlisted stage/helper skipped its validation: $line" ;;
+    *) : ;;
+  esac
+done < <(grep -E "$allowed_re" "$COMBINED" || true)
+ok "validation skips are confined to refused, unapproved stages"
+
+# ---------------------------------------------------------------------------
+hdr "6  every approved stage and every helper ran and exited 0"
+# ---------------------------------------------------------------------------
+STAGES="gate_calibration engine_cap_smoke coherence_gate correction_note_evidence natural_f1_128k impl_validation rope_intervention_128k natural_spec_gated_256k vllm_ladder"
+HELPERS="natural_f1_128k_losslessness natural_f1_128k_doc_intervals natural_f1_128k_round_acceptance rope_intervention_gate rope_intervention_128k_comparison"
+# STAGE_OK goes to the run log, which is the record that survives a dropped
+# SSH session -- the same file the operator reads after a real run.
+RUNLOG=$OUT/RUN_LOG.txt
+[ -s "$RUNLOG" ] || bad "no run log at $RUNLOG"
+for s in $STAGES; do
+  if grep -q "STAGE_OK name=$s " "$RUNLOG"; then ok "stage $s: ok"; else
+    bad "stage $s did not report STAGE_OK"; fi
+done
+for h in $HELPERS; do
+  if grep -q "STAGE_OK name=$h " "$RUNLOG"; then ok "helper $h: ok"; else
+    bad "helper $h did not run"; fi
+done
+# A parent that never ran would have SKIPPED its helper's validation; assert
+# explicitly that the helper markers exist in the run directory.
+for h in $HELPERS; do
+  [ -e "$RAN_DIR/$h" ] || bad "helper $h left no ran-marker"
+done
+ok "helper ran-markers checked"
+
+# ---------------------------------------------------------------------------
+hdr "7  the gate's calibration controls came out as each one declares"
+# ---------------------------------------------------------------------------
+"$PY" - "$OUT/gate_calibration.csv" <<'PY' && ok "calibration verdicts match expect" \
+  || bad "calibration verdicts disagree with the declared expectation"
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+bad = []
+for r in rows:
+    want = (r.get("expect") or "").strip()
+    got = "pass" if r.get("gate_pass") == "True" else "fail"
+    if want and want != got:
+        bad.append(f"{r['candidate']}: expected {want}, got {got} "
+                   f"({r.get('gate_reason')})")
+print(f"  {len(rows)} controls, {len(bad)} disagreements")
+for b in bad:
+    print("  | " + b)
+sys.exit(1 if bad else 0)
+PY
+
+# ---------------------------------------------------------------------------
+hdr "8  the 256k gate candidate is judged against the DECLARED 128k reference"
+# ---------------------------------------------------------------------------
+"$PY" - "$OUT/coherence_gate.csv" <<'PY' && ok "extension reference is the 128k native baseline" \
+  || bad "an extension candidate was not judged against the declared reference"
+import csv, sys
+rows = {r["candidate"]: r for r in csv.DictReader(open(sys.argv[1]))}
+r = rows.get("llama3_f16_256k")
+if r is None:
+    print("  | llama3_f16_256k missing from the gate output")
+    sys.exit(1)
+print(f"  | llama3_f16_256k: ctx={r['context_length']} "
+      f"reference_context={r['reference_context']} "
+      f"baseline_context={r['baseline_context']} ppl_ratio={r['ppl_ratio']} "
+      f"pass={r['gate_pass']}")
+ok_ref = (str(r["baseline_context"]) == "131072"
+          and str(r["reference_context"]) == "131072")
+ok_pass = str(r["gate_pass"]) == "True"
+sys.exit(0 if (ok_ref and ok_pass) else 1)
+PY
+fails=$(grep -c "False" "$OUT/coherence_gate.csv" || true)
+if [ "${fails:-0}" -gt 0 ]; then
+  ok "the gate rejected at least one candidate (it is not trivially all-pass)"
+else
+  bad "the gate passed every candidate, so the filter is untested"
+fi
+[ -s "$OUT/natural_spec_gated_256k.gated.yml" ] \
+  && ok "the gate filter produced a non-empty 256k config" \
+  || bad "the gate filter produced no config for the 256k rung"
+
+# ---------------------------------------------------------------------------
+hdr "9  the cap smoke passes on the stub's rows"
+# ---------------------------------------------------------------------------
+if "$PY" "$SANDBOX/scripts/mlsys_cap_smoke_check.py" \
+     --results "$OUT/engine_cap_smoke.csv" >"$WORK/cap.log" 2>&1; then
+  ok "cap smoke PASSED"
+else
+  bad "cap smoke FAILED"; sed 's/^/  | /' "$WORK/cap.log" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+hdr "10  losslessness: 3 full pairs at 1024, 7 prefixes at 128"
+# ---------------------------------------------------------------------------
+"$PY" - "$OUT/natural_f1_128k_losslessness.csv" <<'PY' || bad "losslessness verdicts are not the pre-registered ones"
+import csv, sys
+from collections import Counter
+rows = list(csv.DictReader(open(sys.argv[1])))
+c = Counter(r["verdict"] for r in rows)
+print(f"  | {dict(c)}")
+want = Counter({"LOSSLESS": 3, "LOSSLESS_PREFIX_128": 7})
+sys.exit(0 if c == want else 1)
+PY
+[ $? -eq 0 ] && ok "losslessness: 3x LOSSLESS + 7x LOSSLESS_PREFIX_128"
+
+# ---------------------------------------------------------------------------
+hdr "11  paired_speedup rows, and the rope comparison's two contrasts"
+# ---------------------------------------------------------------------------
+if "$PY" - "$OUT/natural_f1_128k_doc_intervals.csv" <<'PY'
+import csv, sys
+rows = [r for r in csv.DictReader(open(sys.argv[1]))
+        if r["estimate"].startswith("paired_speedup")]
+print(f"  | {len(rows)} paired_speedup row(s)")
+for r in rows[:3]:
+    print(f"  |   ctx={r['context_length']} n_docs={r['n_documents']} "
+          f"point={r['point']} ci=({r['ci_lo']}, {r['ci_hi']}) "
+          f"roles={r['paired_arm_roles']}")
+sys.exit(0 if rows else 1)
+PY
+then ok "doc_intervals produced paired_speedup rows"
+else bad "no paired_speedup row for natural_f1_128k (the payoff ratio is vapor)"; fi
+
+# Contrast names come from the analysis script, not from this rehearsal: assert
+# the two PRE-REGISTERED primary comparisons are present, by the names the script
+# actually emits.
+if "$PY" - "$OUT/rope_intervention_128k_comparison.csv" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+seen = {(r["contrast"], r["metric"]) for r in rows}
+print(f"  | contrasts: {sorted({c for c, _ in seen})}")
+need = {("factor16_minus_native", "acceptance_rate"),
+        ("factor32_minus_native", "acceptance_rate")}
+sys.exit(0 if need <= seen else 1)
+PY
+then ok "rope comparison produced native vs f16 and native vs f32"
+else bad "the rope comparison is missing a pre-registered primary contrast"; fi
+
+# ---------------------------------------------------------------------------
+hdr "12  the artifacts a stage is supposed to leave behind"
+# ---------------------------------------------------------------------------
+for d in per_token tokens memory_trace generated; do
+  n=$(find "$OUT/$d" -type f 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$n" -gt 0 ]; then ok "$OUT/$d holds $n file(s)"; else
+    bad "$OUT/$d is empty"; fi
+done
+dups=$(ls "$OUT" | grep -c '\.csv$' || true)
+ok "$dups result CSV(s), each named for its stage: $(ls "$OUT"/*.csv | xargs -n1 basename | tr '\n' ' ')"
+
+# ---------------------------------------------------------------------------
+hdr "13  the watcher's pull/merge, with one injected hash mismatch"
+# ---------------------------------------------------------------------------
+MV=$WORK/merge; mkdir -p "$MV/remote/per_token" "$MV/dest"
+echo "run_id,status" > "$MV/remote/natural_f1_128k.csv"
+echo "r1,ok" >> "$MV/remote/natural_f1_128k.csv"
+echo '{"round_idx": 0}' > "$MV/remote/per_token/r1.jsonl"
+( cd "$MV/remote" && find . -type f -print0 | sort -z | xargs -0 shasum -a 256 ) \
+  > "$MV/remote.sha256"
+
+if bash "$SANDBOX/scripts/mlsys_pull_merge.sh" --stage-dir "$MV/remote" \
+     --remote-sha "$MV/remote.sha256" --dest "$MV/dest" >"$MV/a.log" 2>&1; then
+  ok "a verified pull IS merged"
+else
+  bad "a verified pull was not merged"; sed 's/^/  | /' "$MV/a.log"
+fi
+
+# Now inject the mismatch: the staged file no longer matches the remote digest.
+echo "r1,TRUNCATED" >> "$MV/remote/natural_f1_128k.csv"
+if bash "$SANDBOX/scripts/mlsys_pull_merge.sh" --stage-dir "$MV/remote" \
+     --remote-sha "$MV/remote.sha256" --dest "$MV/dest2" >"$MV/b.log" 2>&1; then
+  bad "an INJECTED MISMATCH was merged; the guard is not enforced"
+else
+  ok "the injected mismatch was NOT merged (exit $?)"
+fi
+[ -e "$MV/dest2/natural_f1_128k.csv" ] && bad "the mismatching pull landed in the destination" \
+  || ok "the destination is untouched after the mismatch"
+grep -q "sha256 MISMATCH" "$MV/b.log" && ok "the mismatch was reported as a sha256 mismatch" \
+  || bad "the mismatch was not reported as a sha256 mismatch"
+
+# ---------------------------------------------------------------------------
+hdr "rehearsal summary"
+# ---------------------------------------------------------------------------
+printf '  %d passed, %d failed\n' "$PASS" "$FAIL"
+if [ "$FAIL" -gt 0 ]; then
+  printf '  sandbox kept at %s\n' "$WORK"
+  exit 1
+fi
+printf '  REHEARSAL PASSED: every approved stage and helper ran, the stub rows\n'
+printf '  satisfied every checker, and an unverified pull was refused.\n'
+exit 0

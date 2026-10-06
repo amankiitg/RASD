@@ -49,6 +49,23 @@ def _trace(results_dir: Path, run_id: str) -> list[dict]:
     return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
 
 
+# `generated` holds one token before the verify loop starts: the seed
+# `cur_token` that the first round verifies. Every token-count identity in this
+# file has to include it.
+INITIAL_TOKEN = 1
+
+
+def _sidecar(tokens_dir: Path, run_id: str) -> dict | None:
+    """The token sidecar for a run, or None. Malformed counts as missing."""
+    p = tokens_dir / f"{run_id}.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
 def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str], list[str]]:
     """Returns (problems, notes)."""
     problems: list[str] = []
@@ -64,6 +81,12 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
     for r in ok_rows:
         rid, cap = r["run_id"], int(r["max_new_tokens"])
         gen = int(r["tokens_generated"])
+        # A row with no verify rounds is a target-only run: there is nothing for
+        # a per-round trace to record, so it is checked on the cap and on its
+        # token sidecar instead. Demanding a trace of it asked the generator to
+        # have produced a verify loop it does not have.
+        is_spec = str(r.get("spec_steps", "")).strip() not in ("", "0")
+
         if gen != cap:
             problems.append(
                 f"{rid}: tokens_generated={gen} but max_new_tokens={cap} "
@@ -85,20 +108,48 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                     f"{rid}: {pt} prompt + 1 BOS + {gen} generated != {seq}"
                 )
 
+        # The token sidecar, for BOTH arms: it is the record of what was
+        # actually emitted, and for a target-only row it is the only evidence
+        # available.
+        side = _sidecar(tokens_dir, rid)
+        if side is None:
+            problems.append(f"{rid}: no token sidecar, so the emitted tokens "
+                            f"cannot be checked")
+        else:
+            ids = side.get("generated_token_ids") or []
+            if len(ids) != cap:
+                problems.append(
+                    f"{rid}: token sidecar holds {len(ids)} ids, expected the "
+                    f"cap ({cap})"
+                )
+            if not is_spec:
+                notes.append(
+                    f"{rid}: target-only, {gen} generated == cap, sidecar has "
+                    f"{len(ids)} ids"
+                )
+                continue
+
         tr = _trace(results_dir, rid)
         if not tr:
             problems.append(f"{rid}: no per-round trace, so the cap "
                             f"bookkeeping cannot be checked")
             continue
+
+        # `generated` already holds ONE token before the loop starts (the seed
+        # `cur_token` the first round verifies). So the cap is
+        #   1 + (sum of accepted tokens emitted) + (one bonus per untruncated
+        #       round)
+        # and NOT `emitted + bonuses`, which was short by exactly that first
+        # token.
         emitted = sum(int(x.get("n_emitted", x["n_acc"])) for x in tr)
-        # The bonus token: one per round unless the budget cut the round short.
-        # One bonus/resampled token per round that was NOT cut short: the
-        # truncated final round has no room for it (see _round_commit_plan).
+        # The bonus token: one per round unless the budget cut the round short
+        # (see _round_commit_plan). The truncated final round has no room for it.
         bonuses = sum(1 for x in tr if not x.get("round_truncated"))
-        if emitted + bonuses != cap:
+        if emitted + bonuses + INITIAL_TOKEN != cap:
             problems.append(
                 f"{rid}: trace accounts for {emitted} accepted + {bonuses} bonus "
-                f"= {emitted + bonuses} tokens, expected {cap}"
+                f"+ {INITIAL_TOKEN} seed = {emitted + bonuses + INITIAL_TOKEN} "
+                f"tokens, expected {cap}"
             )
         truncated = [i for i, x in enumerate(tr) if x.get("round_truncated")]
         if truncated and truncated != [len(tr) - 1]:
@@ -160,8 +211,9 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                 )
             kv_expected_prev = ka
         notes.append(
-            f"{rid}: {len(tr)} rounds, {emitted} accepted + {bonuses} bonus = {cap}, "
-            f"final round n_acc={last['n_acc']} n_emitted={last.get('n_emitted')} "
+            f"{rid}: spec, {len(tr)} rounds, 1 seed + {emitted} accepted + "
+            f"{bonuses} bonus = {cap}, final round n_acc={last['n_acc']} "
+            f"n_emitted={last.get('n_emitted')} "
             f"truncated={last.get('round_truncated')} "
             f"kv {tr[0].get('kv_len_before')}->{kv_expected_prev}"
         )

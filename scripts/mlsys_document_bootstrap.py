@@ -169,23 +169,37 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
     for gkey, grows in sorted(group_rows(rows, keys).items()):
         label = dict(zip(keys, gkey))
         for metric in metrics:
-            vals, saturated = _per_document_values(grows, metric, arm_column)
-            if not vals:
-                continue
-            boot = document_mean_bootstrap(vals, seed=seed)
-            t_ci = t_cluster_interval(vals)
-            out.append({
-                **label, "estimate": "mean", "metric": metric,
-                "point": round(boot["mean"], 6),
-                "ci_lo": round(boot["lo"], 6), "ci_hi": round(boot["hi"], 6),
-                "t_ci_lo": round(t_ci["lo"], 6), "t_ci_hi": round(t_ci["hi"], 6),
-                "n_documents": boot["n_documents"],
-                "saturated": saturated,
-                # No verdict here. A 1.0 threshold is meaningful only for the
-                # paired RATIO; applying `clears(..., 1.0)` to a raw throughput
-                # mean in tok/s produced spurious "above" verdicts.
-                "verdict": "",
-            })
+            # Marginally per ARM. The grouping stratum has to hold the paired
+            # arms together or no pair can form, which means it also holds the
+            # speculative rows next to target-only rows whose acceptance is 0 by
+            # construction -- and one mean over both is a mixture of a real
+            # number and a structural zero. Splitting the marginal by arm_role
+            # keeps the stratum shared for pairing and the estimate per arm.
+            for role in sorted({str(r.get("arm_role", "")) for r in grows}):
+                arm_rows = [r for r in grows
+                            if str(r.get("arm_role", "")) == role]
+                vals, saturated = _per_document_values(arm_rows, metric,
+                                                       arm_column)
+                if not vals:
+                    continue
+                boot = document_mean_bootstrap(vals, seed=seed)
+                t_ci = t_cluster_interval(vals)
+                out.append({
+                    **label, "arm_role": role,
+                    "estimate": "mean", "metric": metric,
+                    "point": round(boot["mean"], 6),
+                    "ci_lo": round(boot["lo"], 6),
+                    "ci_hi": round(boot["hi"], 6),
+                    "t_ci_lo": round(t_ci["lo"], 6),
+                    "t_ci_hi": round(t_ci["hi"], 6),
+                    "n_documents": boot["n_documents"],
+                    "saturated": saturated,
+                    # No verdict here. A 1.0 threshold is meaningful only for
+                    # the paired RATIO; applying `clears(..., 1.0)` to a raw
+                    # throughput mean in tok/s produced spurious "above"
+                    # verdicts.
+                    "verdict": "",
+                })
 
         # One row per (document, arm). A plain dict keyed on doc_id kept only
         # the LAST row, so with more than one row per document the paired
@@ -212,6 +226,7 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
             "point": round(pr["point"], 6),
             "ci_lo": round(pr["lo"], 6), "ci_hi": round(pr["hi"], 6),
             "t_ci_lo": round(tr["lo"], 6), "t_ci_hi": round(tr["hi"], 6),
+            "arm_role": ",".join(sorted({roles[d] for d in paired})),
             "n_documents": pr["n_documents"],
             "verdict": verdict,
             # Which target arm each pair actually used, so the pairing is
@@ -269,7 +284,8 @@ def main() -> int:
     out_path = Path(args.out) if args.out else path.with_name(
         path.stem + "_doc_intervals.csv")
     fields = list(args.group_by) + [
-        "estimate", "metric", "point", "ci_lo", "ci_hi", "t_ci_lo", "t_ci_hi",
+        "arm_role", "estimate", "metric", "point", "ci_lo", "ci_hi",
+        "t_ci_lo", "t_ci_hi",
         "n_documents", "saturated", "verdict", "paired_arm_roles", "note"]
     with out_path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
@@ -288,6 +304,16 @@ def main() -> int:
               f"{r['point']:>9} {boot:>24} {tci:>24} {r['n_documents']:>3}  "
               f"{r['verdict']}")
     print(f"\nwrote {out_path}")
+    # The paired ratio is what the payoff rule is evaluated on. A file with no
+    # paired row cannot support it, and silently returning only marginals would
+    # look like a successful run.
+    if not any(str(r.get("estimate", "")).startswith("paired_speedup")
+               for r in res):
+        print("\nNO PAIRED SPEEDUP ROW was produced. The paired ratio is what "
+              "the payoff rule is evaluated on, so this file cannot support it.")
+        print("The usual cause is a --group-by that separates the paired arms: "
+              "they must share a stratum for a pair to exist.")
+        problems.append("no paired_speedup row produced")
     if problems:
         # An ambiguous or missing pair is not a note: it means a paired figure
         # in this file was computed against a partner the code chose, not the

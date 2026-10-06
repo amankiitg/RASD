@@ -17,7 +17,20 @@
     "",
     "The two `expected_fail` entries are deliberate negative controls: they are",
     "the constructions the ARM4 ladder actually used, and the gate is only",
-    "trustworthy if it rejects them."
+    "trustworthy if it rejects them.",
+    "",
+    "REFERENCE CONTEXT. An EXTENSION candidate (256k, 512k) is judged against",
+    "the declared native baseline at 128k, which is what the plan states: the",
+    "question is whether extending the window keeps the target coherent, and",
+    "the reference for 'coherent' is the native configuration at the native",
+    "window. A calibration CONTROL keeps a same-context baseline, because its",
+    "job is to show the gate passes a configuration known to be correct at its",
+    "own context. Each candidate says which it is with `reference_context`",
+    "(absent = its own context).",
+    "",
+    "target_revision is pinned on every candidate, including the two 512k ones",
+    "that previously carried none: a gate verdict against an unpinned revision",
+    "is a verdict about whatever the Hub served that day."
   ],
   "coherence_gate": [
     {
@@ -43,7 +56,8 @@
       "rope_anchor_base": null,
       "seed": 42,
       "expected": "unknown",
-      "why": "Builds ON the native mechanism: copies the shipped llama3 block and only raises factor (8 -> 16). Anchor stays 8192."
+      "why": "Builds ON the native mechanism: copies the shipped llama3 block and only raises factor (8 -> 16). Anchor stays 8192.",
+      "reference_context": 131072
     },
     {
       "name": "yarn_base8192_f32_256k",
@@ -55,7 +69,8 @@
       "rope_anchor_base": 8192,
       "seed": 42,
       "expected": "unknown",
-      "why": "YaRN anchored on Llama-3.1's true pretraining base (8192) instead of the 131072 window its dict would otherwise claim."
+      "why": "YaRN anchored on Llama-3.1's true pretraining base (8192) instead of the 131072 window its dict would otherwise claim.",
+      "reference_context": 131072
     },
     {
       "name": "yarn_base131072_f2_256k",
@@ -67,7 +82,8 @@
       "rope_anchor_base": 131072,
       "seed": 42,
       "expected": "fail",
-      "why": "NEGATIVE CONTROL: the ARM4 f2 construction (YaRN replacing llama3, anchored on the full window). Must be rejected."
+      "why": "NEGATIVE CONTROL: the ARM4 f2 construction (YaRN replacing llama3, anchored on the full window). Must be rejected.",
+      "reference_context": 131072
     },
     {
       "name": "yarn_rebased_on_context_256k",
@@ -79,7 +95,8 @@
       "rope_anchor_base": null,
       "seed": 42,
       "expected": "fail",
-      "why": "NEGATIVE CONTROL: YaRN replacing llama3 with the anchor left on config.max_position_embeddings (= the context length, 262144), i.e. exactly what the engine did on 4.47.1 before rope_anchor_base existed."
+      "why": "NEGATIVE CONTROL: YaRN replacing llama3 with the anchor left on config.max_position_embeddings (= the context length, 262144), i.e. exactly what the engine did on 4.47.1 before rope_anchor_base existed.",
+      "reference_context": 131072
     },
     {
       "name": "llama3_f32_512k",
@@ -89,7 +106,9 @@
       "rope_factor": 32,
       "rope_anchor_base": null,
       "seed": 42,
-      "note": "Native mechanism, only the factor moves 8 -> 32. This is the 512k candidate the approved rung needs; without it the 512k stage has no configuration that can pass the gate, so it would always be skipped."
+      "note": "Native mechanism, only the factor moves 8 -> 32. This is the 512k candidate the approved rung needs; without it the 512k stage has no configuration that can pass the gate, so it would always be skipped.",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "reference_context": 131072
     },
     {
       "name": "yarn_base8192_f64_512k",
@@ -99,7 +118,9 @@
       "rope_factor": 64,
       "rope_anchor_base": 8192,
       "seed": 42,
-      "note": "YaRN over the true 8192 pretraining base; the alternative at 512k."
+      "note": "YaRN over the true 8192 pretraining base; the alternative at 512k.",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "reference_context": 131072
     }
   ]
 }

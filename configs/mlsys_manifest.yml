@@ -263,8 +263,8 @@ stages:
     order: 4
     script: scripts/mlsys_coherence_gate.py
     candidates: configs/mlsys_correction_candidates.json
-    est_hours: 1.5
-    est_cost_usd: 33
+    est_hours: 1.9
+    est_cost_usd: 41
     output: results/mlsys/correction_note_evidence.csv
     why: >
       The correction note claims the anchor explains most of the perplexity
@@ -384,6 +384,54 @@ stages:
       (end-to-end generation tok/s), never forward_tps. Set unit_matched=yes ONLY
       when prompt token ids, max_new_tokens, EOS policy and tensor_parallel_size
       all match the RASD cell. Record honestly where vLLM cannot match.
+
+# HELPER STAGES. These run around a parent stage and previously had no cost
+# entry, so `est_cost` could not price them and the aggregate guard could not
+# see them. They are priced explicitly here, and each names its PARENT: a helper
+# is allowed exactly when its parent is, and it is skipped when its parent was
+# refused or did not run. A refused stage must not have its validation run --
+# validating a stage that never produced rows reports failure for something that
+# never happened, and inflates STAGE_INVALID.
+helpers:
+  - id: gate_calibration_check
+    parent: gate_calibration
+    est_hours: 0.02
+    est_cost_usd: 1
+    script: scripts/mlsys_gate_calibration_check.py
+  - id: engine_cap_smoke_check
+    parent: engine_cap_smoke
+    est_hours: 0.02
+    est_cost_usd: 1
+    script: scripts/mlsys_cap_smoke_check.py
+  - id: rope_intervention_gate
+    parent: rope_intervention_128k
+    # Runs BEFORE its parent: it is what decides whether each treated arm of that
+    # stage may run at all. So it needs the parent to be APPROVED, not to have
+    # already run -- requiring the latter would refuse the gate that gates it.
+    runs_before_parent: true
+    est_hours: 0.6
+    est_cost_usd: 13
+    script: scripts/mlsys_coherence_gate.py
+  - id: rope_intervention_128k_comparison
+    parent: rope_intervention_128k
+    est_hours: 0.02
+    est_cost_usd: 1
+    script: scripts/mlsys_rope_intervention.py
+  - id: _losslessness
+    parent: "*"
+    est_hours: 0.05
+    est_cost_usd: 1
+    script: scripts/mlsys_losslessness.py
+  - id: _doc_intervals
+    parent: "*"
+    est_hours: 0.05
+    est_cost_usd: 1
+    script: scripts/mlsys_document_bootstrap.py
+  - id: _round_acceptance
+    parent: "*"
+    est_hours: 0.05
+    est_cost_usd: 1
+    script: scripts/mlsys_cluster_bootstrap.py
 
 reporting:
   primary_metric: alpha_round

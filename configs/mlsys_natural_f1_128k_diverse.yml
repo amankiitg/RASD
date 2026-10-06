@@ -79,6 +79,10 @@ NATURAL_f1_128k_diverse_TARGET_SHORT:
     context_length: 131072
     documents: [pg19_train_552, pg19_train_1084, pg19_train_1250, pg19_train_1757, pg19_train_1946, pg19_train_2102, pg19_train_2124]
     max_new_tokens: 128
+    # The prompt window is defined by the RUNG, not by this arm's own
+    # 128-token generation: all arms must see the same prompt, or the
+    # 128-token losslessness prefix check compares different contexts.
+    prompt_gen_tokens: 1024
     spec_steps: 0
     checkpoint_every: 0
     measure_target_ppl: false

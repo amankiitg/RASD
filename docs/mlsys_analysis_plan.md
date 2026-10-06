@@ -686,3 +686,81 @@ baselines generate 128 tokens against a 1024-token speculative run, which is the
 case the prefix verdict exists for. It requires instead that the partner is not
 **longer** than the run it checks, since a longer partner cannot be a prefix
 comparison.
+
+---
+
+### Revision: the prompt window is defined by the RUNG, not by the arm's own cap (2026-10-06)
+
+*Before any of these stages has run; no data seen.*
+
+**What was wrong.** The PG-19 prompt builder took its prompt length from the
+run's own `max_new_tokens` (`prompt = [0, C - gen_tokens - 1)`). Every arm was
+therefore given a *different* prompt whenever the arms generate different
+numbers of tokens. This plan requires the three full-length target-only arms and
+the seven short ones to be checked against the speculative run token-by-token,
+and the pair guard in `src/analysis/losslessness.py` refuses a pair whose
+`prompt_sha256` or `prompt_tokens` disagree — as it must, because token equality
+across two different contexts means nothing. The consequence was that the seven
+128-token baselines could never have paired: they would have come back
+`BAD_PAIR`, the prefix verdict this plan introduces would never have been
+produced, and a stage declaring `losslessness: required` would have failed on a
+defect introduced by the prompt builder.
+
+**The rule, now.** The prompt window is a property of the rung:
+
+```
+prompt length = context_length - prompt_gen_tokens - 1
+```
+
+where `prompt_gen_tokens` is the rung's generation length (1024 for the 128k and
+256k rungs), and every arm of a rung sets it to the same value regardless of how
+many tokens it itself generates. A level that omits it keeps the previous
+behaviour (`max_new_tokens`), so no existing single-arm config changes.
+
+The four stage configs that carry a `TARGET_SHORT` arm declare it explicitly.
+The important consequence for the tables: a short baseline's `sequence_tokens` is
+`context_length - 1024 + 128`, NOT `context_length`. It is a 128-token
+generation into the same 1024-token prompt, which is what makes it a prefix
+partner; nothing is reported about its sequence length, and it is not a rung of
+its own.
+
+### Revision: a helper follows its parent, and an unmeasured gate is not a failed arm (2026-10-06)
+
+*Before any of the affected stages has run; no data seen.*
+
+**Allowlist.** Helper stages (`*_losslessness`, `*_doc_intervals`,
+`*_round_acceptance`, `rope_intervention_gate`,
+`rope_intervention_128k_comparison`) are admitted by their PARENT's presence on
+`MLSYS_ONLY_STAGES`, never by their own name. `rope_intervention_gate` is
+declared as a stage (it is what decides whether the intervention's treated arms
+may run), so it did not match the suffix rule, was refused by the allowlist, and
+the stage then **recorded both treated arms as having failed a gate that was
+never measured**. That is the exact failure mode this plan's negative-control
+rule exists to prevent — a control counts as detected only if it was measured
+and failed. A helper's cost is priced under its parent.
+
+**A gate that produced no verdicts is an INVALID stage, not a verdict.** The
+intervention stage now distinguishes two cases it previously conflated:
+
+| gate outcome | meaning |
+|---|---|
+| the arm's row is present and fails | that arm's measured result: no coherent target at 128k, not run |
+| the gate produced no row for the arm | a plumbing mismatch: `STAGE_INVALID`, no arm's fate recorded |
+| the gate produced no file at all | `STAGE_INVALID`, and the speculative stage is skipped rather than spending $120 on arms of unknown coherence |
+
+### Revision: the correction-note evidence declares its baselines (2026-10-06)
+
+*Before the stage has run; no data seen.*
+
+`configs/mlsys_correction_candidates.json` now carries two native rows
+(`B_llama2_native_32k`, `B_llama2_native_128k`, `rope_type: none`,
+`native_baseline: true`). The gate refuses to compute any ratio when no row is
+flagged `native_baseline`, so without them the evidence stage could not have
+produced a single number. Each mis-anchored / correctly-anchored pair is scored
+against the native row at its own context, which keeps the correction note's
+comparison ("the anchor explains the perplexity damage") at a fixed context
+rather than across two.
+
+**Cost.** The two extra rows raise this stage's projection from $33 to $41
+(8 -> 10 measured candidates, 1.5h -> 1.9h), so the approved nine-stage total is
+**$775** against the $850 session ceiling, headroom **$75**.

@@ -85,6 +85,20 @@ count_instances() {
 # The wait is bounded separately (MLSYS_CAPACITY_WAIT_HOURS); the CAMPAIGN clock
 # starts when an instance is actually acquired.
 CAPACITY_WAIT_DEADLINE=$(( $(date -u +%s) + ${MLSYS_CAPACITY_WAIT_HOURS:-72} * 3600 ))
+# The instance's own watchdog is the OUTER campaign clock, not a separate
+# number. If they disagree, the inside guard can kill a stage the outside clock
+# still considers in budget, or the outside clock can end the run while the
+# inside guard is still happy to start a stage -- two answers to one question.
+# MLSYS_MAX_HOURS, if set, must match; naming a different value is refused
+# rather than silently preferred.
+CAMPAIGN_HOURS=${MLSYS_CAMPAIGN_HOURS:-40}
+if [ -n "${MLSYS_MAX_HOURS:-}" ] && [ "$MLSYS_MAX_HOURS" != "$CAMPAIGN_HOURS" ]; then
+  say "FATAL: MLSYS_MAX_HOURS=$MLSYS_MAX_HOURS but the campaign clock is" \
+      "${CAMPAIGN_HOURS}h. They must agree; setting them differently means the" \
+      "inside watchdog and the outside deadline can kill each other's work."
+  exit 7
+fi
+say "instance watchdog = campaign clock = ${CAMPAIGN_HOURS}h"
 # Absolute override, when the operator names one explicitly.
 DEADLINE=${MLSYS_DEADLINE_EPOCH:-0}
 say "target=$INSTANCE_TYPE  per-stage approval threshold=\$$ASK_OVER @ \$$RATE/hr"
@@ -209,14 +223,14 @@ except Exception: print('')" 2>/dev/null)
     # is watching would be one nobody sized or approved. Stop and say so.
     OTHER=$(api_get instances | "$PY" -c \
       "import json,sys;d=json.load(sys.stdin)['data'];print(','.join(x['id'] for x in d))")
-    say "FATAL: $n instance(s) already exist ($OTHER); refusing to launch or adopt."
-    say "Terminate them, or set MLSYS_ADOPT_EXISTING=1 to run on one deliberately."
-    if [ "${MLSYS_ADOPT_EXISTING:-0}" = "1" ]; then
-      INSTANCE_ID=$(api_get instances | "$PY" -c \
-        "import json,sys;d=json.load(sys.stdin)['data'];print(d[0]['id'] if d else '')")
-      say "ADOPTING $INSTANCE_ID as instructed by MLSYS_ADOPT_EXISTING"
-      break
-    fi
+    # NO ADOPTION PATH, deliberately. An adopted instance is one this script
+    # did not launch, was not sized for this campaign, and would later
+    # TERMINATE. `MLSYS_ADOPT_EXISTING` existed as an escape hatch and is gone:
+    # the invariant "we only ever terminate the id we launched" is worth more
+    # than the convenience of reusing a machine whose provenance we do not know.
+    say "FATAL: $n instance(s) already exist ($OTHER)."
+    say "This watcher only runs on an instance IT launches, so that it only ever"
+    say "terminates one it launched. Terminate them yourself, then re-run."
     exit 5
   fi
   interruptible_sleep $nap
@@ -262,10 +276,21 @@ done
 
 say "staging repository + PG-19 data (metadata AND the chunks it names)"
 ssh $SSH_OPTS "$SSH_USER@$IP" "mkdir -p ~/RASD/scripts ~/RASD/configs ~/RASD/results" 2>>"$LOG"
-rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-  --exclude '.git' --exclude 'results/final' --exclude 'manuscript' \
-  --exclude '.venv*' --exclude '__pycache__' \
-  "$REPO/" "$SSH_USER@$IP:~/RASD/" >>"$LOG" 2>&1 && say "  repo staged"
+# A failed repo rsync used to be silent: the old form was
+# `rsync ... && say "repo staged"`, so a non-zero exit merely skipped the
+# message and the run continued against a pod with stale or missing code.
+# Nothing downstream can recover from that -- every stage reads scripts/ and
+# configs/ -- so it is fatal.
+if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
+       --exclude '.git' --exclude 'results/final' --exclude 'manuscript' \
+       --exclude '.venv*' --exclude '__pycache__' \
+       "$REPO/" "$SSH_USER@$IP:~/RASD/" >>"$LOG" 2>&1; then
+  say "FATAL: staging the repository to the pod failed; refusing to run"
+  say "FATAL: against code we cannot confirm is the code under test"
+  terminate_and_confirm
+  exit 6
+fi
+say "  repo staged"
 
 # The metadata names relative paths; the memmap files must travel with it or the
 # stage dies exactly like pg19_short_target did. Verify AFTER the copy, from the
@@ -290,7 +315,12 @@ items=m.get('documents') or m.get('chunks') or []
 missing=[c['file'] for c in items if not pathlib.Path(c['file']).exists()]
 print('  $d: %d files, %d unresolved' % (len(items), len(missing)))
 sys.exit(1 if missing else 0)\"" >>"$LOG" 2>&1 \
-    && say "  $d verified" || say "  WARNING: $d has unresolved paths"
+    && say "  $d verified" || {
+      say "FATAL: $d has unresolved metadata paths on the pod; the stage would"
+      say "FATAL: die mid-run on a paid instance. Staging is incomplete."
+      terminate_and_confirm
+      exit 6
+    }
 done
 
 # --------------------------------------------------------------------------
@@ -300,7 +330,7 @@ say "starting the manifest"
 ssh $SSH_OPTS "$SSH_USER@$IP" \
   "cd ~/RASD && NODE_RATE_PER_HOUR=$RATE \
    MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \
-   MLSYS_MAX_HOURS=${MLSYS_MAX_HOURS:-20} \
+   MLSYS_MAX_HOURS=${MLSYS_CAMPAIGN_HOURS:-40} \
    MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-850} \
    MLSYS_ONLY_STAGES='${ONLY_STR}' \
    MLSYS_APPROVED_STAGES='${ONLY_STR}' \
@@ -340,6 +370,7 @@ done
 STAGE=$SESSION_DIR/pull_$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$STAGE"
 PULL_FAILED=0
+MERGE_OK=0
 say "pulling results to $STAGE (no --delete anywhere)"
 if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
        --exclude 'checkpoints/' \
@@ -379,23 +410,33 @@ if [ "$PULL_FAILED" = "0" ]; then
   fi
 fi
 
-"$PY" - "$STAGE" <<'PYEOF' >>"$LOG" 2>&1
-import hashlib, pathlib, sys
-stage = pathlib.Path(sys.argv[1]); dest = pathlib.Path("results/mlsys")
-dest.mkdir(parents=True, exist_ok=True)
-n = 0
-for f in stage.rglob("*"):
-    if not f.is_file(): continue
-    t = dest / f.relative_to(stage)
-    t.parent.mkdir(parents=True, exist_ok=True)
-    t.write_bytes(f.read_bytes())
-    n += 1
-print(f"  merged {n} files (additive; nothing deleted)")
-PYEOF
+# The merge is GATED on a fully verified pull. It previously ran
+# unconditionally -- the python block was not inside any `if`, so PULL_FAILED
+# only changed the wording of a message while an unverified or truncated pull
+# was copied into results/ regardless. That is the worst shape for this bug: a
+# merged short CSV is indistinguishable from a short run, and the failure would
+# have been discovered in the analysis, not here.
+# The merge rule lives in scripts/mlsys_pull_merge.sh so it can be exercised
+# without a GPU and an SSH session: the rehearsal feeds it a verified pull, a
+# pull with one injected hash mismatch, and an empty pull, and asserts that only
+# the first one lands. It was inline here before, with the copy OUTSIDE the
+# guard, so an unverified pull was merged while the message said otherwise.
 if [ "$PULL_FAILED" = "0" ]; then
-  say "  merged into results/mlsys (additive)"
+  if bash scripts/mlsys_pull_merge.sh \
+       --stage-dir "$STAGE" \
+       --remote-sha "$SESSION_DIR/pull_remote.sha256" \
+       --local-sha "$SESSION_DIR/pull_local.sha256" \
+       --dest results/mlsys --log "$LOG"; then
+    MERGE_OK=1
+  else
+    say "!!! NOT MERGED: the pull did not verify (see above). results/ is"
+    say "!!! untouched and the staged copy is preserved at $STAGE."
+    MERGE_OK=0
+  fi
 else
-  say "!!! NOT merged: the pull did not verify. Staged copy kept at $STAGE"
+  say "!!! NOT MERGED: rsync or the remote manifest failed. results/ is"
+  say "!!! untouched and the staged copy is preserved at $STAGE."
+  MERGE_OK=0
 fi
 
 # --------------------------------------------------------------------------

@@ -46,8 +46,17 @@ def _load_helpers():
     return ns
 
 
-def _args():
-    return SimpleNamespace(matched_max_new_tokens=1024)
+REV = "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+
+
+def _args(**over):
+    """The verdict's inputs. The revisions are part of the comparison: a row
+    cannot be unit-matched against a different target/draft revision."""
+    args = SimpleNamespace(matched_max_new_tokens=1024, target_revision=REV,
+                           draft_revision=REV)
+    for k, v in over.items():
+        setattr(args, k, v)
+    return args
 
 
 def _row(**kw):
@@ -57,7 +66,8 @@ def _row(**kw):
     row = {"eos_policy": ns["EOS_POLICY"], "tensor_parallel_size": 8,
            "max_new_tokens": 1024, "temperature": 0.0,
            "vllm_version": ns["VLLM_PIN"], "doc_id": "pg19_train_0",
-           "prompt_sha256": sha}
+           "prompt_sha256": sha, "prompt_ids_verified": "yes",
+           "target_revision": REV, "draft_revision": REV}
     row.update(kw)
     return ns, row
 
