@@ -1,0 +1,61 @@
+# MLSys — natural-text f1 at the native 128k window.
+#
+# TARGET POLICY: Llama-3.1-8B at 128k runs its NATIVE shipped `llama3` rope
+# block, untouched. rope_type: none asserts that and fails loud if the context
+# does not actually fit the native window.
+#
+# What this answers: f1 on the synthetic repeated-paragraph prompt saturated at
+# 92.6-96.3% fully-accepted rounds. Natural PG-19 text at the identical context
+# and identical system tells us whether that ceiling is the prompt's fault or
+# the system's.
+#
+# 1024 tokens with ignore_eos TRUE: we want a fixed-length generation so runs
+# are comparable, and the per-round ended_on_eos field records where (if
+# anywhere) an EOS was committed. The previous protocol used 128 tokens and
+# honoured EOS, which made 6-round and 127-round runs look comparable when they
+# were not.
+canary:
+  id: nat_f1_128k_canary_s42
+  seed: 42
+  max_new_tokens: 16
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  max_new_tokens: 1024
+  ignore_eos: true          # fixed-length protocol; ended_on_eos records the truth
+  temperature: 1.0
+  top_p: 1.0
+  seeds: [42, 123, 456]
+  rope_type: none           # native window: no scaling, fail-loud if it does not fit
+  rope_factor: null
+  prompt_source: pg19
+  prompt_pg19_meta: data/processed/pg19_llama3/pg19_validation_metadata.json
+  log_per_token: true
+  save_generated_text: true
+NATURAL_F1_SPEC:
+  name: natural_f1_128k
+  factor: context_length
+  levels:
+  - id: NATURAL_f1_128k
+    context_length: 130944      # 131072 - 1024, so prompt+output stays inside the window
+    checkpoint_every: 0
+    notes: 'Natural-text f1 at the native window. rope_type=none (shipped llama3 preserved).'
+NATURAL_F1_TARGET_ONLY:
+  name: natural_f1_128k_target_only
+  factor: context_length
+  levels:
+  - id: NATURAL_f1_128k_targetonly
+    context_length: 130944
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: matched target-only baseline for NATURAL_f1_128k

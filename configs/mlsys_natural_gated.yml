@@ -1,0 +1,54 @@
+# MLSys — pg19-prompt speculative runs on GATE-PASSING rope configurations.
+#
+# Every level here must correspond to a candidate that PASSED
+# results/mlsys/coherence_gate.csv. A configuration the gate failed MUST be
+# removed, not re-run with adjusted settings until it passes.
+#
+# The levels below are the >128k candidates from
+# configs/mlsys_rope_candidates.json. The manifest re-checks each one against
+# the gate output at run time and skips any that did not pass.
+#
+# Prompt source: pg19. 1024 tokens, ignore_eos true, per-round ended_on_eos.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  max_new_tokens: 1024
+  ignore_eos: true
+  temperature: 1.0
+  top_p: 1.0
+  seeds: [42, 123, 456]
+  prompt_source: pg19
+  prompt_pg19_meta: data/processed/pg19_llama3/pg19_validation_metadata.json
+  log_per_token: true
+  save_generated_text: true
+GATED_LLAMA3_F16_256K:
+  name: gated_llama3_f16_256k
+  factor: context_length
+  levels:
+  - id: GATED_llama3_f16_256k
+    context_length: 261120
+    rope_type: llama3
+    rope_factor: 16
+    checkpoint_every: 0
+    notes: 'gate candidate llama3_f16_256k (builds on the native mechanism; only factor moves 8 -> 16)'
+GATED_YARN_B8192_F32_256K:
+  name: gated_yarn_b8192_f32_256k
+  factor: context_length
+  levels:
+  - id: GATED_yarn_b8192_f32_256k
+    context_length: 261120
+    rope_type: yarn
+    rope_factor: 32
+    rope_anchor_base: 8192
+    checkpoint_every: 0
+    notes: 'gate candidate yarn_base8192_f32_256k (YaRN anchored on the true 8192 pretraining base)'

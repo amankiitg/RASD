@@ -1,0 +1,182 @@
+# MLSys run manifest — stages in execution order.
+#
+# Read by scripts/mlsys_manifest.sh on the pod and by the provisioning watcher.
+# Nothing here starts a GPU stage that the coherence gate has not cleared:
+# stage 1 writes results/mlsys/coherence_gate.csv and every later stage
+# declares which gate verdict it requires.
+#
+# TARGET POLICY (binding, from the anchor investigation):
+#   * Target is Llama-3.1-8B.
+#   * At 128k and below it runs its NATIVE shipped `llama3` rope block,
+#     untouched (rope_type: none). No scaling is applied.
+#   * Above 128k, ONLY a rope configuration that PASSED the coherence gate may
+#     be used. The gate's verdict column is the only authority.
+#   * No training-free YaRN on a 4k-native model anywhere in this ladder.
+#     Measured on Llama-2-7B at 32k: even correctly anchored, training-free
+#     YaRN left 4.9x native perplexity and a generation that collapsed into
+#     newline repetition (98.9% blank lines). It is not a usable long-context
+#     configuration at large factors, correctly anchored or not.
+#   * transformers stays at 4.47.1 with rope_anchor_base. On that release
+#     YaRN IGNORES rope_scaling["original_max_position_embeddings"], so the
+#     anchor is routed onto config.max_position_embeddings. The gate asserts
+#     what the model actually built from its inv_freq; the config dict is
+#     never trusted. Do NOT upgrade: 4.51-4.55 additionally override `factor`
+#     with max_position_embeddings/original_max_position_embeddings.
+#   * Every run records its effective inv_freq summary (inv_freq[0],
+#     inv_freq[-1], slowest-channel stretch, and the matched anchor) in its
+#     output row.
+
+meta:
+  name: mlsys_natural_text_ladder
+  transformers_pin: "4.47.1"
+  node_rate_per_hour: 22.32
+  max_cost_usd: 400          # hard ceiling; ask before crossing
+  max_hours: 20              # on-instance self-terminate watchdog
+  terminate_grace_minutes: 60  # after the last stage, wait this long for the
+                               # operator before terminating and confirming
+  results_dir: results/mlsys
+  staging: per_run            # stage to a fresh dir, rsync back, verify sha256
+  pull_verify: sha256
+  interim_report_after_each_stage: true
+
+# Prompt builders. `natural` is the primary arm; `synthetic` is the secondary
+# comparison at the same configurations, so a prompt-content effect can be
+# separated from a rope/context effect.
+prompts:
+  natural:
+    source: pg19
+    meta: data/processed/pg19_llama3/pg19_validation_metadata.json
+    # The .dat chunk files named by that metadata MUST be staged alongside it.
+    # Staging only the metadata is exactly what killed pg19_short_target.
+    data_dir: data/processed/pg19_llama3
+    per_seed_offset: true       # deterministic offset per seed
+    log_prompt_hash: true
+  synthetic:
+    source: synthetic
+    per_seed_offset: true
+    log_prompt_hash: true
+
+# ---------------------------------------------------------------------------
+# STAGE 1 — the gate. Everything else depends on it.
+# ---------------------------------------------------------------------------
+stages:
+  - id: coherence_gate
+    kind: gate
+    order: 1
+    script: scripts/mlsys_coherence_gate.py
+    candidates: configs/mlsys_rope_candidates.json
+    contexts: [262144, 524288]
+    output: results/mlsys/coherence_gate.csv
+    gen_dir: results/mlsys/gate_generated
+    required_before_dependent_stages: true
+    fail_action: >
+      A candidate that fails is REMOVED from the ladder, not re-run with
+      different settings until it passes. Record the verdict, the reason, and
+      the effective inv_freq that was measured.
+
+  - id: natural_f1_128k
+    kind: spec
+    order: 2
+    depends_on: []              # 128k is native; no gate needed
+    config: configs/mlsys_natural_f1_128k.yml
+    prompt: natural
+    seeds: [42, 123, 456]
+    max_new_tokens: 1024
+    ignore_eos: true
+    log_per_token: true
+    memory_trace: true
+    output: results/mlsys/natural_f1_128k.csv
+    why: >
+      The f1 acceptance ceiling on non-degenerate text at the native window.
+      Answers whether the reported saturation is the repetitive synthetic
+      prompt or the system.
+
+  - id: natural_spec_gated
+    kind: spec
+    order: 3
+    depends_on: [coherence_gate]
+    require_gate_verdict: pass  # only configs the gate cleared
+    config: configs/mlsys_natural_gated.yml
+    prompt: natural
+    seeds: [42, 123, 456]
+    max_new_tokens: 1024
+    ignore_eos: true
+    log_per_token: true
+    memory_trace: true
+    output: results/mlsys/natural_spec_gated.csv
+    why: >
+      The factor effect measured on a prompt that is not degenerate, so a
+      factor comparison is not confounded with prompt collapse.
+
+  - id: synthetic_spec_gated
+    kind: spec
+    order: 4
+    depends_on: [coherence_gate]
+    require_gate_verdict: pass
+    config: configs/mlsys_synthetic_gated.yml
+    prompt: synthetic
+    seeds: [42, 123, 456]
+    max_new_tokens: 1024
+    ignore_eos: true
+    log_per_token: true
+    memory_trace: true
+    output: results/mlsys/synthetic_spec_gated.csv
+    why: >
+      Secondary comparison at the SAME configurations as stage 3; the paired
+      difference isolates prompt content from rope/context.
+
+  - id: vllm_ladder
+    kind: baseline
+    order: 5
+    depends_on: []
+    script: scripts/mlsys_vllm_baseline.py
+    prompt: natural
+    max_new_tokens: 1024
+    attempts_per_model: 3
+    capture_traceback: true
+    output: results/mlsys/vllm_baseline.csv
+    unit_check: >
+      Report vLLM generation throughput in the SAME unit as RASD's
+      throughput_tps (end-to-end generation tok/s), never forward_tps. Set
+      unit_matched=yes ONLY when prompt token ids, max_new_tokens, EOS policy
+      and tensor_parallel_size all match the RASD cell. Report end-to-end and
+      decode-only separately. Record honestly where vLLM cannot match the
+      configuration (OOM at 128k single-rank, needs TP) — that is a result.
+    why: >
+      Production-stack reference point for the speedup numbers.
+
+# ---------------------------------------------------------------------------
+# Reporting contract, applied to every stage above.
+# ---------------------------------------------------------------------------
+reporting:
+  acceptance:
+    alpha_round: accepted_prefix_length / gamma, PER ROUND  # the spec-decoding rate
+    a_iid: total_accepted / total_proposed                  # the i.i.d. per-token parameter
+    report_both: true
+    warn_if_conflated: true   # reviewer AbH52 #1: these are not the same number
+  intervals:
+    method: cluster_bootstrap_over_rounds
+    n_boot: 10000
+    alpha: 0.05
+    resample_unit: rounds      # tokens in a round are accepted/rejected together
+    also_report_common_window: true
+  per_round:
+    ended_on_eos: true         # split acceptance at the EOS boundary
+  nominal_vs_actual_context:
+    record_actual_prompt_tokens: true
+    note: >
+      Committed context_length values for synthetic cells are NOMINAL
+      (measured ~95.2% Llama-3.1 / ~95.6% Llama-2). Paired comparisons are
+      unaffected because spec and target-only cells share the same actual
+      length. Natural-text prompts are within 0.005% of nominal.
+  effective_rope_per_run: true # inv_freq summary recorded on every row
+
+guards:
+  - do not start a stage whose projected finish is later than 1h before the deadline
+  - ask before total spend would pass max_cost_usd
+  - pull and sha256-verify after EVERY stage, before the next one starts
+  - write an interim report after every stage, so results survive a cut-short run
+  - never write into results/mlsys while a pull is in progress
+  - terminate the instance on every exit path and CONFIRM via the API (poll to
+    zero instances, never accept "terminating")
+  - never print API keys

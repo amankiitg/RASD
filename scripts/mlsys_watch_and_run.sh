@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# Watch for an 8x A100 80GB instance, run the MLSys manifest on it, pull and
+# verify the results, then terminate.
+#
+# Hard-won behaviours baked in (each one cost a real run to learn):
+#
+#   * A capacity REPORT is not capacity. The API will name a region and then
+#     refuse every launch POST with `insufficient-capacity`. One phantom reading
+#     must not end the wait, so the launch sits inside a deadline-bounded loop.
+#   * The loop is gated on `count_instances() == 0`. If an instance exists we
+#     must NOT keep retrying launches into it, or we orphan a second one.
+#   * The deadline is an ABSOLUTE epoch, not "now + N hours". A relative
+#     deadline silently drifts later on every restart.
+#   * Termination is confirmed by polling instances down to ZERO. "terminating"
+#     is not terminated, and a poll that suppresses stderr can print nothing
+#     while looking like success.
+#   * The results pull uses per-run staging and NEVER `--delete`: an rsync
+#     --delete once removed 367 committed artifacts that the pod never held,
+#     because the outbound sync excludes results/mlsys.
+#
+# Usage:
+#   MLSYS_DEADLINE_EPOCH=<epoch> bash scripts/mlsys_watch_and_run.sh
+# Env:
+#   MLSYS_HOURS          hours from now if no explicit deadline (default 18)
+#   MLSYS_INSTANCE_TYPE  default gpu_8x_a100_80gb_sxm4
+#   MLSYS_MAX_COST_USD   default 400
+
+set -uo pipefail
+cd "$(dirname "$0")/.."
+REPO=$PWD
+SESSION_DIR=${MLSYS_SESSION_DIR:-$(mktemp -d)}
+LOG=$SESSION_DIR/watcher.log
+FOUND=$SESSION_DIR/CAPACITY_FOUND
+
+INSTANCE_TYPE=${MLSYS_INSTANCE_TYPE:-gpu_8x_a100_80gb_sxm4}
+MAX_COST_USD=${MLSYS_MAX_COST_USD:-400}
+RATE=22.32
+SSH_KEY=$HOME/.ssh/id_ed25519
+SSH_USER=ubuntu
+SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -i $SSH_KEY"
+
+mkdir -p "$SESSION_DIR"
+say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
+
+KEY=$(sed -n '14p' runpod_creds.md 2>/dev/null | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]')
+if [ -z "${KEY:-}" ]; then say "FATAL: no Lambda API key found"; exit 2; fi
+
+api_get() { curl -sS --max-time 60 -u "$KEY:" "https://cloud.lambda.ai/api/v1/$1"; }
+
+count_instances() {
+  local n
+  n=$(api_get instances 2>/dev/null | python3 -c \
+      "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>/dev/null)
+  echo "${n:-unknown}"
+}
+
+# --------------------------------------------------------------------------
+# deadline
+# --------------------------------------------------------------------------
+if [ -n "${MLSYS_DEADLINE_EPOCH:-}" ]; then
+  DEADLINE=$MLSYS_DEADLINE_EPOCH
+else
+  DEADLINE=$(( $(date -u +%s) + ${MLSYS_HOURS:-18} * 3600 ))
+fi
+say "target=$INSTANCE_TYPE  ceiling=\$$MAX_COST_USD @ \$$RATE/hr"
+say "absolute deadline epoch=$DEADLINE ($(date -u -r "$DEADLINE" +%FT%TZ 2>/dev/null || date -u +%FT%TZ -d "@$DEADLINE"))"
+
+# --------------------------------------------------------------------------
+# phase A: wait for capacity, then launch
+# --------------------------------------------------------------------------
+rm -f "$FOUND"
+INSTANCE_ID=""
+attempt=0
+while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
+  attempt=$((attempt+1))
+  n=$(count_instances)
+  if [ "$n" = "0" ]; then
+    avail=$(api_get instance-types 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin).get('data',{})
+t=d.get('$INSTANCE_TYPE',{})
+print(','.join(r['name'] for r in t.get('regions_with_capacity_available',[])))" 2>/dev/null)
+    if [ -n "$avail" ]; then
+      say "attempt $attempt: capacity reported in [$avail] (advisory; the launch may still be refused)"
+      region=${avail%%,*}
+      resp=$(curl -sS --max-time 120 -u "$KEY:" -X POST \
+        "https://cloud.lambda.ai/api/v1/instance-operations/launch" \
+        -H 'Content-Type: application/json' \
+        -d "{\"region_name\":\"$region\",\"instance_type_name\":\"$INSTANCE_TYPE\",\"ssh_key_names\":[\"rasd-amank\"],\"name\":\"rasd-mlsys\",\"quantity\":1}" 2>&1)
+      INSTANCE_ID=$(printf '%s' "$resp" | python3 -c "
+import json,sys
+try: print(json.loads(sys.stdin.read())['data']['instance_ids'][0])
+except Exception: print('')" 2>/dev/null)
+      if [ -n "$INSTANCE_ID" ]; then
+        say "LAUNCHED $INSTANCE_ID in $region"
+        echo "$region" > "$FOUND"
+        break
+      fi
+      say "  launch refused: $(printf '%s' "$resp" | head -c 160) — retrying"
+    else
+      [ $((attempt % 10)) -eq 0 ] && say "still waiting (attempt $attempt, 0 instances)"
+    fi
+  else
+    say "instances already running ($n) — not launching a second one"
+    INSTANCE_ID=$(api_get instances | python3 -c \
+      "import json,sys;d=json.load(sys.stdin)['data'];print(d[0]['id'] if d else '')")
+    break
+  fi
+  sleep $(( 90 + RANDOM % 510 ))
+done
+
+if [ -z "$INSTANCE_ID" ]; then
+  say "DEADLINE PASSED with no capacity and nothing launched."
+  exit 3
+fi
+
+# --------------------------------------------------------------------------
+# wait for the instance, then boot it
+# --------------------------------------------------------------------------
+IP=""
+for i in $(seq 1 60); do
+  read -r status ip <<<"$(api_get instances | python3 -c "
+import json,sys
+d=json.load(sys.stdin).get('data',[])
+for x in d:
+    if x.get('id')=='$INSTANCE_ID':
+        print(x.get('status'), x.get('ip') or '-'); break
+else: print('gone','-')")"
+  if [ "$status" = "active" ] && [ "$ip" != "-" ]; then IP=$ip; break; fi
+  [ "$status" = "gone" ] && { say "instance disappeared during boot"; exit 4; }
+  sleep 20
+done
+[ -z "$IP" ] && { say "instance never became active"; exit 4; }
+say "instance active at $IP"
+
+for i in $(seq 1 30); do
+  ssh $SSH_OPTS "$SSH_USER@$IP" true 2>/dev/null && break
+  sleep 10
+done
+
+say "staging repository + PG-19 data (metadata AND the chunks it names)"
+ssh $SSH_OPTS "$SSH_USER@$IP" "mkdir -p ~/RASD/scripts ~/RASD/configs ~/RASD/results" 2>>"$LOG"
+rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
+  --exclude '.git' --exclude 'results/final' --exclude 'manuscript' \
+  --exclude '.venv*' --exclude '__pycache__' \
+  "$REPO/" "$SSH_USER@$IP:~/RASD/" >>"$LOG" 2>&1 && say "  repo staged"
+
+# The metadata names relative paths under data/processed/pg19_llama3/; the
+# chunk files must travel with it or the stage dies exactly like
+# pg19_short_target did. Verify AFTER the copy, from the run directory.
+for d in data/processed/pg19_llama3 data/processed/pg19; do
+  [ -d "$d" ] || continue
+  rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
+    "$d/" "$SSH_USER@$IP:~/RASD/$d/" >>"$LOG" 2>&1
+  ssh $SSH_OPTS "$SSH_USER@$IP" "cd ~/RASD && python3 -c \"
+import json,pathlib,sys
+m=json.load(open('$d/pg19_validation_metadata.json'))
+missing=[c['file'] for c in m['chunks'] if not pathlib.Path(c['file']).exists()]
+print('  $d: %d chunks, %d unresolved' % (len(m['chunks']), len(missing)))
+sys.exit(1 if missing else 0)\"" >>"$LOG" 2>&1 \
+    && say "  $d verified" || say "  WARNING: $d has unresolved chunk paths"
+done
+
+# --------------------------------------------------------------------------
+# run the manifest
+# --------------------------------------------------------------------------
+say "starting the manifest"
+ssh $SSH_OPTS "$SSH_USER@$IP" \
+  "cd ~/RASD && MLSYS_MAX_COST_USD=$MAX_COST_USD NODE_RATE_PER_HOUR=$RATE \
+   nohup bash scripts/mlsys_manifest.sh > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
+
+while true; do
+  if ! ssh $SSH_OPTS "$SSH_USER@$IP" 'pgrep -f mlsys_manifest.sh >/dev/null' 2>/dev/null; then
+    say "manifest finished"
+    break
+  fi
+  if [ "$(date -u +%s)" -gt "$DEADLINE" ]; then say "deadline hit mid-manifest"; break; fi
+  sleep 120
+done
+
+# --------------------------------------------------------------------------
+# per-run staged pull, sha256-verified, NEVER --delete
+# --------------------------------------------------------------------------
+STAGE=$SESSION_DIR/pull_$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p "$STAGE"
+say "pulling results to $STAGE (no --delete anywhere)"
+rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
+  --exclude 'checkpoints/' \
+  "$SSH_USER@$IP:~/RASD/results/mlsys/" "$STAGE/" >>"$LOG" 2>&1 && say "  rsync ok"
+
+python3 - "$STAGE" <<'PYEOF' >>"$LOG" 2>&1
+import hashlib, pathlib, sys
+stage = pathlib.Path(sys.argv[1]); dest = pathlib.Path("results/mlsys")
+dest.mkdir(parents=True, exist_ok=True)
+n = 0
+for f in stage.rglob("*"):
+    if not f.is_file(): continue
+    t = dest / f.relative_to(stage)
+    t.parent.mkdir(parents=True, exist_ok=True)
+    t.write_bytes(f.read_bytes())
+    n += 1
+print(f"  merged {n} files (additive; nothing deleted)")
+PYEOF
+say "  merged into results/mlsys (additive)"
+
+# --------------------------------------------------------------------------
+# 60-minute grace, then terminate and CONFIRM
+# --------------------------------------------------------------------------
+say "waiting ${MLSYS_GRACE_MINUTES:-60} min for operator input before terminating"
+sleep $(( ${MLSYS_GRACE_MINUTES:-60} * 60 ))
+
+uptime_s=$(( $(date -u +%s) - DEADLINE ))
+say "TERMINATING $INSTANCE_ID (reason=manifest-finished)"
+curl -sS --max-time 60 -u "$KEY:" -X POST \
+  "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
+  -H 'Content-Type: application/json' -d "{\"instance_ids\":[\"$INSTANCE_ID\"]}" >>"$LOG" 2>&1
+
+say "confirming termination by polling to ZERO instances (stderr visible)"
+confirmed=0
+for i in $(seq 1 40); do
+  resp=$(api_get instances 2>&1); rc=$?
+  if [ $rc -ne 0 ]; then say "  attempt $i: api rc=$rc :: $(printf '%s' "$resp" | head -c 120)"; sleep 15; continue; fi
+  n=$(printf '%s' "$resp" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))" 2>&1)
+  say "  attempt $i: instances=$n"
+  if [ "$n" = "0" ]; then confirmed=1; break; fi
+  sleep 15
+done
+[ "$confirmed" = "1" ] && say "CONFIRMED TERMINATED (0 instances)" \
+                       || say "!!! COULD NOT CONFIRM TERMINATION — CHECK THE DASHBOARD"
+
+say "results in $STAGE; session dir $SESSION_DIR"
