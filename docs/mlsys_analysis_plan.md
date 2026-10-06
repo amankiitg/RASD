@@ -400,3 +400,69 @@ seeing the affected data)*
   `temperature: 1.0` against this plan's greedy contract; and the document pool
   was too short at the 512k rung once the prompt re-encoding adjustment was
   accounted for.
+
+- **2026-10-06 — REVISION: baseline design, rung set, ordering, and scope.
+  Recorded before any run of this campaign; no data has been seen under this
+  plan.** Every change below is a decision by the operator, taken on the cost
+  estimate in `configs/mlsys_manifest.yml`. The pre-registration is only honest
+  if the change precedes the data, so this block is dated and committed ahead of
+  the first GPU cell.
+
+  **1. Target-only baselines are measured two ways per rung.** For each rung:
+
+  | arm | documents | generated tokens | used for |
+  |---|---:|---:|---|
+  | target-only, full | 3 | 1024 | losslessness, and the end-to-end paired ratio |
+  | target-only, short | 7 | 128 | decode-only tok/s for the paired ratio |
+  | speculative | 10 | 1024 | acceptance, and both ratios |
+
+  **Paired speedup is reported on decode-only tok/s for all 10 documents**, with
+  the end-to-end ratio reported beside it for the 3 full pairs.
+
+  Justification, as required: **losslessness is an implementation property**, not
+  a throughput measurement. Under greedy decoding the speculative output must be
+  token-identical to the target-only output, and that can only be checked against
+  a target-only run of the *same length*; three documents are enough to establish
+  it, and all ten speculative runs are checked against the three they share a
+  document with. Throughput, by contrast, needs a steady-state rate, and a rate
+  does not need the same token count on both sides. **Prefill is identical across
+  arms and is under 5% of the decode wall** — measured 10 s of prefill against
+  4495 s of decode at 128k (0.22%) and 97 s against 18022 s at 512k (0.54%) — so
+  the end-to-end ratio is a prefill-weighted restatement of the decode ratio
+  rather than an independent quantity, and dropping prefill from the primary
+  metric costs nothing while saving ~35% of the target-only wall time.
+
+  **`decode_tps` is pre-registered here**: `tokens_generated / (time_sec −
+  ttft_sec)`, i.e. generated tokens over the post-prefill wall. The same
+  definition is used in both arms, so any convention cancels in the ratio.
+
+  **2. The gated rungs are 256k and 512k, run as separate stages.** 256k runs
+  first. 512k is conditional on 256k completing cleanly and on remaining credit,
+  and runs in its **own instance session with the watchdog raised to 40 h**,
+  because it is ~26 h at this design and the 20 h watchdog would kill it
+  mid-stage.
+
+  **3. The diverse-pool arm at 128k is kept**, at the same baseline design as the
+  core-10 rungs.
+
+  **4. Seeds are settled at `[42]`.** Greedy decoding is deterministic, so a
+  second seed would repeat a run rather than replicate it. The **document** is the
+  replication unit and the basis of every interval. This question is closed.
+
+  **5. Ordering changed**: the cross-implementation validation now runs AFTER
+  `natural_f1_128k` and is **vLLM-only**, on that stage's first 3 documents,
+  compared against `natural_f1_128k`'s own RASD rows and token sidecars. The
+  duplicated RASD runs are removed from it.
+
+  **6. A new first stage, `engine_cap_smoke`, runs immediately after gate
+  calibration and before every speculative stage.** The generation cap has never
+  executed on a GPU, and it is the one change that, if wrong, would silently
+  invalidate every cell rather than fail loudly.
+
+  **7. Scope.** `synthetic_spec_gated` remains optional and is dropped from the
+  primary claim if it does not run; the payoff rule is evaluated on the natural
+  arm alone. The vLLM ladder is retained, scoped to **plain (non-speculative) vLLM
+  decode at the same rungs and documents**, because the cross-implementation
+  stage covers only 128k and only speculative decoding: without the ladder there
+  is no production-stack reference at the 256k and 512k rungs, which is where the
+  payoff boundary is claimed.
