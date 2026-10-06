@@ -55,8 +55,53 @@ log = logging.getLogger("rasd.runner")
 RESULTS_DIR = Path("results/ablations")
 RESULTS_CSV  = RESULTS_DIR / "ablations.csv"
 
-CSV_FIELDS = [
-    "run_id", "group", "level_id", "seed",
+def _guard_output_collision(output_csv: str | Path, stage_id: str,
+                            overwrite: bool = False) -> None:
+    """Refuse to write a stage's results over an artifact it does not own.
+
+    Learned the hard way: the ARM4 driver wrote a stage named
+    `pg19_short_target` with `--output results/mlsys/pg19_multiseed.csv`, which
+    is the filename of an unrelated multi-seed AGGREGATE produced by the
+    analysis pipeline. The stage would have overwritten it. `gpu_hours.csv`
+    had the same problem from the other direction (a cross-run cumulative
+    ledger vs a per-stage output).
+
+    The contract: a per-stage result file must be named for exactly one stage.
+    If the target already exists and its recorded stage (= the seed-0 canary's
+    level_id / run_id prefix) does not match this stage, abort rather than
+    silently clobber. Pass --overwrite-stage to deliberately re-run and
+    replace the same stage.
+
+    This is deliberately a hard failure: a silently overwritten aggregate is
+    indistinguishable from a correct result afterwards, which is the failure
+    class this project keeps having to reconstruct from git history.
+    """
+    path = Path(output_csv)
+    if not path.exists() or overwrite:
+        return
+    try:
+        import pandas as pd
+        df = pd.read_csv(path)
+        existing = sorted({str(x) for x in df.get("level_id", []) if str(x)})
+    except Exception:
+        existing = []
+    # A stage owns the file if at least one of its rows was produced by a
+    # level under this stage's id, or the file has no level_id column at all
+    # (then it is not a per-stage result CSV and is not ours to check).
+    if not existing:
+        return
+    if any(stage_id.split("_")[0] in lv or lv.startswith(stage_id.split("_")[0])
+           for lv in existing):
+        return
+    raise SystemExit(
+        f"REFUSING to write {path} for stage {stage_id!r}: the file already "
+        f"holds rows from {existing[:4]}{'...' if len(existing) > 4 else ''}. "
+        f"Give this stage its own filename (recommended) or pass "
+        f"--overwrite-stage if you really mean to replace it."
+    )
+
+
+CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     "target_model_name", "draft_model_name",
     "spec_steps", "kv_block_size", "prefetch_depth",
     "context_length", "dtype",
@@ -246,7 +291,8 @@ def build_prompt(context_length: int, tokenizer,
                  pg19_meta: str | None = None,
                  seed: int = 42,
                  ruler_sidecar_dir: str | None = None,
-                 run_id: str | None = None) -> str:
+                 run_id: str | None = None,
+                 margin: int = 0) -> str:
     """Build a prompt of approximately `context_length` tokens.
 
     source="synthetic" (default): repeated technical-English paragraph.
@@ -267,7 +313,8 @@ def build_prompt(context_length: int, tokenizer,
     if source == "pg19":
         if pg19_meta is None:
             raise ValueError("source='pg19' requires pg19_meta path")
-        return _build_pg19_prompt(context_length, tokenizer, pg19_meta, seed)
+        return _build_pg19_prompt(context_length, tokenizer, pg19_meta, seed,
+                                  margin=margin)
     if source == "ruler_niah":
         return _build_ruler_niah_prompt(
             context_length, tokenizer, seed,
@@ -430,7 +477,7 @@ def _build_ruler_niah_prompt(context_length: int, tokenizer, seed: int,
 
 
 def _build_pg19_prompt(context_length: int, tokenizer,
-                       meta_path: str, seed: int) -> str:
+                       meta_path: str, seed: int, margin: int = 0) -> str:
     """Load a PG-19 chunk slice of context_length tokens and decode it.
 
     Picks a chunk pseudorandomly seeded from `seed` (same logic as
@@ -442,12 +489,18 @@ def _build_pg19_prompt(context_length: int, tokenizer,
     chunks = meta["chunks"]
     if not chunks:
         raise RuntimeError(f"{meta_path}: no chunks in metadata")
-    suitable = [c for c in chunks if c["length"] >= context_length]
+    # Long-context gate/natural-text runs need prompt + a scored continuation
+    # inside ONE chunk, so prefer the longest chunks and take a contiguous
+    # slice. `margin` is the extra tokens the caller wants held back after the
+    # prompt; it defaults to 0 for the historical dose-response callers.
+    need = context_length + int(margin)
+    suitable = sorted((c for c in chunks if c["length"] >= need),
+                      key=lambda c: c["file"])
     rng = np.random.default_rng(seed)
     if suitable:
-        c = suitable[rng.integers(0, len(suitable))]
+        c = suitable[int(rng.integers(0, len(suitable)))]
         arr = np.memmap(c["file"], dtype="int32", mode="r")
-        start = int(rng.integers(0, c["length"] - context_length + 1))
+        start = int(rng.integers(0, c["length"] - need + 1))
         ids = list(arr[start:start + context_length].astype(int))
     else:
         # Concatenate chunks if no single chunk is long enough.
@@ -457,11 +510,9 @@ def _build_pg19_prompt(context_length: int, tokenizer,
         # boundary carries whatever special token its preprocessing prepended
         # (a BOS, typically). That would inject one BOS per boundary — the
         # same failure mode as the synthetic-prompt BOS bug, though via a
-        # different route. It does NOT affect the published PG-19 results:
-        # the dose-response used the `suitable` branch above, which takes one
-        # contiguous slice from a single chunk and so has at most one leading
-        # BOS. Any future PG-19 run with chunks shorter than the target length
-        # lands here and MUST strip boundary specials before concatenating.
+        # different route. Any caller reaching here MUST strip boundary
+        # specials before concatenating, or stage longer chunks instead; the
+        # long-context gate stages 1M-token chunks precisely to avoid it.
         joined = []
         for c in chunks:
             arr = np.memmap(c["file"], dtype="int32", mode="r")
@@ -469,7 +520,20 @@ def _build_pg19_prompt(context_length: int, tokenizer,
             if len(joined) >= context_length:
                 break
         ids = joined[:context_length]
-    return tokenizer.decode(ids)
+    text = tokenizer.decode(ids)
+    # The engine takes a prompt STRING and re-tokenises it, so verify the
+    # caller actually gets the requested token count. Natural text round-trips
+    # far more cleanly than the synthetic repetition (which loses ~1 token per
+    # block), but "cleanly" is not "exactly", and a silently short prompt would
+    # break B2 (prompt+output inside the native window).
+    got = len(tokenizer.encode(text, add_special_tokens=False))
+    if got != context_length:
+        log.warning(
+            "PG-19 prompt round-trip: requested %d tokens, engine will see %d "
+            "(delta %+d, %.4f%%)", context_length, got, got - context_length,
+            100.0 * (got - context_length) / max(1, context_length))
+    return text
+
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +970,13 @@ def main():
     parser.add_argument("--resume",   action="store_true", help="Skip runs already in results CSV")
     parser.add_argument("--wandb-project", default="rasd-ablations", help="wandb project name")
     parser.add_argument("--output",   default=str(RESULTS_CSV), help="Output CSV path")
+    parser.add_argument("--stage-id", default=None,
+                        help="Identifier of the stage that owns --output, used "
+                             "to refuse writing a stage's results over an "
+                             "unrelated artifact's filename (f).")
+    parser.add_argument("--overwrite-stage", action="store_true",
+                        help="Deliberately replace --output even if it belongs "
+                             "to a different stage.")
     parser.add_argument("--nproc",    type=int, default=8,
                         help="GPUs per run (torchrun nproc_per_node). Use 1 for single-GPU. "
                              "Default 8 — required for ring attention A3/A4 ablations.")
@@ -997,6 +1068,8 @@ def main():
     if args._worker:
         run = json.loads(args._worker)
         output_csv = args.output
+        _guard_output_collision(output_csv, args.stage_id or "unnamed",
+                                overwrite=args.overwrite_stage)
         _run_single_worker(run, args.wandb_project, output_csv)
         return
 

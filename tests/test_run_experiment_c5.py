@@ -382,6 +382,13 @@ class TestPromptSource:
                 # assert build_prompt produced *something* from these ids.
                 return f"PG19[{ids[0]}..{ids[-1]}]"
 
+            def encode(self, s, add_special_tokens=False):
+                # Present because build_prompt verifies its length
+                # round-trip. One id per whitespace token is enough for the
+                # assertions here; the round-trip warning it may trigger is
+                # harmless (a stub is not expected to round-trip).
+                return [i for i, _ in enumerate(s.split())]
+
         out = build_prompt(64, _StubTok(), source="pg19",
                            pg19_meta=str(meta_path), seed=42)
         assert out.startswith("PG19[")
@@ -405,6 +412,9 @@ class TestPromptSource:
         class _StubTok:
             def decode(self, ids):
                 return ",".join(str(i) for i in ids)
+
+            def encode(self, s, add_special_tokens=False):
+                return [int(x) for x in s.split(",") if x]
 
         a = build_prompt(64, _StubTok(), source="pg19",
                          pg19_meta=str(meta_path), seed=42)

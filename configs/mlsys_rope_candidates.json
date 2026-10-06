@@ -1,0 +1,86 @@
+{
+  "_comment": [
+    "Rope candidates for the coherence gate. TARGET POLICY for all MLSys runs:",
+    "  * Llama-3.1-8B is the target. At 128k and below it runs its NATIVE",
+    "    shipped `llama3` rope block, untouched (rope_type 'none').",
+    "  * Above 128k, ONLY a rope configuration that passes the gate may be used.",
+    "  * No training-free YaRN on a 4k-native model. Measured on Llama-2-7B at",
+    "    32k: correct anchoring still left 4.9x native perplexity and a",
+    "    generation that collapsed into newline repetition, so training-free",
+    "    YaRN at large factors is not a usable long-context configuration even",
+    "    when anchored correctly.",
+    "  * Stay on transformers 4.47.1 with rope_anchor_base. 4.47.1's YaRN",
+    "    IGNORES rope_scaling['original_max_position_embeddings'], so the anchor",
+    "    is routed onto config.max_position_embeddings; the gate asserts the",
+    "    result from the built model's inv_freq rather than trusting the dict.",
+    "  * Every run records its effective inv_freq summary in its output.",
+    "",
+    "The two `expected_fail` entries are deliberate negative controls: they are",
+    "the constructions the ARM4 ladder actually used, and the gate is only",
+    "trustworthy if it rejects them."
+  ],
+
+  "coherence_gate": [
+    {
+      "name": "native_128k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 131072,
+      "rope_type": "none",
+      "rope_factor": null,
+      "rope_anchor_base": null,
+      "seed": 42,
+      "native_baseline": true,
+      "expected": "pass",
+      "why": "In-distribution reference: ctx == native window, shipped rope preserved."
+    },
+    {
+      "name": "llama3_f16_256k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 262144,
+      "rope_type": "llama3",
+      "rope_factor": 16,
+      "rope_anchor_base": null,
+      "seed": 42,
+      "expected": "unknown",
+      "why": "Builds ON the native mechanism: copies the shipped llama3 block and only raises factor (8 -> 16). Anchor stays 8192."
+    },
+    {
+      "name": "yarn_base8192_f32_256k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 262144,
+      "rope_type": "yarn",
+      "rope_factor": 32,
+      "rope_anchor_base": 8192,
+      "seed": 42,
+      "expected": "unknown",
+      "why": "YaRN anchored on Llama-3.1's true pretraining base (8192) instead of the 131072 window its dict would otherwise claim."
+    },
+    {
+      "name": "yarn_base131072_f2_256k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 262144,
+      "rope_type": "yarn",
+      "rope_factor": 2,
+      "rope_anchor_base": 131072,
+      "seed": 42,
+      "expected": "fail",
+      "why": "NEGATIVE CONTROL: the ARM4 f2 construction (YaRN replacing llama3, anchored on the full window). Must be rejected."
+    },
+    {
+      "name": "yarn_rebased_on_context_256k",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 262144,
+      "rope_type": "yarn",
+      "rope_factor": 2,
+      "rope_anchor_base": null,
+      "seed": 42,
+      "expected": "fail",
+      "why": "NEGATIVE CONTROL: YaRN replacing llama3 with the anchor left on config.max_position_embeddings (= the context length, 262144), i.e. exactly what the engine did on 4.47.1 before rope_anchor_base existed."
+    }
+  ]
+}
