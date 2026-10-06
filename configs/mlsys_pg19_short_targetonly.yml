@@ -1,0 +1,60 @@
+# MLSys B4 — PG-19 TARGET-ONLY baselines for the 4k / 8k dose-response points
+#
+# The 4k and 8k PG-19 spec rows exist at seed 42 only and at seeds 123/456
+# via configs/mlsys_pg19_multiseed.yml. Their paired target-only baselines
+# exist at seed 42 (TARGET_ctx4k_pg19_phaseD_s42 / TARGET_ctx8k_pg19_phaseD_s42
+# in results/final/phase_d_short_ctx_pg19.csv) but NOT at 123/456.
+#
+# Without those two baselines the 3-seed 4k and 8k speedups have a
+# denominator at one seed and none at the other two. This file fills the
+# gap: same generation settings as the seed-42 target rows, spec_steps=0.
+#
+# Settings are copied from the seed-42 rows, not invented:
+#   Llama-2-7B target + Sheared-LLaMA-1.3B (inert at spec_steps=0),
+#   kv_block_size 2048, prefetch_depth 1, YaRN, NF4 KV, 64 new tokens, bf16.
+#
+# Launch with real PG-19 prompts, into the SAME csv as the spec rows so the
+# pairing is unambiguous:
+#
+#   --prompt-source pg19 \
+#   --prompt-pg19-meta data/processed/pg19/pg19_validation_metadata.json \
+#   --output results/mlsys/pg19_multiseed.csv
+#
+# Cost: 4k/8k are short cells (seed-42 took seconds, not minutes), so all
+# four runs together are a few minutes on 8xA100. Run after the ARM4 cells
+# per the cell order.
+
+canary:
+  id:   "mlsys_pg19_short_targetonly_canary_s123"
+  seed: 123
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        0              # <<< target-only baseline
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [123, 456]
+
+PG19_SHORT_TARGET_ONLY:
+  name:   "pg19_short_target_only"
+  factor: "context_length"
+  levels:
+    - id: "PG19_ctx4k_targetonly"
+      context_length: 4096
+      notes: "paired target-only baseline for RASD_ctx4k_pg19_phaseD_s42"
+
+    - id: "PG19_ctx8k_targetonly"
+      context_length: 8192
+      notes: "paired target-only baseline for RASD_ctx8k_pg19_phaseD_s42"

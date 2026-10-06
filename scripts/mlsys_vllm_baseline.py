@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gc
+import hashlib
 import json
 import os
 import re
@@ -53,7 +54,22 @@ CSV_FIELDS = [
     "unit_matched", "peak_mem_mb", "status", "error",
     # MLSys follow-up — attempt provenance so a failure is diagnosable.
     "attempt", "config_used", "error_class", "log_path",
+    # C1-C5 fairness provenance. Without these a reader cannot tell whether
+    # the comparison was actually like-for-like: which vLLM, which precision,
+    # which EOS policy, and — most importantly — WHICH PROMPT.
+    "vllm_version", "quantization", "eos_policy", "prompt_source",
+    "prompt_sha256",
 ]
+
+# C1: pin vLLM. A speedup ratio is only meaningful against a named release;
+# "whatever pip resolved that afternoon" cannot be reproduced or cited.
+VLLM_PIN = "0.6.3"
+
+# C3: ONE EOS policy on BOTH systems. RASD's ARM4 cells run with
+# ignore_eos=True and emit exactly max_new_tokens, so vLLM must do the same.
+# If vLLM stopped early on EOS it would generate fewer tokens over less wall
+# time and the tok/s ratio would flatter whichever side stopped sooner.
+EOS_POLICY = "ignore_eos_exact_max_new_tokens"
 
 # YaRN for the Llama-2 arm-1 counterpart. Base 4096 = Llama-2's own window,
 # factor 32 = 128k/4k, matching what RASD arm 1 applies.
@@ -199,6 +215,7 @@ def worker_main(spec_path: Path) -> int:
     try:
         import torch
         from transformers import AutoTokenizer
+        import vllm as _vllm
         from vllm import LLM, SamplingParams
     except Exception as e:  # noqa: BLE001
         import traceback
@@ -209,11 +226,15 @@ def worker_main(spec_path: Path) -> int:
         res_path.write_text(json.dumps(result))
         return 1
 
+    # C1: record the ACTUAL vLLM that ran, not the pin we hoped for.
+    vllm_version = getattr(_vllm, "__version__", "") or VLLM_PIN
+
     model = spec["model"]
     ctx = spec["context_length"]
     max_new = spec["max_new_tokens"]
     max_model_len = spec["max_model_len"]
     rope = spec["rope"]
+    quant = spec.get("quantization") or None
 
     try:
         llm_kwargs = dict(
@@ -223,6 +244,11 @@ def worker_main(spec_path: Path) -> int:
             trust_remote_code=True,
             **spec["kwargs"],
         )
+        # C4: the RASD side that the draft story rests on runs 4-bit
+        # bitsandbytes weights, so the baseline needs BOTH a matched-quant row
+        # and a bf16 row. They are separate rows and are never averaged.
+        if quant == "bitsandbytes":
+            llm_kwargs["quantization"] = "bitsandbytes"
         if spec.get("max_num_batched_tokens"):
             llm_kwargs["max_num_batched_tokens"] = spec["max_num_batched_tokens"]
         # vLLM moved `rope_scaling` off EngineArgs; it is applied via
@@ -250,11 +276,24 @@ def worker_main(spec_path: Path) -> int:
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(model)
-        # Size the prompt to ctx - max_new so prompt+output exactly fills the
-        # model's window instead of exceeding it.
-        prompt_target = max(1, min(ctx, max_model_len) - max_new)
-        prompt = build_prompt(tokenizer, prompt_target)
-        prompt_tokens = len(tokenizer(prompt, add_special_tokens=False)["input_ids"])
+        # C2: prefer the EXACT token ids RASD generated with. A prompt of the
+        # right *length*, built from the same paragraph text, is close but not
+        # the same sequence — and removing exactly that doubt is the point.
+        if spec.get("prompt_ids"):
+            ids = list(spec["prompt_ids"])
+            prompt = tokenizer.decode(ids)
+            prompt_tokens = len(ids)
+            prompt_source = spec.get("prompt_source", "rasd_token_ids")
+        else:
+            # Fallback: right length, explicitly flagged NOT token-identical
+            # so it can never be silently reported as unit-matched.
+            prompt_target = max(1, min(ctx, max_model_len) - max_new)
+            prompt = build_prompt(tokenizer, prompt_target)
+            ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            prompt_tokens = len(ids)
+            prompt_source = "synthetic_same_paragraph_NOT_rasd_ids"
+        prompt_sha = hashlib.sha256(
+            json.dumps(list(ids)).encode()).hexdigest()[:16]
         params = SamplingParams(temperature=1.0, top_p=1.0,
                                 max_tokens=max_new, ignore_eos=True)
 
@@ -270,11 +309,17 @@ def worker_main(spec_path: Path) -> int:
         out_tokens = len(outs[0].outputs[0].token_ids)
         ttft = _ttft_from_metrics(outs[0])
         decode_only = (end_to_end - ttft) if ttft is not None else None
+        # C5: raw success is not enough; main() re-checks the fairness rules.
         unit_ok = end_to_end > 0 and out_tokens > 0
 
         result.update({
             "status": "ok",
             "prompt_tokens": prompt_tokens,
+            "vllm_version": vllm_version,
+            "quantization": quant or "bfloat16",
+            "eos_policy": EOS_POLICY,
+            "prompt_source": prompt_source,
+            "prompt_sha256": prompt_sha,
             "output_tokens": out_tokens,
             "end_to_end_wall_s": round(end_to_end, 4),
             "decode_only_wall_s": (round(decode_only, 4) if decode_only else ""),
@@ -373,6 +418,46 @@ def run_attempt(spec: dict, log_path: Path, timeout_s: int) -> tuple[int, str]:
     return proc.returncode, "".join(chunks)
 
 
+def _ids_sha(ids) -> str:
+    return hashlib.sha256(json.dumps(list(ids)).encode()).hexdigest()[:16]
+
+
+def _lookup_prompt_ids(mapping: dict, model: str, ctx: int):
+    """Find the RASD token ids for one cell.
+
+    Several key spellings are accepted so the producer does not have to guess
+    ours. A "*" key means one prompt shared by every cell. Returning None is
+    a legitimate outcome: it means "we could not prove this was the same
+    prompt", and the row is then ineligible for unit matching.
+    """
+    if not mapping:
+        return None
+    for key in (f"{model}@{ctx}", f"{model}_{ctx}", str(ctx), "*"):
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _unit_match_verdict(row: dict, prompt_ids, args) -> tuple[bool, str]:
+    """C2/C3/C5: is this row genuinely comparable to a RASD 128k cell?
+
+    All four conditions must hold. Failing any one makes the ratio
+    meaningless, so the row is kept — the failure is itself a result — but it
+    is flagged rather than quietly averaged into a speedup number.
+    """
+    why: list[str] = []
+    if not prompt_ids:
+        why.append("prompt token ids are not the RASD ids (C2)")
+    if row.get("eos_policy") != EOS_POLICY:
+        why.append(f"eos policy {row.get('eos_policy')!r} != {EOS_POLICY!r} (C3)")
+    if int(row.get("tensor_parallel_size") or 0) != 8:
+        why.append("tensor_parallel_size != 8 (C5)")
+    if int(row.get("max_new_tokens") or 0) != args.matched_max_new_tokens:
+        why.append("max_new_tokens != the matched RASD cell's "
+                   f"{args.matched_max_new_tokens} (C5)")
+    return (not why), "; ".join(why)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--_worker", help=argparse.SUPPRESS)
@@ -380,17 +465,38 @@ def main() -> int:
                     default=["meta-llama/Llama-3.1-8B",
                              "meta-llama/Llama-2-7b-hf"])
     ap.add_argument("--context-lengths", nargs="+", type=int, default=[131072])
-    ap.add_argument("--max-new-tokens", type=int, default=64,
-                    help="must match the RASD 128k cells for unit matching")
+    ap.add_argument("--max-new-tokens", type=int, default=128,
+                    help="C3: must equal the matched RASD cell's "
+                         "max_new_tokens or the row is not unit-matched")
+    ap.add_argument("--matched-max-new-tokens", type=int, default=128,
+                    help="C5: max_new_tokens of the RASD cell we compare "
+                         "against (ARM4 cells run 128)")
+    ap.add_argument("--quantizations", nargs="+",
+                    default=["bitsandbytes", "bfloat16"],
+                    help="C4: emit a 4-bit bitsandbytes row AND a bf16 row")
+    ap.add_argument("--prompt-ids",
+                    help="C2: JSON of the EXACT token ids RASD used. A flat "
+                         "list, or a map keyed '<model>@<ctx>'. Without it "
+                         "rows cannot be unit-matched.")
     ap.add_argument("--tensor-parallel-size", type=int, default=8)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     ap.add_argument("--attempt-timeout-s", type=int, default=MAX_ATTEMPT_WALL_S)
     ap.add_argument("--out", default=str(REPO / "results" / "mlsys"
                                          / "vllm_baseline.csv"))
+    ap.add_argument("--append", action="store_true",
+                    help="append to --out instead of overwriting, so the two "
+                         "targets can be run with their OWN matched "
+                         "max_new_tokens (Llama-3.1 -> 128, Llama-2 -> 64) "
+                         "and still land in one comparison table")
     args = ap.parse_args()
 
     if args._worker:
         return worker_main(Path(args._worker))
+
+    prompt_ids_map: dict = {}
+    if args.prompt_ids:
+        raw = json.loads(Path(args.prompt_ids).read_text())
+        prompt_ids_map = raw if isinstance(raw, dict) else {"*": raw}
 
     if args.gpu_memory_utilization != 0.90:
         print("[warn] --gpu-memory-utilization only overrides attempt 1")
@@ -399,27 +505,41 @@ def main() -> int:
     for model in args.models:
         for ctx in args.context_lengths:
             rope = DEFAULT_ROPE.get(model)
-            print(f"\n=== {model} @ {ctx} tokens (TP={args.tensor_parallel_size}) ===")
-            succeeded = False
-            for idx, att in enumerate(ATTEMPT_LADDER, start=1):
-                if succeeded:
-                    break
-                mml = ctx if att["max_model_len"] == "ctx" else att["max_model_len"]
-                mnbt = (mml if att.get("max_num_batched_tokens") == "ctx"
-                        else att.get("max_num_batched_tokens"))
-                kwargs = dict(att["kwargs"])
-                if idx == 1:
-                    kwargs["gpu_memory_utilization"] = args.gpu_memory_utilization
-                safe_model = model.replace("/", "_")
-                log_path = LOGDIR / f"vllm_{safe_model}_attempt{idx}.log"
-                spec = {
-                    "model": model, "context_length": ctx,
-                    "max_new_tokens": args.max_new_tokens,
-                    "tensor_parallel_size": args.tensor_parallel_size,
-                    "max_model_len": mml, "max_num_batched_tokens": mnbt,
-                    "kwargs": kwargs, "env": att["env"], "rope": rope,
-                    "result_path": str(log_path.with_suffix(".result.json")),
-                }
+            for quant in args.quantizations:
+                quant_label = quant or "bfloat16"
+                print(f"\n=== {model} @ {ctx} tokens "
+                      f"(TP={args.tensor_parallel_size}, {quant_label}) ===")
+                prompt_ids = _lookup_prompt_ids(prompt_ids_map, model, ctx)
+                if prompt_ids:
+                    print(f"    prompt: {len(prompt_ids)} exact RASD token ids "
+                          f"(sha256 {_ids_sha(prompt_ids)})")
+                else:
+                    print("    prompt: synthetic, NOT the RASD ids — row will "
+                          "be ineligible for unit_matched=yes")
+                succeeded = False
+                for idx, att in enumerate(ATTEMPT_LADDER, start=1):
+                    if succeeded:
+                        break
+                    mml = ctx if att["max_model_len"] == "ctx" else att["max_model_len"]
+                    mnbt = (mml if att.get("max_num_batched_tokens") == "ctx"
+                            else att.get("max_num_batched_tokens"))
+                    kwargs = dict(att["kwargs"])
+                    if idx == 1:
+                        kwargs["gpu_memory_utilization"] = args.gpu_memory_utilization
+                    safe_model = model.replace("/", "_")
+                    log_path = (LOGDIR
+                                / f"vllm_{safe_model}_{quant_label}_attempt{idx}.log")
+                    spec = {
+                        "model": model, "context_length": ctx,
+                        "max_new_tokens": args.max_new_tokens,
+                        "tensor_parallel_size": args.tensor_parallel_size,
+                        "max_model_len": mml, "max_num_batched_tokens": mnbt,
+                        "kwargs": kwargs, "env": att["env"], "rope": rope,
+                        "quantization": quant,
+                        "prompt_ids": prompt_ids,
+                        "prompt_source": "rasd_token_ids",
+                        "result_path": str(log_path.with_suffix(".result.json")),
+                    }
                 print(f"  attempt {idx} ({att['name']}): {att['note']}")
                 rc, log_text = run_attempt(spec, log_path, args.attempt_timeout_s)
 
@@ -445,6 +565,14 @@ def main() -> int:
                     "log_path": str(log_path.relative_to(REPO)),
                     **{k: v for k, v in result.items() if k in CSV_FIELDS},
                 })
+                # C5: downgrade unless EVERY fairness criterion holds. A row
+                # that merely ran successfully is not a comparable row.
+                if row["status"] == "ok":
+                    ok_unit, why = _unit_match_verdict(row, prompt_ids, args)
+                    row["unit_matched"] = "yes" if ok_unit else "no"
+                    if not ok_unit:
+                        row["error_class"] = "UnitMismatch"
+                        row["error"] = f"ran ok but NOT comparable: {why}"
                 # If the worker died before writing a result, mine the log for
                 # the real exception instead of reporting vLLM's one-liner.
                 if row["status"] == "ok":
@@ -469,9 +597,14 @@ def main() -> int:
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", newline="") as f:
+    # --append keeps the header once and concatenates rows, so a second model
+    # with a different matched max_new_tokens does not wipe the first.
+    write_header = not (args.append and out_path.exists()
+                        and out_path.stat().st_size > 0)
+    with out_path.open("a" if args.append else "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
-        w.writeheader()
+        if write_header:
+            w.writeheader()
         w.writerows(rows)
 
     n_ok = sum(1 for r in rows if r["status"] == "ok")
