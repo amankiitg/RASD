@@ -23,7 +23,7 @@ reviewer flagged:
       number of consecutively accepted tokens N has
           P(N=j) = (1-alpha) alpha^j   for j = 0..gamma-1
           P(N=gamma) = alpha^gamma
-      with E[N] = (1 - alpha^(gamma+1)) / (1 - alpha).
+      with E[N] = alpha + alpha^2 + ... + alpha^gamma.
       Unlike alpha_round, alpha_iid is a *derived model parameter*: the
       alpha you would have to assume for the i.i.d. formula to reproduce
       the observed mean n_acc.

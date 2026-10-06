@@ -31,7 +31,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.analysis.document_bootstrap import (
-    clears, document_mean_bootstrap, paired_bootstrap, t_cluster_interval,
+    clears, document_mean_bootstrap, paired_bootstrap, paired_ratio_t_interval,
+    t_cluster_interval,
 )
 
 
@@ -43,6 +44,43 @@ def _f(x):
         return float(s)
     except ValueError:
         return None
+
+
+def _per_document_values(rows: list[dict], metric: str, arm_column: str):
+    """One value per document, averaging rows within the same arm.
+
+    Returns `(values, saturated)`. Saturation is the share of rounds fully
+    accepted, averaged over documents; a rung above 0.90 is flagged because a
+    saturated rung cannot support a comparative claim.
+    """
+    by_doc: dict[str, list[float]] = {}
+    sat: list[float] = []
+    for r in rows:
+        v = _f(r.get(metric))
+        if v is None:
+            continue
+        key = (str(r.get("doc_id", "")), str(r.get(arm_column, "")))
+        by_doc.setdefault(key, []).append(v)
+        s = _f(r.get("full_accept_share"))
+        if s is not None:
+            sat.append(s)
+    vals = [sum(v) / len(v) for v in by_doc.values()]
+    mean_sat = round(sum(sat) / len(sat), 6) if sat else ""
+    return vals, mean_sat
+
+
+def _per_document_first(rows: list[dict], metric: str, arm_column: str,
+                        arm: str) -> dict[str, float]:
+    """One value per document for one arm, averaging duplicate rows."""
+    by_doc: dict[str, list[float]] = {}
+    for r in rows:
+        if str(r.get(arm_column, "")) != arm:
+            continue
+        v = _f(r.get(metric))
+        if v is None:
+            continue
+        by_doc.setdefault(str(r.get("doc_id", "")), []).append(v)
+    return {d: sum(v) / len(v) for d, v in by_doc.items() if v}
 
 
 def group_rows(rows: list[dict], keys: list[str]) -> dict[tuple, list[dict]]:
@@ -59,15 +97,7 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
     for gkey, grows in sorted(group_rows(rows, keys).items()):
         label = dict(zip(keys, gkey))
         for metric in metrics:
-            # One value per document; if a document appears twice inside the
-            # same arm the mean would be weighted by row count, not by document.
-            by_doc: dict[str, list[float]] = {}
-            for r in grows:
-                v = _f(r.get(metric))
-                if v is None:
-                    continue
-                by_doc.setdefault(str(r.get("doc_id", "")), []).append(v)
-            vals = [sum(v) / len(v) for v in by_doc.values()]
+            vals, saturated = _per_document_values(grows, metric, arm_column)
             if not vals:
                 continue
             boot = document_mean_bootstrap(vals, seed=seed)
@@ -78,35 +108,39 @@ def summarise(rows: list[dict], keys: list[str], metrics: list[str],
                 "ci_lo": round(boot["lo"], 6), "ci_hi": round(boot["hi"], 6),
                 "t_ci_lo": round(t_ci["lo"], 6), "t_ci_hi": round(t_ci["hi"], 6),
                 "n_documents": boot["n_documents"],
-                "verdict": clears(boot, 1.0) if metric == "throughput_tps" else "",
+                "saturated": saturated,
+                # No verdict here. A 1.0 threshold is meaningful only for the
+                # paired RATIO; applying `clears(..., 1.0)` to a raw throughput
+                # mean in tok/s produced spurious "above" verdicts.
+                "verdict": "",
             })
 
-        spec = {str(r.get("doc_id", "")): r for r in grows
-                if str(r.get(arm_column, "")) == spec_arm}
-        targ = {str(r.get("doc_id", "")): r for r in grows
-                if str(r.get(arm_column, "")) == target_arm}
+        # One row per (document, arm). A plain dict keyed on doc_id kept only
+        # the LAST row, so with more than one row per document the paired
+        # speedup silently used an arbitrary subset while the marginal means
+        # above averaged them all.
+        spec = _per_document_first(grows, "throughput_tps", arm_column, spec_arm)
+        targ = _per_document_first(grows, "throughput_tps", arm_column, target_arm)
         paired = sorted(set(spec) & set(targ))
         if not paired:
             continue
-        a, b, dropped = [], [], []
-        for d in paired:
-            sa, tb = _f(spec[d].get("throughput_tps")), _f(targ[d].get("throughput_tps"))
-            if not sa or not tb:
-                dropped.append(d)
-                continue
-            a.append(sa)
-            b.append(tb)
-        if not a:
-            continue
+        a, b = [spec[d] for d in paired], [targ[d] for d in paired]
         pr = paired_bootstrap(a, b, kind="ratio", seed=seed)
+        tr = paired_ratio_t_interval(a, b)
+        # The plan's payoff rule: the interval must lie entirely below 1.0. It
+        # also requires that a DISAGREEMENT with the robust interval be reported
+        # as not reached, so the two are compared rather than one being quoted.
+        v_boot, v_t = clears(pr, 1.0), clears(tr, 1.0)
+        verdict = v_boot if v_boot == v_t else "inconclusive"
         out.append({
             **label, "estimate": "paired_speedup", "metric": "throughput_tps",
             "point": round(pr["point"], 6),
             "ci_lo": round(pr["lo"], 6), "ci_hi": round(pr["hi"], 6),
-            "t_ci_lo": "", "t_ci_hi": "",
+            "t_ci_lo": round(tr["lo"], 6), "t_ci_hi": round(tr["hi"], 6),
             "n_documents": pr["n_documents"],
-            "verdict": clears(pr, 1.0),
-            "note": f"dropped {dropped}" if dropped else "",
+            "verdict": verdict,
+            "note": ("bootstrap and t interval disagree"
+                     if v_boot != v_t else ""),
         })
     return out
 
@@ -135,7 +169,7 @@ def main() -> int:
         path.stem + "_doc_intervals.csv")
     fields = list(args.group_by) + [
         "estimate", "metric", "point", "ci_lo", "ci_hi", "t_ci_lo", "t_ci_hi",
-        "n_documents", "verdict", "note"]
+        "n_documents", "saturated", "verdict", "note"]
     with out_path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         w.writeheader()

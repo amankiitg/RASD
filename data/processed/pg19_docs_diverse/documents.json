@@ -6,7 +6,7 @@
   "rungs": [
     131072
   ],
-  "selection": "spread: 10 books from 534 eligible (>= 131,072 tokens required), seed 20261006",
+  "selection": "spread: 10 books from 534 eligible (>= 131,072 tokens required, prompt + continuation = context), seed 20261006",
   "selection_mode": "spread",
   "selection_seed": 20261006,
   "documents": [
@@ -17,7 +17,7 @@
       "title": "Fruitfulness by Emile Zola",
       "url": "http://www.gutenberg.org/ebooks/10330",
       "file": "data/processed/pg19_docs_diverse/doc_000.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 233498
     },
     {
@@ -27,7 +27,7 @@
       "title": "Beacon Lights of History Volume XIII by John Lord",
       "url": "http://www.gutenberg.org/ebooks/10648",
       "file": "data/processed/pg19_docs_diverse/doc_001.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 141398
     },
     {
@@ -37,7 +37,7 @@
       "title": "Political Diary 1828-1830 Volume 2 by Edward Law",
       "url": "http://www.gutenberg.org/ebooks/10693",
       "file": "data/processed/pg19_docs_diverse/doc_002.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 149769
     },
     {
@@ -47,7 +47,7 @@
       "title": "Sport and Work on the Nepaul Frontier by James Inglis",
       "url": "http://www.gutenberg.org/ebooks/10818",
       "file": "data/processed/pg19_docs_diverse/doc_003.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 149990
     },
     {
@@ -57,7 +57,7 @@
       "title": "Hodge and His Masters by Richard Jefferies",
       "url": "http://www.gutenberg.org/ebooks/11874",
       "file": "data/processed/pg19_docs_diverse/doc_004.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 172072
     },
     {
@@ -67,7 +67,7 @@
       "title": "Jane Eyre by Charlotte Bronte",
       "url": "http://www.gutenberg.org/ebooks/1260",
       "file": "data/processed/pg19_docs_diverse/doc_005.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 259930
     },
     {
@@ -77,7 +77,7 @@
       "title": "The Evil Eye; Or The Black Spector by William Carleton",
       "url": "http://www.gutenberg.org/ebooks/16004",
       "file": "data/processed/pg19_docs_diverse/doc_006.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 193647
     },
     {
@@ -87,7 +87,7 @@
       "title": "Women of Modern France by Hugo P. Thieme",
       "url": "http://www.gutenberg.org/ebooks/17159",
       "file": "data/processed/pg19_docs_diverse/doc_007.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 161381
     },
     {
@@ -97,7 +97,7 @@
       "title": "The Life of George Washington Vol. 5 (of 5) by John Marshall",
       "url": "http://www.gutenberg.org/ebooks/18595",
       "file": "data/processed/pg19_docs_diverse/doc_008.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 133960
     },
     {
@@ -107,7 +107,7 @@
       "title": "A Certain Rich Man by William Allen White",
       "url": "http://www.gutenberg.org/ebooks/18684",
       "file": "data/processed/pg19_docs_diverse/doc_009.dat",
-      "length": 132096,
+      "length": 133120,
       "book_tokens": 219123
     }
   ],

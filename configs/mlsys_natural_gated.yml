@@ -36,7 +36,9 @@ defaults:
   draft_window_cap: 4096
   max_new_tokens: 1024
   ignore_eos: true
-  temperature: 1.0
+  temperature: 0.0        # GREEDY, per plan section 2. Sampling would make
+                          # the seed-dependent-prompt claim false and the
+                          # token-identity losslessness check invalid.
   top_p: 1.0
   seeds: [42]
   log_per_token: true

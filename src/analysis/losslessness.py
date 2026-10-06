@@ -47,16 +47,23 @@ def compare_generations(
 ) -> dict:
     """Losslessness verdict for one (speculative, target-only) pair.
 
-    `requested_tokens` is the generation length both runs were asked for. When
-    supplied, a run that produced fewer tokens is reported as incomplete even if
-    it agrees with its partner, because the comparison would otherwise be over a
-    shorter window than the plan fixed.
+    `requested_tokens` is the generation length both runs were asked for. A run
+    that produced FEWER tokens than requested is incomplete: the comparison
+    window would be shorter than the plan fixed, and the shortfall usually means
+    generation stopped early, which is itself a divergence. A run that produced
+    more is not treated as a failure — see below — but is reported.
     """
     pos = first_mismatch(spec_ids, target_ids)
     short = None
     if requested_tokens is not None:
-        if len(spec_ids) != requested_tokens or len(target_ids) != requested_tokens:
+        if len(spec_ids) < requested_tokens or len(target_ids) < requested_tokens:
             short = min(len(spec_ids), len(target_ids))
+    # A speculative run may legitimately emit more than the cap if the engine
+    # commits a whole verify round; the target-only arm stops exactly on the
+    # cap. Comparing over their common prefix is the correct comparison, and
+    # the overrun is recorded because it also shifts the throughput denominator.
+    overrun = (max(len(spec_ids), len(target_ids)) - requested_tokens
+               if requested_tokens is not None else 0)
     lossless = (pos is None) and (short is None)
     out = {
         "lossless": bool(lossless),
@@ -64,6 +71,9 @@ def compare_generations(
         "spec_tokens": len(spec_ids),
         "target_tokens": len(target_ids),
         "compared_tokens": min(len(spec_ids), len(target_ids)),
+        "spec_overrun_tokens": max(0, len(spec_ids) - (requested_tokens or len(spec_ids))),
+        "target_overrun_tokens": max(0, len(target_ids) - (requested_tokens or len(target_ids))),
+        "length_overrun": max(0, overrun),
     }
     if pos is not None:
         out["detail"] = (
@@ -90,8 +100,13 @@ def require_same_request(spec_row: dict, target_row: dict) -> list[str]:
     checked explicitly rather than assumed.
     """
     problems: List[str] = []
+    # The contract fields, not just the request identity. Losslessness is only
+    # defined for greedy decoding with EOS ignored, and a pair that differs in
+    # sampling or rope is not the same experiment even when the prompt matches.
     for field in ("prompt_sha256", "prompt_tokens", "context_length",
-                  "max_new_tokens"):
+                  "max_new_tokens", "temperature", "top_p", "ignore_eos",
+                  "rope_type", "rope_factor", "rope_anchor_base",
+                  "target_revision", "draft_revision"):
         a, b = spec_row.get(field), target_row.get(field)
         if a != b:
             problems.append(f"{field}: spec={a!r} target={b!r}")

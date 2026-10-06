@@ -135,6 +135,11 @@ CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     # Target quality beside acceptance (plan 4.3). Blank when not measured,
     # which is distinguishable from a measured zero.
     "target_ppl", "ppl_tokens",
+    # Sequence the engine actually built (prompt + leading BOS + generated).
+    # Recorded so the plan's identity can be checked from the CSV instead of
+    # trusted, since the plan and the manifest previously disagreed about
+    # whether the BOS was inside `context_length`.
+    "sequence_tokens",
 ]
 
 
@@ -169,6 +174,12 @@ def write_per_token_sidecar(
     return path
 
 
+# How far the source length may be adjusted to make the engine's prompt exactly
+# the rung length. Measured drift on the staged pool is a constant 7 tokens for
+# the one book that drifts; the bound only has to exceed it comfortably.
+MAX_PROMPT_SHIFT = 4096
+
+
 def _generated_tokens_dir(output_csv: str | Path) -> Path:
     return Path(output_csv).resolve().parent / "tokens"
 
@@ -200,36 +211,44 @@ def write_generated_tokens_sidecar(
     return path
 
 
-def _exact_token_prompt(tokenizer, ids: list[int], want_len: int,
-                        tries: int = 8):
-    """Decode-then-re-encode until the engine sees exactly `want_len` tokens.
+def _exact_token_window(tokenizer, ids: list[int], prompt_len: int,
+                        max_probe: int = 8, max_shift: int = 4096):
+    """Pick the source length whose re-encoded prompt is EXACTLY `prompt_len`.
 
-    The engine takes a prompt *string* and re-tokenises it, so the ids that
-    reach the model are `encode(decode(ids[:k]))`, which is not always `ids[:k]`.
-    SentencePiece tokenizers (Llama-2) drop or normalise whitespace, so the
-    count can move by tens of tokens; byte-level BPE (Llama-3.1) is stable
-    because it round-trips bytes exactly.
+    Returns `(text, got, source_len)`.
 
-    A drift here is not cosmetic: the prompt plus the generation plus the
-    engine's leading BOS is supposed to be exactly the rung context, so a prompt
-    that comes back longer puts the sequence past the rung and, at native 128k,
-    past the window the rung is supposed to sit inside. It would also shift the
-    continuation relative to the prompt and break the losslessness pairing.
+    The engine takes a prompt *string* and re-tokenises it, so the ids the model
+    sees are `encode(decode(ids[:L]))`, which need not be `ids[:L]` and need not
+    even have the same length. Measured on the staged pool this is
+    document-dependent: 9 of 10 books round-trip exactly at every rung, and one
+    loses a constant 7 tokens at every length (130047 -> 130040), because a
+    single token early in the book decodes to text that re-encodes to 7 tokens.
 
-    Feed the engine's own tokenisation back in until it stops moving, then require
-    exactness. Failing loudly is the point: running at a context we did not
-    measure is worse than not running.
+    The prompt length is not negotiable — it must be exactly
+    `context - gen - 1` tokens for the sequence to be exactly the rung — so the
+    source length `L` is adjusted by the observed deficit, which is locally
+    constant. Two probes suffice in practice; the loop exists for the case where
+    moving `L` crosses another such token.
     """
-    cur = list(ids[:want_len])
-    for _ in range(tries):
-        text = tokenizer.decode(cur)
+    if not ids:
+        raise ValueError("empty source")
+    L = min(prompt_len, len(ids))
+    for _ in range(max_probe):
+        if not 0 < L <= len(ids):
+            break
+        text = tokenizer.decode(ids[:L])
         got = tokenizer.encode(text, add_special_tokens=False)
-        if len(got) == want_len:
-            return text, got
-        cur = got[:want_len]
+        if len(got) == prompt_len:
+            return text, got, L
+        # `len(got) == L + deficit`, so moving L by the deficit removes it.
+        L = L + (prompt_len - len(got))
+        if abs(L - prompt_len) > max_shift:
+            break
     raise RuntimeError(
-        f"prompt did not stabilise at {want_len} tokens after {tries} tries "
-        f"(ended at {len(got)}); the engine would run at the wrong context"
+        f"could not find a source length whose engine prompt is exactly "
+        f"{prompt_len} tokens (last tried L={L}, engine prompt "
+        f"{len(got) if 'got' in dir() else 'n/a'}); refusing to run at a context "
+        f"that was not measured"
     )
 
 
@@ -278,9 +297,19 @@ def _build_pg19_document_prompt(documents_json: str, context_length: int,
             f"{gen_tokens})"
         )
     arr = np.memmap(d["file"], dtype="int32", mode="r")
-    text, got = _exact_token_prompt(tokenizer, arr[:prompt_len].astype(int).tolist(),
-                                    prompt_len)
-    cont = arr[prompt_len:prompt_len + gen_tokens].astype(int).tolist()
+    source_len = min(d["length"], prompt_len + MAX_PROMPT_SHIFT + 1024)
+    text, got, used = _exact_token_window(
+        tokenizer, arr[:source_len].astype(int).tolist(), prompt_len)
+    # Contiguous with the PROMPT TEXT: the continuation is the book text that
+    # follows the prompt the model actually sees, so perplexity is conditioned
+    # on the passage it scores, and the losslessness pairing is against the same
+    # prompt.
+    cont = arr[used:used + gen_tokens].astype(int).tolist()
+    if len(cont) != gen_tokens:
+        raise RuntimeError(
+            f"{doc_id}: continuation is {len(cont)} tokens, need {gen_tokens}; "
+            f"the document is too short for this rung"
+        )
     provenance = {
         "doc_id": doc_id,
         "doc_title": d.get("title"),
@@ -292,11 +321,18 @@ def _build_pg19_document_prompt(documents_json: str, context_length: int,
             ",".join(map(str, cont)).encode()).hexdigest(),
         # Sequence the engine will actually build: prompt + BOS + generation.
         "sequence_tokens": len(got) + 1 + gen_tokens,
+        "prompt_source_len": int(used),
     }
-    if len(got) + 1 + gen_tokens > context_length:
+    sequence_tokens = len(got) + 1 + gen_tokens      # + 1 for the leading BOS
+    if sequence_tokens != context_length:
+        # Not ">": an under-length sequence is also wrong, because the rung is
+        # supposed to BE that context length. Both directions are a measurement
+        # of a different context than the one recorded.
         raise RuntimeError(
-            f"{doc_id}: sequence {len(got)} + 1 BOS + {gen_tokens} exceeds the "
-            f"rung context {context_length}"
+            f"{doc_id}: the engine would build a {sequence_tokens}-token "
+            f"sequence ({len(got)} prompt + 1 BOS + {gen_tokens} generated) for "
+            f"rung context {context_length}; refusing to run at a context we "
+            f"would not be measuring"
         )
     return text, cont, provenance
 
@@ -971,6 +1007,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         row["target_revision"] = run.get("target_revision") or ""
         row["draft_revision"] = run.get("draft_revision") or ""
         row["prompt_source"] = prompt_source
+        if doc_prov.get("sequence_tokens") is not None:
+            row["sequence_tokens"] = doc_prov["sequence_tokens"]
         row["doc_id"] = run.get("doc_id", "") or ""
         row["temperature"] = run.get("temperature", 1.0)
         row["top_p"] = run.get("top_p", 1.0)

@@ -42,16 +42,29 @@ Binding rules:
 | sampling | **greedy** (`temperature=0`, `top_p=1.0`) |
 | generated tokens | **1024** (`max_new_tokens=1024`) |
 | EOS | **ignored** (`ignore_eos=true`) |
-| prompt length | `context_length - 1024` |
-| total sequence | exactly `context_length` |
+| prompt length | `context_length - 1024 - 1` |
+| total sequence | exactly `context_length` (prompt + leading BOS + generated) |
 | spec steps | gamma = 4 |
+
+The `- 1` is not decoration. `generate_text` tokenizes the prompt without
+`add_special_tokens=False`, so the engine prepends one BOS token; the model
+therefore sees one token more than the prompt ids the caller counted. Without the
+`- 1` the sequence would be `context_length + 1`, one position past a native 128k
+window.
 
 Two consequences that must hold in every cell:
 
-* `prompt_tokens + tokens_generated == context_length`. At native 128k this keeps
-  the whole sequence inside the model's window; a longer sequence would measure
-  extrapolation, not the rung. Every row records `prompt_tokens` and
-  `tokens_generated`, and the sum is asserted.
+* `prompt_tokens + 1 + tokens_generated == context_length`, where
+  `prompt_tokens` is the count **excluding** the engine's BOS (that is the field
+  the CSV records) and the row also carries `sequence_tokens`, the total the
+  engine actually built. At native 128k this keeps the whole sequence inside the
+  model's window; a longer sequence would measure extrapolation, not the rung.
+  The builder asserts the identity and **refuses to run** if it cannot be met,
+  rather than warning: a run at a context nobody measured is worse than no run.
+  Note the engine re-tokenises the prompt *string*, so for some books the source
+  slice must be adjusted to make the re-encoded prompt exactly `context - 1025`
+  tokens; the adjustment is logged as `prompt_source_len` and is up to ~1100
+  tokens at the 512k rung.
 * Greedy decoding is **deterministic**. `seed` is therefore *not* a replication
   axis: two seeds on the same prompt produce identical output and identical
   acceptance. Replication is by **document** (§3). `seed` is fixed at 42 and is
@@ -133,9 +146,20 @@ Two distinct quantities, never conflated (reviewer AbH52 #1):
 * **`alpha_round`** — the per-round accepted prefix length divided by gamma,
   averaged over rounds. This is the acceptance parameter of speculative
   decoding and the only one used for claims.
-* **`a_iid`** — total accepted tokens / total drafted tokens. This is the i.i.d.
-  per-token parameter. Reported beside `alpha_round` for comparability with
-  other work, and **never** substituted for it.
+* **`alpha_total_ratio`** — total accepted tokens / total drafted tokens. With
+  gamma constant this is *algebraically identical* to `alpha_round`, so it is a
+  consistency check on the accounting, not an independent quantity. It was
+  previously labelled `a_iid`, which printed the same number twice under
+  "per-round" and "i.i.d." headings and thus asserted memorylessness by
+  construction.
+* **`alpha_iid`** — the memoryless per-token acceptance that reproduces the
+  observed mean accepted-prefix length, obtained by solving
+  `E[N] = alpha + ... + alpha^gamma` (see
+  [acceptance.py](/Users/amankesarwani/PycharmProjects/RASD/src/analysis/acceptance.py)).
+  This is the parameter to quote when describing acceptance as an i.i.d. per-token
+  probability, and it is strictly greater than `alpha_round` whenever the trace is
+  not memoryless. Measured on the 57 committed traces it exceeds `alpha_round` in
+  53 of them, i.e. the distinction is not cosmetic.
 
 Rounding: exclude a partial final round (drafted `< gamma`) from the per-round
 mean; the number of rounds used is always reported. `alpha_round` is also
@@ -173,8 +197,8 @@ Windows inside one book (the book supplies ≥ `C` tokens):
 
 | window | tokens | used for |
 |---|---|---|
-| prompt | `[0, C - 1024)` | both the speculative run and the perplexity measurement |
-| continuation | `[C - 1024, C)` | scored teacher-forced, **and** the window the runs generate into |
+| prompt | `[0, C - 1024 - 1)` after re-encoding | both the speculative run and the perplexity measurement |
+| continuation | next 1024 tokens of the book | scored teacher-forced, **and** the window the runs generate into |
 
 The scored sequence is exactly `C` tokens, contiguous, so it is one forward
 inside the configured context. The continuation must be contiguous with the
@@ -340,3 +364,39 @@ seeing the affected data)*
   6 eligible books, 10 required. Measured in
   `data/processed/pg19_books/book_lengths_train.json`.
   (Opened 2026-10-06, closed 2026-10-06.)
+
+- **2026-10-06 — three corrections from an independent review pass, before any
+  data.** An independent reviewer (fresh context) audited this plan, the
+  manifest and the pipeline. The following were changed as a result; each is a
+  correction of an error in the plan or the code, not a change of intent.
+
+  1. **The prompt/BOS identity was stated wrongly.** The plan said
+     `prompt_tokens + tokens_generated == context_length`. The engine prepends a
+     BOS, so the true identity is
+     `prompt_tokens + 1 + tokens_generated == context_length`, and the prompt is
+     `context_length - 1024 - 1` tokens. §2 and §4.3 corrected, and
+     `sequence_tokens` is now recorded on every row. (Constant-1 error; no data
+     existed.)
+
+  2. **`a_iid` was not the i.i.d. parameter.** The plan defined it as total
+     accepted / total drafted, which with gamma constant is algebraically
+     identical to `alpha_round`. The plan now separates `alpha_total_ratio`
+     (a consistency check) from `alpha_iid` (the memoryless parameter solved
+     from the mean prefix length). Measured on the 57 committed traces,
+     `alpha_iid > alpha_round` in 53 of them.
+
+  3. **The effective-rope assertion could not fail.** It compared the built
+     `inv_freq` against a reference recomputed from the same built config, so it
+     matched unconditionally and could not have detected the mis-anchoring it
+     exists to catch. It now compares against a reference derived from the
+     candidate's DECLARED type/factor/anchor, and reports separately when the
+     built rope is anchored on the context.
+
+  Also corrected, without changing the design: the gate scored a candidate over
+  `context + 1024` positions (which would have measured the 128k native control
+  past its own window); the gate's baseline selection could pick the 32k control
+  as the 128k reference; the generation cap was not enforced in the engine, so a
+  speculative run could exceed `max_new_tokens`; the stage configs shipped
+  `temperature: 1.0` against this plan's greedy contract; and the document pool
+  was too short at the 512k rung once the prompt re-encoding adjustment was
+  accounted for.

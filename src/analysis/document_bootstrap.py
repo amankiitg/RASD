@@ -121,6 +121,38 @@ def paired_bootstrap(a: Sequence[float], b: Sequence[float],
             "n_documents": int(x.size)}
 
 
+def paired_ratio_t_interval(a: Sequence[float], b: Sequence[float],
+                           alpha: float = 0.05) -> dict:
+    """t-based cluster interval for the paired ratio, on log ratios.
+
+    The robustness counterpart to the percentile bootstrap. It is computed on
+    the per-document log ratios, so the estimand is the GEOMETRIC mean ratio
+    rather than the ratio of means the bootstrap targets — the two answer
+    slightly different questions, which is the point: if they disagree about a
+    threshold, the result is not robust and the plan requires saying so rather
+    than quoting the favourable one.
+
+    A document whose denominator is non-positive cannot contribute a ratio and
+    is dropped; `n_documents` reports how many were actually used.
+    """
+    x = np.asarray(a, dtype=float)
+    y = np.asarray(b, dtype=float)
+    if x.shape != y.shape:
+        raise ValueError(f"paired arms must be aligned; got {x.shape} and {y.shape}")
+    keep = (x > 0) & (y > 0)
+    if keep.sum() < 2:
+        return {"kind": "ratio_t", "point": float("nan"), "lo": float("nan"),
+                "hi": float("nan"), "n_documents": int(keep.sum())}
+    lr = np.log(x[keep] / y[keep])
+    n = lr.size
+    se = lr.std(ddof=1) / math.sqrt(n)
+    t = _t_crit(n - 1, alpha)
+    m = float(lr.mean())
+    return {"kind": "ratio_t", "point": float(np.exp(m)),
+            "lo": float(np.exp(m - t * se)), "hi": float(np.exp(m + t * se)),
+            "n_documents": int(n), "estimand": "geometric mean ratio"}
+
+
 def clears(interval: dict, threshold: float) -> str:
     """Verdict for an interval against a decision threshold.
 

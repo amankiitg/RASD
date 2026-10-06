@@ -348,10 +348,15 @@ reporting:
   primary_metric: alpha_round   # per plan 4.1; a_iid is reported beside it
   acceptance:
     alpha_round: accepted_prefix_length / gamma, PER ROUND  # the spec-decoding rate
-    a_iid: total_accepted / total_proposed                  # the i.i.d. per-token parameter
-    report_both: true
-    warn_if_conflated: true   # reviewer AbH52 #1: these are not the same number
-    exclude_partial_final_round: true
+    alpha_total_ratio: total_accepted / total_proposed      # == alpha_round when gamma is constant
+    alpha_iid: the memoryless alpha solving E[N] = alpha + ... + alpha^gamma
+    report_all_three: true
+    warn_if_conflated: true   # reviewer AbH52 #1: these are not the same number.
+                              # alpha_total_ratio and alpha_round are algebraically
+                              # identical; only alpha_iid is the i.i.d. parameter.
+    exclude_partial_final_round: true   # rounds flagged round_truncated in the trace
+    record_n_emitted: true              # n_acc is what the target verified;
+                                        # n_emitted is what was committed
     report_n_acc_distribution: true
     flag_saturated_above: 0.90   # full_accept_share; a saturated rung cannot
                                  # support a comparative claim

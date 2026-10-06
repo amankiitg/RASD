@@ -271,7 +271,8 @@ if [ $? -eq 0 ] && [ -s "$WORK/boot.csv" ]; then
   $PY - "$WORK/boot.csv" <<'PYEOF'
 import csv, sys
 rows = {r["trace"]: r for r in csv.DictReader(open(sys.argv[1]))}
-for k in ("alpha_round_ci_lo", "alpha_round_ci_hi", "a_iid",
+for k in ("alpha_round_ci_lo", "alpha_round_ci_hi", "alpha_total_ratio",
+          "alpha_iid",
           "p_alpha_zero", "full_accept_share", "ended_on_eos_round"):
     assert k in rows["tiny_healthy"], f"missing {k}"
 h, c = rows["tiny_healthy"], rows["tiny_collapsed"]
@@ -313,7 +314,7 @@ step "8  documents: one book per document, windows, run expansion"
 # --------------------------------------------------------------------------
 (cd "$WORK" && PYTHONPATH="$REPO" $PY - <<'PYEOF'
 import json, sys, pathlib, numpy as np
-from run_experiment import _build_pg19_document_prompt, _exact_token_prompt
+from run_experiment import _build_pg19_document_prompt, _exact_token_window
 
 ctx, gen = 2048, 1024            # > CONTINUATION_TOKENS so a prompt fits
 docs_dir = pathlib.Path("data/processed/pg19_docs"); docs_dir.mkdir(parents=True, exist_ok=True)
@@ -336,10 +337,15 @@ class StableTok:
 
 
 class DriftTok:
-    """Never stabilises: encode returns one token more than it was given."""
+    """Never stabilises: the encoded length is independent of the input length.
+
+    A tokenizer whose round-trip merely shifts by a constant IS resolvable by
+    adjusting the source length, so the unresolvable case needs a length that
+    does not track the input at all.
+    """
     def decode(self, ids): return " ".join(f"t{i}" for i in ids)
     def encode(self, text, add_special_tokens=False):
-        return [int(t[1:]) for t in text.split()] + [0]
+        return [0] * 5
 
 
 tok = StableTok()
@@ -361,9 +367,9 @@ print(f"  prompt={prov['prompt_tokens']} + 1 BOS + gen={gen} = {prov['sequence_t
 # A tokenizer whose decode->encode is not length-preserving must NOT be allowed
 # to run: the sequence would silently be a different context than the rung.
 try:
-    _exact_token_prompt(DriftTok(), list(range(100)), 100)
+    _exact_token_window(DriftTok(), list(range(100)), 100)
 except RuntimeError as exc:
-    print(f"  non-stabilising tokenizer refused: {str(exc)[:64]}...")
+    print(f"  unresolvable tokenizer refused: {str(exc)[:64]}...")
 else:
     print("  ERROR: a drifting tokenizer was accepted")
     sys.exit(1)

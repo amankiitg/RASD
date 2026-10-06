@@ -14,7 +14,8 @@ comments. Two things are wrong with that:
   point estimates compares two different amounts of evidence.
 
 So: resample ROUNDS with replacement, B times, and report the percentile
-interval of the resampled mean. `a_iid` (the i.i.d. per-token parameter,
+interval of the resampled mean. `alpha_total_ratio` (identical to alpha_round when gamma is constant) and
+  `alpha_iid` (the memoryless parameter, solved from the mean prefix length),
 total_accepted / total_proposed) is reported alongside `alpha_round` (the
 per-round accepted-prefix-length / gamma) because they answer different
 questions and only one of them is the speculative-decoding acceptance rate.
@@ -33,9 +34,16 @@ import argparse
 import csv
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
+
+# This script imports the project's own acceptance code, so the repo root must be
+# importable when it is run as a file (sys.path[0] is then `scripts/`).
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 
 def read_rounds(path: Path) -> list[dict]:
@@ -84,10 +92,38 @@ def cluster_bootstrap_ci(acc: np.ndarray, drafted: np.ndarray,
     return point, float(lo), float(hi)
 
 
-def a_iid(acc: np.ndarray, drafted: np.ndarray) -> float:
-    """The i.i.d. per-token parameter: total accepted / total proposed."""
+def alpha_total_ratio(acc: np.ndarray, drafted: np.ndarray) -> float:
+    """Total accepted / total proposed.
+
+    NOTE: with gamma constant this is algebraically IDENTICAL to the per-round
+    mean `alpha_round`, because mean(n_acc/gamma) == sum(n_acc)/(R*gamma). It is
+    therefore NOT the i.i.d. per-token parameter and must not be labelled as
+    one; see `alpha_iid` below. This function used to be called `a_iid`, which
+    printed the same number twice under "per-round" and "i.i.d." headings —
+    asserting memorylessness by construction, which is precisely the reviewer
+    objection `src/analysis/acceptance.py` was written to answer.
+    """
     tot_d = float(drafted.sum())
     return float(acc.sum() / tot_d) if tot_d > 0 else float("nan")
+
+
+def alpha_iid(acc: np.ndarray, drafted: np.ndarray, gamma: int) -> float:
+    """The memoryless per-token alpha that reproduces this mean prefix length.
+
+    Solves E[N] = mean(n_acc) for alpha under P(N >= i) = alpha^i, i.e.
+    E[N] = alpha + ... + alpha^gamma. This is the parameter to quote when
+    describing acceptance as an i.i.d. per-token probability, and it is
+    strictly greater than the per-round mean whenever the trace is not
+    memoryless. Returns NaN when it cannot be identified.
+    """
+    if gamma <= 0 or acc.size == 0:
+        return float("nan")
+    # Deliberately NOT wrapped in a broad try/except. Swallowing the error here
+    # returned NaN for all 57 existing traces while the column printed as if it
+    # had been computed, which is the "looks like success" failure mode this
+    # project has already been bitten by.
+    from src.analysis.acceptance import iid_alpha_for_mean
+    return float(iid_alpha_for_mean(float(acc.mean()), gamma))
 
 
 def split_at_eos(rows: list[dict]) -> int | None:
@@ -153,7 +189,8 @@ def main() -> int:
             "alpha_round_ci_lo": round(lo, 6),
             "alpha_round_ci_hi": round(hi, 6),
             "ci_half_width": round((hi - lo) / 2, 6),
-            "a_iid": round(a_iid(acc, drf), 6),
+            "alpha_total_ratio": round(alpha_total_ratio(acc, drf), 6),
+            "alpha_iid": round(alpha_iid(acc, drf, int(drf[drf > 0][0])), 6),
             "p_alpha_zero": round(p_zero(acc, drf), 6),
             "full_accept_share": round(full_accept_share(acc, drf), 6),
             "total_accepted": int(acc.sum()),
@@ -196,12 +233,13 @@ def main() -> int:
         for r in rows:
             w.writerow(r)
 
-    print(f"\n  {'trace':<34} {'n':>4} {'alpha':>8} {'95% CI':>18} {'a_iid':>8} "
+    print(f"\n  {'trace':<34} {'n':>4} {'alpha':>8} {'95% CI':>18} {'ratio':>8} {'alpha_iid':>9} "
           f"{'P(a=0)':>7} {'full':>6}")
     for r in rows:
         ci = f"[{r['alpha_round_ci_lo']:.3f}, {r['alpha_round_ci_hi']:.3f}]"
         print(f"  {r['trace']:<34} {r['n_rounds_used']:>4} {r['alpha_round']:>8.4f} "
-              f"{ci:>18} {r['a_iid']:>8.4f} {r['p_alpha_zero']:>7.3f} "
+              f"{ci:>18} {r['alpha_total_ratio']:>8.4f} {r['alpha_iid']:>8.4f} "
+              f"{r['p_alpha_zero']:>7.3f} "
               f"{r['full_accept_share']:>6.3f}")
     print(f"\n  wrote {out}  ({len(rows)} traces)")
     print("  NOTE: tokens within a round are accepted/rejected together, so the")

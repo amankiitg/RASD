@@ -51,7 +51,12 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   local name=$1 tmo=$2; shift 2
   local est
   est=$(est_cost "$name")
-  if [ 0 -eq "$(awk -v e="$est" -v a="$ASK_OVER" 'BEGIN{print (e>a)?1:0}')" ] && ! approved "$name"; then
+  # `awk` prints 1 when est > ASK_OVER. The previous version tested
+  # `[ 0 -eq <that> ]`, which is true for the CHEAP stages, so it refused cheap
+  # stages and let the expensive ones run unapproved — the opposite of the
+  # declared guard. Test the condition directly instead of through an integer
+  # comparison nobody can read.
+  if awk -v e="$est" -v a="$ASK_OVER" 'BEGIN{exit !(e > a)}' && ! approved "$name"; then
     # Above the approval threshold and not approved: refuse, and say so.
     interim "SKIPPED name=$name reason=needs_approval projected=\$$est over=\$$ASK_OVER"
     echo "SKIP $name (projected \$$est > \$$ASK_OVER, not in MLSYS_APPROVED_STAGES)"
@@ -100,11 +105,16 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
   stage "${name}_losslessness" 3600 python3 scripts/mlsys_losslessness.py \
     --results "$csv" --tokens-dir "$(dirname "$csv")/tokens" \
     --out "$(dirname "$csv")/${name}_losslessness.csv"
+  # Group by level_id, NOT context_length: the speculative and target-only arms
+  # share a context_length, so grouping by it pooled them and averaged the
+  # target-only acceptance (hard-coded 0.0) into the speculative number.
   stage "${name}_doc_intervals" 1800 python3 scripts/mlsys_document_bootstrap.py \
-    --results "$csv" --group-by context_length \
+    --results "$csv" --group-by level_id \
     --out "$(dirname "$csv")/${name}_doc_intervals.csv"
+  # --window: the plan compares rungs over a common window of rounds so cells
+  # with different output lengths are on equal footing.
   stage "${name}_round_acceptance" 1800 python3 scripts/mlsys_cluster_bootstrap.py \
-    --traces "$(dirname "$csv")/per_token" \
+    --traces "$(dirname "$csv")/per_token" --window 15 \
     --out "$(dirname "$csv")/${name}_acceptance_bootstrap.csv"
 }
 
@@ -190,8 +200,19 @@ for spec_stage in "natural_spec_gated:configs/mlsys_natural_gated.yml" \
     interim "SKIPPED name=$name reason=config-missing path=$cfg"
     continue
   fi
+  # ENFORCE the gate. `require_gate_verdict: pass` was declared in the manifest
+  # and never implemented: a gate that failed every candidate still let every
+  # >128k stage run. The filter writes a config containing only the levels whose
+  # configuration actually passed; a level with no matching verdict is dropped.
+  filtered="$OUT/${name}.gated.yml"
+  if ! python3 scripts/mlsys_gate_filter.py --gate "$OUT/coherence_gate.csv" \
+        --config "$cfg" --out "$filtered" --allow-empty; then
+    interim "SKIPPED name=$name reason=no_gate_passing_config"
+    echo "SKIP $name (no configuration passed the gate)"
+    continue
+  fi
   stage "$name" 86400 python3 run_experiment.py \
-    --config "$cfg" --output "$OUT/${name}.csv" --stage-id "$name" \
+    --config "$filtered" --output "$OUT/${name}.csv" --stage-id "$name" \
     --log-per-token --memory-trace --save-generated-text \
     --save-generated-tokens
   report_spec_stage "$OUT/${name}.csv" "$name"

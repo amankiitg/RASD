@@ -62,7 +62,8 @@ CONTINUATION_TOKENS = 1024   # scored continuation after the full-length prompt
 # Natural-text prompt + held-out continuation (d)
 # --------------------------------------------------------------------------
 
-def load_pg19_window(meta_path: str, context_length: int, seed: int):
+def load_pg19_window(meta_path: str, context_length: int, seed: int,
+                     bos_id: int | None = None):
     """Return (prompt_ids, continuation_ids) from held-out natural text.
 
     Deterministic per seed: the document and the offset inside it are both drawn
@@ -84,7 +85,13 @@ def load_pg19_window(meta_path: str, context_length: int, seed: int):
     concatenates books and a slice can straddle a boundary.
     """
     meta = json.loads(Path(meta_path).read_text())
-    prompt_len = context_length - max(CONTINUATION_TOKENS, GENERATE_TOKENS)
+    # The engine prepends a leading BOS at encode time, so the gate's prompt
+    # must include one too, and the text budget shrinks by that token. Without
+    # this the gate measures a sequence one token shorter than the runs and
+    # (before the fix) 1024 tokens LONGER, which put the 128k native control
+    # past its own window.
+    bos = 1 if bos_id is not None else 0
+    prompt_len = context_length - max(CONTINUATION_TOKENS, GENERATE_TOKENS) - bos
     if prompt_len < 1:
         raise RuntimeError(
             f"context_length {context_length} leaves no room for a prompt after "
@@ -112,7 +119,10 @@ def load_pg19_window(meta_path: str, context_length: int, seed: int):
     arr = np.memmap(c["file"], dtype="int32", mode="r")
     off = int(rng.integers(0, c["length"] - need + 1))
     ids = arr[off:off + prompt_len + CONTINUATION_TOKENS].astype(int).tolist()
-    return ids[:prompt_len], ids[prompt_len:]
+    prompt = ids[:prompt_len]
+    if bos_id is not None:
+        prompt = [int(bos_id)] + prompt
+    return prompt, ids[prompt_len:]
 
 
 # --------------------------------------------------------------------------
@@ -147,63 +157,133 @@ def reference_inv_freq(hf_config_kwargs, model_name):
     return ROPE_INIT_FUNCTIONS[rs["rope_type"]](cfg, torch.device("cpu"))[0].float()
 
 
+def _declared_reference(intended: dict, model_name: str, anchor_override=None):
+    """inv_freq implied by the candidate's DECLARED parameters.
+
+    This is the whole point of the assertion, so it must not be a replay of the
+    configuration the model was built with. An earlier version compared the
+    built `inv_freq` against a reference recomputed from the very `hf_cfg` used
+    to build the model, via the same `ROPE_INIT_FUNCTIONS`. That is a tautology:
+    it always matched, so it could not detect the historical mis-anchoring
+    (routing the YaRN anchor onto `config.max_position_embeddings = ctx`),
+    because the reference inherited the same mis-anchoring.
+
+    Here the reference is built from what the CANDIDATE asked for — rope type,
+    factor, and anchor — so a configuration that silently anchors somewhere else
+    matches a *different* reference and is reported as a mismatch.
+
+    `anchor_override` forces the anchor (used to build the deliberately
+    mis-anchored reference for comparison).
+    """
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+    from types import SimpleNamespace
+
+    cfg = AutoConfig.from_pretrained(model_name)
+    native_max = int(cfg.max_position_embeddings)
+    rtype = intended.get("rope_type")
+    anchor = anchor_override
+    if anchor is None:
+        anchor = intended.get("rope_anchor_base")
+    if anchor is None:
+        anchor = native_max
+    anchor = int(anchor)
+
+    # Start from the model's SHIPPED rope dict, not a minimal one. Some rope
+    # types need keys beyond type/factor/anchor — `llama3` reads
+    # low_freq_factor and high_freq_factor — so a hand-built dict raises
+    # KeyError and the gate would report an error instead of a verdict for
+    # exactly the configurations it exists to check.
+    shipped = dict(getattr(cfg, "rope_scaling", None) or {})
+    if "rope_type" not in shipped and "type" in shipped:
+        shipped["rope_type"] = shipped.pop("type")
+    probe = SimpleNamespace(**{k: getattr(cfg, k) for k in
+                               ("hidden_size", "num_attention_heads",
+                                "head_dim", "rope_theta")
+                               if hasattr(cfg, k)})
+
+    if rtype in (None, "none"):
+        # No scaling declared: the expectation is the model's own rope block.
+        rs = shipped or {"rope_type": "default"}
+        probe.max_position_embeddings = native_max
+        probe.rope_scaling = rs
+        return ROPE_INIT_FUNCTIONS[rs["rope_type"]](probe, torch.device("cpu"))[0].float()
+
+    rs = dict(shipped)
+    rs.update({
+        "rope_type": rtype,
+        "type": rtype,
+        "factor": float(intended.get("rope_factor") or 1.0),
+        "original_max_position_embeddings": anchor,
+    })
+    # transformers 4.47.1 YaRN reads the band from max_position_embeddings and
+    # llama3 reads it from the dict; setting both keeps this honest for either.
+    probe.max_position_embeddings = anchor
+    probe.rope_scaling = rs
+    return ROPE_INIT_FUNCTIONS[rtype](probe, torch.device("cpu"))[0].float()
+
+
 def assert_effective_rope(model, model_name: str, intended: dict) -> dict:
-    """Recover which rope the model ACTUALLY built, by matching inv_freq.
+    """Recover which rope the model ACTUALLY built, and whether it was asked for.
 
-    Compares the built vector against reference vectors for the intended
-    configuration and for the two ways it could have gone wrong: the anchor
-    carried on config.max_position_embeddings (the 4.47.1 behaviour) versus
-    honoured from the dict, and the model's untouched native block.
+    Compares the built `inv_freq` against references derived from the
+    candidate's declared parameters:
 
-    Returns a dict with the matched label, the stretch summary, and whether the
-    match is the intended one. A mismatch is reported, not raised: the gate
-    should record what it measured, and fail the candidate on it.
+      `declared`         rope type / factor / anchor the candidate asked for
+      `anchor_on_context` the same, but with the anchor replaced by the context
+                         length — the historical 4.47.1 failure mode
+      `native_shipped`   the model's untouched block
+
+    `effective_rope_matches_intent` requires matching `declared`. Matching the
+    mis-anchored reference instead is reported as a mismatch even though the
+    model built successfully, which is the case that previously went unnoticed.
+
+    A mismatch is reported, not raised: the gate should record what it measured
+    and fail the candidate on it.
     """
     built = built_inv_freq(model)
-    ctx = intended["context_length"]
-    native_max = AutoConfig.from_pretrained(model_name).max_position_embeddings
+    ctx = int(intended["context_length"])
+    native_max = int(AutoConfig.from_pretrained(model_name).max_position_embeddings)
+    rtype = intended.get("rope_type")
 
-    refs = {
-        "intended": {"rope_scaling": intended.get("rope_scaling"),
-                     "max_position_embeddings": intended.get("max_position_embeddings")},
-    }
-    # When the intended rope IS the model's shipped configuration (no scaling
-    # requested, context inside the native window), "native_shipped" is not a
-    # mismatch — it is exactly what was asked for. Without this the no-scaling
-    # baseline candidate reports a rope mismatch and fails the gate it defines.
-    if intended.get("rope_scaling") is None:
-        native_expected = True
+    refs = {"declared": _declared_reference(intended, model_name)}
+    if rtype in (None, "none"):
+        # Nothing was scaled, so `native_shipped` IS the declaration and the
+        # tie is not a mismatch.
+        refs["native_shipped"] = _declared_reference({}, model_name)
+    elif rtype == "llama3":
+        # llama3 reads original_max_position_embeddings from the dict, so
+        # replacing the anchor with the context does not produce a different
+        # rope: there is no context-anchoring failure mode to test for. Say so
+        # rather than emitting a reference identical to `declared` under a
+        # second label, which would make the label meaningless.
+        refs["native_shipped"] = _declared_reference({}, model_name)
     else:
-        native_expected = False
-        refs["native_shipped"] = {}
-        rs = dict(intended["rope_scaling"])
-        refs["anchor_on_context"] = {
-            "rope_scaling": {**rs, "original_max_position_embeddings": native_max},
-            "max_position_embeddings": ctx,
-        }
+        refs["native_shipped"] = _declared_reference({}, model_name)
+        refs["anchor_on_context"] = _declared_reference(
+            intended, model_name, anchor_override=ctx)
 
     best, best_err = None, float("inf")
-    for label, kw in refs.items():
-        try:
-            r = reference_inv_freq(kw, model_name)
-        except Exception:
-            continue
-        if r.shape != built.shape:
+    errors = {}
+    for label, r in refs.items():
+        if r is None or r.shape != built.shape:
             continue
         err = float((r - built).abs().max().item())
+        errors[label] = err
         if err < best_err:
             best, best_err = label, err
 
-    # Stretch of the slowest channel vs the model's untouched native rope.
-    native = reference_inv_freq({}, model_name)
+    native = _declared_reference({}, model_name)
     stretch = float((built[-1] / native[-1]).item()) if native[-1] != 0 else float("nan")
 
-    matches = (best_err < 1e-6) and (
-        best == "intended" or (native_expected and best == "intended"))
     return {
         "effective_rope_match": best,
         "effective_rope_maxerr": best_err,
-        "effective_rope_matches_intent": bool(matches),
+        "effective_rope_errors": json.dumps(errors),
+        "effective_rope_matches_intent": bool(best_err < 1e-6 and best == "declared"),
+        "declared_anchor": int(intended.get("rope_anchor_base") or native_max),
+        "built_anchor_is_context": bool(
+            errors.get("anchor_on_context", float("inf")) < 1e-6
+            and errors.get("declared", 0.0) > 1e-6),
         "inv_freq_last": f"{float(built[-1]):.6g}",
         "inv_freq_first": f"{float(built[0]):.6g}",
         "slowest_channel_stretch": round(stretch, 6),
@@ -249,6 +329,30 @@ def generate_after_prompt(model, tok, prompt_ids, n_new=GENERATE_TOKENS):
     return tok.decode(new, skip_special_tokens=True), new
 
 
+def eos_ids(tok) -> set:
+    """Every token id that terminates a generation.
+
+    `tok.eos_token_id` is only `<|end_of_text|>` (128001) for Llama-3.1;
+    `<|eot_id|>` (128009) is a separate special token that also stops
+    generation. Checking one of them lets a generation that immediately emits
+    the other pass the early-EOS test.
+    """
+    ids = set()
+    for attr in ("eos_token_id",):
+        v = getattr(tok, attr, None)
+        if v is not None:
+            ids.add(int(v))
+    for name in ("<|eot_id|>", "<|end_of_text|>", "<|end_of_turn|>",
+                 "<|im_end|>", "</s>"):
+        try:
+            i = tok.convert_tokens_to_ids(name)
+            if i is not None and int(i) >= 0 and i != tok.unk_token_id:
+                ids.add(int(i))
+        except Exception:
+            pass
+    return ids
+
+
 def generation_metrics(text: str, new_ids: list[int], eos_id) -> dict:
     lines = text.split("\n")
     blank = sum(1 for l in lines if not l.strip()) / max(1, len(lines))
@@ -256,7 +360,8 @@ def generation_metrics(text: str, new_ids: list[int], eos_id) -> dict:
     toks = text.split()
     grams = [tuple(toks[i:i + 3]) for i in range(max(0, len(toks) - 2))]
     repeat = 1.0 - (len(set(grams)) / len(grams)) if grams else 0.0
-    early = next((i for i, t in enumerate(new_ids) if t == eos_id), None)
+    eos_set = eos_id if isinstance(eos_id, (set, frozenset)) else {eos_id}
+    early = next((i for i, t in enumerate(new_ids) if t in eos_set), None)
     return {
         "gen_chars": len(text),
         "gen_blank_share": round(blank, 4),
@@ -291,7 +396,13 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
            "context_length": ctx, "seed": cand.get("seed", 42),
            "rope_type": cand.get("rope_type"),
            "rope_factor": cand.get("rope_factor"),
-           "rope_anchor_base": cand.get("rope_anchor_base")}
+           "rope_anchor_base": cand.get("rope_anchor_base"),
+           # Carried onto the row because the baseline lookup selects on it.
+           # Without this the flag was read from the candidate dict list, which
+           # worked only because `rows` happened to be built from the same dicts.
+           "native_baseline": bool(cand.get("native_baseline", False)),
+           "role": cand.get("role", ""),
+           "expect": cand.get("expect", "")}
 
     intended = {}
     try:
@@ -302,9 +413,16 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
             rope_factor=cand.get("rope_factor"),
             rope_anchor_base=cand.get("rope_anchor_base"),
         )
-        intended["rope_scaling"] = getattr(hf_cfg, "rope_scaling", None)
-        intended["max_position_embeddings"] = hf_cfg.max_position_embeddings
+        # The DECLARED parameters, deliberately not read back off `hf_cfg`. A
+        # reference built from the config the model was built with cannot detect
+        # a mis-anchored build; see _declared_reference.
+        intended["rope_type"] = cand.get("rope_type")
+        intended["rope_factor"] = cand.get("rope_factor")
+        intended["rope_anchor_base"] = cand.get("rope_anchor_base")
         intended["context_length"] = ctx
+        # What the builder actually produced, recorded for the audit only.
+        intended["built_rope_scaling"] = json.dumps(getattr(hf_cfg, "rope_scaling", None))
+        intended["built_max_position_embeddings"] = hf_cfg.max_position_embeddings
         model = AutoModelForCausalLM.from_pretrained(
             model_name, config=hf_cfg,
             revision=cand.get("target_revision"),
@@ -331,7 +449,7 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
 
         text, new_ids = generate_after_prompt(model, tok, prompt_ids)
         (out_dir / f"gen_{name}.txt").write_text(text)
-        row.update(generation_metrics(text, new_ids, tok.eos_token_id))
+        row.update(generation_metrics(text, new_ids, eos_ids(tok)))
         row["status"] = "ok"
     except torch.cuda.OutOfMemoryError as e:
         row.update(status="oom", error=f"CUDA OOM: {str(e)[:120]}")
@@ -347,7 +465,7 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
 
 def verdict(row: dict, native_ppl: float) -> dict:
     """Apply the gate's pass rule, or the reason it could not be applied."""
-    out = {"native_ppl_at_128k": round(native_ppl, 4) if native_ppl else ""}
+    out = {"native_ppl_reference": round(native_ppl, 4) if native_ppl else ""}
     if row.get("status") != "ok":
         out.update(ppl_ratio="", gate_pass=False,
                    gate_reason=f"not measured ({row.get('status')})")
@@ -384,10 +502,31 @@ FIELDS = ["candidate", "target_model_name", "context_length", "seed",
           "effective_rope_match", "effective_rope_maxerr",
           "effective_rope_matches_intent", "native_window",
           "inv_freq_first", "inv_freq_last", "slowest_channel_stretch",
-          "prompt_tokens", "prompt_sha256", "ppl_continuation", "native_ppl_at_128k",
+          "prompt_tokens", "prompt_sha256", "ppl_continuation", "native_ppl_reference", "baseline_context",
           "ppl_ratio", "early_eos", "eos_at", "gen_chars", "gen_blank_share",
           "gen_alpha_share", "gen_repeat_share",
           "gate_pass", "gate_reason", "status", "error"]
+
+
+def load_candidates(spec):
+    """Accept a bare list, or a dict under any of the documented keys.
+
+    The gate used to require `{"coherence_gate": [...]}` and would raise
+    KeyError on anything else. The control and correction-evidence files use
+    `{"candidates": [...]}`, so S0 (the stage that must run first) would have
+    crashed on its own config rather than reporting a calibration failure. A
+    loader that silently accepts one shape and not the other is a trap.
+    """
+    if isinstance(spec, list):
+        return spec
+    for key in ("coherence_gate", "candidates", "controls"):
+        if key in spec:
+            return spec[key]
+    raise SystemExit(
+        f"candidate file has no candidate list; expected one of "
+        f"'coherence_gate', 'candidates', 'controls' or a bare JSON list, "
+        f"found keys {sorted(spec)}"
+    )
 
 
 def main() -> int:
@@ -400,7 +539,7 @@ def main() -> int:
     args = ap.parse_args()
 
     spec = json.loads(Path(args.candidates).read_text())
-    candidates = spec["coherence_gate"] if isinstance(spec, dict) else spec
+    candidates = load_candidates(spec)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     gen_dir = Path(args.gen_dir)
@@ -412,17 +551,51 @@ def main() -> int:
 
     rows = [run_candidate(c, tok, args.pg19_meta, gen_dir) for c in candidates]
 
-    native = next((r["ppl_continuation"] for r in rows
-                   if r.get("native_baseline") and r.get("ppl_continuation")), None)
-    if native is None:
-        # Fall back to the untouched-config candidate if not explicitly flagged.
-        native = next((r["ppl_continuation"] for r in rows
-                       if r.get("status") == "ok"
-                       and r.get("rope_type") in (None, "none", "llama3")
-                       and r.get("context_length", 0) <= 131072), None)
+    # The reference every candidate is judged against. It must be DECLARED, and
+    # it must be measured at the candidate's own context.
+    #
+    # The previous fallback took the first ok row with rope_type in
+    # (none, llama3) and context <= 131072. At S0 that selected P1_native_32k,
+    # so the 128k positive control was judged against the 32k perplexity and the
+    # column was still labelled `native_ppl_at_128k`. Since perplexity changes
+    # with context and the loader picks a different offset per context, the whole
+    # comparison was against the wrong measurement.
+    baseline_rows = [r for r in rows
+                     if r.get("native_baseline") and r.get("ppl_continuation")]
+    if not baseline_rows:
+        # Refuse rather than guess. Guessing here silently invalidates every
+        # ratio in the file.
+        raise SystemExit(
+            "no candidate is flagged native_baseline=true, so there is no "
+            "reference perplexity; refusing to compute ratios against a "
+            "baseline nobody declared. Add native_baseline: true to the "
+            "configuration that should serve as the reference."
+        )
+
+    def _baseline_for(r):
+        """The declared baseline at this candidate's context, if one exists."""
+        ctx = r.get("context_length")
+        same = [b for b in baseline_rows
+                if b.get("context_length") == ctx
+                and b.get("target_model_name") == r.get("target_model_name")]
+        if same:
+            return same[0]
+        # A different model or context is not the same reference. Report no
+        # baseline instead of substituting one, so the row's ratio is blank
+        # rather than wrong.
+        return None
 
     for r in rows:
-        r.update(verdict(r, native))
+        b = _baseline_for(r)
+        r["native_ppl_reference"] = b["ppl_continuation"] if b else ""
+        r["baseline_context"] = b["context_length"] if b else ""
+        if b is None:
+            r["gate_pass"] = False
+            r["gate_reason"] = ("no declared native baseline at this context and "
+                                "model; cannot compute a ratio against one")
+            r["status"] = r.get("status") or "no_baseline"
+        else:
+            r.update(verdict(r, b["ppl_continuation"]))
 
     with out_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)

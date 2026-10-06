@@ -477,6 +477,38 @@ def _rope_anchor_channel(rope_type: str) -> str:
     return "unused"
 
 
+def _round_commit_plan(budget: int, n_acc: int, gamma: int) -> tuple:
+    """How many tokens a verify round may commit, given the remaining budget.
+
+    Returns `(n_emit, committed, with_bonus, truncated)`:
+
+      n_emit      accepted draft tokens actually emitted
+      committed   total tokens emitted this round (n_emit + the bonus token)
+      with_bonus  whether there was room for the bonus/resampled token
+      truncated   the round was cut short by the budget
+
+    A round yields up to `n_acc + 1` tokens, so an uncapped final round
+    overshoots `max_new_tokens` by up to gamma. That makes the generated length
+    a function of how much the draft happened to be accepted, which breaks
+    three things at once: the `prompt + BOS + generated == context` identity,
+    the fixed-length contract the analysis plan pre-registers, and the
+    losslessness comparison (the target-only arm stops exactly on the cap, so
+    every speculative cell would look incomplete). Pure function so the
+    arithmetic is testable without a GPU — the engine itself requires CUDA.
+
+    `budget` is at least 1 whenever a round starts, because the loop condition
+    is `generated < max_new_tokens`.
+    """
+    if budget < 1:
+        raise ValueError(f"budget must be >= 1 to start a round; got {budget}")
+    if n_acc < 0 or n_acc > gamma:
+        raise ValueError(f"n_acc {n_acc} outside [0, {gamma}]")
+    n_emit = min(n_acc, budget)
+    with_bonus = budget > n_acc
+    committed = n_emit + (1 if with_bonus else 0)
+    return n_emit, committed, with_bonus, committed < (n_acc + 1)
+
+
 def _build_per_token_record(
     round_idx: int,
     global_pos_start: int,
@@ -1446,11 +1478,10 @@ class RASDInference:
                     per_token_trace if self._rank == 0 else None
                 )
             if cfg.save_generated_tokens and self._rank == 0:
-                # Raw generated token IDs for the losslessness check. Sliced by
-                # the LOCAL prompt width: under sequence-parallel sharding
-                # `input_ids` is this rank's shard while `generated` is the
-                # replicated output, so slicing by the global prompt length
-                # would cut the wrong place.
+                # Raw generated token IDs for the losslessness check. `input_ids`
+                # is the FULL prompt on every rank (only `local_ids` is sharded),
+                # so slicing past `input_ids.shape[1]` returns exactly the
+                # replicated `generated` list and nothing of the prompt.
                 metrics["generated_token_ids"] = generated_ids[
                     0, input_ids.shape[1]:].tolist()
             if mem_tracer is not None:
@@ -1599,17 +1630,38 @@ class RASDInference:
             # C13 per-position sidecar — cur_token sits at global_seqlen,
             # the k draft tokens span global_seqlen+1..global_seqlen+k.
             # n_rounds is still 0-indexed at this point (incremented next line).
+            # `max_new_tokens` is a CAP, and a round yields up to n_acc + 1
+            # tokens, so an untruncated final round would overshoot it. The
+            # generated length would then be a function of how much the draft
+            # happened to be accepted, not a fixed protocol: the
+            # prompt + BOS + generated == context identity would be false, the
+            # losslessness check (which compares a fixed-length generation
+            # against a target-only run that stops exactly on the cap) would
+            # report every speculative cell as incomplete, and throughput at
+            # 1.000x vs 1.004x of the cap would not be the same measurement
+            # across arms.
+            budget = cfg.max_new_tokens - sum(t.shape[1] for t in generated)
+            n_emit, committed, with_bonus, round_truncated = _round_commit_plan(
+                budget, n_acc, cfg.spec_steps)
+
             if cfg.log_per_token:
-                per_token_trace.append(_build_per_token_record(
+                rec = _build_per_token_record(
                     round_idx=n_rounds,
                     global_pos_start=global_seqlen,
                     spec_steps=cfg.spec_steps,
                     n_acc=n_acc,
                     draft_seq=draft_seq,
                     accepted=accepted,
-                ))
+                )
+                # What the TARGET verified (n_acc) and what was actually
+                # committed (n_emit) differ only in a truncated final round.
+                # Both are recorded so the acceptance mean can exclude that
+                # round instead of silently averaging a partial one.
+                rec["n_emitted"] = int(n_emit)
+                rec["round_truncated"] = bool(round_truncated)
+                per_token_trace.append(rec)
 
-            total_accepted   += n_acc
+            total_accepted   += n_emit
             total_draft_toks += cfg.spec_steps
             n_rounds         += 1
 
@@ -1627,10 +1679,10 @@ class RASDInference:
             # n_acc draft tokens and the bonus are committed; the rest must
             # be dropped so the next round's cur_token arrives at the correct
             # positional offset.
-            past_kv = _truncate_kv(post_verify_kv, prior_target_len + n_acc + 1)
+            past_kv = _truncate_kv(post_verify_kv, prior_target_len + committed)
 
             # Collect accepted tokens
-            for i in range(n_acc):
+            for i in range(n_emit):
                 generated.append(draft_seq[:, i:i+1])
 
             # --- Bonus token ---
@@ -1649,7 +1701,11 @@ class RASDInference:
                 resid = torch.clamp(t_probs_row - d_probs_row, min=0.0)
                 resid = resid / (resid.sum(-1, keepdim=True) + 1e-12)
                 cur_token = torch.multinomial(resid, num_samples=1)
-            generated.append(cur_token)
+            # Skipped only when the budget ran out mid-round; the sampled token
+            # is still produced so the truncation path leaves no half-updated
+            # state, it simply is not part of the generation.
+            if with_bonus:
+                generated.append(cur_token)
 
             # --- Draft KV fix-up ---
             # Draft loop absorbed prior_d + k positions [cur_token_prev,
@@ -1671,9 +1727,11 @@ class RASDInference:
                     draft_past_kv = catchup.past_key_values
 
             # Track global sequence length for next round's RoPE positions.
-            # The verify just committed (n_acc + 1) new tokens to the global
-            # context: n_acc accepted draft tokens + 1 bonus or resampled token.
-            global_seqlen += n_acc + 1
+            # The verify committed `committed` new tokens to the global
+            # context: the accepted prefix plus the bonus or resampled token.
+            # In a truncated final round that is fewer than n_acc + 1, which is
+            # exactly what keeps the total at the cap.
+            global_seqlen += committed
 
             # ---- C6 SAVE: periodic checkpoint of verify-loop state ----
             # Gated on cfg.checkpoint_every > 0 (default 0 = disabled).
@@ -1687,6 +1745,11 @@ class RASDInference:
             )
 
             _nvtx_pop()  # close verify_round_NNN NVTX range
+
+            # The cap is reached. `with_bonus` false means this round was cut
+            # short by the budget, so there is nothing left to generate.
+            if not with_bonus:
+                break
 
             # Early stop on EOS (suppressed when B3 ignore_eos is set)
             if (not cfg.ignore_eos) and (cur_token == self.tokenizer.eos_token_id).all():
@@ -1733,8 +1796,9 @@ class RASDInference:
                 per_token_trace if self._rank == 0 else None
             )
         if cfg.save_generated_tokens and self._rank == 0:
-            # Raw generated token IDs for the losslessness check. Sliced by the
-            # LOCAL prompt width (see the target-only path for why).
+            # Raw generated token IDs for the losslessness check. `input_ids` is
+            # the FULL prompt on every rank (only `local_ids` is sharded), so
+            # this slice returns exactly `generated` (see the target-only path).
             metrics["generated_token_ids"] = generated_ids[
                 0, input_ids.shape[1]:].tolist()
 

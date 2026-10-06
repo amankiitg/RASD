@@ -63,7 +63,9 @@ def eligible(books: list[dict], max_rung: int, need_docs: int) -> list[dict]:
     exactly C. Taking the longest first means the selected set also has the
     most headroom at the top rung.
     """
-    need = max_rung
+    # A book must cover the rung plus a generation, so that after the
+    # source-length adjustment there is still a full continuation left.
+    need = max_rung + GEN
     ok = [b for b in books if b["tokens"] >= need]
     ok.sort(key=lambda b: -b["tokens"])
     if len(ok) < need_docs:
@@ -93,10 +95,17 @@ def build(lengths_path: Path, out_dir: Path, rungs: list[int], n_docs: int,
     else:
         raise ValueError(f"unknown selection {selection!r}")
     want = {b["index"]: b for b in chosen}
-    # Memmaps carry up to GEN tokens of tail headroom beyond the largest rung.
-    # Nothing scores that tail; it exists so that a later change to the
-    # generation length does not invalidate an already-built pool.
-    max_len = max_rung + GEN
+    # Memmaps carry a full generation of tail headroom beyond the largest rung.
+    #
+    # This is not slack. The engine re-tokenises the prompt STRING, and for some
+    # books the source slice must be LONGER than the prompt it produces (measured
+    # drift on this pool: up to ~1100 tokens at the 512k rung, from tokens that
+    # decode to text re-encoding to more tokens than they came from). The
+    # continuation is then taken after that longer source slice, so a pool capped
+    # at exactly `max_rung + GEN` leaves too little room and the last rung fails
+    # with a short continuation. The cap is therefore `max_rung + 2 * GEN`, and a
+    # book must supply at least `max_rung + GEN` to be eligible.
+    max_len = max_rung + 2 * GEN
     print(f"selected {len(chosen)} books (>= {max_len:,} tokens), longest "
           f"{chosen[0]['tokens']:,}, shortest {chosen[-1]['tokens']:,}")
 

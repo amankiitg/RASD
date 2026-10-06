@@ -66,7 +66,7 @@ def check(csv_path: Path, controls_path: Path) -> tuple[list[str], dict]:
             )
             continue
         got = "pass" if str(r.get("gate_pass")) == "True" else "fail"
-        ppl = r.get("continuation_ppl", "")
+        ppl = r.get("ppl_continuation", "")
         reason = r.get("gate_reason", "")
         entry = {"name": name, "want": want, "got": got, "ppl": ppl,
                  "reason": reason}

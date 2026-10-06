@@ -52,19 +52,20 @@ class TestPerTokenRecord:
         """Source-inspect the integration: the flag must be set on the trace
         record inside the same branch that breaks the verify loop, and the
         break must stay gated on `not cfg.ignore_eos` (B3)."""
-        m = re.search(
-            r"if \(not cfg\.ignore_eos\) and \(cur_token == self\.tokenizer\.eos_token_id\)\.all\(\):"
-            r"\n(.*?)\n\s*break",
-            RASD_INF_SRC, re.S,
+        from tests.source_guard_utils import (
+            assignment_precedes_break, call_gated_by,
         )
-        assert m, "C13/EOS regression: EOS break branch not found in generate()"
-        body = m.group(1)
-        assert 'per_token_trace[-1]["ended_on_eos"] = True' in body, (
-            "ended_on_eos must be flipped on the terminating round before break"
-        )
-        assert "cfg.log_per_token" in body, (
-            "the flip must be gated on log_per_token so non-traced runs are "
-            "byte-identical to before"
+        # Ordering is the property: the flag is flipped on the terminating round
+        # and THEN the loop breaks. Asserting that by adjacency to a regex-captured
+        # `break` broke as soon as an unrelated statement was inserted between
+        # them, which reported a regression that had not happened.
+        assert assignment_precedes_break(
+            RASD_INF_SRC, 'per_token_trace[-1]["ended_on_eos"] = True',
+            guard_fragment="cfg.log_per_token",
+        ), (
+            "ended_on_eos must be flipped on the terminating round before break, "
+            "and the flip must be gated on cfg.log_per_token so non-traced runs "
+            "stay byte-identical"
         )
 
     def test_ignore_eos_suppresses_the_flag(self):
@@ -189,23 +190,16 @@ class TestPerTokenTraceIntegration:
     def test_trace_append_inside_log_guard(self):
         """The append into per_token_trace must be inside `if cfg.log_per_token`
         otherwise a small allocation runs every round at no benefit."""
-        lines = RASD_INF_SRC.splitlines()
-        append_idx = next(
-            (i for i, ln in enumerate(lines)
-             if "per_token_trace.append(" in ln),
-            None,
-        )
-        assert append_idx is not None, (
+        from tests.source_guard_utils import call_gated_by
+        assert "per_token_trace.append(" in RASD_INF_SRC, (
             "C13 regression: per_token_trace.append( … ) not present — "
             "trace not being recorded inside the verify loop"
         )
-        # Walk backwards up to 8 lines for the cfg.log_per_token guard
-        found = False
-        for i in range(append_idx - 1, max(0, append_idx - 8), -1):
-            if re.match(r"\s*if cfg\.log_per_token:", lines[i]):
-                found = True
-                break
-        assert found, (
+        # Structural, not a fixed backwards window: an insertion between the
+        # guard and the call is not a regression, an unguarded call is.
+        assert call_gated_by(
+            RASD_INF_SRC, "per_token_trace.append(", "cfg.log_per_token"
+        ), (
             "C13 regression: per_token_trace.append is not gated by "
             "`if cfg.log_per_token:` — adds allocation cost when disabled"
         )

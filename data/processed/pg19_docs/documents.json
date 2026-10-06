@@ -8,7 +8,9 @@
     262144,
     524288
   ],
-  "selection": "longest: 10 books with >= 524,288 tokens required (prompt + continuation = context)",
+  "selection": "longest: 10 books from 14 eligible (>= 524,288 tokens required, prompt + continuation = context)",
+  "selection_mode": "longest",
+  "selection_seed": null,
   "documents": [
     {
       "doc_id": "pg19_train_0",
@@ -17,7 +19,7 @@
       "title": "The Bible Both Testaments King James Version",
       "url": "http://www.gutenberg.org/ebooks/10",
       "file": "data/processed/pg19_docs/doc_000.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 1152439
     },
     {
@@ -27,7 +29,7 @@
       "title": "The Complete Works of William Shakespeare",
       "url": "http://www.gutenberg.org/ebooks/100",
       "file": "data/processed/pg19_docs/doc_001.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 1469935
     },
     {
@@ -37,7 +39,7 @@
       "title": "The Book of Household Management by Mrs. Isabella Beeton",
       "url": "http://www.gutenberg.org/ebooks/10136",
       "file": "data/processed/pg19_docs/doc_002.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 800945
     },
     {
@@ -47,7 +49,7 @@
       "title": "The Anatomy of Melancholy by Democritus Junior",
       "url": "http://www.gutenberg.org/ebooks/10800",
       "file": "data/processed/pg19_docs/doc_003.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 968232
     },
     {
@@ -57,7 +59,7 @@
       "title": "The Anti-Slavery Examiner Omnibus by American Anti-Slavery Society",
       "url": "http://www.gutenberg.org/ebooks/11275",
       "file": "data/processed/pg19_docs/doc_004.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 1392970
     },
     {
@@ -67,7 +69,7 @@
       "title": "Les Miserables by Victor Hugo",
       "url": "http://www.gutenberg.org/ebooks/135",
       "file": "data/processed/pg19_docs/doc_005.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 801623
     },
     {
@@ -77,7 +79,7 @@
       "title": "The Holy Bible Douay-Rheims Version Both Testaments by Anonymous",
       "url": "http://www.gutenberg.org/ebooks/1581",
       "file": "data/processed/pg19_docs/doc_006.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 1555412
     },
     {
@@ -87,7 +89,7 @@
       "title": "Mother's Remedies by T. J. Ritter",
       "url": "http://www.gutenberg.org/ebooks/17439",
       "file": "data/processed/pg19_docs/doc_007.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 682007
     },
     {
@@ -97,7 +99,7 @@
       "title": "The History of England in Three Volumes Vol.II by Tobias Smollett",
       "url": "http://www.gutenberg.org/ebooks/19217",
       "file": "data/processed/pg19_docs/doc_008.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 1098080
     },
     {
@@ -107,7 +109,7 @@
       "title": "The Complete Shakespeare's First Folio [35 Plays]",
       "url": "http://www.gutenberg.org/ebooks/2270",
       "file": "data/processed/pg19_docs/doc_009.dat",
-      "length": 525312,
+      "length": 526336,
       "book_tokens": 1327934
     }
   ],

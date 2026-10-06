@@ -34,7 +34,8 @@ defaults:
   quantize_target: true
   draft_window_cap: 4096
   max_new_tokens: 128
-  ignore_eos: false      # B3: exactly 128 tokens, EOS not honoured
+  ignore_eos: false      # B3 revised: EOS IS honoured; max_new_tokens is a cap. Forced post-EOS rounds
+                          # would inflate the collapse in the OOD rungs.
   temperature: 1.0
   top_p: 1.0
   seeds:

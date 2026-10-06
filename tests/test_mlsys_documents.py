@@ -27,15 +27,18 @@ class _StubTok:
 def test_document_selection_and_prompt_windows(tmp_path: Path):
     # Selection: only books that can serve the top rung, longest first, and the
     # rule is the plan's (10 longest) so it is reproducible without an RNG.
+    # A book must cover the rung PLUS one generation: the engine re-tokenises
+    # the prompt string, so the source slice can be longer than the prompt it
+    # produces and the continuation must still fit after it.
     books = [{"index": i, "tokens": t} for i, t in
-             enumerate([1000, 60000, 524288, 700000, 900000, 524289])]
+             enumerate([1000, 60000, 525312, 700000, 900000, 525313, 530000])]
     # `eligible` is the sorted pool; the plan's "10 longest" rule is the
     # caller's slice, so the pool is asserted and then sliced here.
     pool = eligible(books, max_rung=524288, need_docs=3)
-    assert [b["tokens"] for b in pool] == [900000, 700000, 524289, 524288]
-    assert [b["tokens"] for b in pool[:3]] == [900000, 700000, 524289]
+    assert [b["tokens"] for b in pool] == [900000, 700000, 530000, 525313, 525312]
+    assert [b["tokens"] for b in pool[:3]] == [900000, 700000, 530000]
     with pytest.raises(RuntimeError, match="not feasible"):
-        eligible(books, max_rung=524288, need_docs=5)
+        eligible(books, max_rung=524288, need_docs=6)
 
     # A document is one memmap, so the prompt and the scored continuation are
     # contiguous slices of one book and the sequence is exactly the rung.
