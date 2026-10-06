@@ -23,7 +23,9 @@
 # Env:
 #   MLSYS_HOURS          hours from now if no explicit deadline (default 18)
 #   MLSYS_INSTANCE_TYPE  default gpu_8x_a100_80gb_sxm4
-#   MLSYS_MAX_COST_USD   default 400
+#   MLSYS_ASK_OVER_USD   per-stage approval threshold (default 300)
+#   MLSYS_APPROVED_STAGES  comma list of stage ids approved to run
+#                        while projected above that threshold
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -33,7 +35,7 @@ LOG=$SESSION_DIR/watcher.log
 FOUND=$SESSION_DIR/CAPACITY_FOUND
 
 INSTANCE_TYPE=${MLSYS_INSTANCE_TYPE:-gpu_8x_a100_80gb_sxm4}
-MAX_COST_USD=${MLSYS_MAX_COST_USD:-400}
+ASK_OVER=${MLSYS_ASK_OVER_USD:-300}
 RATE=22.32
 SSH_KEY=$HOME/.ssh/id_ed25519
 SSH_USER=ubuntu
@@ -62,7 +64,8 @@ if [ -n "${MLSYS_DEADLINE_EPOCH:-}" ]; then
 else
   DEADLINE=$(( $(date -u +%s) + ${MLSYS_HOURS:-18} * 3600 ))
 fi
-say "target=$INSTANCE_TYPE  ceiling=\$$MAX_COST_USD @ \$$RATE/hr"
+say "target=$INSTANCE_TYPE  per-stage approval threshold=\$$ASK_OVER @ \$$RATE/hr"
+say "approved stages: ${MLSYS_APPROVED_STAGES:-<none>}"
 say "absolute deadline epoch=$DEADLINE ($(date -u -r "$DEADLINE" +%FT%TZ 2>/dev/null || date -u +%FT%TZ -d "@$DEADLINE"))"
 
 # --------------------------------------------------------------------------
@@ -145,20 +148,24 @@ rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   --exclude '.venv*' --exclude '__pycache__' \
   "$REPO/" "$SSH_USER@$IP:~/RASD/" >>"$LOG" 2>&1 && say "  repo staged"
 
-# The metadata names relative paths under data/processed/pg19_llama3/; the
-# chunk files must travel with it or the stage dies exactly like
-# pg19_short_target did. Verify AFTER the copy, from the run directory.
-for d in data/processed/pg19_llama3 data/processed/pg19; do
+# The metadata names relative paths; the memmap files must travel with it or the
+# stage dies exactly like pg19_short_target did. Verify AFTER the copy, from the
+# run directory, for both metadata shapes (per-book `documents` and the older
+# concatenated `chunks`). pg19_docs is the primary pool; pg19_docs_diverse backs
+# the diverse-pool arm; the two older dirs still back legacy cells.
+for d in data/processed/pg19_docs data/processed/pg19_docs_diverse \
+         data/processed/pg19_llama3 data/processed/pg19; do
   [ -d "$d" ] || continue
   rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
     "$d/" "$SSH_USER@$IP:~/RASD/$d/" >>"$LOG" 2>&1
   ssh $SSH_OPTS "$SSH_USER@$IP" "cd ~/RASD && python3 -c \"
 import json,pathlib,sys
-m=json.load(open('$d/pg19_validation_metadata.json'))
-missing=[c['file'] for c in m['chunks'] if not pathlib.Path(c['file']).exists()]
-print('  $d: %d chunks, %d unresolved' % (len(m['chunks']), len(missing)))
+m=json.load(open('$d/documents.json')) if pathlib.Path('$d/documents.json').exists() else json.load(open('$d/pg19_validation_metadata.json'))
+items=m.get('documents') or m.get('chunks') or []
+missing=[c['file'] for c in items if not pathlib.Path(c['file']).exists()]
+print('  $d: %d files, %d unresolved' % (len(items), len(missing)))
 sys.exit(1 if missing else 0)\"" >>"$LOG" 2>&1 \
-    && say "  $d verified" || say "  WARNING: $d has unresolved chunk paths"
+    && say "  $d verified" || say "  WARNING: $d has unresolved paths"
 done
 
 # --------------------------------------------------------------------------
@@ -166,7 +173,9 @@ done
 # --------------------------------------------------------------------------
 say "starting the manifest"
 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "cd ~/RASD && MLSYS_MAX_COST_USD=$MAX_COST_USD NODE_RATE_PER_HOUR=$RATE \
+  "cd ~/RASD && NODE_RATE_PER_HOUR=$RATE \
+   MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \
+   MLSYS_APPROVED_STAGES='${MLSYS_APPROVED_STAGES:-}' \
    nohup bash scripts/mlsys_manifest.sh > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
 
 while true; do

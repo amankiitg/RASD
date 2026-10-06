@@ -8,7 +8,7 @@
     262144,
     524288
   ],
-  "selection": "10 longest books with >= 525,312 tokens (required: context + 1024)",
+  "selection": "longest: 10 books with >= 524,288 tokens required (prompt + continuation = context)",
   "documents": [
     {
       "doc_id": "pg19_train_0",

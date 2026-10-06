@@ -171,7 +171,9 @@ def build(lengths_path: Path, out_dir: Path, rungs: list[int], n_docs: int,
         "rungs": sorted(rungs),
         "selection": (
             f"{selection}: {len(docs)} books from {len(pool)} eligible "
-            f"(>= {max_rung:,} tokens)" + (f", seed {seed}" if selection == "spread" else "")
+            f"(>= {max_rung:,} tokens required, prompt + continuation = "
+            f"context)"
+            + (f", seed {seed}" if selection == "spread" else "")
         ),
         "selection_mode": selection,
         "selection_seed": seed if selection == "spread" else None,
