@@ -200,6 +200,39 @@ def write_generated_tokens_sidecar(
     return path
 
 
+def _exact_token_prompt(tokenizer, ids: list[int], want_len: int,
+                        tries: int = 8):
+    """Decode-then-re-encode until the engine sees exactly `want_len` tokens.
+
+    The engine takes a prompt *string* and re-tokenises it, so the ids that
+    reach the model are `encode(decode(ids[:k]))`, which is not always `ids[:k]`.
+    SentencePiece tokenizers (Llama-2) drop or normalise whitespace, so the
+    count can move by tens of tokens; byte-level BPE (Llama-3.1) is stable
+    because it round-trips bytes exactly.
+
+    A drift here is not cosmetic: the prompt plus the generation plus the
+    engine's leading BOS is supposed to be exactly the rung context, so a prompt
+    that comes back longer puts the sequence past the rung and, at native 128k,
+    past the window the rung is supposed to sit inside. It would also shift the
+    continuation relative to the prompt and break the losslessness pairing.
+
+    Feed the engine's own tokenisation back in until it stops moving, then require
+    exactness. Failing loudly is the point: running at a context we did not
+    measure is worse than not running.
+    """
+    cur = list(ids[:want_len])
+    for _ in range(tries):
+        text = tokenizer.decode(cur)
+        got = tokenizer.encode(text, add_special_tokens=False)
+        if len(got) == want_len:
+            return text, got
+        cur = got[:want_len]
+    raise RuntimeError(
+        f"prompt did not stabilise at {want_len} tokens after {tries} tries "
+        f"(ended at {len(got)}); the engine would run at the wrong context"
+    )
+
+
 def _build_pg19_document_prompt(documents_json: str, context_length: int,
                                 doc_id: str, tokenizer, gen_tokens: int = 1024):
     """Build one rung's prompt from a single PG-19 book.
@@ -245,10 +278,9 @@ def _build_pg19_document_prompt(documents_json: str, context_length: int,
             f"{gen_tokens})"
         )
     arr = np.memmap(d["file"], dtype="int32", mode="r")
-    pids = arr[:prompt_len].astype(int).tolist()
+    text, got = _exact_token_prompt(tokenizer, arr[:prompt_len].astype(int).tolist(),
+                                    prompt_len)
     cont = arr[prompt_len:prompt_len + gen_tokens].astype(int).tolist()
-    text = tokenizer.decode(pids)
-    got = tokenizer.encode(text, add_special_tokens=False)
     provenance = {
         "doc_id": doc_id,
         "doc_title": d.get("title"),
@@ -258,16 +290,13 @@ def _build_pg19_document_prompt(documents_json: str, context_length: int,
             ",".join(map(str, got)).encode()).hexdigest(),
         "continuation_sha256": hashlib.sha256(
             ",".join(map(str, cont)).encode()).hexdigest(),
+        # Sequence the engine will actually build: prompt + BOS + generation.
+        "sequence_tokens": len(got) + 1 + gen_tokens,
     }
-    if len(got) != prompt_len:
-        # The engine takes a prompt STRING and re-tokenises it, so the tokens
-        # that reach the model are `got`, not the `prompt_len` we sliced. A
-        # silent difference would put the continuation at the wrong offset and
-        # make the losslessness pairing unsound.
-        log.warning(
-            "document prompt round-trip %s: requested %d tokens, engine will "
-            "see %d (delta %+d)", doc_id, prompt_len, len(got),
-            len(got) - prompt_len,
+    if len(got) + 1 + gen_tokens > context_length:
+        raise RuntimeError(
+            f"{doc_id}: sequence {len(got)} + 1 BOS + {gen_tokens} exceeds the "
+            f"rung context {context_length}"
         )
     return text, cont, provenance
 

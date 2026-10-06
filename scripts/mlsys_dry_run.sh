@@ -16,6 +16,14 @@
 #   5  the (f) filename-collision guard
 #   6  the acceptance reporting with cluster-bootstrap intervals
 #   7  a staged pull with checksum verification
+#   8  documents: one book per document, contiguous prompt windows, and the
+#      per-document run expansion
+#   9  losslessness: a token-level match is LOSSLESS, a divergence is a
+#      MISMATCH with its first position, and a mismatched request is refused
+#  10  target quality: sharded NLL tiles the sequence once and equals the
+#      unsharded total
+#  11  document-level intervals and the payoff verdict (which must NOT round an
+#      interval that contains 1.0 toward the favourable side)
 #
 # Exits non-zero on the first failed assertion. No network, no GPU required.
 
@@ -299,6 +307,253 @@ sys.exit(1 if missing or bad else 0)
 PYEOF
 [ $? -eq 0 ] && ok "pull reproduced every file byte-for-byte" \
              || bad "pull verification found missing or divergent files"
+
+# --------------------------------------------------------------------------
+step "8  documents: one book per document, windows, run expansion"
+# --------------------------------------------------------------------------
+(cd "$WORK" && PYTHONPATH="$REPO" $PY - <<'PYEOF'
+import json, sys, pathlib, numpy as np
+from run_experiment import _build_pg19_document_prompt, _exact_token_prompt
+
+ctx, gen = 2048, 1024            # > CONTINUATION_TOKENS so a prompt fits
+docs_dir = pathlib.Path("data/processed/pg19_docs"); docs_dir.mkdir(parents=True, exist_ok=True)
+entries = []
+for slot in range(3):
+    ids = list(range(1000 + slot * 4096, 1000 + slot * 4096 + ctx + 64))
+    p = docs_dir / f"doc_{slot:03d}.dat"
+    arr = np.asarray(ids, dtype=np.int32)
+    mm = np.memmap(p, dtype="int32", mode="w+", shape=arr.shape); mm[:] = arr[:]; mm.flush()
+    entries.append({"doc_id": f"pg19_train_{slot}", "slot": slot, "file": str(p),
+                    "length": len(ids)})
+(docs_dir / "documents.json").write_text(json.dumps({"documents": entries}))
+
+
+class StableTok:
+    """Round-trips exactly, like Llama-3.1's byte-level BPE."""
+    def decode(self, ids): return " ".join(f"t{i}" for i in ids)
+    def encode(self, text, add_special_tokens=False):
+        return [int(t[1:]) for t in text.split()]
+
+
+class DriftTok:
+    """Never stabilises: encode returns one token more than it was given."""
+    def decode(self, ids): return " ".join(f"t{i}" for i in ids)
+    def encode(self, text, add_special_tokens=False):
+        return [int(t[1:]) for t in text.split()] + [0]
+
+
+tok = StableTok()
+hashes = set()
+for e in entries:
+    text, cont, prov = _build_pg19_document_prompt(
+        str(docs_dir / "documents.json"), ctx, e["doc_id"], tok, gen_tokens=gen)
+    ids = list(range(1000 + e["slot"] * 4096, 1000 + e["slot"] * 4096 + ctx + 64))
+    # The continuation must be contiguous with the prompt, and the sequence the
+    # engine builds (prompt + leading BOS + generation) must fit the rung.
+    assert len(cont) == gen, (len(cont), gen)
+    assert prov["prompt_tokens"] == ctx - gen - 1, prov["prompt_tokens"]
+    assert prov["sequence_tokens"] == ctx, prov["sequence_tokens"]
+    assert cont[0] == ids[prov["prompt_tokens"]], "continuation not contiguous"
+    hashes.add(prov["prompt_sha256"])
+print(f"  documents: {len(entries)}  unique prompt hashes: {len(hashes)}/{len(entries)}")
+print(f"  prompt={prov['prompt_tokens']} + 1 BOS + gen={gen} = {prov['sequence_tokens']} == ctx={ctx}")
+
+# A tokenizer whose decode->encode is not length-preserving must NOT be allowed
+# to run: the sequence would silently be a different context than the rung.
+try:
+    _exact_token_prompt(DriftTok(), list(range(100)), 100)
+except RuntimeError as exc:
+    print(f"  non-stabilising tokenizer refused: {str(exc)[:64]}...")
+else:
+    print("  ERROR: a drifting tokenizer was accepted")
+    sys.exit(1)
+
+sys.exit(0 if len(hashes) == len(entries) else 1)
+PYEOF
+)
+[ $? -eq 0 ] && ok "document windows contiguous, rung exact, drift refused" \
+             || bad "document prompt windows were wrong"
+
+cat > "$WORK/docs.yml" <<'YAMLEOF'
+defaults:
+  target_model_name: hf-internal-testing/tiny-random-LlamaForCausalLM
+  draft_model_name: hf-internal-testing/tiny-random-LlamaForCausalLM
+  spec_steps: 2
+  kv_block_size: 64
+  prefetch_depth: 1
+  max_new_tokens: 8
+  ignore_eos: true
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+  seeds: [42]
+DOCS:
+  name: docs
+  factor: context_length
+  levels:
+  - id: DOC_ctx2048
+    context_length: 2048
+    documents: [pg19_train_0, pg19_train_1]
+YAMLEOF
+(cd "$WORK" && PYTHONPATH="$REPO" $PY "$REPO/run_experiment.py" --config "$WORK/docs.yml" \
+    --groups DOCS --seeds 42 --dry-run > "$WORK/docs_dryrun.log" 2>&1)
+if [ $? -eq 0 ]; then
+  grep -q "pg19_train_0" "$WORK/docs_dryrun.log" && grep -q "pg19_train_1" "$WORK/docs_dryrun.log" \
+    && ok "document expansion produced one planned run per document" \
+    || bad "document expansion did not name both documents"
+else bad "run_experiment rejected the document config"; tail -5 "$WORK/docs_dryrun.log"; fi
+
+# --------------------------------------------------------------------------
+step "9  losslessness: token-level agreement, and a mismatch is caught"
+# --------------------------------------------------------------------------
+$PY - "$WORK" <<'PYEOF'
+import csv, json, pathlib, sys
+work = pathlib.Path(sys.argv[1])
+tw = work / "lossless" / "tokens"; tw.mkdir(parents=True, exist_ok=True)
+# Two documents x (spec, target-only). Doc 0 agrees; doc 1 diverges at token 3.
+rows, toks = [], {}
+for doc in ("d0", "d1"):
+    good = [11, 12, 13, 14, 15]
+    spec = good if doc == "d0" else [11, 12, 13, 99, 15]
+    for arm, ss, ids in (("spec", 4, spec), ("tgt", 0, good)):
+        rid = f"{doc}_{arm}"
+        toks[rid] = ids
+        rows.append({"run_id": rid, "doc_id": doc, "context_length": 2048,
+                     "max_new_tokens": 5, "spec_steps": ss, "status": "ok",
+                     "prompt_sha256": "h" + doc, "prompt_tokens": 1024,
+                     "acceptance_rate": 0.9, "throughput_tps": 10.0})
+        (tw / f"{rid}.json").write_text(json.dumps(
+            {"run_id": rid, "generated_token_ids": ids,
+             "doc_id": doc, "prompt_sha256": "h" + doc,
+             "context_length": 2048, "max_new_tokens": 5}))
+with (work / "lossless.csv").open("w", newline="") as fh:
+    w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+PYEOF
+$PY scripts/mlsys_losslessness.py --results "$WORK/lossless.csv" \
+    --tokens-dir "$WORK/lossless/tokens" --out "$WORK/losslessness.csv" \
+    > "$WORK/lossless.log" 2>&1
+grep -q "d0.*LOSSLESS\|LOSSLESS.*d0_spec" "$WORK/lossless.log" \
+  && ok "agreeing spec/target pair reported LOSSLESS" \
+  || { bad "agreeing pair was not reported lossless"; sed -n '1,6p' "$WORK/lossless.log"; }
+$PY - "$WORK" <<'PYEOF'
+import csv, pathlib, sys
+work = pathlib.Path(sys.argv[1])
+rows = {r["spec_run_id"]: r for r in csv.DictReader((work / "losslessness.csv").open())}
+d1 = rows["d1_spec"]
+ok = d1["verdict"] == "MISMATCH" and d1["first_mismatch_position"] == "3"
+print(f"  d1_spec verdict={d1['verdict']} first_mismatch_position={d1['first_mismatch_position']}")
+sys.exit(0 if ok else 1)
+PYEOF
+[ $? -eq 0 ] && ok "diverging pair reported MISMATCH with the first mismatch position" \
+             || bad "divergence was not reported with its position"
+# A pair whose requests disagree must be refused, not ticked green. Two ways to
+# disagree: a field inside the pair key (no pair is found at all) and a field
+# outside it (the pair is found but rejected). Both must refuse.
+$PY - "$WORK" <<'PYEOF'
+import csv, pathlib, sys
+work = pathlib.Path(sys.argv[1])
+p = work / "lossless.csv"
+rows = list(csv.DictReader(p.open()))
+for r in rows:
+    if r["run_id"] == "d0_tgt":
+        r["prompt_tokens"] = "9999"      # outside the pair key -> BAD_PAIR
+    if r["run_id"] == "d1_tgt":
+        r["prompt_sha256"] = "DIFFERENT"  # inside the pair key -> NO_PAIR
+with p.open("w", newline="") as fh:
+    w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+PYEOF
+$PY scripts/mlsys_losslessness.py --results "$WORK/lossless.csv" \
+    --tokens-dir "$WORK/lossless/tokens" --out "$WORK/losslessness2.csv" \
+    > "$WORK/lossless2.log" 2>&1
+$PY - "$WORK" <<'PYEOF'
+import csv, pathlib, sys
+rows = {r["spec_run_id"]: r for r in
+        csv.DictReader((pathlib.Path(sys.argv[1]) / "losslessness2.csv").open())}
+a, b = rows["d0_spec"], rows["d1_spec"]
+print(f"  d0_spec verdict={a['verdict']}  d1_spec verdict={b['verdict']}")
+sys.exit(0 if a["verdict"] == "BAD_PAIR" and b["verdict"] == "NO_PAIR" else 1)
+PYEOF
+[ $? -eq 0 ] && ok "a mismatched request was refused, not ticked" \
+             || bad "mismatched request was compared anyway"
+
+# --------------------------------------------------------------------------
+step "10  target quality: sharded perplexity equals unsharded"
+# --------------------------------------------------------------------------
+(cd "$WORK" && PYTHONPATH="$REPO" $PY - <<'PYEOF'
+import sys, torch
+from src.analysis.target_quality import continuation_nll, perplexity_from_sums
+
+D, V, L, SCORE_FROM = 8, 16, 64, 40
+torch.manual_seed(0)
+emb = torch.nn.Embedding(V, D)
+head = torch.nn.Linear(D, V, bias=False)
+
+class Inner(torch.nn.Module):
+    # Hidden at a position depends only on that token, so the sharded and
+    # unsharded paths must produce the SAME total NLL. A mismatch would mean
+    # the shard bounds lose or double-count positions, not that the model
+    # quality differs.
+    def forward(self, input_ids, position_ids=None, use_cache=False,
+                past_key_values=None):
+        return type("O", (), {"last_hidden_state": emb(input_ids)})()
+
+class Mini(torch.nn.Module):
+    def __init__(self):
+        super().__init__(); self.model = Inner(); self.lm_head = head
+
+m = Mini()
+ids = torch.tensor([[i % V for i in range(L)]], dtype=torch.long)
+
+t1, n1, _ = continuation_nll(m, ids, SCORE_FROM,
+                             forward=lambda li, ap: m.model(input_ids=li,
+                                                           position_ids=ap).last_hidden_state,
+                             rank=0, world_size=1)
+tot, cnt = 0.0, 0
+for r in range(4):
+    t, n, _ = continuation_nll(m, ids, SCORE_FROM,
+                               forward=lambda li, ap: m.model(input_ids=li,
+                                                             position_ids=ap).last_hidden_state,
+                               rank=r, world_size=4)
+    tot += t; cnt += n
+print(f"  unsharded nll={t1:.6f} n={n1}   sharded nll={tot:.6f} n={cnt}")
+# The COUNT must match exactly -- that is the tiling property. The sums are
+# allowed to differ in the last bits because four shards accumulate their
+# cross-entropy in a different order than one does.
+assert n1 == cnt == L - SCORE_FROM, (n1, cnt, L - SCORE_FROM)
+assert abs(t1 - tot) <= 1e-5 * max(1.0, abs(t1)), (t1, tot)
+print(f"  ppl={perplexity_from_sums(t1, n1):.6f} over {n1} scored tokens")
+sys.exit(0)
+PYEOF
+)
+[ $? -eq 0 ] && ok "sharded NLL tiles the sequence exactly once and matches unsharded" \
+             || bad "sharded target-quality NLL disagrees with unsharded"
+
+# --------------------------------------------------------------------------
+step "11  document-level intervals and the payoff verdict"
+# --------------------------------------------------------------------------
+$PY scripts/mlsys_document_bootstrap.py --results "$WORK/lossless.csv" \
+    --group-by context_length --out "$WORK/doc_intervals.csv" \
+    > "$WORK/doc_boot.log" 2>&1
+if [ $? -eq 0 ]; then
+  $PY - "$WORK" <<'PYEOF'
+import csv, pathlib, sys
+rows = list(csv.DictReader((pathlib.Path(sys.argv[1]) / "doc_intervals.csv").open()))
+sp = [r for r in rows if r["estimate"] == "paired_speedup"]
+assert sp, "no paired speedup row produced"
+r = sp[0]
+print(f"  paired speedup point={r['point']} ci=[{r['ci_lo']}, {r['ci_hi']}] "
+      f"n={r['n_documents']} verdict={r['verdict']}")
+# The spec arm is 1.0x the target arm here, so the interval must contain 1.0
+# and the verdict must be inconclusive rather than rounded to the favourable
+# side.
+assert abs(float(r["point"]) - 1.0) < 1e-9, r["point"]
+assert r["verdict"] == "inconclusive", r["verdict"]
+for m in rows:
+    assert m["ci_lo"] and m["ci_hi"] and m["n_documents"], m
+sys.exit(0)
+PYEOF
+  [ $? -eq 0 ] && ok "intervals computed per document and the verdict did not round" \
+               || bad "interval output was wrong"
+else bad "document bootstrap script failed"; tail -5 "$WORK/doc_boot.log"; fi
 
 # --------------------------------------------------------------------------
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
