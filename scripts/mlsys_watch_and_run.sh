@@ -301,7 +301,7 @@ ssh $SSH_OPTS "$SSH_USER@$IP" \
   "cd ~/RASD && NODE_RATE_PER_HOUR=$RATE \
    MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \
    MLSYS_MAX_HOURS=${MLSYS_MAX_HOURS:-20} \
-   MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-700} \
+   MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-850} \
    MLSYS_ONLY_STAGES='${ONLY_STR}' \
    MLSYS_APPROVED_STAGES='${ONLY_STR}' \
    nohup bash scripts/mlsys_manifest.sh > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1

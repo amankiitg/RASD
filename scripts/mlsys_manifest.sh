@@ -68,7 +68,7 @@ ONLY_EXPLICIT=0
 
 # Aggregate ceiling for this session. The per-stage guard bounds one stage; this
 # bounds the session, which is the number the operator actually agreed to.
-MAX_COST=${MLSYS_MAX_COST_USD:-700}
+MAX_COST=${MLSYS_MAX_COST_USD:-850}
 mkdir -p "$OUT"
 [ -f "$COST_LOG" ] || echo "stage,wall_seconds,nproc,gpu_hours,node_cost_usd" > "$COST_LOG"
 
@@ -551,11 +551,16 @@ for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
 done
 
 # ---- S6b: rope_intervention_128k ----------------------------------------
-# Pre-registered as C6 in the plan revision. Context held at 128k; ONLY the
-# target's rope moves. The intervention arm must clear the gate at 128k first,
-# and a gate failure IS the result, not a campaign failure: it says a llama3
-# factor-16 intervention at 128k does not produce a coherent target, which is
-# worth reporting and is not something to retry with a different threshold.
+# Pre-registered as C6 in the plan revisions. Context held at 128k; ONLY the
+# target's rope moves, so this is the one comparison that isolates a rope
+# intervention.
+#
+# PER-ARM GATING. Each treated arm clears the gate at 128k ON ITS OWN. A gate
+# failure is recorded as THAT arm's result and the other arms still run: a
+# factor that produces an incoherent target says nothing about acceptance, and
+# inferring one factor's fate from another's is an assumption -- exactly the
+# assumption the ARM4 f2 cell punished. The native arm is the control and always
+# runs; without it there is no contrast to report.
 if on_list rope_intervention_128k "$ONLY"; then
   stage rope_intervention_gate 14400 "$PY" scripts/mlsys_coherence_gate.py \
     --candidates configs/mlsys_rope_intervention_candidates.json \
@@ -563,28 +568,37 @@ if on_list rope_intervention_128k "$ONLY"; then
     --out "$OUT/rope_intervention_gate.csv" \
     --gen-dir "$OUT/rope_intervention_gate_generated"
 
-  if gate_pass RI_llama3_f16_128k "$OUT/rope_intervention_gate.csv"; then
-    interim "GATE_PASS name=rope_intervention_128k candidate=RI_llama3_f16_128k"
-    want=$(expected_rows configs/mlsys_rope_intervention_128k.yml \
-                         "RI_native_128k_SPEC RI_llama3_f16_128k_SPEC")
-    stage rope_intervention_128k 43200 "$PY" run_experiment.py \
-      --config configs/mlsys_rope_intervention_128k.yml \
-      --groups RI_native_128k_SPEC RI_llama3_f16_128k_SPEC \
-      --output "$OUT/rope_intervention_128k.csv" --stage-id rope_intervention_128k \
-      --timeout-per-run-s 9000 --abort-on-failure \
-      --log-per-token --memory-trace --save-generated-text --save-generated-tokens
-    check_stage_rows rope_intervention_128k "$OUT/rope_intervention_128k.csv" "${want:-0}"
-    # Paired per document (pair_id), the arms differing only in arm_role.
-    stage rope_intervention_128k_doc_intervals 1800 "$PY" \
-      scripts/mlsys_document_bootstrap.py \
-      --results "$OUT/rope_intervention_128k.csv" --group-by context_length \
-      --ratio-metric decode_tps \
-      --out "$OUT/rope_intervention_128k_intervals.csv"
-  else
-    # Recorded as the RESULT. Not a stage failure, and not retried.
-    interim "RESULT name=rope_intervention_128k gate=FAIL candidate=RI_llama3_f16_128k note=no_coherent_target_at_factor16_128k"
-    echo "RESULT rope_intervention_128k: the factor-16 intervention did not pass the gate at 128k; arms not run"
-  fi
+  RI_GROUPS="RI_native_128k_SPEC"
+  for arm in "factor16:RI_llama3_f16_128k_SPEC:RI_llama3_f16_128k" \
+             "factor32:RI_llama3_f32_128k_SPEC:RI_llama3_f32_128k"; do
+    label=${arm%%:*}; rest=${arm#*:}; grp=${rest%%:*}; cand=${rest##*:}
+    if gate_pass "$cand" "$OUT/rope_intervention_gate.csv"; then
+      interim "GATE_PASS name=rope_intervention_128k arm=$label candidate=$cand"
+      RI_GROUPS="$RI_GROUPS $grp"
+    else
+      # That arm's RESULT. Recorded, not retried, and the round is not refused.
+      interim "RESULT name=rope_intervention_128k arm=$label gate=FAIL candidate=$cand note=no_coherent_target_at_128k"
+      echo "RESULT rope_intervention_128k arm=$label: did not pass the gate at 128k; that arm is not run"
+    fi
+  done
+
+  want=$(expected_rows configs/mlsys_rope_intervention_128k.yml "$RI_GROUPS")
+  stage rope_intervention_128k 43200 "$PY" run_experiment.py \
+    --config configs/mlsys_rope_intervention_128k.yml \
+    --groups $RI_GROUPS \
+    --output "$OUT/rope_intervention_128k.csv" --stage-id rope_intervention_128k \
+    --timeout-per-run-s 9000 --abort-on-failure \
+    --log-per-token --memory-trace --save-generated-text --save-generated-tokens
+  check_stage_rows rope_intervention_128k "$OUT/rope_intervention_128k.csv" "${want:-0}"
+  # Native vs each treated arm, paired by document, difference in alpha_round
+  # with the pre-registered 0.05 equivalence margin. An arm whose gate failed
+  # has no rows, so its contrast is simply absent -- which is the recorded
+  # result for that arm, not a missing measurement to be filled in.
+  stage rope_intervention_128k_comparison 1800 "$PY" \
+    scripts/mlsys_rope_intervention.py \
+    --results "$OUT/rope_intervention_128k.csv" \
+    --out "$OUT/rope_intervention_128k_comparison.csv" \
+    --metric acceptance_rate --margin 0.05
 else
   interim "SKIPPED name=rope_intervention_128k reason=needs_approval"
 fi

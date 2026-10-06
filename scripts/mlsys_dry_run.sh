@@ -762,10 +762,14 @@ if "no readable cost projection" not in man:
     fails.append("the runner does not refuse a stage with no cost estimate")
 if re.search(r"(?m)^\s*python3 - ", man) or re.search(r"(?m)\bpython3 scripts/", man):
     fails.append("the manifest still calls bare python3")
-if m["meta"].get("max_cost_usd") != 700:
-    fails.append("no $700 session cap in the manifest")
+if m["meta"].get("max_cost_usd") != 850:
+    fails.append("no $850 session cap in the manifest")
 if "MAX_COST" not in man:
     fails.append("the session cap is not enforced")
+if "MLSYS_MAX_COST_USD:-850" not in man:
+    fails.append("the manifest's default session cap is not $850")
+if "MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-850}" not in watch:
+    fails.append("the watcher does not pass the $850 ceiling")
 
 # 3/4. control baselines and the fixed tolerance are checked in step 13
 
@@ -917,24 +921,40 @@ if "document-bootstrap" not in plan:
 
 cfg = yaml.safe_load(open("configs/mlsys_rope_intervention_128k.yml"))
 groups = [k for k in cfg if k != "defaults"]
-if groups != ["RI_native_128k_SPEC", "RI_llama3_f16_128k_SPEC"]:
+if groups != ["RI_native_128k_SPEC", "RI_llama3_f16_128k_SPEC",
+              "RI_llama3_f32_128k_SPEC"]:
     fails.append(f"unexpected arms: {groups}")
 lv = {g: cfg[g]["levels"][0] for g in groups}
-native, treated = lv["RI_native_128k_SPEC"], lv["RI_llama3_f16_128k_SPEC"]
+native = lv["RI_native_128k_SPEC"]
+treated_arms = [lv["RI_llama3_f16_128k_SPEC"], lv["RI_llama3_f32_128k_SPEC"]]
 
-# the ONLY difference between the arms must be the rope
-for key in ("context_length", "max_new_tokens", "documents", "spec_steps"):
-    if native.get(key) != treated.get(key):
-        fails.append(f"the arms differ in {key}, so the rope is not isolated")
 if "rope_type" in native:
     fails.append("the control arm declares a rope, so it is not the shipped one")
-if treated.get("rope_type") != "llama3" or int(treated.get("rope_factor", 0)) != 16:
-    fails.append("the intervention arm is not llama3 factor 16")
-if int(treated.get("rope_anchor_base", 0)) != 8192:
-    fails.append("the intervention arm is not anchored where the model ships "
-                 "(8192), so the factor is not the only change")
-if len(treated.get("documents", [])) != 10:
-    fails.append("the intervention arm does not use the 10 core documents")
+for t in treated_arms:
+    # everything that is not the rope must be identical to the control
+    for key in set(native) | set(t):
+        if key in ("rope_type", "rope_factor", "rope_anchor_base") or \
+           key in ("id", "rope_arm", "name", "notes"):
+            continue
+        if native.get(key) != t.get(key):
+            fails.append(f"a treated arm differs from the control in {key}, "
+                         f"so the rope is not isolated")
+    if t.get("rope_type") != "llama3":
+        fails.append("a treated arm is not a llama3 configuration")
+    if int(t.get("rope_anchor_base", 0)) != 8192:
+        fails.append("a treated arm is not anchored where the model ships "
+                     "(8192), so the factor is not the only change")
+    if len(t.get("documents", [])) != 10:
+        fails.append("a treated arm does not use the 10 core documents")
+factors = sorted(int(t["rope_factor"]) for t in treated_arms)
+if factors != [16, 32]:
+    fails.append(f"expected factors 16 and 32, got {factors}")
+# every arm is labelled, or the analysis cannot tell the speculative arms apart
+for g, lv0 in lv.items():
+    if not lv0.get("rope_arm"):
+        fails.append(f"{g} carries no rope_arm label")
+if "rope_arm" not in open("run_experiment.py").read():
+    fails.append("rope_arm never reaches the CSV")
 if int(cfg["defaults"].get("temperature", -1)) != 0.0:
     fails.append("the stage is not greedy")
 if cfg["defaults"].get("ignore_eos") is not True:
@@ -945,15 +965,25 @@ for g in groups:
     if "TARGET" in g:
         fails.append(f"a target-only arm is present: {g}")
 
-# the gate runs first and a gate failure is recorded, not retried
+# the gate runs first, EACH treated arm is gated on its own, and the native arm
+# always runs
 i_gate = shell.find("rope_intervention_gate")
 i_stage = shell.find("stage rope_intervention_128k ")
 if i_gate < 0 or i_stage < 0:
     fails.append("the stage or its gate invocation is missing")
 elif i_gate > i_stage:
     fails.append("the arms run before the gate, so an incoherent target can run")
-if "RESULT name=rope_intervention_128k gate=FAIL" not in shell:
-    fails.append("a gate failure is not recorded as the result")
+if "for arm in" not in shell or "gate_pass \"$cand\"" not in shell:
+    fails.append("the treated arms are not gated independently")
+if 'RI_GROUPS="RI_native_128k_SPEC"' not in shell:
+    fails.append("the native control is not unconditionally included")
+if "RESULT name=rope_intervention_128k arm=$label gate=FAIL" not in shell:
+    fails.append("a gate failure is not recorded as THAT arm's result")
+# the comparison is the pre-registered paired difference, not a ratio
+if "mlsys_rope_intervention.py" not in shell:
+    fails.append("the native-vs-each-factor comparison stage is missing")
+if "--margin 0.05" not in shell:
+    fails.append("the comparison does not apply the pre-registered 0.05 margin")
 
 # the gate candidates file declares a baseline at the candidate's own context
 j = json.load(open("configs/mlsys_rope_intervention_candidates.json"))

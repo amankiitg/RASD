@@ -10,7 +10,12 @@
     "measurement rather than the candidate compared with itself (which would be",
     "ratio 1.0 by construction and could not fail).",
     "",
-    "The tolerance is the fixed 1.5x from the plan revision, not a derived one."
+    "The tolerance is the fixed 1.5x from the plan revision, not a derived one.",
+    "",
+    "EACH treated arm is gated on its own at 128k. A factor that produces an",
+    "incoherent target is recorded as THAT ARM's result and the other arms still",
+    "run: inferring one factor's coherence from another's would be an assumption,",
+    "and it is exactly the assumption the ARM4 f2 cell punished."
   ],
   "candidates": [
     {
@@ -24,6 +29,18 @@
       "context_length": 131072,
       "seed": 42,
       "_what_it_is": "The intervention arm: the shipped llama3 dict with only factor changed from 8 to 16, at the shipped 8192 anchor, evaluated at 128k."
+    },
+    {
+      "name": "RI_llama3_f32_128k",
+      "expect": "pass",
+      "role": "candidate",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "rope_type": "llama3",
+      "rope_factor": 32,
+      "rope_anchor_base": 8192,
+      "context_length": 131072,
+      "seed": 42,
+      "_what_it_is": "The second intervention arm: the shipped llama3 dict with only factor changed from 8 to 32, at the shipped 8192 anchor, evaluated at 128k. Gated on its own, because a factor that is incoherent tells us nothing about acceptance and must be recorded as that arm's result rather than inferring the arm's fate from the other factor's."
     },
     {
       "name": "B_native_128k_ri",

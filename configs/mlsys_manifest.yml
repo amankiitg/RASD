@@ -41,7 +41,7 @@ meta:
   analysis_plan: docs/mlsys_analysis_plan.md
   transformers_pin: "4.47.1"
   node_rate_per_hour: 22.32
-  max_cost_usd: 700                  # SESSION ceiling, enforced by the runner
+  max_cost_usd: 850                  # SESSION ceiling, enforced by the runner
                                      # before every stage: spent + projection
                                      # must stay under it. The per-stage guard
                                      # bounds one stage; this bounds the run.
@@ -178,32 +178,45 @@ stages:
     order: 5.5
     depends_on: [natural_f1_128k]
     config: configs/mlsys_rope_intervention_128k.yml
-    groups: [RI_native_128k_SPEC, RI_llama3_f16_128k_SPEC]
+    groups: [RI_native_128k_SPEC, RI_llama3_f16_128k_SPEC, RI_llama3_f32_128k_SPEC]
     rung: 131072
     require_gate_verdict: pass
     gate_candidates: configs/mlsys_rope_intervention_candidates.json
-    gate_candidate: RI_llama3_f16_128k
-    est_hours: 3.7
-    est_cost_usd: 82
+    # Each treated arm is gated at 128k ON ITS OWN; a failure is recorded as
+    # that arm's result and the other arms still run. The native arm is the
+    # control and always runs.
+    gate_candidates_per_arm: [RI_llama3_f16_128k, RI_llama3_f32_128k]
+    est_hours: 5.4
+    est_cost_usd: 120
     baseline_design: {target_full_docs: 0, target_short_docs: 0}
     spec_only: true
     losslessness: not_required
     measure_target_ppl: true
     output: results/mlsys/rope_intervention_128k.csv
     fail_action: >
-      If the factor-16 arm fails the gate at 128k, the failure IS the result:
-      record it and do not run the arms, and do not retry with a different
+      If a treated arm fails the gate at 128k, the failure IS that arm's
+      result: record it, do not run that arm, and do not retry with a different
       threshold. A threshold relaxed to make the intervention agree is a
-      threshold that no longer excludes anything.
+      threshold that no longer excludes anything. The other arms still run:
+      inferring one factor's coherence from another's would be an assumption,
+      and that assumption is what the ARM4 f2 cell punished.
     why: >
       Pre-registered C6. Every other comparison moves the context length and
       the rope together, so none isolates a rope intervention. Context is held
       at 128k and ONLY the target's rope moves, so if acceptance here is a
       property of the positional frame rather than of the context, that is
-      visible. Speculative runs only: nothing is reported as a ratio against a
-      baseline, only as a paired difference between two speculative arms, so
-      there is no target-only arm to pair against and losslessness does not
-      apply. Equivalence margin 0.05 on the paired difference; an interval
+      visible.
+
+      THREE ARMS: native, factor 16, factor 32. With a single treated arm a
+      difference and an equivalence are both uninterpretable -- factor 16 may
+      sit close enough to the shipped 8 that nothing moves, or far enough that
+      coherence breaks -- so the stage carries two factors and reports native
+      vs each (f16 vs f32 is reported as a secondary contrast only).
+
+      Speculative runs only: nothing is reported as a ratio against a
+      baseline, only as a paired difference between speculative arms, so there
+      is no target-only arm to pair against and losslessness does not apply.
+      Equivalence margin 0.05 on EACH paired difference; an interval
       overlapping the boundary is INCONCLUSIVE, which with n = 10 documents is
       the likely outcome and is not a failure.
 

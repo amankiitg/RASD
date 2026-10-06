@@ -138,6 +138,11 @@ CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     # discarded the other arm whenever a document had more than one partner,
     # and nothing in the output said which partner had been used.
     "pair_id", "arm_role",
+    # Which arm of a multi-arm intervention this row is, when a stage declares
+    # one. `arm_role` says spec/target, which is not enough to tell the arms of
+    # rope_intervention_128k apart: all three are speculative, and the stage's
+    # whole purpose is to compare them.
+    "rope_arm",
     "generated_tokens_sha256",
     # Target quality beside acceptance (plan 4.3). Blank when not measured,
     # which is distinguishable from a measured zero.
@@ -1071,6 +1076,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         _ctx = run.get("context_length", "")
         row["pair_id"] = f"{_ctx}:{row['doc_id']}" if row["doc_id"] else ""
         row["arm_role"] = _arm_role(run)
+        row["rope_arm"] = str(run.get("rope_arm", "") or "")
         row["temperature"] = run.get("temperature", 1.0)
         row["top_p"] = run.get("top_p", 1.0)
         row["ignore_eos"] = bool(run.get("ignore_eos", False))

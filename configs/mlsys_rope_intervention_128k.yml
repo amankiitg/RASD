@@ -9,14 +9,30 @@
 # property of the target's positional frame rather than of the context length,
 # that has to be visible with the context held at 128k and ONLY the rope moved.
 #
-# TWO ARMS, paired by document:
+# THREE ARMS, paired by document (plan revision "gains a factor-32 arm"):
 #   R_native_SPEC     the shipped `llama3` block, untouched (rope_type: none
 #                     asserts it is the shipped one)
 #   R_llama3_f16_SPEC rope_type llama3, the SHIPPED dict with only `factor`
 #                     changed from 8 to 16, anchored where the model ships it
 #                     (original_max_position_embeddings = 8192)
+#   R_llama3_f32_SPEC the same, factor 8 -> 32
 # The shipped dict is spread and one key overridden, so the factor is the only
-# difference between the arms. Nothing else varies.
+# difference in each treated arm. Nothing else varies, the anchor included:
+# moving the anchor as well would confound the factor with the anchor, which is
+# the error the correction note documents.
+#
+# ONE TREATED ARM COULD ONLY EVER BE A STATEMENT ABOUT THAT FACTOR. With a
+# single point, a difference and an equivalence are both uninterpretable --
+# factor 16 may sit close enough to the shipped 8 that nothing moves, or far
+# enough that coherence breaks -- so the stage carries two factors and reports
+# native vs each.
+#
+# PRIMARY COMPARISONS: native vs f16 and native vs f32, each a paired
+# document-bootstrap interval on the difference in alpha_round with the
+# pre-registered 0.05 equivalence margin. f16 vs f32 is a secondary contrast.
+#
+# `rope_arm` labels each arm so the analysis can tell them apart: all three are
+# speculative, so `arm_role` alone cannot.
 #
 # SPECULATIVE RUNS ONLY. There is no target-only arm and losslessness is not
 # required: nothing here is reported as a ratio against a baseline, only as a
@@ -67,6 +83,7 @@ RI_native_128k_SPEC:
   factor: context_length
   levels:
   - id: RI_native_128k
+    rope_arm: native
     context_length: 131072
     documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     max_new_tokens: 1024
@@ -78,6 +95,7 @@ RI_llama3_f16_128k_SPEC:
   factor: context_length
   levels:
   - id: RI_llama3_f16_128k
+    rope_arm: factor16
     context_length: 131072
     documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
     # The intervention: shipped llama3 dict, factor 8 -> 16, anchor unchanged.
@@ -87,3 +105,20 @@ RI_llama3_f16_128k_SPEC:
     max_new_tokens: 1024
     checkpoint_every: 0
     notes: 'intervention arm: llama3 factor 16 at the shipped 8192 anchor, same 10 documents, same 1024 tokens'
+
+RI_llama3_f32_128k_SPEC:
+  name: rope_intervention_llama3_f32
+  factor: context_length
+  levels:
+  - id: RI_llama3_f32_128k
+    rope_arm: factor32
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537, pg19_train_915, pg19_train_1404, pg19_train_1726, pg19_train_1981, pg19_train_2204, pg19_train_2768]
+    # The second intervention: shipped llama3 dict, factor 8 -> 32, anchor
+    # unchanged, same documents and same generation length as the other arms.
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    max_new_tokens: 1024
+    checkpoint_every: 0
+    notes: 'intervention arm: llama3 factor 32 at the shipped 8192 anchor, same 10 documents, same 1024 tokens'

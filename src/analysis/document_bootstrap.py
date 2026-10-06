@@ -168,3 +168,31 @@ def clears(interval: dict, threshold: float) -> str:
     if interval["hi"] < threshold:
         return "below"
     return "inconclusive"
+
+
+def equivalence_verdict(interval: dict, margin: float) -> str:
+    """The pre-registered three-way decision for an equivalence margin.
+
+    Returns one of:
+
+      "equivalent"    the whole interval lies inside [-margin, +margin];
+      "effect"        the whole interval lies outside it (one side);
+      "inconclusive"  the interval overlaps a boundary.
+
+    The rule is asymmetric on purpose and is fixed BEFORE the data. It exists
+    so that "no difference was detected" cannot be reported as "equivalent":
+    only interval-inclusion licenses the word, and with a small number of
+    documents the interval is usually too wide to license it. That outcome is
+    inconclusive, which is a result, not a failure.
+
+    A single-point estimate inside the margin is NOT equivalence, and is not
+    treated as such.
+    """
+    lo, hi = float(interval["lo"]), float(interval["hi"])
+    if math.isnan(lo) or math.isnan(hi):
+        return "inconclusive"
+    if hi < -margin or lo > margin:
+        return "effect"
+    if lo >= -margin and hi <= margin:
+        return "equivalent"
+    return "inconclusive"
