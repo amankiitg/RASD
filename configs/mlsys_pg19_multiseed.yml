@@ -62,5 +62,7 @@ PG19_MULTISEED:
 
     - id: "PG19_ctx1M"
       context_length: 1048576
-      checkpoint_every: 4     # ~20 min/cell; recover from crash
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "PG-19 1M — matches P35D_ctx1M_pg19_s42"

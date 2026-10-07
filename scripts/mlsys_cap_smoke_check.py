@@ -122,6 +122,34 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                 notes.append(f"{rid}: {len(gaps)} gaps aligned with "
                              f"{len(ids)} emitted ids")
 
+            # NUMERICS, measured by the engine off the loaded models and the
+            # live cache. The campaign's stages run FP4 weights and an NF4 KV
+            # cache, and every comparison in the plan rests on that: the vLLM
+            # cross-check reports token agreement instead of scoring it BECAUSE
+            # vLLM cannot reproduce this cache. A row whose config claimed 4-bit
+            # while the loader skipped it would invalidate that reasoning
+            # silently, so the values are asserted rather than assumed.
+            wp = sidecar.get("weight_precision")
+            kvd = sidecar.get("kv_dtype")
+            if not wp or not kvd:
+                problems.append(
+                    f"{rid}: the sidecar carries no measured precision "
+                    f"(weight_precision={wp!r} kv_dtype={kvd!r}); the numerics "
+                    f"every comparison depends on are unstated")
+            else:
+                if wp != "fp4":
+                    problems.append(
+                        f"{rid}: weight_precision={wp!r}, expected 'fp4' — the "
+                        f"campaign's cells are FP4 and a different precision "
+                        f"makes them incomparable with the published numbers")
+                if kvd != "nf4":
+                    problems.append(
+                        f"{rid}: kv_dtype={kvd!r}, expected 'nf4' — the KV cache "
+                        f"is what the vLLM comparison cannot reproduce")
+                if wp == "fp4" and kvd == "nf4":
+                    notes.append(f"{rid}: numerics fp4 weights + nf4 KV "
+                                 f"(measured)")
+
         # The sequence the engine built must be the rung.
         pt, seq = r.get("prompt_tokens"), r.get("sequence_tokens")
         if pt and seq and int(seq) != int(r["context_length"]):
@@ -274,8 +302,9 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                             f"member")
             continue
         # Both arms of the smoke use the SAME cap, so the verdict must be
-        # LOSSLESS rather than a prefix verdict: a prefix here would mean the
-        # partner stopped short, which for this stage is itself a failure.
+        # LOSSLESS (or a NUMERIC_TIE) rather than a prefix verdict: a prefix here
+        # would mean the partner stopped short, which for this stage is itself a
+        # failure.
         cap = int(r["max_new_tokens"])
         res = compare_generations(a["generated_token_ids"],
                                   b["generated_token_ids"],
@@ -286,7 +315,22 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                                   spec_gaps=a.get("token_gaps"),
                                   target_gaps=b.get("token_gaps"))
         seen += 1
-        if res["verdict"] != "LOSSLESS":
+        # PLAN RULE (B4 revision): a stage fails ONLY on MISMATCH. NUMERIC_TIE
+        # passes and is REPORTED with its positions, because the target was
+        # indifferent at the divergence and no implementation defect is implied.
+        # Treating a tie as a failure here would fail a stage for being honest
+        # about a numerics artefact.
+        if res["verdict"] == "MISMATCH":
+            problems.append(f"{r['run_id']}: MISMATCH vs {partner['run_id']} — "
+                            f"{res['detail']}")
+        elif res["verdict"] == "NUMERIC_TIE":
+            notes.append(
+                f"NUMERIC_TIE at {res['tie_positions']} vs "
+                f"{partner['run_id']}: gaps {res['gap_at_divergence_spec']}/"
+                f"{res['gap_at_divergence_target']} below "
+                f"{res['tie_gap_threshold']} — reported, not a failure "
+                f"({res['compared_tokens']} tokens compared)")
+        elif res["verdict"] != "LOSSLESS":
             problems.append(f"{r['run_id']}: {res['verdict']} vs "
                             f"{partner['run_id']} — {res['detail']}")
         else:

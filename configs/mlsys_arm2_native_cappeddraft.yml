@@ -66,5 +66,7 @@ ARM2_TARGET_ONLY:
     - id: "ARM2_llama3_native_128k_targetonly"
       context_length: 131072
       spec_steps: 0
-      checkpoint_every: 4
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "matched target-only baseline for ARM2_llama3_native_128k_cap4k"

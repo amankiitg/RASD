@@ -118,6 +118,9 @@ def _write(tmp: Path, cap=64, *, trace=None, partner=True, sidecar_ids=None,
          # asserts this length relationship, so a fixture without it is
          # incomplete rather than exempt.
          "token_gaps": [3.0] * len(spec_ids),
+         # The precision the engine MEASURED; the smoke asserts the campaign's
+         # fp4 weights + nf4 cache on every row.
+         "weight_precision": "fp4", "kv_dtype": "nf4",
          "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
          "context_length": CONTEXT, "max_new_tokens": cap}))
 
@@ -127,6 +130,7 @@ def _write(tmp: Path, cap=64, *, trace=None, partner=True, sidecar_ids=None,
         (tmp / "tokens" / "CAP_tgt.json").write_text(json.dumps(
             {"run_id": "CAP_tgt", "generated_token_ids": _tgt_ids,
              "token_gaps": [3.0] * len(_tgt_ids),
+             "weight_precision": "fp4", "kv_dtype": "nf4",
              "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
              "context_length": CONTEXT, "max_new_tokens": cap}))
 
@@ -229,3 +233,103 @@ def test_losslessness_uses_the_sidecars_of_both_arms(tmp_path):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ---------------------------------------------------------------------------
+# The plan's rule for ties, and the measured numerics, on the cap-smoke path
+# ---------------------------------------------------------------------------
+
+def _write_tie(tmp: Path, *, position: int, gap: float, oth_gap: float = 3.0):
+    """A spec/target pair that diverges at `position`, with chosen gaps."""
+    cap = 16
+    spec_ids = list(range(100, 100 + cap))
+    tgt_ids = list(spec_ids)
+    tgt_ids[position] = 999
+    (tmp / "per_token").mkdir(parents=True, exist_ok=True)
+    (tmp / "tokens").mkdir(parents=True, exist_ok=True)
+    rows = [_row("CAP_spec", GAMMA, cap), _row("CAP_tgt", 0, cap)]
+    tr = _spec_trace(cap)
+    (tmp / "per_token" / "CAP_spec.jsonl").write_text(
+        "\n".join(json.dumps(x) for x in tr) + "\n")
+    sg = [oth_gap] * cap
+    sg[position] = gap
+    for rid, ids, gaps in (("CAP_spec", spec_ids, sg),
+                           ("CAP_tgt", tgt_ids, [oth_gap] * cap)):
+        (tmp / "tokens" / f"{rid}.json").write_text(json.dumps({
+            "run_id": rid, "generated_token_ids": ids, "token_gaps": gaps,
+            "weight_precision": "fp4", "kv_dtype": "nf4",
+            "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
+            "context_length": CONTEXT, "max_new_tokens": cap}))
+    with (tmp / "res.csv").open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    return tmp
+
+
+def test_a_numeric_tie_passes_and_is_reported(tmp_path):
+    """PLAN RULE: only MISMATCH fails a stage; a tie is reported."""
+    mod = _load_checker()
+    _write_tie(tmp_path, position=5, gap=0.01)
+    problems, notes = mod.check(tmp_path / "res.csv")
+
+    assert problems == [], problems
+    joined = " ".join(notes)
+    assert "NUMERIC_TIE" in joined and "[5]" in joined, (
+        f"the tie and its position must be reported: {notes}")
+    assert "not a failure" in joined
+
+
+def test_a_mismatch_fails_the_stage(tmp_path):
+    mod = _load_checker()
+    _write_tie(tmp_path, position=5, gap=3.0)
+    problems, _notes = mod.check(tmp_path / "res.csv")
+
+    assert problems, "a decided divergence must fail the cap smoke"
+    assert any("MISMATCH" in p for p in problems), problems
+
+
+def test_a_tie_is_recorded_from_either_arm(tmp_path):
+    """The target's indifference is a property of the position."""
+    mod = _load_checker()
+    _write_tie(tmp_path, position=5, gap=3.0, oth_gap=3.0)
+    # ... now make the TARGET arm indifferent there instead.
+    p = tmp_path / "tokens" / "CAP_tgt.json"
+    d = json.loads(p.read_text())
+    d["token_gaps"][5] = 0.02
+    p.write_text(json.dumps(d))
+
+    problems, notes = mod.check(tmp_path / "res.csv")
+
+    assert problems == [], problems
+    assert any("NUMERIC_TIE" in n for n in notes)
+
+
+def test_a_row_without_measured_numerics_fails(tmp_path):
+    """The columns are load-bearing; an unstated precision is a failure."""
+    mod = _load_checker()
+    _write(tmp_path)
+    p = tmp_path / "tokens" / "CAP_spec.json"
+    d = json.loads(p.read_text())
+    d.pop("weight_precision")
+    d.pop("kv_dtype")
+    p.write_text(json.dumps(d))
+
+    problems, _notes = mod.check(tmp_path / "res.csv")
+
+    assert any("no measured precision" in p for p in problems), problems
+
+
+def test_a_row_that_is_not_fp4_nf4_fails(tmp_path):
+    mod = _load_checker()
+    _write(tmp_path)
+    p = tmp_path / "tokens" / "CAP_tgt.json"
+    d = json.loads(p.read_text())
+    d["weight_precision"] = "bfloat16"
+    d["kv_dtype"] = "bfloat16"
+    p.write_text(json.dumps(d))
+
+    problems, _notes = mod.check(tmp_path / "res.csv")
+
+    assert any("weight_precision='bfloat16'" in p for p in problems), problems
+    assert any("kv_dtype='bfloat16'" in p for p in problems), problems

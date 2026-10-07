@@ -128,15 +128,39 @@ class TestC3OneEosPolicy:
 
 
 class TestC4BothPrecisions:
-    def test_both_bitsandbytes_and_bf16_are_default(self, wrapper):
-        # The draft story rests on 4-bit bitsandbytes weights, so the bf16 row
-        # alone would not answer the reviewer; the 4-bit row alone would make
-        # the quantization difference invisible. Both, as separate rows.
+    """C4 changed shape on 2026-10-07, and this records the new contract.
+
+    The original ask was that both precisions appear as separate rows, so the
+    quantization difference could not hide. Sweeping both is no longer how it is
+    answered: the campaign's vLLM reference is Llama-3.1-8B at **bf16** only
+    (plan revision, 2026-10-07), and the precision difference is now visible
+    through the per-row `weight_precision`/`kv_dtype` columns -- which the
+    cross-check reports rather than scores, because the two engines do not share
+    numerics.
+
+    So the default is bf16, and the bitsandbytes path stays reachable by flag
+    (the capability is not deleted, only the doubled default).
+    """
+
+    def test_the_default_is_bf16_only(self, wrapper):
+        import argparse
         import inspect
 
         src = inspect.getsource(wrapper.main)
-        assert '"bitsandbytes"' in src
-        assert '"bfloat16"' in src
+        assert 'default=["bfloat16"]' in src, (
+            "a default that also sweeps bitsandbytes silently reinstates the "
+            "doubled sweep the 2026-10-07 revision removed")
+        assert 'default=["bitsandbytes", "bfloat16"]' not in src
+
+    def test_the_bitsandbytes_path_is_still_available(self, wrapper):
+        """Dropped from the DEFAULT, not deleted: the worker still supports it."""
+        assert 'quant == "bitsandbytes"' in _WRAPPER.read_text(), (
+            "the 4-bit path was deleted rather than dropped from the default")
+
+    def test_the_precision_is_reported_per_row(self, wrapper):
+        """The C4 concern, answered by a measured column instead of a sweep."""
+        assert "weight_precision" in wrapper.CSV_FIELDS
+        assert "kv_dtype" in wrapper.CSV_FIELDS
 
     def test_quantization_is_recorded_in_csv_fields(self, wrapper):
         assert "quantization" in wrapper.CSV_FIELDS

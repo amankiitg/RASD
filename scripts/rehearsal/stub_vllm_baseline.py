@@ -204,8 +204,9 @@ def main() -> int:
                     # The numerics this engine ran, as the production worker
                     # reports them: vLLM has no NF4 KV path, which is why the
                     # cross-check reports token agreement instead of scoring it.
-                    "weight_precision": "bf16" if not args.quantizations else "nf4_4bit",
-                    "kv_dtype": "bf16",
+                    "weight_precision": "int4_bnb" if args.quantizations
+                    and args.quantizations != ["bfloat16"] else "bfloat16",
+                    "kv_dtype": "bfloat16",
                     # What this "engine" emitted, and its own gap per position.
                     # The ids mirror the RASD target-only sidecar for the same
                     # document -- that is what a working cross-check looks like --

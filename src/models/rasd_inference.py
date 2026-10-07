@@ -612,6 +612,120 @@ def _build_per_token_record(
     }
 
 
+# ---------------------------------------------------------------------------
+# Numerics provenance: what the RUNNING objects are, not what the config asked
+# for
+# ---------------------------------------------------------------------------
+
+# The canonical spelling of every dtype the campaign can produce. Recorded in a
+# row so a reader can compare two engines' precision, which only works if the
+# spellings are the same: `bf16` and `bfloat16` are the same dtype and must
+# compare equal.
+_DTYPE_ALIASES = {
+    "bf16": "bfloat16", "bfloat16": "bfloat16",
+    "fp16": "float16", "float16": "float16", "half": "float16",
+    "fp32": "float32", "float32": "float32", "float": "float32",
+    "fp64": "float64", "float64": "float64", "double": "float64",
+    "int8": "int8", "uint8": "uint8",
+}
+
+
+def normalize_dtype_name(dtype) -> str:
+    """One canonical spelling per dtype, so equal dtypes compare equal."""
+    if dtype is None:
+        return ""
+    name = getattr(dtype, "__name__", None) or str(dtype)
+    name = name.rsplit(".", 1)[-1].strip().lower()
+    return _DTYPE_ALIASES.get(name, name)
+
+
+def detect_weight_precision(model) -> str:
+    """How the weights are ACTUALLY stored, read off the loaded model.
+
+    Why not the config: `quantize_target=True` is an instruction, and this
+    project has already shipped a run whose config said one thing while the
+    loaded weights were another (the MPS/CPU path warns and silently skips
+    4-bit). A row that reports its own config cannot detect that, and the whole
+    point of the column is to let a reader see the precision difference that
+    makes two engines' outputs incomparable.
+
+    Order matters. A 4-bit model's parameters are `Params4bit` (uint8 storage
+    behind a dequantize hook), so reading `next(model.parameters()).dtype`
+    first would report `uint8` -- or, worse, the compute dtype -- and lose the
+    distinction between fp4 and nf4 storage, which is exactly the axis the
+    vLLM comparison is about.
+
+    Returns "fp4"/"nf4"/"int8"/"bfloat16"/... ; "" when there is no model.
+    """
+    if model is None:
+        return ""
+    if getattr(model, "is_loaded_in_4bit", False):
+        qc = getattr(getattr(model, "config", None), "quantization_config", None)
+        # Attribute FIRST, then mapping. A real BitsAndBytesConfig is a plain
+        # object (`QuantizationConfigMixin`), while a config round-tripped
+        # through a saved `config.json` arrives as a dict -- so both spellings
+        # occur and this has to handle either. Checking `isinstance(qc, dict)`
+        # first would read a dict that also carries the value as an attribute
+        # (which is how a `dict` subclass behaves) as "unset" and report the
+        # nf4 default for an fp4 model: exactly the mislabelling this column
+        # exists to prevent.
+        qtype = getattr(qc, "bnb_4bit_quant_type", None)
+        if qtype is None and isinstance(qc, dict):
+            qtype = qc.get("bnb_4bit_quant_type")
+        # bitsandbytes defaults to nf4 when the type is unset; iff it is 4-bit
+        # loaded and says nothing, the storage is nf4.
+        return str(qtype or "nf4").lower()
+    if getattr(model, "is_loaded_in_8bit", False):
+        return "int8"
+    try:
+        param = next(model.parameters())
+    except (StopIteration, AttributeError):
+        return ""
+    return normalize_dtype_name(param.dtype)
+
+
+def detect_kv_precision(cache) -> str:
+    """The KV-cache precision in use, read off the CACHE OBJECT.
+
+    The class is the authority, not the flag that built it: `kv_quant=True` with
+    an empty cache falls back to HF's bf16 `DynamicCache` inside the model, and a
+    legacy tuple is bf16 by construction (it is built from dequantized tensors).
+    So the name comes from what is actually holding the cache.
+
+    Returns "nf4" | "bfloat16" | ... | "" when there is no cache.
+    """
+    if cache is None:
+        return ""
+    # Import here: this module is imported by CPU-only tests, and the cache
+    # module pulls in the codec it needs, not torch CUDA.
+    from src.models.nf4_dynamic_cache import NF4DynamicCache
+    if isinstance(cache, NF4DynamicCache):
+        return "nf4"
+    layer0 = None
+    try:
+        layer0 = cache[0]
+    except Exception:                                      # noqa: BLE001
+        getter = getattr(cache, "get_seq_length", None)
+        if callable(getter):
+            # A cache that reports a length but exposes no layer view is one we
+            # cannot name; report it as unknown rather than guessing.
+            return "unknown"
+        return ""
+    try:
+        k = layer0[0] if isinstance(layer0, (tuple, list)) else layer0
+        return normalize_dtype_name(k.dtype)
+    except Exception:                                      # noqa: BLE001
+        return ""
+
+
+def numerics_report(model, cache) -> Dict[str, str]:
+    """The precision columns for one run: weights and KV, both measured."""
+    return {
+        "weight_precision": detect_weight_precision(model),
+        "kv_dtype": detect_kv_precision(cache),
+    }
+
+
 def _draft_window(input_ids, window: int):
     """The sequence the DRAFT is conditioned on: leading BOS + most recent tokens.
 
@@ -1157,6 +1271,12 @@ class RASDInference:
         No-op when cfg.checkpoint_every == 0 (the default; preserves M3
         byte-identical behavior). All ranks save their own KV slice into
         per-rank files — the on-disk layout is rank-aware.
+
+        NOTE a saved checkpoint can no longer be RESUMED: `generate` refuses a
+        run it finds a checkpoint for, because the per-token logit gaps are not
+        part of a checkpoint and a resumed run would write a misaligned gap
+        array. The file remains readable by the checkpoint tooling; it is the
+        in-generation resume that is refused.
         """
         cfg = self.cfg
         if cfg.checkpoint_every <= 0 or not cfg.checkpoint_dir or not cfg.run_id:
@@ -1277,324 +1397,261 @@ class RASDInference:
             )
             mem_tracer.snapshot("post_load",  S=S, S_local=S // max(self._world_size, 1))
 
-        # ---- C6 RESUME: try to load a checkpoint and skip prefill ----
-        # Gated on cfg.checkpoint_every > 0 — when 0 (the default), this
-        # whole branch is skipped and the M3 path is byte-identical.
-        ckpt = self._try_load_checkpoint() if cfg.checkpoint_every > 0 else None
-
-        # ---- Prefill: run target model on the prompt to get KV cache ----
-        if ckpt is None:
-            # ============================================================
-            # Fresh start — run target + draft prefill, sample seed token
-            # ============================================================
-            # Under multi-rank (R3 dual-cache layout), each rank owns the contiguous
-            # slice [rank*S/W, (rank+1)*S/W) of the prompt. Each rank embeds and
-            # forwards its own slice; the patched LlamaAttention performs ring
-            # attention across ranks for cross-slice attention. Position IDs are
-            # the absolute global positions so RoPE produces correct embeddings.
-            if self._world_size > 1:
-                # Auto-truncate prompt to nearest multiple of world_size so the
-                # contiguous sequence shard math works regardless of caller's
-                # exact tokenization. (Tokenizers can produce off-by-a-few token
-                # counts that don't divide evenly — happens regularly with
-                # synthetic prompts that target a specific token count.)
-                if S % self._world_size != 0:
-                    S_aligned = (S // self._world_size) * self._world_size
-                    if self._rank == 0:
-                        logger.warning(
-                            "context_length=%d not divisible by world_size=%d; "
-                            "truncating to %d for contiguous sequence sharding",
-                            S, self._world_size, S_aligned,
-                        )
-                    input_ids = input_ids[:, :S_aligned].contiguous()
-                    if attention_mask is not None:
-                        attention_mask = attention_mask[:, :S_aligned].contiguous()
-                    S = S_aligned
-                S_local = S // self._world_size
-                start = self._rank * S_local
-                end   = start + S_local
-                local_ids = input_ids[:, start:end].contiguous()
-                local_pos = torch.arange(start, end, device=device).unsqueeze(0).expand(B, -1)
-                # attention_mask under sharding is implicit (causal handled by ring kernel)
-                local_attn_mask = None
-            else:
-                local_ids = input_ids
-                local_pos = None
-                local_attn_mask = attention_mask
-
-            # M4 C11 (true NF4 storage): when cfg.kv_quant=True, supply
-            # an empty NF4DynamicCache as the initial past_key_values so
-            # HF's LlamaModel uses it instead of constructing its own
-            # bf16 DynamicCache. Every patched LlamaAttention layer's
-            # update() call then routes through NF4 quantization at
-            # append time. The cache object is mutated in place across
-            # the rest of the verify loop, so we keep a single instance
-            # for the duration of generate().
-            initial_cache = None
-            if cfg.kv_quant:
-                from src.models.nf4_dynamic_cache import NF4DynamicCache
-                # Outlier-keep: only the rank holding global position 0
-                # (rank 0 under sequence-parallel sharding) gets a bf16
-                # prefix. Other ranks' caches are pure NF4. The prefix
-                # protects the first ~128 tokens (attention sinks per
-                # StreamingLLM) which are disproportionately attended to
-                # and account for most of the NF4 acceptance loss.
-                prefix_size = (
-                    cfg.kv_outlier_prefix_size if self._rank == 0 else 0
-                )
-                initial_cache = NF4DynamicCache(
-                    block_size=cfg.kv_block_size_nf4,
-                    dtype=cfg.torch_dtype,
-                    bf16_prefix_size=prefix_size,
-                    update_chunk_size=cfg.nf4_update_chunk_size,
-                    # Target-only decode appends ONE token per step; without the
-                    # fold the layer accumulates one chunk per step and every
-                    # forward concatenates all of them (R1). Exact, not
-                    # approximate -- see NF4DynamicCache._append_nf4_chunk.
-                    tail_merge_below=cfg.nf4_tail_merge_below,
+        # ---- C6 RESUME: REFUSED ------------------------------------------
+        # Generation always starts fresh. The per-token logit gaps are
+        # accumulated in memory as tokens are emitted and are NOT part of a
+        # checkpoint, so a resumed run would write a gap array covering only the
+        # post-resume tokens beside a full-length id list: the alignment check
+        # would abort it after the money was spent, and if the two lengths
+        # happened to agree it would report the neighbouring token's
+        # indifference at every divergence -- excusing real mismatches as
+        # numerics ties. A found checkpoint is therefore REMOVED from the
+        # decision and reported, never resumed.
+        #
+        # `checkpoint_every=0` for every campaign stage (asserted in the dry run
+        # and in tests/test_mlsys_resume_refusal.py), so this is a guard against
+        # a misconfiguration, not a path the campaign takes.
+        if cfg.checkpoint_every > 0:
+            existing = self._try_load_checkpoint()
+            if existing is not None:
+                raise RuntimeError(
+                    f"resume refused: checkpoint {self.cfg.run_id!r} found in "
+                    f"{self.cfg.checkpoint_dir!r}, but the per-token logit gaps "
+                    f"cannot be restored from a checkpoint, so a resumed run "
+                    f"would write a misaligned gap array. Re-run from scratch "
+                    f"(checkpoint_every=0)."
                 )
 
-            # M4 Phase C 2026-05-10 lever #1: only the LAST position's
-            # logits are used downstream (`local_last_logit = ...[:, -1, :]`).
-            # Pass num_logits_to_keep=1 so HF only materializes the final
-            # token's logits row instead of the full (B, S_local, vocab)
-            # tensor. At 1M S_local=128k that's
-            #   128k * 32000 * 2 = 8.2 GB saved per rank;
-            # at 512k it's 4 GB. LlamaForCausalLM gained this kwarg in
-            # transformers 4.45+; we bumped requirements-lock.txt from
-            # 4.44.2 to 4.46.3 specifically to enable this.
-            # Per-layer memory snapshots during prefill (paper Figure 3
-            # + OOM attribution). Register forward hooks ONLY when
-            # mem_tracer is active so M3 byte-identical replay isn't
-            # affected. Hooks fire after each LlamaDecoderLayer's
-            # forward and emit a labelled snapshot with layer_idx.
-            # Removed before any decode/verify forward so verify-loop
-            # forwards aren't spammed with hooks.
-            prefill_hook_handles = []
-            if mem_tracer is not None:
-                try:
-                    layers = self.target_model.model.layers
-                    for layer_idx, layer in enumerate(layers):
-                        def _make_hook(idx):
-                            def _hook(module, inputs, output):
-                                mem_tracer.snapshot(
-                                    f"prefill_after_layer_{idx:02d}",
-                                    layer_idx=idx,
-                                )
-                            return _hook
-                        prefill_hook_handles.append(
-                            layer.register_forward_hook(_make_hook(layer_idx))
-                        )
-                except Exception:
-                    # Best-effort. If the model doesn't expose .model.layers
-                    # in the expected shape, just skip per-layer snapshots —
-                    # the post_target_prefill snapshot still fires.
-                    prefill_hook_handles = []
+        # ============================================================
+        # Fresh start — run target + draft prefill, sample seed token
+        # ============================================================
+        # Under multi-rank (R3 dual-cache layout), each rank owns the contiguous
+        # slice [rank*S/W, (rank+1)*S/W) of the prompt. Each rank embeds and
+        # forwards its own slice; the patched LlamaAttention performs ring
+        # attention across ranks for cross-slice attention. Position IDs are
+        # the absolute global positions so RoPE produces correct embeddings.
+        if self._world_size > 1:
+            # Auto-truncate prompt to nearest multiple of world_size so the
+            # contiguous sequence shard math works regardless of caller's
+            # exact tokenization. (Tokenizers can produce off-by-a-few token
+            # counts that don't divide evenly — happens regularly with
+            # synthetic prompts that target a specific token count.)
+            if S % self._world_size != 0:
+                S_aligned = (S // self._world_size) * self._world_size
+                if self._rank == 0:
+                    logger.warning(
+                        "context_length=%d not divisible by world_size=%d; "
+                        "truncating to %d for contiguous sequence sharding",
+                        S, self._world_size, S_aligned,
+                    )
+                input_ids = input_ids[:, :S_aligned].contiguous()
+                if attention_mask is not None:
+                    attention_mask = attention_mask[:, :S_aligned].contiguous()
+                S = S_aligned
+            S_local = S // self._world_size
+            start = self._rank * S_local
+            end   = start + S_local
+            local_ids = input_ids[:, start:end].contiguous()
+            local_pos = torch.arange(start, end, device=device).unsqueeze(0).expand(B, -1)
+            # attention_mask under sharding is implicit (causal handled by ring kernel)
+            local_attn_mask = None
+        else:
+            local_ids = input_ids
+            local_pos = None
+            local_attn_mask = attention_mask
 
-            _nvtx_push("phase:prefill_target")
-            with torch.cuda.stream(self.stream_compute):
-                target_out = self.target_model(
-                    local_ids,
-                    attention_mask=local_attn_mask,
-                    position_ids=local_pos,
-                    use_cache=True,
-                    past_key_values=initial_cache,
-                    num_logits_to_keep=1,
-                )
-                past_kv          = target_out.past_key_values
-                local_last_logit = target_out.logits[:, -1, :]
-            self.stream_compute.synchronize()
-            _nvtx_pop()
+        # M4 C11 (true NF4 storage): when cfg.kv_quant=True, supply
+        # an empty NF4DynamicCache as the initial past_key_values so
+        # HF's LlamaModel uses it instead of constructing its own
+        # bf16 DynamicCache. Every patched LlamaAttention layer's
+        # update() call then routes through NF4 quantization at
+        # append time. The cache object is mutated in place across
+        # the rest of the verify loop, so we keep a single instance
+        # for the duration of generate().
+        initial_cache = None
+        if cfg.kv_quant:
+            from src.models.nf4_dynamic_cache import NF4DynamicCache
+            # Outlier-keep: only the rank holding global position 0
+            # (rank 0 under sequence-parallel sharding) gets a bf16
+            # prefix. Other ranks' caches are pure NF4. The prefix
+            # protects the first ~128 tokens (attention sinks per
+            # StreamingLLM) which are disproportionately attended to
+            # and account for most of the NF4 acceptance loss.
+            prefix_size = (
+                cfg.kv_outlier_prefix_size if self._rank == 0 else 0
+            )
+            initial_cache = NF4DynamicCache(
+                block_size=cfg.kv_block_size_nf4,
+                dtype=cfg.torch_dtype,
+                bf16_prefix_size=prefix_size,
+                update_chunk_size=cfg.nf4_update_chunk_size,
+                # Target-only decode appends ONE token per step; without the
+                # fold the layer accumulates one chunk per step and every
+                # forward concatenates all of them (R1). Exact, not
+                # approximate -- see NF4DynamicCache._append_nf4_chunk.
+                tail_merge_below=cfg.nf4_tail_merge_below,
+            )
 
-            # Always remove the per-layer hooks before decode. Otherwise
-            # every verify round would re-fire 32 hook callbacks, each
-            # writing JSON — measurable overhead and noise.
-            for h in prefill_hook_handles:
-                try:
-                    h.remove()
-                except Exception:
-                    pass
+        # M4 Phase C 2026-05-10 lever #1: only the LAST position's
+        # logits are used downstream (`local_last_logit = ...[:, -1, :]`).
+        # Pass num_logits_to_keep=1 so HF only materializes the final
+        # token's logits row instead of the full (B, S_local, vocab)
+        # tensor. At 1M S_local=128k that's
+        #   128k * 32000 * 2 = 8.2 GB saved per rank;
+        # at 512k it's 4 GB. LlamaForCausalLM gained this kwarg in
+        # transformers 4.45+; we bumped requirements-lock.txt from
+        # 4.44.2 to 4.46.3 specifically to enable this.
+        # Per-layer memory snapshots during prefill (paper Figure 3
+        # + OOM attribution). Register forward hooks ONLY when
+        # mem_tracer is active so M3 byte-identical replay isn't
+        # affected. Hooks fire after each LlamaDecoderLayer's
+        # forward and emit a labelled snapshot with layer_idx.
+        # Removed before any decode/verify forward so verify-loop
+        # forwards aren't spammed with hooks.
+        prefill_hook_handles = []
+        if mem_tracer is not None:
+            try:
+                layers = self.target_model.model.layers
+                for layer_idx, layer in enumerate(layers):
+                    def _make_hook(idx):
+                        def _hook(module, inputs, output):
+                            mem_tracer.snapshot(
+                                f"prefill_after_layer_{idx:02d}",
+                                layer_idx=idx,
+                            )
+                        return _hook
+                    prefill_hook_handles.append(
+                        layer.register_forward_hook(_make_hook(layer_idx))
+                    )
+            except Exception:
+                # Best-effort. If the model doesn't expose .model.layers
+                # in the expected shape, just skip per-layer snapshots —
+                # the post_target_prefill snapshot still fires.
+                prefill_hook_handles = []
 
-            # Freeze the prefill boundary on every patched attention module so
-            # subsequent decode forwards know where the sharded prefill ends and
-            # the replicated tail begins.
-            prefill_len = local_ids.shape[1]
-            if self._world_size > 1:
-                from src.models.ring_llama_attention import set_prefill_len
-                set_prefill_len(self.target_model, prefill_len=prefill_len)
+        _nvtx_push("phase:prefill_target")
+        with torch.cuda.stream(self.stream_compute):
+            target_out = self.target_model(
+                local_ids,
+                attention_mask=local_attn_mask,
+                position_ids=local_pos,
+                use_cache=True,
+                past_key_values=initial_cache,
+                num_logits_to_keep=1,
+            )
+            past_kv          = target_out.past_key_values
+            local_last_logit = target_out.logits[:, -1, :]
+        self.stream_compute.synchronize()
+        _nvtx_pop()
 
-            # The "first generated token" is sampled from the LAST GLOBAL position's
-            # logits, which only rank world_size-1 holds. Broadcast it so every rank
-            # samples the same cur_token (deterministic given same seed + same RNG).
-            if self._world_size > 1:
-                dist.broadcast(local_last_logit, src=self._world_size - 1)
-            next_token_logit = local_last_logit
-            print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
-            if mem_tracer is not None:
-                mem_tracer.snapshot("post_target_prefill")
-
-            if cfg.debug:
-                logger.debug("[RASD] prefill done, S=%d", S)
-
-            # Draft prefill (skipped in target-only baseline mode).
-            draft_past_kv = None
-            if cfg.spec_steps > 0:
-                # Prefill draft model — same tokenizer/vocab as target
-                # (LLaMA-2 SentencePiece, vocab=32000). The draft sees the
-                # leading BOS plus the most recent `draft_max_len - 1` tokens
-                # (Sheared-LLaMA=4096, TinyLlama=2048, capped by
-                # cfg.draft_window_cap): recency is the point, and a draft
-                # conditioned on the document's opening proposes tokens the
-                # target then rejects for context it never had.
-                raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
-                draft_ids = _draft_window(raw_draft_ids, self.draft_max_len)
-                logger.info("[draft-window] draft prefill over %d of %d prompt tokens (window=%d)",
-                            draft_ids.shape[1], raw_draft_ids.shape[1], self.draft_max_len)
-                print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
-                _nvtx_push("phase:prefill_draft")
-                with torch.cuda.stream(self.stream_draft):
-                    draft_out = self.draft_model(draft_ids, use_cache=True)
-                    draft_past_kv = draft_out.past_key_values
-                self.stream_draft.synchronize()
-                _nvtx_pop()
-                print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
-                if mem_tracer is not None:
-                    mem_tracer.snapshot("post_draft_prefill")
-            else:
-                print(f"[TRACE rank={self._rank}] target-only mode — skipping draft prefill", flush=True)
-
-            if cfg.debug:
+        # Always remove the per-layer hooks before decode. Otherwise
+        # every verify round would re-fire 32 hook callbacks, each
+        # writing JSON — measurable overhead and noise.
+        for h in prefill_hook_handles:
+            try:
+                h.remove()
+            except Exception:
                 pass
 
-            # Seed the first generated token from target prefill (target-vocab safe)
-            cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
-            generated  = [cur_token]
-            # The seed token is the FIRST emitted position, so its gap goes at the
-            # front of the list: `token_gaps` is aligned with `generated`, and
-            # both consumers (the sidecar length check and the tie rule's
-            # position lookup) read it as a parallel array. Recorded HERE, above
-            # the speculative/target-only split, so the two arms cannot drift.
-            seed_gap: List[float] = (
-                _step_gap(next_token_logit) if int(self._rank) == 0 else [])
+        # Freeze the prefill boundary on every patched attention module so
+        # subsequent decode forwards know where the sharded prefill ends and
+        # the replicated tail begins.
+        prefill_len = local_ids.shape[1]
+        if self._world_size > 1:
+            from src.models.ring_llama_attention import set_prefill_len
+            set_prefill_len(self.target_model, prefill_len=prefill_len)
 
-            # TTFT (C12, mentor M4 metric): time from generate() entry to the
-            # first output token being sampled. Captures prefill cost (target +
-            # draft + first-token broadcast under multi-rank) but excludes the
-            # speculative verify loop. All ranks lockstep on cur_token sample;
-            # rank 0's reading is representative.
-            torch.cuda.synchronize()
-            t_first_token = time.perf_counter()
+        # The "first generated token" is sampled from the LAST GLOBAL position's
+        # logits, which only rank world_size-1 holds. Broadcast it so every rank
+        # samples the same cur_token (deterministic given same seed + same RNG).
+        if self._world_size > 1:
+            dist.broadcast(local_last_logit, src=self._world_size - 1)
+        next_token_logit = local_last_logit
+        print(f"[TRACE rank={self._rank}] target prefill done, past_kv layers={len(past_kv)}", flush=True)
+        if mem_tracer is not None:
+            mem_tracer.snapshot("post_target_prefill")
 
-            # Global sequence length — needed under multi-rank to compute correct
-            # position_ids for each verify forward. After prefill of S prompt
-            # tokens, global_seqlen = S. The seed `cur_token` is at position S,
-            # the first verified token will be at position S+1, etc.
-            global_seqlen = S
+        if cfg.debug:
+            logger.debug("[RASD] prefill done, S=%d", S)
 
-            # Tracking
-            total_accepted   = 0
-            total_draft_toks = 0
-            n_rounds         = 0
-            # Acceptance is measured over NON-TRUNCATED rounds only. A round cut
-            # short by the budget had its accepted prefix verified but only
-            # partially emitted, so its accepted/gamma is not a draw from the
-            # same distribution as the others: keeping it in the mean biases the
-            # primary metric, and it biases it in the direction of the observed
-            # result rather than randomly.
-            acc_rounds       = 0     # rounds included in the acceptance mean
-            acc_verified     = 0     # sum of n_acc over those rounds
-            n_truncated      = 0
-            # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
-            per_token_trace: List[Dict] = []
-            # Top-1 minus top-2 logit gap at every emitted position, in emission
-            # order, so it lines up element-for-element with `generated` (the
-            # losslessness tie rule needs the gap at the position where two runs
-            # first disagree). Rank 0 only, like the token ids themselves.
-            # Starts with the SEED token's gap: the seed is an emitted token and
-            # the rounds below append theirs, so the list and the ids stay in
-            # step from the first position.
-            emitted_gaps: List[float] = list(seed_gap)
+        # Draft prefill (skipped in target-only baseline mode).
+        draft_past_kv = None
+        if cfg.spec_steps > 0:
+            # Prefill draft model — same tokenizer/vocab as target
+            # (LLaMA-2 SentencePiece, vocab=32000). The draft sees the
+            # leading BOS plus the most recent `draft_max_len - 1` tokens
+            # (Sheared-LLaMA=4096, TinyLlama=2048, capped by
+            # cfg.draft_window_cap): recency is the point, and a draft
+            # conditioned on the document's opening proposes tokens the
+            # target then rejects for context it never had.
+            raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
+            draft_ids = _draft_window(raw_draft_ids, self.draft_max_len)
+            logger.info("[draft-window] draft prefill over %d of %d prompt tokens (window=%d)",
+                        draft_ids.shape[1], raw_draft_ids.shape[1], self.draft_max_len)
+            print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
+            _nvtx_push("phase:prefill_draft")
+            with torch.cuda.stream(self.stream_draft):
+                draft_out = self.draft_model(draft_ids, use_cache=True)
+                draft_past_kv = draft_out.past_key_values
+            self.stream_draft.synchronize()
+            _nvtx_pop()
+            print(f"[TRACE rank={self._rank}] draft prefill done", flush=True)
+            if mem_tracer is not None:
+                mem_tracer.snapshot("post_draft_prefill")
         else:
-            # ============================================================
-            # C6 Resume — restore state, skip prefill, jump into the loop
-            # ============================================================
-            # If past_kv was serialized in NF4-native form (kv_quant=True
-            # at save time), reconstruct an NF4DynamicCache; otherwise
-            # the legacy bf16 tuple path is fine. (Fix for high-risk
-            # finding #1 from 2026-05-10 third-pass review — without
-            # NF4-native restore, NF4 storage would be permanently lost
-            # after the first reload.)
-            from src.models.nf4_dynamic_cache import (
-                NF4DynamicCache as _NF4DC,
-                is_nf4_serialized as _is_nf4,
-            )
-            if _is_nf4(ckpt.past_kv):
-                past_kv = _NF4DC.from_serializable(ckpt.past_kv)
-                if getattr(self, "_device", None) is not None:
-                    past_kv.move_tensors_to(self._device)
-            else:
-                past_kv = ckpt.past_kv
-            if _is_nf4(ckpt.draft_past_kv):
-                draft_past_kv = _NF4DC.from_serializable(ckpt.draft_past_kv)
-                if getattr(self, "_device", None) is not None:
-                    draft_past_kv.move_tensors_to(self._device)
-            else:
-                draft_past_kv = ckpt.draft_past_kv
-            cur_token        = ckpt.cur_token
-            generated        = list(ckpt.generated)
-            global_seqlen    = ckpt.global_seqlen
-            n_rounds         = ckpt.n_rounds
-            total_accepted   = ckpt.total_accepted
-            total_draft_toks = ckpt.total_draft_toks
-            per_token_trace  = list(ckpt.per_token_trace)
-            # On resume the seed token was emitted in an earlier session and its
-            # gap was not checkpointed: the `None` placeholder keeps the ARRAY
-            # aligned with `generated` (a missing entry would shift every later
-            # gap by one) and reads as "no evidence of indifference", which is
-            # the safe direction for the tie rule.
-            emitted_gaps     = [None] + [float(g) for r in per_token_trace
-                                         for g in (r.get("emitted_gaps") or [])]
-            prefill_len      = ckpt.prefill_len
-            # Restore the patched ring attention's prefill boundary so the
-            # next decode forward knows where sharded prefill ends.
-            if self._world_size > 1:
-                from src.models.ring_llama_attention import set_prefill_len
-                set_prefill_len(self.target_model, prefill_len=prefill_len)
-            # Rebuild the acceptance accumulators from the restored trace so a
-            # resumed run measures acceptance exactly as an uninterrupted one.
-            # Checkpoints are disabled in this campaign (checkpoint_every = 0),
-            # so this keeps the invariant true rather than assumed.
-            acc_rounds   = sum(1 for r in per_token_trace
-                               if not r.get("round_truncated"))
-            acc_verified = sum(int(r.get("n_acc", 0)) for r in per_token_trace
-                               if not r.get("round_truncated"))
-            n_truncated  = sum(1 for r in per_token_trace
-                               if r.get("round_truncated"))
-            # Recompute S from saved state — global_seqlen at checkpoint
-            # time = S + (sum of per-round contributions). Total tokens
-            # in `generated` = 1 (initial cur_token) + sum of contributions.
-            generated_total = sum(t.shape[1] for t in generated)
-            S = global_seqlen - (generated_total - 1)
-            # Restore both CPU and CUDA RNG state. CPU alone is
-            # insufficient when sampling runs on CUDA tensors (default
-            # under multi-rank GPU): torch.multinomial / torch.rand_like
-            # consume the device generator. (Fix for finding #3 from
-            # 2026-05-10 review; original Fix #5 only addressed CPU.)
-            if ckpt.rng_state is not None:
-                torch.set_rng_state(ckpt.rng_state)
-            if (ckpt.cuda_rng_state is not None
-                    and torch.cuda.is_available()
-                    and getattr(self, "_device", None) is not None
-                    and self._device.type == "cuda"):
-                torch.cuda.set_rng_state(ckpt.cuda_rng_state, self._device)
-            # TTFT is meaningless on resume (we skipped prefill); record 0
-            # so downstream metrics handling doesn't NaN.
-            t_first_token = t_start
-            logger.info(
-                "[checkpoint] rank=%d resumed n_rounds=%d global_seqlen=%d "
-                "(skipped prefill)", self._rank, n_rounds, global_seqlen,
-            )
+            print(f"[TRACE rank={self._rank}] target-only mode — skipping draft prefill", flush=True)
 
+        if cfg.debug:
+            pass
+
+        # Seed the first generated token from target prefill (target-vocab safe)
+        cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
+        generated  = [cur_token]
+        # The seed token is the FIRST emitted position, so its gap goes at the
+        # front of the list: `token_gaps` is aligned with `generated`, and
+        # both consumers (the sidecar length check and the tie rule's
+        # position lookup) read it as a parallel array. Recorded HERE, above
+        # the speculative/target-only split, so the two arms cannot drift.
+        seed_gap: List[float] = (
+            _step_gap(next_token_logit) if int(self._rank) == 0 else [])
+
+        # TTFT (C12, mentor M4 metric): time from generate() entry to the
+        # first output token being sampled. Captures prefill cost (target +
+        # draft + first-token broadcast under multi-rank) but excludes the
+        # speculative verify loop. All ranks lockstep on cur_token sample;
+        # rank 0's reading is representative.
+        torch.cuda.synchronize()
+        t_first_token = time.perf_counter()
+
+        # Global sequence length — needed under multi-rank to compute correct
+        # position_ids for each verify forward. After prefill of S prompt
+        # tokens, global_seqlen = S. The seed `cur_token` is at position S,
+        # the first verified token will be at position S+1, etc.
+        global_seqlen = S
+
+        # Tracking
+        total_accepted   = 0
+        total_draft_toks = 0
+        n_rounds         = 0
+        # Acceptance is measured over NON-TRUNCATED rounds only. A round cut
+        # short by the budget had its accepted prefix verified but only
+        # partially emitted, so its accepted/gamma is not a draw from the
+        # same distribution as the others: keeping it in the mean biases the
+        # primary metric, and it biases it in the direction of the observed
+        # result rather than randomly.
+        acc_rounds       = 0     # rounds included in the acceptance mean
+        acc_verified     = 0     # sum of n_acc over those rounds
+        n_truncated      = 0
+        # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
+        per_token_trace: List[Dict] = []
+        # Top-1 minus top-2 logit gap at every emitted position, in emission
+        # order, so it lines up element-for-element with `generated` (the
+        # losslessness tie rule needs the gap at the position where two runs
+        # first disagree). Rank 0 only, like the token ids themselves.
+        # Starts with the SEED token's gap: the seed is an emitted token and
+        # the rounds below append theirs, so the list and the ids stay in
+        # step from the first position.
+        emitted_gaps: List[float] = list(seed_gap)
         # ---- Target-only autoregressive baseline (M4 Phase C 2026-05-10) ----
         # When cfg.spec_steps == 0, skip the whole speculative decoding
         # loop and run plain single-token autoregressive decode through
@@ -1693,6 +1750,13 @@ class RASDInference:
                 metrics["per_token_trace"] = (
                     per_token_trace if self._rank == 0 else None
                 )
+            # The precision this run ACTUALLY used, measured off the loaded
+            # model and the live cache rather than read from the config. Outside
+            # the `save_generated_tokens` guard because it is a property of the
+            # RUN, not of the sidecar: a row whose config claimed 4-bit weights
+            # while the loader silently skipped them (the CPU/MPS path warns and
+            # does exactly that) would otherwise report the claim.
+            metrics["numerics"] = numerics_report(self.target_model, past_kv)
             if cfg.save_generated_tokens and self._rank == 0:
                 # Raw generated token IDs for the losslessness check. `input_ids`
                 # is the FULL prompt on every rank (only `local_ids` is sharded),
@@ -2085,6 +2149,9 @@ class RASDInference:
             metrics["per_token_trace"] = (
                 per_token_trace if self._rank == 0 else None
             )
+        # See the target-only path: measured, not read from the config, and
+        # recorded outside the sidecar guard because it is a property of the run.
+        metrics["numerics"] = numerics_report(self.target_model, past_kv)
         if cfg.save_generated_tokens and self._rank == 0:
             # Raw generated token IDs for the losslessness check. `input_ids` is
             # the FULL prompt on every rank (only `local_ids` is sharded), so

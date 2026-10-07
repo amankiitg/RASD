@@ -70,5 +70,7 @@ ARM1_TARGET_ONLY:
     - id: "ARM1_llama2_yarn_128k_targetonly"
       context_length: 131072
       spec_steps: 0
-      checkpoint_every: 4         # ~50 min/run at 128k; recover from crashes
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "matched target-only baseline for ARM1_llama2_yarn_128k"

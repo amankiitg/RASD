@@ -44,12 +44,16 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-# The target cross-check imports the campaign's analysis rule
-# (src.analysis.losslessness) rather than restating it, so the repo root has to
-# be importable: this script lives in scripts/, and running it as
-# `python scripts/...` puts scripts/ on sys.path, not the repo root.
+# The repo root has to be importable before anything from `src` is imported:
+# this script lives in scripts/, and running it as `python scripts/...` puts
+# scripts/ on sys.path, not the repo root. Two things are shared with the
+# campaign rather than restated here -- the dtype vocabulary (so `bf16` and
+# `bfloat16` cannot read as a difference) and the losslessness/tie rule the
+# cross-check reports under.
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+
+from src.models.rasd_inference import normalize_dtype_name  # noqa: E402
 LOGDIR = REPO / "results" / "mlsys" / "logs"
 
 CSV_FIELDS = [
@@ -371,6 +375,17 @@ def worker_main(spec_path: Path) -> int:
         # C5: raw success is not enough; main() re-checks the fairness rules.
         unit_ok = end_to_end > 0 and out_tokens > 0
 
+        # The precision the engine actually holds. Read off the loaded model,
+        # like the RASD side does, so the two columns are measurements of the
+        # same kind; `bfloat16` is the honest fallback because it is what THIS
+        # stage is restricted to, and a failure to introspect must not invent a
+        # 4-bit label.
+        torch_dtype = "bfloat16"
+        try:
+            torch_dtype = next(llm.llm_engine.model_executor.driver_worker
+                               .model_runner.model.parameters()).dtype
+        except Exception:                                  # noqa: BLE001
+            pass
         result.update({
             "status": "ok",
             "prompt_tokens": prompt_tokens,
@@ -380,8 +395,14 @@ def worker_main(spec_path: Path) -> int:
             # dtype. vLLM has no NF4 KV path, so `kv_dtype` here is never the
             # `nf4` the RASD side uses -- which is the whole reason the
             # cross-check reports token agreement descriptively.
-            "weight_precision": ("nf4_4bit" if quant else "bf16"),
-            "kv_dtype": "bf16",
+            # The spellings are the ENGINE's (`normalize_dtype_name`), so the two
+            # engines' columns are comparable: "bf16" and "bfloat16" are one
+            # dtype and a table showing them as different would invent a
+            # difference. The bitsandbytes path is `int4_bnb` rather than a
+            # storage type this process cannot introspect from vLLM.
+            "weight_precision": ("int4_bnb" if quant
+                                 else normalize_dtype_name(torch_dtype)),
+            "kv_dtype": normalize_dtype_name(torch_dtype),
             "eos_policy": EOS_POLICY,
             "prompt_source": prompt_source,
             "prompt_sha256": prompt_sha,
@@ -1017,8 +1038,12 @@ def main() -> int:
                     help="C5: max_new_tokens of the RASD cell we compare "
                          "against (ARM4 cells run 128)")
     ap.add_argument("--quantizations", nargs="+",
-                    default=["bitsandbytes", "bfloat16"],
-                    help="C4: emit a 4-bit bitsandbytes row AND a bf16 row")
+                    default=["bfloat16"],
+                    help="Weight precisions to run. Defaults to bf16 ONLY: the "
+                         "campaign's vLLM reference is Llama-3.1-8B at bf16 "
+                         "(plan revision 2026-10-07), and a default that also "
+                         "emitted a bitsandbytes row would silently reinstate "
+                         "the doubled sweep the revision removed")
     ap.add_argument("--target-revision", default="",
                     help="the RASD cell's target revision; a row is not "
                          "unit-matched unless it ran the same one")

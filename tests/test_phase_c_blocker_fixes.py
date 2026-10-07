@@ -25,6 +25,7 @@ component (Fix #3 is exercised end-to-end via build_run_configs).
 """
 from __future__ import annotations
 
+import pathlib
 import re
 from pathlib import Path
 
@@ -243,196 +244,46 @@ class TestFix4BaselinesInvocation:
 # Fix #5 — RNG state populated on save + restored on resume
 # ---------------------------------------------------------------------------
 
-class TestFix5RngState:
-    def test_save_populates_rng_state(self):
-        """_maybe_save_checkpoint must call torch.get_rng_state() and
-        pass it to GenerationCheckpoint."""
-        assert "rng_state=torch.get_rng_state()" in RASD_INF_SRC, (
-            "Fix #5 regression: _maybe_save_checkpoint not populating "
-            "rng_state — resumed runs diverge under temperature > 0"
-        )
+class TestResumeIsRefused:
+    """RNG-state and NF4-cache RESTORE on resume (Fixes 5, 2nd-pass #3,
+    3rd-pass blocker 1) are gone with the resume branch itself.
 
-    def test_resume_restores_rng_state(self):
-        """The resume branch in generate() must call torch.set_rng_state()."""
-        assert "torch.set_rng_state(ckpt.rng_state)" in RASD_INF_SRC, (
-            "Fix #5 regression: resume branch not restoring rng_state"
-        )
+    Those fixes existed to make a resumed run correct: restore the RNG state so
+    sampling continues identically, reconstruct the NF4 cache from its saved form
+    so quantization is not silently lost. They were real defects and they were
+    fixed -- and then the whole path was retired (2026-10-07) because the
+    per-token logit gaps cannot be checkpointed, so a resumed run would write a
+    gap array that the tie rule reads at the wrong positions.
 
-    def test_restore_guarded_against_none(self):
-        """Older checkpoints (saved before this fix) had rng_state=None.
-        Restore must guard against the None case so old checkpoints
-        don't crash a resume."""
-        # Look for the guarded form
-        assert re.search(
-            r"if ckpt\.rng_state is not None:[\s\S]{0,80}torch\.set_rng_state\(ckpt\.rng_state\)",
-            RASD_INF_SRC,
-        ), (
-            "Fix #5 regression: rng_state restore not guarded by None-check; "
-            "old pre-fix checkpoints would crash on resume"
-        )
+    What replaces them is not "nothing": it is a refusal, and the assertions
+    below pin the refusal AND the absence of the code it replaced. Leaving the
+    restore branch in place would have read as a working resume path.
+    """
 
+    def test_a_found_checkpoint_is_refused(self):
+        assert "resume refused" in RASD_INF_SRC
 
-# ---------------------------------------------------------------------------
-# 2026-05-10 second-pass review fixes
-# ---------------------------------------------------------------------------
+    def test_the_rng_restores_are_gone(self):
+        for dead in ("torch.set_rng_state(ckpt.rng_state)",
+                     "torch.cuda.set_rng_state(ckpt.cuda_rng_state"):
+            assert dead not in RASD_INF_SRC, (
+                f"{dead!r} survives the refusal: unreachable restore code")
 
-class TestSecondPassFix1CacheSubclass:
-    """The 2nd-pass review found that NF4DynamicCache was duck-typed as
-    DynamicCache but did NOT subclass transformers.cache_utils.Cache.
-    LlamaModel.forward in transformers 4.44.2 explicitly checks
-    `not isinstance(past_key_values, Cache)` and replaces non-Cache
-    objects via DynamicCache.from_legacy_cache(...) → our NF4 storage
-    would have been silently swapped out for bf16. CRITICAL fix."""
+    def test_the_nf4_restore_is_gone(self):
+        assert "from_serializable(ckpt.past_kv)" not in RASD_INF_SRC
+        assert "is_nf4_serialized" not in RASD_INF_SRC, (
+            "the resume dispatch survives even though nothing can resume")
 
-    def test_isinstance_cache(self):
-        from transformers.cache_utils import Cache
-        from src.models.nf4_dynamic_cache import NF4DynamicCache
-        assert isinstance(NF4DynamicCache(), Cache), (
-            "2nd-pass #1 regression: NF4DynamicCache no longer subclasses "
-            "transformers.cache_utils.Cache. LlamaModel.forward will "
-            "replace it before attention sees it; kv_quant=True will "
-            "silently store bf16; 1M context will OOM at 40 GB."
-        )
+    def test_the_checkpoint_class_still_round_trips(self):
+        """Retiring the in-generation resume does not break the format.
 
-
-class TestSecondPassFix2NoOuterLoop:
-    """P3.3 long_ctx_smokes had a `for ctx in 32k 128k 512k 1M; do
-    python ... --groups SMOKE; done` loop. Each iteration runs the
-    entire SMOKE group (which itself enumerates all 4 contexts via
-    its level entries), so 4×4 = 16 cells instead of 4. ~$50-80 of
-    pod time wasted."""
-
-    def test_long_ctx_smokes_has_no_outer_for_loop(self):
-        """The long_ctx_smokes function body must not contain a
-        `for ctx in ...; do ... done` style loop; the SMOKE YAML
-        already enumerates all 4 contexts."""
-        m = re.search(
-            r"^long_ctx_smokes\(\) \{(.*?)^\}",
-            PHASE_C_SH, re.DOTALL | re.MULTILINE,
-        )
-        assert m is not None, "long_ctx_smokes function not found"
-        body = m.group(1)
-        # Strip comments before searching for the loop
-        non_comment = "\n".join(
-            line for line in body.splitlines()
-            if not line.lstrip().startswith("#")
-        )
-        assert not re.search(r"\bfor\b\s+ctx\b", non_comment), (
-            "2nd-pass #2 regression: long_ctx_smokes has an outer "
-            "`for ctx in ...` loop that runs the SMOKE group 4× — "
-            "wastes ~$50-80 of pod time"
-        )
-
-
-class TestSecondPassFix3CudaRngState:
-    """The original Fix #5 saved `torch.get_rng_state()` (CPU only).
-    Sampling runs on CUDA tensors (torch.multinomial / torch.rand_like
-    on the verify forward's accept_prob tensor), which consumes the
-    CUDA generator state — independent from CPU. Without saving
-    cuda_rng_state, resumed runs still diverge."""
-
-    def test_checkpoint_dataclass_has_cuda_rng_field(self):
-        from src.models.checkpoint import GenerationCheckpoint
-        import dataclasses
-        field_names = {f.name for f in dataclasses.fields(GenerationCheckpoint)}
-        assert "cuda_rng_state" in field_names, (
-            "2nd-pass #3 regression: GenerationCheckpoint missing "
-            "cuda_rng_state field; resumed runs still diverge under "
-            "GPU sampling"
-        )
-
-    def test_save_populates_cuda_rng(self):
-        """_maybe_save_checkpoint must set cuda_rng_state from
-        torch.cuda.get_rng_state(self._device) when CUDA available."""
-        assert "cuda_rng_state=" in RASD_INF_SRC
-        assert "torch.cuda.get_rng_state(self._device)" in RASD_INF_SRC, (
-            "2nd-pass #3 regression: cuda_rng_state not populated from "
-            "torch.cuda.get_rng_state(self._device)"
-        )
-
-    def test_resume_restores_cuda_rng(self):
-        """Resume branch in generate() must call torch.cuda.set_rng_state."""
-        assert "torch.cuda.set_rng_state(ckpt.cuda_rng_state, self._device)" in RASD_INF_SRC, (
-            "2nd-pass #3 regression: resume branch not restoring cuda_rng_state"
-        )
-
-    def test_cuda_restore_guarded_against_none(self):
-        """Old checkpoints had cuda_rng_state=None. Restore must guard."""
-        assert re.search(
-            r"if\s*\(?\s*ckpt\.cuda_rng_state is not None",
-            RASD_INF_SRC,
-        ), (
-            "2nd-pass #3 regression: cuda_rng_state restore not None-guarded"
-        )
-
-    def test_payload_round_trips_cuda_rng(self):
-        """save() / load() preserve cuda_rng_state through the on-disk
-        format."""
-        import torch
-        from src.models.checkpoint import GenerationCheckpoint
-        ckpt = GenerationCheckpoint(
-            n_rounds=1, global_seqlen=10, total_accepted=1,
-            total_draft_toks=2, prefill_len=8,
-            cur_token=torch.tensor([[42]]),
-            generated=[torch.tensor([[1]])],
-            past_kv=tuple([(torch.zeros(1, 2, 4, 4), torch.zeros(1, 2, 4, 4))]),
-            draft_past_kv=tuple([(torch.zeros(1, 2, 4, 4), torch.zeros(1, 2, 4, 4))]),
-            cuda_rng_state=torch.tensor([1, 2, 3, 4], dtype=torch.uint8),
-        )
-        import tempfile, pathlib
-        with tempfile.TemporaryDirectory() as tmp:
-            p = pathlib.Path(tmp) / "ckpt.pt"
-            ckpt.save(p)
-            loaded = GenerationCheckpoint.load(p)
-        assert loaded.cuda_rng_state is not None
-        assert torch.equal(loaded.cuda_rng_state, ckpt.cuda_rng_state)
-
-
-class TestThirdPassBlocker1NF4CheckpointPath:
-    """3rd-pass review: _maybe_save_checkpoint did
-        past_kv = tuple(tuple(t.detach().cpu() for t in layer) for layer in past_kv)
-    which iterates NF4DynamicCache and dequantizes the FULL cache to
-    bf16 before .cpu(). At ctx=1M × W=8 that's ~64 GB / rank — OOMs on
-    save AND loses NF4 storage permanently after first reload.
-
-    Fix: detect NF4DynamicCache via to_serializable() / from_serializable()
-    so the on-disk form is NF4-native (~3.55x smaller than bf16) and
-    the resume path reconstructs as NF4DynamicCache."""
-
-    def test_maybe_save_uses_to_serializable_for_nf4(self):
-        """The save site must dispatch to to_serializable() when present
-        instead of unconditionally iterating + dequantizing."""
-        rinf = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
-        # The dispatch lives in _maybe_save_checkpoint. Look for the
-        # hasattr(...) check that gates the NF4-native branch.
-        assert re.search(
-            r'hasattr\(past_kv,\s*[\"\']to_serializable[\"\']\)[\s\S]{0,300}'
-            r'past_kv\.to_serializable\(\)',
-            rinf,
-        ), (
-            "3rd-pass blocker 1 regression: _maybe_save_checkpoint does "
-            "not call past_kv.to_serializable() — would dequantize NF4 "
-            "cache to bf16 at save time, OOM at 1M, lose NF4 on resume"
-        )
-
-    def test_resume_branch_reconstructs_nf4_cache(self):
-        """Resume must call NF4DynamicCache.from_serializable when the
-        saved past_kv is the NF4 dict form."""
-        rinf = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
-        assert "from_serializable(ckpt.past_kv)" in rinf, (
-            "3rd-pass blocker 1 regression: resume branch does not "
-            "reconstruct NF4DynamicCache from saved form — would stay "
-            "bf16 forever after resume"
-        )
-
-    def test_resume_dispatches_via_is_nf4_serialized(self):
-        """The reconstruction must be guarded by is_nf4_serialized(...)
-        so legacy bf16 tuples (kv_quant=False) still load correctly."""
-        rinf = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
-        assert "is_nf4_serialized" in rinf, (
-            "3rd-pass blocker 1 regression: resume not dispatching via "
-            "is_nf4_serialized; legacy bf16 checkpoints would crash"
-        )
+        `to_serializable`/`from_serializable` remain the checkpoint's own
+        contract, and the tests that exercise the class directly still hold;
+        what is gone is generate() consuming it.
+        """
+        from src.models.checkpoint import GenerationCheckpoint  # noqa: F401
+        assert "def from_serializable" in pathlib.Path(
+            "src/models/nf4_dynamic_cache.py").read_text()
 
 
 class TestThirdPassBlocker5ModuleInit:

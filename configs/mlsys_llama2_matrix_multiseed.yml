@@ -59,10 +59,14 @@ M4_MULTISEED:
 
     - id: "M4_ctx512k"
       context_length: 524288
-      checkpoint_every: 4
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "512k — factor=128"
 
     - id: "M4_ctx1M"
       context_length: 1048576
-      checkpoint_every: 4
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "1M — factor=256"

@@ -1084,3 +1084,54 @@ So, recorded here BEFORE the code changes:
 * The B4 tie rule stays where it is, on the RASD-versus-RASD losslessness check,
   where both arms DO run the same arithmetic and a divergence really is an
   implementation defect.
+
+### Revision: vllm_ladder is Llama-3.1-8B at bf16, and the precision columns are measured (2026-10-07)
+
+*Before either vLLM stage has run; no data seen. No metric, unit of independence,
+document count, interval method or comparison changes.*
+
+**The ladder narrows to one model at one precision.** It swept Llama-3.1-8B *and*
+Llama-2-7b-hf, each at bitsandbytes and bf16 — 12 cells. What the ladder is for is
+one thing: a production-stack **throughput reference** at 256k and 512k for this
+campaign's target, and whether vLLM can serve those contexts at all on 8 ranks.
+A second model at a second weight precision does not strengthen that reference;
+it makes the table a comparison across four configurations while the claim is
+about one. So the ladder runs **Llama-3.1-8B at bfloat16 only**, 6 cells.
+
+Cost recomputed on the halved cell count: **1.25 h / $28**, down from 2.5 h / $56.
+The stage's per-stage header (6 h) and the 20 % margin check are unchanged.
+
+**The precision columns are now MEASURED, not read from the config.** Both
+stages record `weight_precision` and `kv_dtype` from the engine's loaded state:
+`target_model.is_loaded_in_4bit` and its `bnb_4bit_quant_type` for the weights,
+and the KV cache's own class for the cache. The reason is load-bearing rather
+than cosmetic.
+
+The 2026-10-07 revision above turns on the claim that RASD runs FP4 weights with
+an NF4 KV cache while vLLM cannot reproduce that cache — which is why token
+agreement between them is reported descriptively instead of scored. A column
+derived from `run["kv_quant"]` reports the **instruction**, and this project has
+already shipped a path where the instruction was not carried out: `quantize_target`
+on CPU/MPS logs a warning and silently loads dense weights. A row that reports its
+own config cannot detect that, and the whole vLLM reasoning would inherit the
+error. Dtype spellings are normalized (`bf16` ≡ `bfloat16`) so two engines'
+precision can be compared at all.
+
+Consequences, all asserted rather than assumed:
+
+* the cap smoke asserts on **every** RASD row that `weight_precision == fp4` and
+  `kv_dtype == nf4`, and reports the pair when it holds;
+* the cap smoke follows the B4 rule for ties: **NUMERIC_TIE passes** and is
+  reported with its positions and both arms' gaps; only **MISMATCH** fails;
+* `checkpoint_every` is **0** in every `configs/mlsys_*.yml`, and the dry run
+  asserts it, because a run that resumes cannot restore the per-token gaps.
+
+**Resume is refused.** `generate` raises a clear error if it finds a checkpoint
+rather than resuming: the per-token logit gaps are accumulated in memory and are
+not part of a checkpoint, so a resumed run would write a gap array covering only
+the post-resume tokens beside a full-length id list. That would either abort the
+run after the money was spent, or — if the lengths happened to agree — report the
+neighbouring token's indifference at every divergence, excusing real mismatches
+as ties. The now-unreachable restore branch is deleted rather than left in place:
+code that claims to resume is worse than no code, because it reads as a working
+path.

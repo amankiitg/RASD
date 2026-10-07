@@ -368,17 +368,25 @@ stages:
     plain_decode_only: true
     documents: target_full_first3
     contexts: [131072, 262144, 524288]
+    models: [meta-llama/Llama-3.1-8B]
+    quantizations: [bfloat16]
     max_new_tokens: 1024
-    est_hours: 2.5
-    est_cost_usd: 56
+    est_hours: 1.25
+    est_cost_usd: 28
     output: results/mlsys/vllm_baseline.csv
     what_it_adds: >
       Kept because it measures something impl_validation does not: PLAIN
       (non-speculative) vLLM decode throughput at 256k and 512k, and whether
       vLLM can serve those contexts at all on 8 ranks (an OOM or a required
       tensor-parallel change is itself a result). impl_validation covers only
-      128k and only speculative decoding, so without this there is no
-      production-stack reference where the payoff boundary is claimed.
+      128k.
+      NARROWED (plan revision, 2026-10-07): Llama-3.1-8B at bfloat16 only. The
+      ladder swept Llama-2 and a bitsandbytes precision as well, which doubled
+      the cells to answer a question nobody asked -- a throughput reference is
+      for THIS campaign's target, and a second model at a second weight
+      precision makes the table a comparison across two configurations rather
+      than a reference for one. Cost recomputed on the halved cell count (12 ->
+      6 cells): 1.25h / $28, down from 2.5h / $56.
     unit_check: >
       Report vLLM generation throughput in the SAME unit as RASD's throughput_tps
       (end-to-end generation tok/s), never forward_tps. Set unit_matched=yes ONLY

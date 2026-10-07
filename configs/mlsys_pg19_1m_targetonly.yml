@@ -45,5 +45,7 @@ PG19_1M_TARGET_ONLY:
   levels:
     - id: "PG19_ctx1M_targetonly"
       context_length: 1048576
-      checkpoint_every: 4
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "paired target-only baseline for P35D_ctx1M_pg19 / PG19_ctx1M"

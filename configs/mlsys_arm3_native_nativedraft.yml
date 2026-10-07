@@ -50,7 +50,9 @@ ARM3_SPEC:
   levels:
     - id: "ARM3_llama3_native_128k_nativedraft"
       context_length: 131072
-      checkpoint_every: 4
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "Llama-3.1-8B native @128k, Llama-3.2-1B draft at full native window"
 
 # ---------------------------------------------------------------------------
@@ -67,5 +69,7 @@ ARM3_TARGET_ONLY:
     - id: "ARM3_llama3_native_128k_targetonly"
       context_length: 131072
       spec_steps: 0
-      checkpoint_every: 4
+      checkpoint_every: 0         # 0: a checkpoint cannot be resumed (the per-token
+                                 # logit gaps are not stored), so saving one only
+                                 # risks the refusal in generate().
       notes: "matched target-only baseline (identical to Arm 2's; see header)"

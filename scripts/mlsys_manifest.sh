@@ -810,11 +810,13 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
 }
 
 DOCS=${MLSYS_DOCUMENTS_JSON:-data/processed/pg19_docs/documents.json}
-# The revisions a vLLM row is compared against. `--target-revision` (singular)
-# cannot describe a ladder that runs two targets, and a row pinned to the WRONG
-# model's revision is a comparison across models that looks pinned.
-ALL_TARGET_REVS="meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b,meta-llama/Llama-2-7b-hf=01c7f73d771dfac7d292323805ebc428287df4f9"
-ALL_DRAFT_REVS="meta-llama/Llama-3.2-1B=4e20de362430cd3b72f300e6b0f18e50e7166e08"
+# The revision a vLLM row is compared against. Every vLLM cell in this campaign
+# is Llama-3.1-8B at bf16 (plan revision, 2026-10-07): the ladder used to sweep
+# Llama-2 as well, but the comparison it exists for is the production-stack
+# THROUGHPUT reference for this campaign's target, and a second model at a
+# second weight precision doubled the cells to answer a question nobody asked.
+# A row pinned to another model's revision would be a comparison across models
+# that looks pinned, so the pin is per-model and there is now exactly one.
 TARGET_REVS_D3="meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
 interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDOG}h only='${ONLY:-<none>}' approved='$APPROVED' ==="
 echo "spend before manifest: \$$(spend)"
@@ -1197,9 +1199,9 @@ if VLLM_PY=$(vllm_python); then
     --compare-out "$OUT/vllm_ladder_target_crosscheck.csv" \
     --context-lengths 131072 262144 524288 --max-new-tokens 1024 \
     --matched-max-new-tokens 1024 \
-    --models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf \
-    --target-revisions "$ALL_TARGET_REVS" \
-    --draft-revisions "$ALL_DRAFT_REVS"
+    --models meta-llama/Llama-3.1-8B \
+    --quantizations bfloat16 \
+    --target-revisions "$TARGET_REVS_D3"
 else
   interim "REFUSED name=vllm_ladder reason=no_vllm_venv"
   echo "REFUSE vllm_ladder: no vLLM interpreter (run scripts/mlsys_vllm_venv.sh)"

@@ -39,6 +39,8 @@ import random
 import sys
 import zlib
 
+import torch
+
 SANDBOX = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SANDBOX))
 
@@ -47,7 +49,7 @@ import _real_run_experiment as real          # noqa: E402
 # produced during a real run. Importing it (rather than copying the dict) means
 # a schema change there reaches this stub.
 from src.models.rasd_inference import (                          # noqa: E402
-    _build_per_token_record, _round_commit_plan)
+    _build_per_token_record, _round_commit_plan, numerics_report)
 
 CSV_FIELDS = real.CSV_FIELDS
 
@@ -349,15 +351,17 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
              # MISMATCH rather than silently excused as a numerics tie.
              "token_gaps": [round(3.0 + 0.001 * i, 6)
                             for i in range(len(emitted_ids))],
-             # The numerics this run was measured under, exactly as
-             # run_experiment records them. The vLLM cross-check reports these
-             # beside its own, because the two engines cannot share an NF4 KV
-             # path and their token divergence measures precision.
-             "weight_precision": (run.get("weight_quant")
-                                  or run.get("quantization")
-                                  or run.get("dtype") or "bfloat16"),
-             "kv_dtype": ("nf4" if run.get("kv_quant")
-                          else (run.get("dtype") or "bfloat16")),
+             # The numerics this run was measured under, through the SAME
+             # production function the engine uses: a stand-in carrying the
+             # attributes a 4-bit-loading transformers model carries
+             # (`is_loaded_in_4bit`, `config.quantization_config`) and a real
+             # NF4DynamicCache. Hardcoding "fp4"/"nf4" here would let the stub
+             # pass while the production detector was broken, which is what the
+             # cap smoke's per-row assertion exists to catch.
+             **numerics_report(
+                 _fake_4bit_model() if run.get("kv_quant")
+                 or run.get("quantize_target") else _dense_model(),
+                 _fake_kv_cache(run)),
              "throughput_tps": row.get("throughput_tps"),
              "target_revision": row["target_revision"],
              "draft_revision": row["draft_revision"]})
@@ -388,6 +392,49 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
 
 
 # ---------------------------------------------------------------------------
+
+def _fake_4bit_model():
+    """A model object shaped like a bitsandbytes 4-bit load.
+
+    `detect_weight_precision` reads exactly these two things, so this exercises
+    the production detector rather than restating its answer.
+    """
+    class _QC:
+        # A real BitsAndBytesConfig is a plain object, not a dict; this mirrors
+        # that so the stub exercises the same branch the engine does.
+        bnb_4bit_quant_type = "fp4"
+    class _Cfg:
+        quantization_config = _QC()
+    class _M:
+        is_loaded_in_4bit = True
+        config = _Cfg()
+    return _M()
+
+
+def _dense_model():
+    class _P:
+        dtype = torch.bfloat16
+    class _M:
+        is_loaded_in_4bit = False
+        def parameters(self):
+            return iter([_P()])
+    return _M()
+
+
+def _fake_kv_cache(run):
+    """The cache object the run would really hold: NF4 when kv_quant, else None.
+
+    `detect_kv_precision` reads the CLASS, so a real NF4DynamicCache is the only
+    honest stand-in for the quantized case; `None` is what a non-quantized run
+    leaves behind (HF builds its own bf16 DynamicCache, which the engine does not
+    retain).
+    """
+    if not run.get("kv_quant"):
+        return None
+    from src.models.nf4_dynamic_cache import NF4DynamicCache
+    return NF4DynamicCache(block_size=64, dtype=torch.bfloat16,
+                           bf16_prefix_size=0, update_chunk_size=0)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()

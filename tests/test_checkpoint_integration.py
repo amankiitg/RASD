@@ -201,50 +201,60 @@ class TestMaybeSaveCheckpoint:
 # ---------------------------------------------------------------------------
 
 class TestGenerateWiring:
-    def test_resume_gate_present(self):
-        """generate() must check for an existing checkpoint at entry,
-        gated on cfg.checkpoint_every > 0."""
-        assert re.search(
-            r"ckpt\s*=\s*self\._try_load_checkpoint\(\)\s*if\s+cfg\.checkpoint_every\s*>\s*0\s+else\s+None",
-            RASD_INF_SRC,
-        ), (
-            "C6 regression: resume gate missing from generate() entry"
-        )
+    """The C6 wiring, as it is AFTER resume was refused (2026-10-07).
 
-    def test_prefill_skipped_on_resume(self):
-        """The prefill block must be inside `if ckpt is None:` — otherwise
-        we'd run prefill even when restoring from a checkpoint."""
-        assert "if ckpt is None:" in RASD_INF_SRC, (
-            "C6 regression: `if ckpt is None:` guard missing — prefill "
-            "would run unconditionally"
-        )
+    Resuming skips prefill and re-enters the verify loop mid-generation, but the
+    per-token logit gaps are accumulated in memory and are not part of a
+    checkpoint: a resumed run would write a gap array covering only the
+    post-resume tokens beside a full-length id list. So `generate` REFUSES a run
+    it finds a checkpoint for, and the restore branch is DELETED rather than
+    left unreachable -- code that reads as a working resume path is worse than
+    no code.
+    """
 
-    def test_resume_else_branch_restores_state(self):
-        """The else branch of `if ckpt is None:` must restore variables
-        from the checkpoint."""
-        # Search for the restore lines inside the else branch
-        for needle in ("ckpt.past_kv", "ckpt.draft_past_kv", "ckpt.cur_token",
-                       "ckpt.n_rounds", "ckpt.global_seqlen",
-                       "ckpt.total_accepted", "ckpt.prefill_len"):
-            assert needle in RASD_INF_SRC, (
-                f"C6 regression: resume branch missing restore of {needle!r}"
-            )
+    def test_a_found_checkpoint_is_refused(self):
+        """The gate must detect a checkpoint and refuse, gated on the same flag."""
+        i = RASD_INF_SRC.index("if cfg.checkpoint_every > 0:")
+        window = RASD_INF_SRC[i:i + 700]
+        assert "_try_load_checkpoint()" in window, (
+            "C6 regression: generate() no longer looks for a checkpoint")
+        assert "raise RuntimeError(" in window, (
+            "C6 regression: a found checkpoint is not refused")
+
+    def test_the_refusal_explains_itself(self):
+        i = RASD_INF_SRC.index("resume refused")
+        msg = RASD_INF_SRC[i:i + 700]
+        assert "gaps" in msg and "checkpoint_every=0" in msg, (
+            "the refusal must say why and what to do instead, or the next "
+            "person re-enables resume")
+
+    def test_the_restore_branch_is_gone(self):
+        """No unreachable restore code that claims resume works."""
+        for dead in ("ckpt.past_kv", "ckpt.draft_past_kv", "ckpt.cur_token",
+                     "ckpt.n_rounds", "ckpt.global_seqlen",
+                     "ckpt.total_accepted", "ckpt.prefill_len",
+                     "ckpt.cuda_rng_state"):
+            assert dead not in RASD_INF_SRC, (
+                f"{dead} survives the refusal: an unreachable resume branch")
+        assert "if ckpt is None:" not in RASD_INF_SRC, (
+            "C6 regression: the prefill is guarded as if a resume path existed")
+        assert "C6 Resume — restore state" not in RASD_INF_SRC
+
+    def test_generation_always_starts_fresh(self):
+        assert "Fresh start" in RASD_INF_SRC
 
     def test_save_called_in_verify_loop(self):
-        """_maybe_save_checkpoint must be invoked from inside the verify
-        loop. The default-off check is inside the helper itself."""
+        """_maybe_save_checkpoint must still be invoked from inside the verify
+        loop; the default-off check is inside the helper itself."""
         assert "self._maybe_save_checkpoint(" in RASD_INF_SRC, (
-            "C6 regression: _maybe_save_checkpoint not called from generate()"
-        )
+            "C6 regression: _maybe_save_checkpoint not called from generate()")
 
-    def test_set_prefill_len_called_on_resume(self):
-        """On resume under multi-rank, set_prefill_len must be called so
-        the patched ring attention knows the prefill boundary."""
-        # Find the resume branch and verify set_prefill_len is called there
-        idx_resume = RASD_INF_SRC.find("ckpt.prefill_len")
-        assert idx_resume > 0
-        # Look for set_prefill_len call within the next ~500 chars
-        window = RASD_INF_SRC[idx_resume:idx_resume + 500]
-        assert "set_prefill_len(self.target_model" in window, (
-            "C6 regression: set_prefill_len not called in resume branch"
-        )
+    def test_the_save_helper_is_honest_about_resume(self):
+        i = RASD_INF_SRC.index("def _maybe_save_checkpoint")
+        doc = RASD_INF_SRC[i:i + 1400]
+        assert "cannot be resumed" in doc or "no longer be RESUMED" in doc, (
+            "the save helper still implies its checkpoints are resumable")
+
+    def test_set_prefill_len_is_called_on_the_fresh_path(self):
+        """The ring prefill boundary is still frozen, on the only path there is."""
+        assert "set_prefill_len(self.target_model" in RASD_INF_SRC

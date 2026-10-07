@@ -1615,6 +1615,143 @@ PYX
                || bad "this round's contracts are not in place"
 
 
+# --- 20. measured numerics, the tie rule on the smoke, resume, the ladder ----
+"$PY" - <<'PYX'
+import re, sys, yaml, pathlib
+fails = []
+
+def read(p):
+    try:
+        return open(p).read()
+    except OSError as e:
+        fails.append(f"cannot read {p}: {e}")
+        return ""
+
+eng = read("src/models/rasd_inference.py")
+rexp = read("run_experiment.py")
+smoke = read("scripts/mlsys_cap_smoke_check.py")
+vs = read("scripts/mlsys_vllm_baseline.py")
+man = open("scripts/mlsys_manifest.sh").read()
+plan = read("docs/mlsys_analysis_plan.md")
+
+# 1. the precision columns come from the loaded state, not the config
+for fn in ("def detect_weight_precision", "def detect_kv_precision",
+           "def numerics_report", "def normalize_dtype_name"):
+    if fn not in eng:
+        fails.append(f"{fn} missing: the precision columns have no measured source")
+if "is_loaded_in_4bit" not in eng:
+    fails.append("the weight label does not read the model's 4-bit state")
+if "bnb_4bit_quant_type" not in eng:
+    fails.append("the weight label cannot distinguish fp4 from nf4 storage")
+if 'metrics["numerics"] = numerics_report(' not in eng:
+    fails.append("the engine does not measure the numerics of a run")
+if eng.count('metrics["numerics"] = numerics_report(') != 2:
+    fails.append("the numerics are not measured in BOTH arms")
+if re.search(r'"weight_precision":\s*\(run\.get', rexp):
+    fails.append("run_experiment derives weight_precision from the config again")
+if re.search(r'"kv_dtype":\s*\("nf4" if run\.get', rexp):
+    fails.append("run_experiment derives kv_dtype from the config again")
+if "numerics = metrics.pop(\"numerics\"" not in rexp:
+    fails.append("run_experiment does not take the MEASURED numerics")
+if "**numerics," not in rexp:
+    fails.append("the measured numerics never reach the sidecar")
+for soft in ("bf16", "bfloat16"):
+    if soft not in eng:
+        fails.append(f"dtype normalization does not handle {soft!r}")
+
+# the rehearsal must go through the same production detector
+stub = read("scripts/rehearsal/stub_run_experiment.py")
+if "numerics_report(" not in stub:
+    fails.append("the rehearsal stub does not use the production numerics "
+                 "detector, so it could pass while the detector was broken")
+if '"_real_run_experiment"' in stub and "real.numerics_report" in stub:
+    fails.append("the stub calls numerics_report on the wrong module")
+
+# 2. the cap smoke follows the plan for ties, and asserts the numerics
+if 'if res["verdict"] == "MISMATCH"' not in smoke:
+    fails.append("the cap smoke does not fail specifically on MISMATCH")
+if 'elif res["verdict"] == "NUMERIC_TIE"' not in smoke:
+    fails.append("the cap smoke does not pass a NUMERIC_TIE")
+if "tie_positions" not in smoke:
+    fails.append("the cap smoke does not report the tie positions")
+for needle in ('if wp != "fp4"', 'if kvd != "nf4"'):
+    if needle not in smoke:
+        fails.append(f"the cap smoke does not assert {needle}")
+if "no measured precision" not in smoke:
+    fails.append("a row with no measured precision is not a failure")
+
+# 3. the ladder is Llama-3.1-8B at bf16 only, at the recomputed cost
+if "--models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf" in man:
+    fails.append("the ladder still sweeps Llama-2")
+mv = read("configs/mlsys_manifest.yml")
+try:
+    d = yaml.safe_load(mv)
+    lad = next(s for s in d["stages"] if s["id"] == "vllm_ladder")
+except Exception as e:                                   # noqa: BLE001
+    fails.append(f"cannot read the ladder's cost entry: {e}")
+    lad = {}
+if lad.get("models") != ["meta-llama/Llama-3.1-8B"]:
+    fails.append(f"the ladder's models are {lad.get('models')!r}")
+if lad.get("quantizations") != ["bfloat16"]:
+    fails.append(f"the ladder's quantizations are {lad.get('quantizations')!r}")
+if int(lad.get("est_cost_usd") or 0) != 28:
+    fails.append(f"the ladder's cost is {lad.get('est_cost_usd')!r}, not 28")
+if float(lad.get("est_hours") or 0) != 1.25:
+    fails.append(f"the ladder's projection is {lad.get('est_hours')!r}, not 1.25")
+if "NARROWED (plan revision, 2026-10-07)" not in mv:
+    fails.append("the narrowing is not stated in the manifest's cost entry")
+if "vllm_ladder is Llama-3.1-8B at bf16" not in plan:
+    fails.append("the plan does not carry the dated narrowing revision")
+
+# 4. the alignment raise is deferred past the last collective
+i_check = rexp.index("alignment_error = \"\"")
+i_ppl = rexp.rindex("_measure_target_ppl(")   # the CALL, not the definition
+i_raise = rexp.index("if alignment_error:\n            raise RuntimeError")
+if not (i_check < i_ppl < i_raise):
+    fails.append("the gap-alignment raise is not after the perplexity "
+                 "collective: rank 0 would strand the other ranks")
+if "LAST COLLECTIVE IS DONE" not in rexp:
+    fails.append("the deferral is not explained where it happens")
+if "tok_sidecar = None" not in rexp or "if not alignment_error:" not in rexp:
+    fails.append("a misaligned gap array would still be written to a sidecar")
+
+# 5. resume is refused, and no campaign config can reach it
+if "resume refused" not in eng:
+    fails.append("generate does not refuse a found checkpoint")
+if "ckpt.past_kv" in eng or "ckpt.n_rounds" in eng:
+    fails.append("an unreachable resume-restore branch is still present")
+if "if ckpt is None:" in eng:
+    fails.append("the prefill is still guarded as if a resume path existed")
+for p in sorted(pathlib.Path("configs").glob("mlsys_*.yml")):
+    try:
+        doc = yaml.safe_load(p.read_text())
+    except Exception as e:                               # noqa: BLE001
+        fails.append(f"{p.name}: {e}")
+        continue
+    vals = []
+    def walk(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                if k == "checkpoint_every":
+                    vals.append(v)
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(doc)
+    nz = [v for v in vals if int(v or 0) != 0]
+    if nz:
+        fails.append(f"{p.name} sets checkpoint_every={nz}; a leftover "
+                     f"checkpoint would make the stage refuse")
+
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYX
+  [ $? -eq 0 ] && ok "measured numerics, the smoke's tie rule, the narrowed ladder, deferred abort and the resume refusal" \
+               || bad "this round's contracts are not in place"
+
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."
