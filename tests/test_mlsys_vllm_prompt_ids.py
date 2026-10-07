@@ -14,6 +14,7 @@ downgrade of every throughput ratio in the paper.
 """
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import sys
@@ -384,3 +385,249 @@ def test_the_row_records_that_the_ids_are_the_engines():
         _good_row(mod, prompt_ids_from_engine="yes",
                   prompt_sha256=mod._ids_sha(ENGINE_IDS)), ENGINE_IDS, args)
     assert ok2, why2
+
+
+# --- the PARENT's row and CSV path -----------------------------------------
+# The worker cannot report `prompt_ids_from_engine`: whether the ids handed to
+# vLLM are the ids the target engine was fed is a fact about the RASD sidecar,
+# which the worker never sees. An earlier parent copied only the worker's result
+# fields, so the marker was empty on EVERY row and no vLLM row could ever be
+# unit-matched -- the stage would have "passed" while producing a comparison
+# table with zero comparable rows. These tests drive the production parent path
+# (`build_row` + `write_rows`, and `main` end to end with a stubbed worker) with
+# a fake worker result that does NOT contain the marker.
+
+def _parent_args(**over):
+    args = types.SimpleNamespace(max_new_tokens=1024, tensor_parallel_size=8,
+                                 matched_max_new_tokens=1024,
+                                 target_revision=TARGET_REV,
+                                 draft_revision=DRAFT_REV)
+    for k, v in over.items():
+        setattr(args, k, v)
+    return args
+
+
+def _worker_result(mod, prompt_ids, **over):
+    """A result shaped exactly like the real worker's `result.update({...})`."""
+    result = {
+        "status": "ok", "prompt_tokens": len(prompt_ids),
+        "vllm_version": mod.VLLM_PIN, "quantization": "bfloat16",
+        "eos_policy": mod.EOS_POLICY, "prompt_source": "rasd_token_ids",
+        "prompt_sha256": mod._ids_sha(prompt_ids),
+        "prompt_ids_used_sha256": mod._ids_sha(prompt_ids),
+        "prompt_ids_verified": "yes",
+        "target_revision": TARGET_REV, "draft_revision": DRAFT_REV,
+        "output_tokens": 1024, "end_to_end_wall_s": 40.0,
+        "decode_only_wall_s": 39.0, "ttft_s": 1.0,
+        "throughput_tps_end_to_end": 25.6,
+        "throughput_tps_decode_only": 26.25,
+        "peak_mem_mb": 78000.0, "error": "", "error_class": "",
+    }
+    # If the worker ever reported these, this test would be checking the test
+    # rather than the parent: the marker is the parent's to set. `doc_id` and
+    # `temperature` are likewise the parent's (the worker is not told which
+    # document its prompt came from, and does not know the RASD cells are
+    # greedy).
+    for forbidden in ("prompt_ids_from_engine", "doc_id", "temperature"):
+        assert forbidden not in result
+        assert forbidden not in over, f"{forbidden} must not come from the worker"
+    result.update(over)
+    return result
+
+
+def _build(mod, cell, prompt_ids, **over):
+    return mod.build_row(
+        cell, "meta-llama/Llama-3.1-8B", 131072, prompt_ids,
+        _worker_result(mod, prompt_ids, **over),
+        attempt_idx=1, config_name="1-default-tp8",
+        log_path="results/mlsys/logs/vllm_stub_attempt1.log", rope=None,
+        args=_parent_args(), max_model_len=131072, target_revision=TARGET_REV,
+        draft_revision=DRAFT_REV)
+
+
+def test_a_shorter_context_fallback_is_not_a_unit_match(tmp_path):
+    """The ladder's 64k fallback must not be certified as the 128k rung.
+
+    It is a legitimate row to report -- "vLLM could not load 128k" is a result
+    -- but pairing it with a 128k RASD cell would put a 64k throughput in the
+    128k speedup column, which no reader could detect from the other columns.
+    """
+    mod = _load_module()
+    cell = mod.load_rasd_cells(
+        _sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS)))[0]
+
+    fallen_back = mod.build_row(
+        cell, "meta-llama/Llama-3.1-8B", 131072, ENGINE_IDS,
+        _worker_result(mod, ENGINE_IDS),
+        attempt_idx=3, config_name="3-fallback-64k", log_path="logs/x.log",
+        rope=None, args=_parent_args(), max_model_len=65536,
+        target_revision=TARGET_REV, draft_revision=DRAFT_REV)
+
+    assert fallen_back["unit_matched"] == "no"
+    assert "shorter-context fallback" in fallen_back["error"]
+    assert fallen_back["max_model_len"] == 65536
+
+
+def test_the_parent_sets_the_engine_marker_from_the_cell(tmp_path):
+    """A cell whose sidecar carries `engine_input_ids` must yield yes."""
+    mod = _load_module()
+    cell = mod.load_rasd_cells(
+        _sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS)))[0]
+
+    row = _build(mod, cell, ENGINE_IDS)
+    assert row["prompt_ids_from_engine"] == "yes"
+    assert row["unit_matched"] == "yes", row["error"]
+
+    out = tmp_path / "out.csv"
+    mod.write_rows(out, [row])
+    with out.open() as fh:
+        got = list(csv.DictReader(fh))
+    assert len(got) == 1
+    assert got[0]["unit_matched"] == "yes", got[0]["error"]
+    assert got[0]["prompt_ids_from_engine"] == "yes"
+
+
+def test_a_cell_without_engine_ids_yields_no_unit_match(tmp_path):
+    """No `engine_input_ids` -> no proof the ids are the target's -> no."""
+    mod = _load_module()
+    cell = {"doc_id": "pg19_train_0", "prompt_ids": ENGINE_IDS,
+            "prompt_sha256": mod._ids_sha(ENGINE_IDS), "sidecar": "r1.json"}
+
+    row = _build(mod, cell, ENGINE_IDS)
+    assert row["prompt_ids_from_engine"] == ""
+    assert row["unit_matched"] == "no"
+    assert "engine's input ids" in row["error"]
+
+    out = tmp_path / "out.csv"
+    mod.write_rows(out, [row])
+    with out.open() as fh:
+        got = list(csv.DictReader(fh))
+    assert got[0]["unit_matched"] == "no"
+
+
+def _parent_argv(sidecar_dir, out, **over):
+    argv = ["mlsys_vllm_baseline.py", "--out", str(out),
+            "--prompt-ids-from-sidecars", str(sidecar_dir),
+            "--context-lengths", "131072", "--max-new-tokens", "1024",
+            "--matched-max-new-tokens", "1024",
+            "--quantizations", "bfloat16",
+            "--models", "meta-llama/Llama-3.1-8B",
+            "--target-revisions", f"meta-llama/Llama-3.1-8B={TARGET_REV}",
+            "--draft-revision", DRAFT_REV]
+    for k, v in over.items():
+        argv += [f"--{k.replace('_', '-')}", str(v)]
+    return argv
+
+
+def _drive_main(mod, tmp_path, monkeypatch, runner=None, **result_over):
+    """Run the real main() with a stubbed worker subprocess."""
+    if runner is None:
+        def runner(spec):                                   # noqa: E731
+            Path(spec["result_path"]).write_text(json.dumps(
+                _worker_result(mod, spec["prompt_ids"], **result_over)))
+            return 0, "stub worker log"
+
+    def fake_run_attempt(spec, log_path, timeout_s):
+        return runner(spec)
+
+    monkeypatch.setattr(mod, "run_attempt", fake_run_attempt)
+    out = tmp_path / "parent.csv"
+    argv = _parent_argv(tmp_path / "tokens", out)
+    monkeypatch.setattr(sys, "argv", argv)
+    return mod.main(), out
+
+
+def test_the_attempt_ladder_actually_retries(tmp_path, monkeypatch):
+    """Regression: the execution used to sit OUTSIDE the ladder loop.
+
+    The `for idx, att` body ended at the spec dict, so the loop built all three
+    specs and then ran only the LAST one -- the 64k fallback -- labelling it
+    attempt 3. Every vLLM row would have come from a 64k run while the row said
+    128k, and `attempt`/`config_used` would have lied about which ladder fix
+    produced it. Found by driving the parent end to end; the rehearsal could not
+    see it because its stub replaces the whole module.
+    """
+    mod = _load_module()
+    _sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS))
+    calls: list = []
+
+    def runner(spec):
+        calls.append(spec["max_model_len"])
+        if len(calls) < 3:
+            return 1, "engine core initialization failed"
+        Path(spec["result_path"]).write_text(json.dumps(
+            _worker_result(mod, spec["prompt_ids"])))
+        return 0, "ok"
+
+    rc, out = _drive_main(mod, tmp_path, monkeypatch, runner=runner)
+
+    assert calls == [131072, 131072, 65536], (
+        "each ladder attempt must be tried in order until one succeeds")
+    with out.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert [r["config_used"] for r in rows] == [
+        "1-default-tp8", "2-eager-mem95-seq1", "3-fallback-64k"]
+    # Only attempt 3 ran, and it ran at 64k. Its row is REPORTED -- "128k did
+    # not load" is a result -- but it is not certified as the 128k rung, so the
+    # stage has no usable baseline and must not be recorded ok.
+    fallback = [r for r in rows if r["status"] == "ok"]
+    assert len(fallback) == 1
+    assert fallback[0]["max_model_len"] == "65536"
+    assert fallback[0]["unit_matched"] == "no"
+    assert "shorter-context fallback" in fallback[0]["error"]
+    assert rc != 0, "zero unit-matched rows is a failed stage"
+
+
+def test_the_ladder_stops_at_the_first_success(tmp_path, monkeypatch):
+    mod = _load_module()
+    _sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS))
+    calls: list = []
+
+    def runner(spec):
+        calls.append(spec["max_model_len"])
+        Path(spec["result_path"]).write_text(json.dumps(
+            _worker_result(mod, spec["prompt_ids"])))
+        return 0, "ok"
+
+    rc, out = _drive_main(mod, tmp_path, monkeypatch, runner=runner)
+
+    assert calls == [131072], "a successful attempt must not be repeated"
+    assert rc == 0
+    with out.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 1
+    assert rows[0]["config_used"] == "1-default-tp8"
+
+
+def test_main_writes_a_unit_matched_row_end_to_end(tmp_path, monkeypatch):
+    mod = _load_module()
+    _sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS))
+
+    rc, out = _drive_main(mod, tmp_path, monkeypatch)
+
+    assert rc == 0, "a unit-matched row must leave the stage ok"
+    with out.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 1
+    assert rows[0]["unit_matched"] == "yes", rows[0]["error"]
+    assert rows[0]["prompt_ids_from_engine"] == "yes"
+
+
+def test_main_fails_the_stage_when_no_row_is_unit_matched(tmp_path,
+                                                        monkeypatch):
+    """Zero comparable rows is a FAILED stage, not an ok one.
+
+    Otherwise the campaign records a stage ok and a speedup table is built on
+    an empty lookup while every individual number looks correct.
+    """
+    mod = _load_module()
+    _sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS))
+
+    # vLLM reported consuming ids that are not the ones it was given: the run
+    # happened, the row is not comparable.
+    rc, out = _drive_main(mod, tmp_path, monkeypatch, prompt_ids_verified="no")
+
+    assert rc != 0, "a stage with no usable baseline must not exit 0"
+    with out.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows and all(r["unit_matched"] == "no" for r in rows)

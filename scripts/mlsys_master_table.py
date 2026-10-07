@@ -257,10 +257,16 @@ def _vllm_summary(vllm: pd.DataFrame | None) -> str:
                             for _, r in vllm.iterrows()))
     parts = []
     for _, r in ok.iterrows():
+        # The rung and the model length it ACTUALLY ran at: the ladder's 64k
+        # fallback is a legitimate row, but it is not the 128k rung and the
+        # reader has to be able to see that from the number itself.
+        ran = r.get("max_model_len")
+        ran_txt = (f", ran at {int(ran)}" if ran == ran and ran else "")
         parts.append(f"{r['model'].split('/')[-1]}@"
                      f"{int(r['context_length'])}: "
                      f"{r['throughput_tps_end_to_end']} tok/s "
-                     f"(end-to-end, unit_matched={r['unit_matched']})")
+                     f"(end-to-end{ran_txt}, "
+                     f"unit_matched={r['unit_matched']})")
     return "; ".join(parts)
 
 

@@ -1345,6 +1345,8 @@ for want, why in (
         ("the row identity holds on every stage's rows",
          "the row-identity case is missing"),
         ("MLSYS_REHEARSAL_FAIL_RUN=", "no injected-failure case"),
+        ("build_row set prompt_ids_from_engine",
+         "the rehearsal does not assert that the PARENT sets the engine marker"),
 ):
     if want not in reh:
         fails.append(why)
@@ -1355,6 +1357,72 @@ sys.exit(1 if fails else 0)
 PYBLK
   [ $? -eq 0 ] && ok "stage freshness, strict row counts, reference labels and the shared stub paths are all in place" \
                || bad "the second Codex round's contracts are not in place"
+
+# --- 8. the parent owns the engine marker, and the ladder actually retries --
+# The worker cannot report `prompt_ids_from_engine` (it never sees the RASD
+# sidecar), so the parent must set it. A parent that merely copied the worker's
+# fields left the marker empty on EVERY row and no vLLM row could ever be
+# unit-matched. And a ladder whose execution sits outside the `for` loop builds
+# every spec and runs only the last one: the 64k fallback, reported as the 128k
+# rung.
+"$PY" - <<'PYBLK'
+import ast, pathlib, sys
+fails = []
+vsrc = pathlib.Path("scripts/mlsys_vllm_baseline.py").read_text()
+tree = ast.parse(vsrc)
+fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef)
+           and n.name == "build_row"), None)
+if fn is None:
+    fails.append("the vLLM parent has no build_row; the row path is inlined "
+                 "again and the marker can only come from the worker")
+else:
+    body = ast.get_source_segment(vsrc, fn) or ""
+    if 'row["prompt_ids_from_engine"]' not in body:
+        fails.append("build_row does not set prompt_ids_from_engine from the cell")
+main = next((n for n in tree.body if isinstance(n, ast.FunctionDef)
+             and n.name == "main"), None)
+keys = {k.value for n in ast.walk(main) if isinstance(n, ast.Dict)
+        for k in n.keys if isinstance(k, ast.Constant)}
+if "prompt_ids_from_engine" in keys:
+    fails.append("the worker spec still carries prompt_ids_from_engine, which "
+                 "the worker cannot know: it is a fact about the sidecar")
+if "no row is unit_matched=yes" not in vsrc:
+    fails.append("the parent exits 0 with zero unit-matched rows, so a stage "
+                 "with no usable baseline is recorded ok")
+if "shorter-context fallback" not in vsrc:
+    fails.append("a 64k ladder fallback can be certified as unit_matched=yes "
+                 "at 128k, putting a 64k throughput in the 128k column")
+if '"max_model_len"' not in vsrc:
+    fails.append("the row does not record the model length it ran at, so a "
+                 "fallback is indistinguishable from the rung")
+lines = vsrc.splitlines()
+ind = lambda s: len(s) - len(s.lstrip())          # noqa: E731
+i_loop = next((i for i, l in enumerate(lines)
+               if "for idx, att in enumerate(ATTEMPT_LADDER" in l), None)
+i_run = next((i for i, l in enumerate(lines)
+              if "run_attempt(spec, log_path" in l), None)
+if i_loop is None or i_run is None:
+    fails.append("the attempt ladder is gone from the vLLM parent")
+elif ind(lines[i_run]) <= ind(lines[i_loop]):
+    fails.append("the attempt execution is outside the ladder loop: only the "
+                 "last attempt (the 64k fallback) would ever run")
+vstub = pathlib.Path("scripts/rehearsal/stub_vllm_baseline.py").read_text()
+if "vb.build_row" not in vstub:
+    fails.append("the vLLM stub does not use the production row path, so the "
+                 "rehearsal cannot catch a parent that never sets the marker")
+if '"prompt_ids_from_engine"' in vstub:
+    fails.append("the vLLM stub still sets prompt_ids_from_engine itself, which "
+                 "is what hid the parent's bug")
+gc = pathlib.Path("configs/mlsys_gate_controls.json").read_text()
+if "DIFFERENT seed" in gc:
+    fails.append("the gate controls still claim their baselines use a different "
+                 "seed; the references share their candidate's sample")
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYBLK
+  [ $? -eq 0 ] && ok "the parent sets the engine marker and the attempt ladder retries" \
+               || bad "the parent/ladder contracts are not in place"
 
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

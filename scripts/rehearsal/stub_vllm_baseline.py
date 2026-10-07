@@ -1,9 +1,14 @@
 """GPU-free stand-in for `scripts/mlsys_vllm_baseline.py`.
 
-Only the `vllm`-importing worker is replaced. The row-assembly, the pairing
-identity (`prompt_sha256` recomputed from the ids the sidecar supplies), the
-`unit_matched` verdict and the CSV schema all come from the real module, so a
-missing revision pin or a mismatched prompt id is decided by production code.
+Only the `vllm`-importing worker is replaced. The row assembly
+(`build_row`, which sets `prompt_ids_from_engine` from the RASD cell), the
+pairing identity (`prompt_sha256` recomputed from the ids the sidecar supplies),
+the `unit_matched` verdict and the CSV writer all come from the real module, so
+a missing revision pin or a mismatched prompt id is decided by production code.
+An earlier version of this stub set `prompt_ids_from_engine` itself, which hid a
+real bug: the production parent copied only the worker's result fields, and the
+worker cannot report that field at all, so no real row could ever be
+unit-matched.
 
 The one thing it must NOT do is take the verdict for granted. The real worker
 records the ids vLLM REPORTED consuming -- `outs[0].prompt_token_ids`, a value
@@ -24,7 +29,6 @@ Only the first may be unit-matched.
 """
 from __future__ import annotations
 
-import csv
 import importlib.util
 import json
 import os
@@ -127,28 +131,18 @@ def main() -> int:
                 given = (list(cell["prompt_ids"])
                          if cell["prompt_ids"] is not None else None)
                 reported = _reported_ids(given)
-                row = {f: "" for f in vb.CSV_FIELDS}
-                row.update({
-                    "model": model, "context_length": ctx,
-                    "doc_id": cell["doc_id"], "max_new_tokens": toks,
-                    "temperature": 0.0,
-                    "tensor_parallel_size": args.tensor_parallel_size,
-                    "eos_policy": vb.EOS_POLICY, "vllm_version": vb.VLLM_PIN,
+                # The ids vLLM "reported" consuming: the equality the real
+                # worker asserts on vLLM's own `prompt_token_ids`, produced here
+                # by a path independent of the input. Never echo the input:
+                # `prompt_ids_verified` would then be a tautology.
+                result = {
+                    "status": "ok",
+                    "eos_policy": vb.EOS_POLICY,
+                    "vllm_version": vb.VLLM_PIN,
                     "quantization": "bfloat16",
                     "prompt_tokens": len(cell["prompt_ids"] or []),
                     "prompt_sha256": (vb._ids_sha(cell["prompt_ids"])
                                       if cell["prompt_ids"] else ""),
-                    "prompt_ids_from": cell["sidecar"],
-                    # The same field the real loader sets from
-                    # `engine_input_ids`: these ids are the engine's input, BOS
-                    # included, not a rebuilt prompt.
-                    "prompt_ids_from_engine": (
-                        "yes" if cell.get("engine_input_ids") else ""),
-                    # The equality the real worker asserts on vLLM's own
-                    # prompt_token_ids; here it is the sidecar's own ids.
-                    # What the ENGINE reported consuming, produced
-                    # independently of the ids handed to it. Never echo the
-                    # input: `prompt_ids_verified` would then be a tautology.
                     "prompt_ids_used_sha256": (
                         vb._ids_sha(reported) if reported else ""),
                     "prompt_ids_verified": (
@@ -162,30 +156,31 @@ def main() -> int:
                     "ttft_s": round(ttft, 4),
                     "decode_only_wall_s": round((toks - 1) / tps, 4),
                     "throughput_tps_end_to_end": round(toks / wall, 4),
-                    "throughput_tps_decode_only": round(vb.rasd_decode_rate(
-                        toks, (toks - 1) / tps), 4),
-                    "peak_mem_mb": 78000.0, "status": "ok", "error": "",
-                    "error_class": "",
-                })
-                ok, why = vb._unit_match_verdict(
-                    row, cell["prompt_ids"], args,
-                    target_revision=tgt_rev, draft_revision=drf_rev)
-                row["unit_matched"] = "yes" if ok else "no"
-                if not ok:
-                    row["error_class"] = "UnitMismatch"
-                    row["error"] = why
-                rows.append(row)
+                    "throughput_tps_decode_only": round(
+                        vb.rasd_decode_rate(toks, (toks - 1) / tps), 4),
+                    "peak_mem_mb": 78000.0, "error": "", "error_class": "",
+                }
+                # The PRODUCTION row path: `prompt_ids_from_engine` and the
+                # unit-match verdict are decided by build_row, exactly as in the
+                # real parent. The stub must not set the marker itself -- doing
+                # so masked a bug where no real row could ever be unit-matched.
+                rows.append(vb.build_row(
+                    cell, model, ctx, cell["prompt_ids"], result,
+                    attempt_idx=1, config_name="stub",
+                    log_path=f"stub/{model}/{ctx}/{cell['doc_id']}", rope=None,
+                    args=args, max_model_len=ctx, target_revision=tgt_rev,
+                    draft_revision=drf_rev))
 
-    write_header = not out.exists()
-    with out.open("a", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=vb.CSV_FIELDS, extrasaction="ignore")
-        if write_header:
-            w.writeheader()
-        for r in rows:
-            w.writerow(r)
+    vb.write_rows(out, rows, append=False)
+    n_unit = sum(1 for r in rows if r["unit_matched"] == "yes")
     print(f"stub wrote {len(rows)} vLLM rows to {out}")
-    print(json.dumps({"unit_matched_yes": sum(
-        1 for r in rows if r["unit_matched"] == "yes")}))
+    print(json.dumps({"unit_matched_yes": n_unit}))
+    if n_unit == 0:
+        # Mirror the production exit contract: a stage with no usable baseline
+        # is FAILED, so the rehearsal's mismatch/unavailable cases exercise the
+        # same non-zero path the real script takes.
+        print("[FAIL] no row is unit_matched=yes: no usable baseline")
+        return 1
     return 0
 
 

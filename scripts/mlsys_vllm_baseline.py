@@ -67,6 +67,10 @@ CSV_FIELDS = [
     # against what it actually consumed rather than asserted.
     "prompt_ids_used_sha256", "prompt_ids_verified", "prompt_ids_from_engine",
     "target_revision", "draft_revision",
+    # The model length the row actually ran at. The ladder's last resort is a
+    # 64k fallback, and without this column a 64k run is indistinguishable from
+    # the 128k rung it claims to be the counterpart of.
+    "max_model_len",
 ]
 
 # C1: pin vLLM. A speedup ratio is only meaningful against a named release;
@@ -637,6 +641,17 @@ def _unit_match_verdict(row: dict, prompt_ids, args,
                    f"{VLLM_PIN!r} (C1)")
     if not row.get("doc_id"):
         why.append("no doc_id, so the row cannot be paired with its RASD cell")
+    # Context. The ladder falls back to a 64k model length when 128k will not
+    # load. That fallback is a legitimate row to REPORT -- it is the honest
+    # "vLLM could not match this rung" result -- but it is not the 128k cell it
+    # would be paired with, and certifying it as unit-matched would put a 64k
+    # throughput in the 128k speedup column.
+    ctx_rung = int(row.get("context_length") or 0)
+    ctx_ran = int(row.get("max_model_len") or 0)
+    if ctx_rung and ctx_ran < ctx_rung:
+        why.append(f"ran at max_model_len={ctx_ran} but the rung is "
+                   f"{ctx_rung}: a shorter-context fallback is not this rung's "
+                   f"baseline")
     # The ids vLLM consumed must be the ids supplied. "We passed them" is not
     # the same claim, and only the second one is about the run.
     if prompt_ids:
@@ -657,6 +672,73 @@ def _unit_match_verdict(row: dict, prompt_ids, args,
             why.append(f"{field} {row.get(field) or '<none>'!r} != the RASD "
                        f"cell's {want!r}")
     return (not why), "; ".join(why)
+
+
+def build_row(cell: dict, model: str, ctx: int, prompt_ids, result: dict, *,
+              attempt_idx: int, config_name: str, log_path: str, rope,
+              args, max_model_len: int, target_revision: str = "",
+              draft_revision: str = "") -> dict:
+    """Assemble one CSV row from a worker result — the parent's only row path.
+
+    `prompt_ids_from_engine` is decided HERE, from the RASD cell, never from the
+    worker's result. Whether the ids fed to vLLM are the ids the target engine
+    was actually given (BOS included) is a fact about the SIDECAR, and the
+    worker never sees the sidecar, so it cannot report it. A parent that only
+    copied the worker's fields therefore left the marker empty on every row and
+    no vLLM row could ever be unit-matched -- the comparison would fail closed
+    silently, and every lookup in a speedup table would come back empty. The
+    rehearsal's stub hid this by setting the field itself; it now calls this
+    function, so the rehearsal exercises the production path.
+    """
+    row = {f: "" for f in CSV_FIELDS}
+    row.update({
+        "model": model, "context_length": ctx,
+        "max_new_tokens": args.max_new_tokens,
+        "tensor_parallel_size": args.tensor_parallel_size,
+        "rope_scaling": json.dumps(rope) if rope else "",
+        "attempt": attempt_idx, "config_used": config_name,
+        "log_path": log_path,
+        **{k: v for k, v in (result or {}).items() if k in CSV_FIELDS},
+    })
+    # Authoritative pairing identity, set AFTER the worker's result so a worker
+    # that did not report it cannot leave the row un-pairable.
+    row["doc_id"] = cell.get("doc_id", "")
+    row["prompt_ids_from"] = cell.get("sidecar", "")
+    row["temperature"] = 0.0
+    # What the ladder actually ran at, taken from the attempt rather than from
+    # the worker: the fallback attempt runs a 64k model length and must be
+    # distinguishable from the rung it was launched for.
+    row["max_model_len"] = max_model_len
+    # The RASD loader sets `engine_input_ids` on the cells it built from the
+    # sidecars the engine wrote; anything else (a synthetic prompt, a bare
+    # `--prompt-ids` list) has no such proof and stays ineligible.
+    row["prompt_ids_from_engine"] = "yes" if cell.get("engine_input_ids") else ""
+    if prompt_ids:
+        row["prompt_sha256"] = _ids_sha(prompt_ids)
+    # C5: downgrade unless EVERY fairness criterion holds. A row that merely ran
+    # successfully is not a comparable row.
+    if row["status"] == "ok":
+        ok_unit, why = _unit_match_verdict(
+            row, prompt_ids, args, target_revision=target_revision,
+            draft_revision=draft_revision)
+        row["unit_matched"] = "yes" if ok_unit else "no"
+        if not ok_unit:
+            row["error_class"] = "UnitMismatch"
+            row["error"] = f"ran ok but NOT comparable: {why}"
+    return row
+
+
+def write_rows(out_path, rows: list, append: bool = False) -> None:
+    """Write the comparison CSV. `append` keeps one header across models."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not (append and out_path.exists()
+                        and out_path.stat().st_size > 0)
+    with out_path.open("a" if append else "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        if write_header:
+            w.writeheader()
+        w.writerows(rows)
 
 
 def main() -> int:
@@ -798,12 +880,10 @@ def main() -> int:
                         "kwargs": kwargs, "env": att["env"], "rope": rope,
                         "quantization": quant,
                         "prompt_ids": prompt_ids,
-                        # Whether these ids are the ENGINE's input ids (with the
-                        # BOS) or a rebuilt/substituted prompt. The verdict reads
-                        # it, so a row can never be unit-matched on ids that are
-                        # not the sequence the target saw.
-                        "prompt_ids_from_engine": (
-                            "yes" if _cell.get("engine_input_ids") else ""),
+                        # NOTE: `prompt_ids_from_engine` is deliberately NOT
+                        # here. It is not an instruction to the worker -- the
+                        # worker cannot know it, because it never sees the
+                        # sidecar. build_row() sets it from `_cell`.
                         "target_revision": (target_revisions.get(model)
                                             or args.target_revision),
                         "draft_revision": (draft_revisions.get(model)
@@ -815,93 +895,73 @@ def main() -> int:
                         "prompt_sha256": _ids_sha(prompt_ids) if prompt_ids else "",
                         "result_path": str(log_path.with_suffix(".result.json")),
                     }
-                print(f"  attempt {idx} ({att['name']}): {att['note']}")
-                rc, log_text = run_attempt(spec, log_path, args.attempt_timeout_s)
+                    print(f"  attempt {idx} ({att['name']}): {att['note']}")
+                    rc, log_text = run_attempt(spec, log_path, args.attempt_timeout_s)
 
-                res_path = log_path.with_suffix(".result.json")
-                result = {}
-                if res_path.exists():
-                    try:
-                        result = json.loads(res_path.read_text())
-                    except Exception:  # noqa: BLE001
-                        result = {}
-                if not result:
-                    cls, tb = extract_last_exception(log_text)
-                    result = {"status": "error", "error_class": cls,
-                              "error": tb or f"worker rc={rc} with no result file"}
+                    res_path = log_path.with_suffix(".result.json")
+                    result = {}
+                    if res_path.exists():
+                        try:
+                            result = json.loads(res_path.read_text())
+                        except Exception:  # noqa: BLE001
+                            result = {}
+                    if not result:
+                        cls, tb = extract_last_exception(log_text)
+                        result = {"status": "error", "error_class": cls,
+                                  "error": tb or f"worker rc={rc} with no result file"}
 
-                row = {f: "" for f in CSV_FIELDS}
-                row.update({
-                    "model": model, "context_length": ctx,
-                    "max_new_tokens": args.max_new_tokens,
-                    "tensor_parallel_size": args.tensor_parallel_size,
-                    "rope_scaling": json.dumps(rope) if rope else "",
-                    "attempt": idx, "config_used": att["name"],
-                    "log_path": str(log_path.relative_to(REPO)),
-                    **{k: v for k, v in result.items() if k in CSV_FIELDS},
-                })
-                # Authoritative pairing identity, set AFTER the worker's result
-                # so a worker that did not report it cannot leave the row
-                # un-pairable.
-                row["doc_id"] = doc_id
-                row["prompt_ids_from"] = _cell["sidecar"]
-                row["temperature"] = 0.0
-                if prompt_ids:
-                    row["prompt_sha256"] = _ids_sha(prompt_ids)
-                # C5: downgrade unless EVERY fairness criterion holds. A row
-                # that merely ran successfully is not a comparable row.
-                if row["status"] == "ok":
-                    ok_unit, why = _unit_match_verdict(
-                        row, prompt_ids, args,
+                    row = build_row(
+                        _cell, model, ctx, prompt_ids, result,
+                        attempt_idx=idx, config_name=att["name"],
+                        log_path=str(log_path.relative_to(REPO)), rope=rope,
+                        args=args, max_model_len=int(mml),
                         target_revision=(target_revisions.get(model)
                                          or args.target_revision),
                         draft_revision=(draft_revisions.get(model)
                                         or args.draft_revision))
-                    row["unit_matched"] = "yes" if ok_unit else "no"
-                    if not ok_unit:
-                        row["error_class"] = "UnitMismatch"
-                        row["error"] = f"ran ok but NOT comparable: {why}"
-                # If the worker died before writing a result, mine the log for
-                # the real exception instead of reporting vLLM's one-liner.
-                if row["status"] == "ok":
-                    succeeded = True
-                    print(f"    -> OK  end-to-end={row['throughput_tps_end_to_end']} tok/s "
-                          f"(unit_matched={row['unit_matched']})")
-                else:
-                    cls, tb = extract_last_exception(log_text)
-                    if tb and (not row["error"] or len(tb) > len(str(row["error"]))):
-                        row["error"] = tb
-                    if cls and not row["error_class"]:
-                        row["error_class"] = cls
-                    print(f"    -> {row['status'].upper()} "
-                          f"[{row['error_class'] or 'unknown'}]: "
-                          f"{str(row['error']).splitlines()[-1][:160]}")
-                rows.append(row)
-                res_path.unlink(missing_ok=True)
+                    # If the worker died before writing a result, mine the log for
+                    # the real exception instead of reporting vLLM's one-liner.
+                    if row["status"] == "ok":
+                        succeeded = True
+                        print(f"    -> OK  end-to-end={row['throughput_tps_end_to_end']} tok/s "
+                              f"(unit_matched={row['unit_matched']})")
+                    else:
+                        cls, tb = extract_last_exception(log_text)
+                        if tb and (not row["error"] or len(tb) > len(str(row["error"]))):
+                            row["error"] = tb
+                        if cls and not row["error_class"]:
+                            row["error_class"] = cls
+                        print(f"    -> {row['status'].upper()} "
+                              f"[{row['error_class'] or 'unknown'}]: "
+                              f"{str(row['error']).splitlines()[-1][:160]}")
+                    rows.append(row)
+                    res_path.unlink(missing_ok=True)
 
             if not succeeded:
                 print(f"  !! all {len(ATTEMPT_LADDER)} attempts failed for "
                       f"{model} @ {ctx} — recorded as failures, not fabricated")
 
     out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     # --append keeps the header once and concatenates rows, so a second model
     # with a different matched max_new_tokens does not wipe the first.
-    write_header = not (args.append and out_path.exists()
-                        and out_path.stat().st_size > 0)
-    with out_path.open("a" if args.append else "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
-        if write_header:
-            w.writeheader()
-        w.writerows(rows)
+    write_rows(out_path, rows, append=args.append)
 
     n_ok = sum(1 for r in rows if r["status"] == "ok")
-    n_bad_unit = sum(1 for r in rows if r["unit_matched"] != "yes")
+    n_unit = sum(1 for r in rows if r["unit_matched"] == "yes")
+    n_bad_unit = len(rows) - n_unit
     print(f"\n[write] {out_path}  ({len(rows)} rows)")
     print(f"        {n_ok}/{len(rows)} ok, {len(rows) - n_ok} failed/unsupported")
     if n_bad_unit:
         print(f"[WARN] {n_bad_unit} row(s) have unit_matched=no — do NOT place "
               f"them in a speedup comparison against RASD's throughput_tps.")
+    if n_unit == 0:
+        # A reference row that is not unit-matched is not a baseline. Exiting 0
+        # here would let the stage be recorded ok and a speedup table be built
+        # on zero comparable rows -- the exact failure the unit match exists to
+        # prevent.
+        print("[FAIL] no row is unit_matched=yes: this stage produced no usable "
+              "baseline, so it is recorded FAILED rather than ok.")
+        return 1
     return 0
 
 

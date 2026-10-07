@@ -929,3 +929,45 @@ So: vLLM receives `engine_input_ids` as `prompt_token_ids`; the row records
 whether the ids came from the engine (`prompt_ids_from_engine`); the verdict
 refuses a row whose ids are not the engine's; and the loader refuses a sidecar
 that lacks the field, or whose `len(engine_input_ids) != prompt_tokens + 1`.
+
+### Revision: the baseline row must be the attempt that ran, at the rung it claims (2026-10-06)
+
+*Before the vLLM stage has run; no data seen. No metric, unit of independence,
+document count, interval method or comparison changes.*
+
+Four corrections to how a vLLM row is produced and how a vLLM stage is judged.
+None of them touches a headline number; all of them decide whether a number that
+gets into the table is the number it says it is.
+
+1. **The engine-provenance marker is the parent's to set.** Whether the ids fed
+   to vLLM are the ids the target engine was fed is a fact about the RASD token
+   sidecar, not about vLLM's run, and the worker never sees the sidecar, so it
+   cannot report it. The parent now sets `prompt_ids_from_engine` from the cell
+   it is running. Before this, the field was empty on every row the parent
+   wrote, so **no vLLM row could be unit-matched at all** and the stage would
+   have reported success while producing a comparison table with zero comparable
+   rows. Failing closed, silently.
+
+2. **The attempt ladder retries.** The loop that tries the three configurations
+   had its execution outside its own body: all three specs were built and only
+   the LAST was run, so every row would have come from the 64k fallback attempt
+   while `attempt=3`, `config_used` and the row's rung said otherwise. The
+   attempt that ran is now the attempt that is recorded.
+
+3. **A stage with no unit-matched row is failed, not ok.** "Reported as invalid
+   rather than as a speedup" (§4.2) is enforced at the stage level: if no row is
+   `unit_matched=yes`, the stage exits non-zero and the manifest records it
+   failed. A baseline that cannot be compared is not a baseline.
+
+4. **A shorter-context fallback is reported but never certified.** The ladder's
+   last resort runs `max_model_len=65536`. That is a legitimate row to report --
+   "vLLM could not load 128k here" is exactly the honest result §5 asks for --
+   but it is not the 128k rung's counterpart, and certifying it would put a 64k
+   throughput in the 128k speedup column with nothing else in the row to show
+   it. Rows now record `max_model_len`, and the verdict refuses a row whose
+   model length is shorter than its rung.
+
+Consequence for reading the results: a vLLM row that ran at a shorter context
+than its rung appears in the CSV, is labelled `unit_matched=no`, and does not
+enter any speedup ratio. If that happens at 128k, the vLLM reference for that
+rung is reported as unavailable rather than as a slower or faster number.

@@ -618,7 +618,8 @@ fi
 hdr "16  the vLLM worker's reported ids decide unit_matched"
 # ---------------------------------------------------------------------------
 # Three outcomes, produced by the engine-side path rather than echoed from the
-# sidecar: match, mismatch and unavailable. Only a match may be unit-matched.
+# sidecar: match, mismatch and unavailable. Only a match may be unit-matched,
+# and only a match leaves a usable baseline -- so only `match` may exit 0.
 for mode in match mismatch unavailable; do
   V=$WORK/vllm_$mode; mkdir -p "$V"
   # The INSTALLED stub, not the repo source: it resolves `_real_vllm_baseline`
@@ -631,23 +632,50 @@ for mode in match mismatch unavailable; do
        --models meta-llama/Llama-3.1-8B \
        --target-revisions "meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b" \
        >"$V/log" 2>&1; then
-    ok "vLLM stub ran in '$mode' mode"
+    vrc=0
   else
-    bad "vLLM stub failed in '$mode' mode"; sed 's/^/  | /' "$V/log" | tail -3
+    vrc=$?
   fi
+  case "$mode" in
+    match)
+      if [ "$vrc" -eq 0 ]; then
+        ok "vLLM stub ran in '$mode' mode and exited 0"
+      else
+        bad "vLLM stub failed in '$mode' mode (rc=$vrc)"; sed 's/^/  | /' "$V/log" | tail -3
+      fi ;;
+    *)
+      # No row is unit_matched=yes, so the stage must NOT be recorded ok.
+      if [ "$vrc" -ne 0 ]; then
+        ok "vLLM stub exited $vrc in '$mode' mode: no usable baseline"
+      else
+        bad "vLLM stub exited 0 in '$mode' mode with no unit-matched row"
+      fi ;;
+  esac
   verdict=$("$PY" - "$V/out.csv" <<'PY'
 import csv, sys
 rows = list(csv.DictReader(open(sys.argv[1])))
 print(rows[0]["unit_matched"] if rows else "NO_ROWS")
 print(rows[0].get("prompt_ids_verified", "") if rows else "")
+# The marker comes from the production `build_row`, not from the stub: if the
+# parent only copied the worker's result fields, this is empty and the row can
+# never be unit-matched.
+print(rows[0].get("prompt_ids_from_engine", "") if rows else "")
 PY
 )
-  unit=$(echo "$verdict" | head -1); verified=$(echo "$verdict" | tail -1)
+  unit=$(echo "$verdict" | sed -n 1p)
+  verified=$(echo "$verdict" | sed -n 2p)
+  from_engine=$(echo "$verdict" | sed -n 3p)
   case "$mode" in
     match)       want_unit=yes ;;
     mismatch)    want_unit=no ;;
     unavailable) want_unit=no ;;
   esac
+  if [ "$from_engine" = "yes" ]; then
+    ok "ids '$mode': build_row set prompt_ids_from_engine=yes from the cell"
+  else
+    bad "ids '$mode': prompt_ids_from_engine='$from_engine' - the parent did " \
+        "not take it from the RASD cell"
+  fi
   if [ "$unit" = "$want_unit" ]; then
     ok "ids '$mode' (verified='$verified') -> unit_matched=$unit"
   else
