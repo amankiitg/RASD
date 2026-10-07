@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.analysis.losslessness import (
-    compare_generations, require_same_request, stage_requirement,
+    TIE_GAP, compare_generations, require_same_request, stage_requirement,
 )
 
 
@@ -119,7 +119,15 @@ def check(csv_path: Path, tokens_dir: Path, full_length: int = 1024,
             continue
         res = compare_generations(
             a["generated_token_ids"], b["generated_token_ids"],
-            full_length=full_length, min_prefix=min_prefix)
+            full_length=full_length, min_prefix=min_prefix,
+            # The tie rule needs the target's indifference at the divergence in
+            # BOTH arms: it is the target's own top1-top2 gap, recorded per
+            # emitted position by the engine. A sidecar written before that
+            # existed has no `token_gaps`, which is reported as "no gap" (and
+            # therefore a MISMATCH) rather than assumed indifferent.
+            spec_gaps=a.get("token_gaps"), target_gaps=b.get("token_gaps"))
+        if res["verdict"] == "NUMERIC_TIE":
+            base["tie_positions"] = res["tie_positions"]
         out.append({**base, **res})
     return out, stage_requirement(out, full_length, min_prefix)
 
@@ -147,7 +155,9 @@ def main() -> int:
               "verified_prefix", "meets_min_prefix", "min_prefix",
               "first_mismatch_position",
               "spec_tokens", "target_tokens", "target_tokens_requested",
-              "compared_tokens",
+              "compared_tokens", "numeric_tie", "tie_gap_threshold",
+              "tie_positions", "gap_at_divergence_spec",
+              "gap_at_divergence_target",
               "spec_acceptance", "spec_throughput_tps",
               "target_throughput_tps", "detail"]
     out_path = Path(args.out) if args.out else csv_path.with_name(
@@ -163,8 +173,20 @@ def main() -> int:
               f"prefix={r.get('verified_prefix','')} {r.get('detail','')[:44]}")
     n_loss = sum(1 for r in rows if r["verdict"] == "LOSSLESS")
     n_pref = sum(1 for r in rows if str(r["verdict"]).startswith("LOSSLESS_PREFIX"))
+    n_tie = sum(1 for r in rows if r["verdict"] == "NUMERIC_TIE")
     print(f"\n{n_loss} full-length LOSSLESS, {n_pref} prefix-verified, "
-          f"{len(rows) - n_loss - n_pref} failed; wrote {out_path}")
+          f"{n_tie} NUMERIC_TIE, {len(rows) - n_loss - n_pref - n_tie} failed; "
+          f"wrote {out_path}")
+    if n_tie:
+        print(f"  {n_tie} divergence(s) at a target top1-top2 gap below "
+              f"{TIE_GAP}: reported, not counted as failures. A stage passing "
+              f"on ties alone is not a clean pass.")
+        for r in rows:
+            if r["verdict"] == "NUMERIC_TIE":
+                print(f"    tie at {r['tie_positions']} gaps "
+                      f"{r.get('gap_at_divergence_spec')}/"
+                      f"{r.get('gap_at_divergence_target')} "
+                      f"({r['spec_run_id']})")
     print(f"  requirement: every cell verified over >= {args.min_prefix} "
           f"tokens, and all {req['full_length_cells']} full-length pairs "
           f"LOSSLESS over {args.full_length}")

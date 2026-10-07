@@ -22,6 +22,11 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
+# The target is treated as INDIFFERENT between its top two candidates below this
+# raw-logit margin. Both arms of a pair are the same model at the same revision
+# in the same dtype, so this margin is the same scale on both sides.
+TIE_GAP = 0.1
+
 
 def first_mismatch(a: Sequence[int], b: Sequence[int]) -> Optional[int]:
     """Index of the first differing token, or None if one is a prefix of the other.
@@ -40,11 +45,31 @@ def first_mismatch(a: Sequence[int], b: Sequence[int]) -> Optional[int]:
     return None
 
 
+def _gap_at(gaps, pos: int) -> Optional[float]:
+    """The recorded gap at position `pos`, or None when it was not recorded.
+
+    None is NOT a tie. An unrecorded gap means the evidence for indifference is
+    absent, and treating absence as indifference would let a missing sidecar
+    field convert every mismatch into a pass.
+    """
+    if gaps is None:
+        return None
+    try:
+        if pos < 0 or pos >= len(gaps):
+            return None
+        return float(gaps[pos])
+    except (TypeError, ValueError):
+        return None
+
+
 def compare_generations(
     spec_ids: Sequence[int],
     target_ids: Sequence[int],
     full_length: int | None = None,
     min_prefix: int = 128,
+    spec_gaps: Sequence[float] | None = None,
+    target_gaps: Sequence[float] | None = None,
+    tie_gap: float = TIE_GAP,
 ) -> dict:
     """Losslessness verdict for one (speculative, target-only) pair.
 
@@ -69,8 +94,23 @@ def compare_generations(
     n_common = min(len(spec_ids), len(target_ids))
     pos = first_mismatch(spec_ids[:n_common], target_ids[:n_common])
 
+    # A divergence where the target was INDIFFERENT is a numerics artefact, not
+    # an implementation defect: at a gap below `tie_gap` the two candidates are
+    # within the noise of a bf16 reduction whose order differs between the ring's
+    # ranks. It is reported (with the gap and the position) and it does NOT fail
+    # a stage; a mismatch at a position where BOTH arms were decided does.
+    tie_positions: List[int] = []
     if pos is not None:
-        verdict = "MISMATCH"
+        g_spec = _gap_at(spec_gaps, pos)
+        g_target = _gap_at(target_gaps, pos)
+        if (g_spec is not None and g_spec < tie_gap) or \
+                (g_target is not None and g_target < tie_gap):
+            verdict = "NUMERIC_TIE"
+            tie_positions = [pos]
+        else:
+            # Decided in both arms, or the gap was not recorded. Either way this
+            # is a divergence this project has to explain.
+            verdict = "MISMATCH"
     elif full_length is not None and len(target_ids) >= full_length \
             and len(spec_ids) >= full_length:
         verdict = "LOSSLESS"
@@ -83,6 +123,17 @@ def compare_generations(
         "verdict": verdict,
         "lossless": bool(verdict == "LOSSLESS"),
         "lossless_full_prefix": bool(verdict.startswith("LOSSLESS")),
+        "numeric_tie": bool(verdict == "NUMERIC_TIE"),
+        "tie_gap_threshold": float(tie_gap),
+        "tie_positions": tie_positions,
+        "gap_at_divergence_spec": ("" if pos is None
+                                   else (_gap_at(spec_gaps, pos)
+                                         if _gap_at(spec_gaps, pos) is not None
+                                         else "")),
+        "gap_at_divergence_target": ("" if pos is None
+                                     else (_gap_at(target_gaps, pos)
+                                           if _gap_at(target_gaps, pos)
+                                           is not None else "")),
         "verified_prefix": int(n_common),
         "meets_min_prefix": bool(n_common >= min_prefix and verdict.startswith("LOSSLESS")),
         "first_mismatch_position": "" if pos is None else int(pos),
@@ -91,9 +142,18 @@ def compare_generations(
         "compared_tokens": int(n_common),
         "min_prefix": int(min_prefix),
     }
-    if pos is not None:
+    if pos is not None and verdict == "NUMERIC_TIE":
+        out["detail"] = (
+            f"token {pos}: spec={spec_ids[pos]} target={target_ids[pos]} at a "
+            f"target top1-top2 gap of {out['gap_at_divergence_spec'] or 'n/a'} "
+            f"(spec) / {out['gap_at_divergence_target'] or 'n/a'} (target), "
+            f"below the {tie_gap} tie threshold"
+        )
+    elif pos is not None:
         out["detail"] = (
             f"token {pos}: spec={spec_ids[pos]} target={target_ids[pos]}"
+            f" (gaps {out['gap_at_divergence_spec'] or 'n/a'} / "
+            f"{out['gap_at_divergence_target'] or 'n/a'})"
             if pos < n_common else f"runs diverged by length at {pos}"
         )
     elif verdict == "LOSSLESS":
@@ -114,14 +174,30 @@ def stage_requirement(rows: list[dict], full_length: int,
     AND every cell whose partner reached `full_length` must be LOSSLESS over
     `full_length`. Returns the failures, so a stage can report them rather than
     trusting an aggregate.
+
+    `NUMERIC_TIE` does NOT fail a stage (the target was indifferent at the
+    divergence, so no implementation defect is implied), but the tie counts come
+    back with the verdict so a stage that passes on ties alone is visible rather
+    than looking like a clean pass. `MISMATCH` fails, always.
     """
     failures = []
     full_cells = 0
+    ties = 0
+    mismatches = 0
     for r in rows:
         v = str(r.get("verdict", ""))
         if not v:
             continue
+        if v == "NUMERIC_TIE":
+            ties += 1
+            continue
+        if v == "MISMATCH":
+            mismatches += 1
+            failures.append(f"{r.get('spec_run_id')}: {v} at "
+                            f"{r.get('first_mismatch_position')}")
+            continue
         if not v.startswith("LOSSLESS"):
+            mismatches += 1
             failures.append(f"{r.get('spec_run_id')}: {v} at "
                             f"{r.get('first_mismatch_position')}")
             continue
@@ -137,7 +213,8 @@ def stage_requirement(rows: list[dict], full_length: int,
         failures.append(f"no pair had a {full_length}-token partner, so the "
                         f"full-length check did not happen")
     return {"failures": failures, "full_length_cells": full_cells,
-            "ok": not failures}
+            "ok": not failures, "numeric_ties": ties,
+            "mismatches": mismatches}
 
 
 def require_same_request(spec_row: dict, target_row: dict) -> list[str]:

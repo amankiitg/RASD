@@ -140,27 +140,46 @@ class TestFix2:
         )
 
     def test_broadcasts_inside_world_size_guard(self):
-        """Both broadcasts must be inside `if self._world_size > 1:` so
-        single-rank runs stay byte-identical to pre-Fix2."""
+        """All three broadcasts sit behind a world_size guard.
+
+        The three calls moved into `_broadcast_round_state(draft_seq,
+        target_logits_v, draft_logits, world_size)` so that the SET could be
+        tested as a set (test_mlsys_round_consensus drives the helper with a
+        recording `dist`). The invariant is unchanged -- single-rank runs
+        broadcast nothing, so they stay byte-identical to pre-Fix2 -- but it is
+        now expressed once, at the top of that helper, instead of wrapping two
+        inline calls. `draft_seq` joined the set in the 2026-10-07 round: at
+        temperature > 0 each rank samples its own proposal, so sharing the
+        logits alone does not make n_acc agree.
+        """
         lines = RASD_INF_SRC.splitlines()
-        for needle in ("dist.broadcast(target_logits_v",
+        start = next(i for i, ln in enumerate(lines)
+                     if ln.startswith("def _broadcast_round_state"))
+        end = next(i for i in range(start + 1, len(lines))
+                   if lines[i].startswith("def "))
+        body = lines[start:end]
+        guard = next((i for i, ln in enumerate(body)
+                      if re.match(r"\s*if world_size <= 1:", ln)), None)
+        assert guard is not None, (
+            "Fix2 regression: the round-state broadcast has no world_size guard"
+        )
+        assert any(ln.strip() == "return" for ln in body[guard:guard + 3]), (
+            "the guard must return before any broadcast so a single rank "
+            "broadcasts nothing")
+        for needle in ("dist.broadcast(draft_seq",
+                       "dist.broadcast(target_logits_v",
                        "dist.broadcast(draft_logits"):
-            target_idx = next(
-                (i for i, ln in enumerate(lines) if needle in ln), None
-            )
-            assert target_idx is not None, f"could not locate {needle!r}"
-            # walk backwards up to 30 lines for the guard
-            found = False
-            for i in range(target_idx - 1, max(0, target_idx - 30), -1):
-                if re.match(r"\s*if self\._world_size > 1:", lines[i]):
-                    found = True
-                    break
-                if re.match(r"\s*def ", lines[i]):
-                    break  # left enclosing function without finding guard
-            assert found, (
-                f"Fix2 regression: {needle!r} is not inside an "
-                f"`if self._world_size > 1:` guard"
-            )
+            idx = next((i for i, ln in enumerate(body) if needle in ln), None)
+            assert idx is not None, f"could not locate {needle!r}"
+            assert idx > guard, f"{needle!r} is not behind the guard"
+        # ... and the loop must actually call it.
+        loop = "".join(lines)
+        assert "_broadcast_round_state(draft_seq, target_logits_v, " \
+               "draft_logits," in loop, (
+            "the verify loop no longer broadcasts its round state")
+        assert "dist.broadcast(target_logits_v" not in loop.split(
+            "def _broadcast_round_state")[1].split("def _kv_seq_len")[1], (
+            "a stray inline broadcast survived the extraction")
 
 
 # ---------------------------------------------------------------------------

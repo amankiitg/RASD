@@ -148,6 +148,16 @@ hdr "4  run the manifest with the default allowlist and the GPU stubbed"
 # ---------------------------------------------------------------------------
 RAN_DIR=$WORK/ran
 mkdir -p "$RAN_DIR"
+# NOTE: no comments inside this continuation. A `#` on a backslash-continued
+# line comments out the REST of the logical line, including the command being
+# built -- the run then happens with none of the environment below, which is how
+# a rehearsal can pass its own checks while rehearsing nothing.
+#
+# MLSYS_VLLM_PYTHON: the vLLM stages must run in an ISOLATED interpreter,
+# selected by path. The rehearsal satisfies that contract with the sandbox
+# python (where the stubs are installed) rather than by weakening the selector:
+# what is rehearsed is that the path is honoured, and that the stage REFUSES
+# when it is absent.
 ( cd "$SANDBOX" && \
   MLSYS_PYTHON="$PY" \
   MLSYS_MAX_COST_USD=850 \
@@ -155,6 +165,7 @@ mkdir -p "$RAN_DIR"
   MLSYS_DOCUMENTS_JSON="$DOCS" \
   MLSYS_RAN_DIR="$RAN_DIR" \
   MLSYS_MAX_HOURS=40 \
+  MLSYS_VLLM_PYTHON="$PY" \
   bash scripts/mlsys_manifest.sh ) >"$LOG" 2>&1
 MAN_RC=$?
 if [ "$MAN_RC" = "0" ]; then ok "the manifest exited 0"; else
@@ -565,6 +576,7 @@ N0=$(wc -l < "$OUT/RUN_LOG.txt" 2>/dev/null | tr -d ' ')
   MLSYS_PYTHON="$PY" MLSYS_MAX_COST_USD=850 MLSYS_ASK_OVER_USD=300 \
   MLSYS_DOCUMENTS_JSON="$DOCS" MLSYS_RAN_DIR="$RAN_DIR" MLSYS_MAX_HOURS=40 \
   MLSYS_REHEARSAL_FAIL_RUN=CAPS_prefix1024_targetonly \
+  MLSYS_VLLM_PYTHON="$PY" \
   bash scripts/mlsys_manifest.sh ) >"$B/manifest.log" 2>&1
 B_RC=$?
 RUNLOG2=$WORK/attempt2.runlog
@@ -682,6 +694,71 @@ PY
     bad "ids '$mode' (verified='$verified') -> unit_matched=$unit, expected $want_unit"
   fi
 done
+
+# ---------------------------------------------------------------------------
+hdr "17  the target cross-check: the tie rule decides, and it decides both ways"
+# ---------------------------------------------------------------------------
+# `impl_validation` no longer claims acceptance agreement (vLLM cannot be given
+# RASD's draft, its window, its ring sharding or its NF4 cache). It claims that
+# two independent implementations of the same target produce the same greedy
+# continuation -- and the production comparison decides that, under the tie rule.
+#
+# Three cases, all through production code:
+#   agree    -> LOSSLESS (rc 0)
+#   diverge with a DECISIVE gap -> MISMATCH (rc != 0)
+#   diverge where the gap is below the tie threshold -> NUMERIC_TIE (rc 0)
+for cse in "agree::3.0:0" "diverge:40:3.0:1" "tie:40:0.01:0"; do
+  mode=${cse%%:*}; rest=${cse#*:}; pos=${rest%%:*}
+  rest=${rest#*:}; gap=${rest%%:*}; want_rc=${rest##*:}
+  C=$WORK/cross_$mode; mkdir -p "$C"
+  if MLSYS_REHEARSAL_VLLM_DIVERGE=$pos MLSYS_REHEARSAL_VLLM_GAP=$gap "$PY" \
+       "$SANDBOX/scripts/mlsys_vllm_baseline.py" \
+       --out "$C/vllm.csv" --prompt-ids-from-sidecars "$OUT/tokens" \
+       --rasd-target-sidecars "$OUT/tokens" \
+       --compare-out "$C/crosscheck.csv" \
+       --documents pg19_train_0 --context-lengths 131072 \
+       --max-new-tokens 1024 --matched-max-new-tokens 1024 \
+       --models meta-llama/Llama-3.1-8B \
+       --target-revisions "meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b" \
+       >"$C/log" 2>&1; then
+    crc=0
+  else
+    crc=$?
+  fi
+  verdict=$("$PY" - "$C/crosscheck.csv" <<'PYX'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+print(rows[0]["verdict"] if rows else "NO_ROWS")
+print(rows[0].get("tie_positions", "") if rows else "")
+PYX
+)
+  case "$mode" in
+    agree)   want_verdict=LOSSLESS ;;
+    diverge) want_verdict=MISMATCH ;;
+    tie)     want_verdict=NUMERIC_TIE ;;
+  esac
+  got=$(echo "$verdict" | sed -n 1p)
+  if [ "$got" = "$want_verdict" ]; then
+    ok "cross-check '$mode' -> $got (rc=$crc)"
+  else
+    bad "cross-check '$mode' -> $got, expected $want_verdict"
+  fi
+  if [ "$want_rc" = "0" ] && [ "$crc" -ne 0 ]; then
+    bad "cross-check '$mode' should not fail the stage (rc=$crc)"
+  fi
+  if [ "$want_rc" = "1" ] && [ "$crc" -eq 0 ]; then
+    bad "cross-check '$mode' produced a MISMATCH but exited 0: the stage would be recorded ok with two engines that disagree"
+  fi
+done
+# A tie is reported, not swallowed: the counts have to reach the table.
+"$PY" - "$WORK/cross_tie/crosscheck.csv" <<'PYX' && ok "the tie count is reported in the table" \
+  || bad "a NUMERIC_TIE was not reported as a tie"
+import csv, sys
+r = next(csv.DictReader(open(sys.argv[1])))
+assert r["verdict"] == "NUMERIC_TIE", r["verdict"]
+assert r["tie_positions"], "the tie position was not recorded"
+assert float(r["tie_gap_threshold"]) == 0.1
+PYX
 
 # ---------------------------------------------------------------------------
 hdr "rehearsal summary"

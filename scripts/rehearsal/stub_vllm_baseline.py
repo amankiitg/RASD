@@ -72,6 +72,45 @@ def _reported_ids(given):
     raise SystemExit(f"unknown MLSYS_REHEARSAL_VLLM_IDS={mode!r}")
 
 
+def _perturbed(ids):
+    """Optionally move ONE emitted id, to exercise the cross-check's verdicts.
+
+    `MLSYS_REHEARSAL_VLLM_DIVERGE=<pos>` makes this "engine" disagree with the
+    RASD target-only run at that position; `MLSYS_REHEARSAL_VLLM_GAP=<f>` sets
+    the gap it reports there, so the rehearsal can drive both outcomes of the
+    tie rule (a decisive divergence is a MISMATCH; an indifferent one is a
+    NUMERIC_TIE) through the production comparison.
+    """
+    pos = os.environ.get("MLSYS_REHEARSAL_VLLM_DIVERGE")
+    if pos in (None, "") or not ids:
+        return list(ids)
+    out = list(ids)
+    i = min(int(pos), len(out) - 1)
+    out[i] = 12345 if out[i] != 12345 else 54321
+    return out
+
+
+def _gap():
+    return float(os.environ.get("MLSYS_REHEARSAL_VLLM_GAP", "3.0"))
+
+
+def _target_ids(cell, toks):
+    """The ids a correct target-only implementation would emit.
+
+    Taken from the RASD target-only sidecar for this document when one exists,
+    because the cross-check compares against exactly that; otherwise a
+    deterministic stand-in so the stub still produces a row.
+    """
+    sc = (cell.get("rasd_target") or {})
+    ids = sc.get("ids") or []
+    if len(ids) >= toks:
+        return [int(i) for i in ids[:toks]]
+    seed = zlib.crc32(f"vllm|{cell.get('doc_id')}|{toks}".encode())
+    rng = random.Random(seed)
+    return [int(i) for i in ids] + [rng.randrange(1, 30000)
+                                    for _ in range(toks - len(ids))]
+
+
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser()
@@ -79,6 +118,8 @@ def main() -> int:
     ap.add_argument("--prompt-ids-from-sidecars")
     ap.add_argument("--prompt-ids")
     ap.add_argument("--documents")
+    ap.add_argument("--rasd-target-sidecars")
+    ap.add_argument("--compare-out")
     ap.add_argument("--context-lengths", nargs="+", type=int, default=[])
     ap.add_argument("--max-new-tokens", type=int, default=1024)
     ap.add_argument("--matched-max-new-tokens", type=int, default=1024)
@@ -159,6 +200,13 @@ def main() -> int:
                     "throughput_tps_decode_only": round(
                         vb.rasd_decode_rate(toks, (toks - 1) / tps), 4),
                     "peak_mem_mb": 78000.0, "error": "", "error_class": "",
+                    # What this "engine" emitted, and its own gap per position.
+                    # The ids mirror the RASD target-only sidecar for the same
+                    # document -- that is what a working cross-check looks like --
+                    # and the gaps are decisive, so a divergence would be a
+                    # MISMATCH rather than excused as a tie.
+                    "output_token_ids": _perturbed(_target_ids(cell, toks)),
+                    "output_gaps": [round(_gap(), 6) for _ in range(toks)],
                 }
                 # The PRODUCTION row path: `prompt_ids_from_engine` and the
                 # unit-match verdict are decided by build_row, exactly as in the
@@ -171,6 +219,25 @@ def main() -> int:
                     args=args, max_model_len=ctx, target_revision=tgt_rev,
                     draft_revision=drf_rev))
 
+    # Attach the RASD target-only ids the cross-check will compare against, so
+    # the stub's emitted ids agree with them (the production worker gets its ids
+    # from vLLM, not from the sidecar).
+    if args.rasd_target_sidecars:
+        try:
+            refs = vb.load_rasd_target_sidecars(args.rasd_target_sidecars)
+        except SystemExit:
+            refs = {}
+        for r in rows:
+            key = (r.get("doc_id") or "", int(r.get("context_length") or 0))
+            ref = refs.get(key)
+            if ref:
+                # Same document, so a correct implementation emits the reference
+                # ids -- and then the divergence knob is applied ON TOP, so the
+                # three outcomes the rehearsal drives are the comparison's own
+                # verdicts rather than the stub's assertions.
+                r["output_token_ids"] = _perturbed(
+                    ref["ids"][:args.max_new_tokens])
+                r["_output_token_ids"] = r["output_token_ids"]
     vb.write_rows(out, rows, append=False)
     n_unit = sum(1 for r in rows if r["unit_matched"] == "yes")
     print(f"stub wrote {len(rows)} vLLM rows to {out}")
@@ -181,6 +248,12 @@ def main() -> int:
         # same non-zero path the real script takes.
         print("[FAIL] no row is unit_matched=yes: no usable baseline")
         return 1
+    if args.compare_out:
+        # The PRODUCTION cross-check, on the production rows: the stub does not
+        # decide whether two engines agree, it only supplies a worker result.
+        vdir = vb.write_vllm_token_sidecars(rows, args.compare_out)
+        return vb.compare_targets(rows, args.rasd_target_sidecars,
+                                  args.compare_out, vllm_sidecars_dir=vdir)
     return 0
 
 

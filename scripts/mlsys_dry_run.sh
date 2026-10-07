@@ -635,6 +635,70 @@ if not refuse(19.0, "natural_f1_128k", 20):
 if refuse(1.0, "gate_calibration", 20):
     fails.append("a short early stage was refused")
 
+# --- every stage's timeout must clear its own projection by >=20% ------------
+# The header and the projection are two numbers describing the same run, and a
+# header below the projection kills the stage the model says fits. They live in
+# one bash table and one YAML section, so the relation is checked rather than
+# assumed. The 256k rung carried 12h against a 13.0h projection before this.
+import re as _re
+man = open("scripts/mlsys_manifest.sh").read()
+
+
+def _table(name):
+    """Parse a `NAME='\n id value\n ...'` block out of the manifest."""
+    block = man.split(f"{name}='", 1)[1].split("\n'", 1)[0]
+    out = {}
+    for line in block.strip().splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            out[parts[0]] = float(parts[1])
+    return out
+
+
+headers = _table("STAGE_TIMEOUTS")
+proj = _table("STAGE_EST_HOURS")
+if not headers:
+    fails.append("no stage timeouts are declared in STAGE_TIMEOUTS")
+if not proj:
+    fails.append("no cost projections are declared in STAGE_EST_HOURS")
+checked = 0
+for name, tmo_s in sorted(headers.items()):
+    est = proj.get(name)
+    if est is None and any(name.endswith("_" + suf) for suf in (
+            "losslessness", "doc_intervals", "round_acceptance")):
+        est = 0.05          # helpers share the parent's helper bucket
+    if est is None:
+        fails.append(f"{name}: header declared but no projection to check it "
+                     f"against")
+        continue
+    checked += 1
+    if tmo_s < est * 3600 * 1.2:
+        fails.append(f"{name}: header {tmo_s/3600:.1f}h does not clear its "
+                     f"{est:.1f}h projection by 20% "
+                     f"(needs {est*1.2:.2f}h)")
+if checked < 15:
+    fails.append(f"only {checked} headers were checked against a projection")
+# The call sites must all resolve: `stage()` refuses a header that is missing or
+# non-numeric, so a launcher that names a stage nobody priced stops the run --
+# this is the check that the two lists have not drifted apart.
+called = set(_re.findall(r'stage_timeout\s+([a-z_0-9]+)', man))
+# Stages launched through a loop pass "$name"; only the loops that actually call
+# `stage_timeout "$name"` bind such a header, and their lists are right there.
+for chunk in man.split("\nfor ")[1:]:
+    head, _, body = chunk.partition("do")
+    if 'stage_timeout "$name"' not in body[:400]:
+        continue
+    called.update(m.group(1) for m in _re.finditer(r'"(\w+):', head))
+undeclared = sorted(c for c in called if c not in headers)
+if undeclared:
+    fails.append(f"the manifest launches stages with no declared timeout: "
+                 f"{undeclared}")
+if "natural_spec_gated_256k 64800" not in man:
+    fails.append("the 256k stage header is not 64800 (18h)")
+if "no_declared_timeout" not in man:
+    fails.append("stage() does not fail closed on a missing header")
+print(f"  | headers checked against the cost model: {checked} stages")
+
 # --- every exit path must terminate the instance ------------------------------
 if "trap terminate_and_confirm EXIT" not in watch:
     fails.append("no EXIT trap: an early exit would orphan the instance")
@@ -1423,6 +1487,106 @@ sys.exit(1 if fails else 0)
 PYBLK
   [ $? -eq 0 ] && ok "the parent sets the engine marker and the attempt ladder retries" \
                || bad "the parent/ladder contracts are not in place"
+
+# --- 19. this round's contracts: window, tie rule, KV truth, venv ------------
+"$PY" - <<'PYX'
+import sys
+fails = []
+
+def read(p):
+    try:
+        return open(p).read()
+    except OSError as e:
+        fails.append(f"cannot read {p}: {e}")
+        return ""
+
+eng = read("src/models/rasd_inference.py")
+# B1: ONE place applies the draft window, and it keeps the recent tokens.
+if "_draft_window(" not in eng:
+    fails.append("the draft window is not a single named rule")
+# The removed construct, specifically: the tokenizer call that kept the FIRST
+# `draft_max_len` tokens. (A bare "truncation=True" also appears in the
+# docstring explaining why it went, so it cannot be the needle.)
+if "max_length=self.draft_max_len" in eng:
+    fails.append("a second, right-truncating draft input is back: the draft "
+                 "would be conditioned on the OPENING of the prompt")
+if "_draft_window(raw_draft_ids" not in eng:
+    fails.append("generate() does not apply the single draft-window rule")
+if "draft_input_ids=None" not in eng:
+    fails.append("generate_text still builds its own draft input")
+# B4: the gap is measured, in both arms, and reaches the sidecar.
+if "_top1_top2_gap" not in eng or eng.count("_top1_top2_gap(") < 3:
+    fails.append("the target's top1-top2 gap is not recorded in both arms")
+if 'metrics["token_gaps"]' not in eng:
+    fails.append("the gaps never leave the engine")
+rexp = read("run_experiment.py")
+if '"token_gaps"' not in rexp:
+    fails.append("the token sidecar does not carry the gaps")
+loss = read("src/analysis/losslessness.py")
+if "NUMERIC_TIE" not in loss or "TIE_GAP" not in loss:
+    fails.append("the losslessness verdict has no tie rule")
+if "_gap_at" not in loss:
+    fails.append("the tie rule does not read the gaps")
+if "NUMERIC_TIE" not in read("scripts/mlsys_losslessness.py"):
+    fails.append("the losslessness stage does not report ties")
+# R1: the tail fold, and R3: the KV length read back from the cache.
+cache = read("src/models/nf4_dynamic_cache.py")
+if "_append_nf4_chunk" not in cache or "tail_merge_below" not in cache:
+    fails.append("the NF4 tail fold is missing: per-step cost grows with steps")
+if "_kv_seq_len(" not in eng:
+    fails.append("kv_len_after is not read back from the cache")
+if 'rec["kv_len_after"] = int(prior_target_len + committed)' in eng:
+    fails.append("kv_len_after is again the arithmetic the truncation was asked "
+                 "to perform")
+# R4: the consensus broadcast includes the draft tokens.
+if "_broadcast_round_state" not in eng:
+    fails.append("the round-state broadcast is not a single named rule")
+# R7: the baseline runs in its own interpreter, selected by path.
+man = read("scripts/mlsys_manifest.sh")
+if "vllm_python()" not in man:
+    fails.append("the vLLM interpreter is not selected by path")
+if 'stage impl_validation' not in man or "VLLM_PY" not in man:
+    fails.append("impl_validation does not use the isolated interpreter")
+if man.count("vllm_python; do") + man.count("$(vllm_python)") < 2:
+    fails.append("only one vLLM stage selects the isolated interpreter")
+if "no_vllm_venv" not in man:
+    fails.append("a missing vLLM venv does not refuse the stage")
+vsrc = read("scripts/mlsys_vllm_baseline.py")
+if "compare_targets" not in vsrc or "--rasd-target-sidecars" not in vsrc:
+    fails.append("impl_validation is not the target cross-check")
+if "logprobs=2" not in vsrc:
+    fails.append("the vLLM side does not record its own top-2 gap, so the tie "
+                 "rule cannot be applied to its output")
+if "_position_gaps" not in vsrc:
+    fails.append("vLLM's per-position gaps are not extracted")
+if "def compare_targets" in vsrc and "load_rasd_target_sidecars" not in vsrc:
+    fails.append("the cross-check cannot find the RASD target-only sidecars")
+if "spec_steps" not in vsrc.split("def load_rasd_target_sidecars")[1][:900]:
+    fails.append("the cross-check does not restrict itself to target-only "
+                 "sidecars (spec_steps == 0)")
+if "seen_cells" not in vsrc:
+    fails.append("the prompt-sidecar loader does not dedup a document, so the "
+                 "spec and target-only sidecars launch it twice")
+vvenv = read("scripts/mlsys_vllm_venv.sh")
+if "vllm==$VLLM_PIN" not in vvenv and "vllm==${VLLM_PIN}" not in vvenv:
+    fails.append("the provisioning script does not pin vLLM")
+if "torch" not in vvenv:
+    fails.append("the provisioning script does not install its own torch")
+reh = read("scripts/mlsys_rehearsal.sh")
+for want, why in (
+        ("the target cross-check", "the cross-check case is missing"),
+        ("MLSYS_REHEARSAL_VLLM_DIVERGE", "no divergence knob"),
+        ("NUMERIC_TIE", "the tie outcome is not rehearsed"),
+):
+    if want not in reh:
+        fails.append(why)
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYX
+  [ $? -eq 0 ] && ok "window, tie rule, KV truth, tail fold and the isolated venv are all in place" \
+               || bad "this round's contracts are not in place"
+
 
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

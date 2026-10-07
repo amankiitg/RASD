@@ -971,3 +971,70 @@ Consequence for reading the results: a vLLM row that ran at a shorter context
 than its rung appears in the CSV, is labelled `unit_matched=no`, and does not
 enter any speedup ratio. If that happens at 128k, the vLLM reference for that
 rung is reported as unavailable rather than as a slower or faster number.
+
+### Revision: a first divergence at an indifferent target is a TIE, not a MISMATCH (2026-10-07)
+
+*Before the code exists; no data seen. No metric, unit of independence, document
+count, interval method or comparison changes.*
+
+Every arm now records, on rank 0, the target's **top-1 minus top-2 logit gap at
+every emitted position**, into the token sidecar. The gap is `logit(top1) -
+logit(top2)` for the target's own distribution at that position, in the arm that
+produced the token.
+
+The losslessness verdict changes accordingly. Under greedy decoding two runs
+that see the same prompt must agree token for token, but a bf16 target that is
+indifferent between two candidates --- a gap near zero --- can pick either one
+for reasons that are arithmetic (reduction order, the ring's non-associative
+online-softmax merge, which the engine already has to broadcast logits to
+neutralise) rather than semantic. Calling that a losslessness failure would
+report a numerics artefact as an implementation defect.
+
+| verdict | when |
+|---|---|
+| `LOSSLESS` / `LOSSLESS_PREFIX_n` | unchanged: identical over the checked prefix |
+| **`NUMERIC_TIE`** | the first divergence is at position `p` and the gap at `p` is `< 0.1` in EITHER arm |
+| `MISMATCH` | the first divergence is at position `p` and both gaps are `>= 0.1` |
+
+* Tie counts are reported per stage and per rung (`n_tie`, `n_mismatch`, and the
+  positions), so a stage that passes on ties alone is visible as such rather than
+  as a clean pass.
+* A missing gap (an older sidecar, or a position the arm did not record) is
+  **not** a tie: the verdict is `MISMATCH`, and the record says the gap was
+  unavailable. Absence of evidence is not indifference.
+* **A stage fails only on `MISMATCH`.** `NUMERIC_TIE` does not fail a stage, and
+  it is never reported as `LOSSLESS`.
+* The margin `0.1` is on the raw logit scale of the target's final layer, which
+  is the same scale for both arms of a pair (same model, same revision, same
+  dtype) — the only scale on which the two gaps are comparable.
+
+### Revision: impl_validation is a TARGET cross-check, not an acceptance cross-check (2026-10-07)
+
+*Before the redefined stage runs; no data seen.*
+
+`impl_validation` was defined as an acceptance cross-check against vLLM's
+speculative decoding. That claim cannot be supported: vLLM has no way to be
+given RASD's draft model, its 4k draft window, its ring sharding, or its NF4 KV
+cache, so an agreement (or disagreement) in acceptance would be a statement
+about two different speculative implementations, not about one implementation
+verified twice. Reporting it as validation of RASD's acceptance would overstate
+what was measured.
+
+The stage is redefined, and the claim it supports is renamed:
+
+* **Measured:** vLLM's *greedy target-only* output on the same
+  `engine_input_ids`, at the same context, with `max_new_tokens` matched to the
+  RASD target-only cell, against RASD's *target-only* output for that document.
+* **Compared:** token-level agreement under the tie rule above (tie counts
+  reported), plus throughput in the same unit ($4.2 end-to-end tok/s) with the
+  `unit_matched` flag.
+* **Claim it supports:** "two independent implementations of the same target at
+  the same revision and context produce the same greedy continuation, and here
+  is the throughput of both." Nothing about acceptance.
+* **Not claimed:** any acceptance, any speculative-decoding agreement, any
+  equivalence of the two engines' performance. The stage's rows keep
+  `spec_steps=0` semantics on the vLLM side.
+* vLLM runs in a **separate virtual environment with its own torch**, invoked by
+  absolute interpreter path, so the main environment's pins are untouched. The
+  stage records the interpreter path and the vLLM version in every row, and a
+  row whose version is not the pin is not `unit_matched`.

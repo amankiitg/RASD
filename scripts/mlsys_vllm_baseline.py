@@ -44,6 +44,12 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# The target cross-check imports the campaign's analysis rule
+# (src.analysis.losslessness) rather than restating it, so the repo root has to
+# be importable: this script lives in scripts/, and running it as
+# `python scripts/...` puts scripts/ on sys.path, not the repo root.
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 LOGDIR = REPO / "results" / "mlsys" / "logs"
 
 CSV_FIELDS = [
@@ -71,6 +77,10 @@ CSV_FIELDS = [
     # 64k fallback, and without this column a 64k run is indistinguishable from
     # the 128k rung it claims to be the counterpart of.
     "max_model_len",
+    # Which interpreter ran the engine. The baseline lives in its own venv with
+    # its own torch (R7), so "which vLLM" is only half the provenance: the row
+    # also has to say which interpreter produced it.
+    "interpreter",
 ]
 
 # C1: pin vLLM. A speedup ratio is only meaningful against a named release;
@@ -324,8 +334,13 @@ def worker_main(spec_path: Path) -> int:
         # GREEDY. The RASD cells run at temperature 0.0; sampling here would
         # make the two systems answer different questions, and the acceptance
         # comparison would be between a sampled path and a greedy one.
+        # logprobs=2 is what makes the TIE rule usable on this side: vLLM then
+        # returns its own top-2 per position, and the difference of two logprobs
+        # is the difference of the two logits (the partition function cancels),
+        # so the gap is on the same scale as the target's recorded one.
         params = SamplingParams(temperature=0.0, top_p=1.0,
-                                max_tokens=max_new, ignore_eos=True)
+                                max_tokens=max_new, ignore_eos=True,
+                                logprobs=2)
 
         # No warm-up: a cold first call is what the RASD number includes too.
         import torch  # noqa: F811
@@ -370,6 +385,13 @@ def worker_main(spec_path: Path) -> int:
             "target_revision": spec.get("target_revision") or "",
             "draft_revision": spec.get("draft_revision") or "",
             "output_tokens": out_tokens,
+            # What this engine actually emitted, and its own top1-top2 gap at
+            # each of those positions. The parent compares these against the
+            # RASD target-only sidecar for the same document under the tie rule;
+            # without them the cross-check would be a throughput table with the
+            # word "validation" in the title.
+            "output_token_ids": [int(t) for t in outs[0].outputs[0].token_ids],
+            "output_gaps": _position_gaps(outs[0].outputs[0]),
             "end_to_end_wall_s": round(end_to_end, 4),
             "decode_only_wall_s": (round(decode_only, 4) if decode_only else ""),
             "ttft_s": (round(ttft, 4) if ttft is not None else ""),
@@ -478,6 +500,194 @@ def rasd_decode_rate(tokens: int, decode_wall_s) -> float:
     return (int(tokens) - 1) / max(float(decode_wall_s), 1e-9)
 
 
+def _position_gaps(output) -> list:
+    """Top-1 minus top-2 of vLLM's own logprobs at each emitted position.
+
+    `SamplingParams(logprobs=2)` returns a dict per position keyed by token id.
+    Two entries are the minimum for a gap; fewer means the engine did not report
+    enough, and the position gets `None` -- which the verdict treats as "no
+    evidence of indifference", i.e. NOT a tie.
+    """
+    try:
+        per_position = output.logprobs
+    except Exception:                                      # noqa: BLE001
+        return []
+    if not per_position:
+        return []
+    gaps = []
+    for entry in per_position:
+        try:
+            vals = sorted((float(v.logprob) for v in entry.values()),
+                          reverse=True)
+        except Exception:                                  # noqa: BLE001
+            vals = []
+        gaps.append(round(vals[0] - vals[1], 6) if len(vals) >= 2 else None)
+    return gaps
+
+
+def load_rasd_target_sidecars(tokens_dir) -> dict:
+    """Target-only RASD sidecars, keyed by (doc_id, context_length).
+
+    `spec_steps == 0` is what makes a sidecar a target-only run: a speculative
+    cell's ids are a different claim (they depend on the draft), and comparing
+    those against a plain vLLM decode would measure the draft, not the engine.
+    """
+    out = {}
+    d = Path(tokens_dir)
+    if not d.is_dir():
+        raise SystemExit(f"--rasd-target-sidecars: no such directory: {d}")
+    for f in sorted(d.glob("*.json")):
+        try:
+            sc = json.loads(f.read_text())
+        except Exception:                                  # noqa: BLE001
+            continue
+        if int(sc.get("spec_steps") or 0) != 0:
+            continue
+        ids = sc.get("generated_token_ids")
+        if not ids:
+            continue
+        key = (sc.get("doc_id") or "", int(sc.get("context_length") or 0))
+        out[key] = {"run_id": sc.get("run_id"), "ids": [int(t) for t in ids],
+                    "gaps": sc.get("token_gaps"), "sidecar": f.name}
+    return out
+
+
+def write_vllm_token_sidecars(rows: list, out_path) -> Path:
+    """Per-cell emitted ids and gaps, so the cross-check can be re-run later.
+
+    Written next to the comparison table rather than into it: the CSV stays a
+    table, and the ids stay re-checkable from artifacts without a GPU.
+    """
+    d = Path(str(out_path)).with_suffix("")
+    d = d.parent / (d.name + "_tokens")
+    d.mkdir(parents=True, exist_ok=True)
+    for r in rows:
+        key = (f"{r.get('doc_id') or 'nodoc'}_"
+               f"{r.get('context_length') or 0}_{r.get('attempt') or 1}")
+        (d / f"{key}.json").write_text(json.dumps({
+            "run_id": r.get("run_id") or "",
+            "model": r.get("model"), "doc_id": r.get("doc_id"),
+            "context_length": r.get("context_length"),
+            "status": r.get("status"), "unit_matched": r.get("unit_matched"),
+            "output_token_ids": r.get("_output_token_ids") or [],
+            "output_gaps": r.get("_output_gaps") or [],
+        }))
+    return d
+
+
+def _load_vllm_sidecars(d) -> dict:
+    out = {}
+    if d is None or not Path(d).is_dir():
+        return out
+    for f in sorted(Path(d).glob("*.json")):
+        try:
+            sc = json.loads(f.read_text())
+        except Exception:                                  # noqa: BLE001
+            continue
+        out[(sc.get("doc_id") or "",
+             int(sc.get("context_length") or 0))] = sc
+    return out
+
+
+def compare_targets(rows: list, tokens_dir, out_path,
+                    vllm_sidecars_dir=None) -> int:
+    """vLLM's greedy target-only output vs RASD's, under the tie rule (R7).
+
+    This is what `impl_validation` now claims: two independent implementations of
+    the same target at the same revision and context produce the same greedy
+    continuation, and here is the throughput of both. It is NOT an acceptance
+    cross-check -- vLLM cannot be given RASD's draft model, draft window, ring
+    sharding or NF4 cache, so an acceptance agreement would be a statement about
+    two different speculative implementations.
+    """
+    from src.analysis.losslessness import (TIE_GAP, compare_generations,
+                                           stage_requirement)
+
+    sidecars = load_rasd_target_sidecars(tokens_dir)
+    vside = _load_vllm_sidecars(vllm_sidecars_dir)
+    out_rows = []
+    for r in rows:
+        key = (r.get("doc_id") or "", int(r.get("context_length") or 0))
+        ref = sidecars.get(key)
+        base = {
+            "model": r.get("model"), "doc_id": r.get("doc_id"),
+            "context_length": r.get("context_length"),
+            "max_model_len": r.get("max_model_len"),
+            "unit_matched": r.get("unit_matched"),
+            "vllm_version": r.get("vllm_version"),
+            "interpreter": r.get("interpreter"),
+            "vllm_run_id": r.get("run_id") or "",
+            "rasd_run_id": (ref or {}).get("run_id", ""),
+            "vllm_throughput_tps_end_to_end": r.get("throughput_tps_end_to_end"),
+        }
+        if r.get("status") != "ok":
+            out_rows.append({**base, "verdict": "VLLM_FAILED",
+                             "detail": f"status={r.get('status')}"})
+            continue
+        if r.get("unit_matched") != "yes":
+            out_rows.append({**base, "verdict": "NOT_UNIT_MATCHED",
+                             "detail": r.get("error") or "unit_matched=no"})
+            continue
+        if ref is None:
+            out_rows.append({**base, "verdict": "NO_PAIR",
+                             "detail": "no RASD target-only sidecar for this "
+                                       "document and context"})
+            continue
+        mine = vside.get(key, {})
+        v_ids = r.get("_output_token_ids") or mine.get("output_token_ids") or []
+        v_gaps = r.get("_output_gaps") or mine.get("output_gaps")
+        if not v_ids:
+            out_rows.append({**base, "verdict": "NO_IDS",
+                             "detail": "the vLLM row carries no emitted ids "
+                                       "(no result file, or an older run)"})
+            continue
+        res = compare_generations(
+            v_ids, ref["ids"],
+            full_length=int(r.get("output_tokens") or 0) or None,
+            spec_gaps=v_gaps, target_gaps=ref["gaps"],
+        )
+        out_rows.append({**base, **res})
+
+    p = Path(out_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fields = ["model", "doc_id", "context_length", "max_model_len",
+              "unit_matched", "vllm_version", "interpreter", "vllm_run_id",
+              "rasd_run_id", "verdict", "lossless", "numeric_tie",
+              "tie_gap_threshold", "tie_positions", "verified_prefix",
+              "first_mismatch_position", "gap_at_divergence_spec",
+              "gap_at_divergence_target", "vllm_throughput_tps_end_to_end",
+              "detail"]
+    with p.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(out_rows)
+
+    req = stage_requirement(out_rows,
+                            full_length=max((int(x.get("verified_prefix") or 0)
+                                             for x in out_rows), default=0) or 1)
+    n_tie = sum(1 for x in out_rows if x.get("verdict") == "NUMERIC_TIE")
+    n_mis = sum(1 for x in out_rows if x.get("verdict") == "MISMATCH")
+    print(f"\n[compare] {p} ({len(out_rows)} cell(s))")
+    for x in out_rows:
+        print(f"    {x.get('verdict',''):<16} {x.get('doc_id','')}@"
+              f"{x.get('context_length','')} ties={x.get('tie_positions','')} "
+              f"{(x.get('detail') or '')[:60]}")
+    print(f"    {n_tie} NUMERIC_TIE (reported, not failures), "
+          f"{n_mis} MISMATCH (failures)")
+    if n_mis:
+        return 1
+    # Only MISMATCH fails (plan revision, 2026-10-07). A cell that agreed, or
+    # that diverged only where the target was indifferent, is a usable
+    # cross-check; a cell that was never compared is not.
+    usable = sum(1 for x in out_rows if str(x.get("verdict", "")).startswith(
+        "LOSSLESS") or x.get("verdict") == "NUMERIC_TIE")
+    if usable == 0:
+        print("[FAIL] no cell produced a token-level comparison: this stage "
+              "produced no usable cross-check, so it is recorded FAILED.")
+        return 1
+    return 0
+
+
 def _ids_sha(ids) -> str:
     """sha256 of a prompt id list, in RASD's spelling.
 
@@ -514,6 +724,7 @@ def load_rasd_cells(tokens_dir) -> list[dict]:
     sidecar; it is reported and skipped, never used.
     """
     cells: list[dict] = []
+    seen_cells: set = set()
     d = Path(tokens_dir)
     if not d.is_dir():
         raise SystemExit(f"--prompt-ids-from-sidecars: no such directory: {d}")
@@ -543,6 +754,14 @@ def load_rasd_cells(tokens_dir) -> list[dict]:
                   f"engine fed {len(ids)} ids; the difference must be exactly "
                   f"the BOS, so this sidecar did not come from the engine")
             continue
+        # One cell per (document, context). The token directory holds a sidecar
+        # for EVERY run of that document -- the speculative cell and its
+        # target-only partner -- and they share a prompt, so without this the
+        # same document is launched twice and appears twice in the comparison.
+        key = (sc.get("doc_id") or "", int(sc.get("context_length") or 0))
+        if key in seen_cells:
+            continue
+        seen_cells.add(key)
         cells.append({
             "doc_id": sc.get("doc_id") or "",
             "context_length": int(sc.get("context_length") or 0),
@@ -698,6 +917,8 @@ def build_row(cell: dict, model: str, ctx: int, prompt_ids, result: dict, *,
         "rope_scaling": json.dumps(rope) if rope else "",
         "attempt": attempt_idx, "config_used": config_name,
         "log_path": log_path,
+        # Which interpreter ran the engine (R7: the baseline has its own venv).
+        "interpreter": sys.executable,
         **{k: v for k, v in (result or {}).items() if k in CSV_FIELDS},
     })
     # Authoritative pairing identity, set AFTER the worker's result so a worker
@@ -715,6 +936,12 @@ def build_row(cell: dict, model: str, ctx: int, prompt_ids, result: dict, *,
     row["prompt_ids_from_engine"] = "yes" if cell.get("engine_input_ids") else ""
     if prompt_ids:
         row["prompt_sha256"] = _ids_sha(prompt_ids)
+    # What the engine emitted, and its own gaps. Kept OUT of the CSV (a 1024-id
+    # list per row would make the table unreadable) but ON the row, so the
+    # cross-check compares what ran rather than re-reading a log.
+    for k in ("output_token_ids", "output_gaps"):
+        if isinstance(result, dict) and k in result:
+            row["_" + k] = result[k]
     # C5: downgrade unless EVERY fairness criterion holds. A row that merely ran
     # successfully is not a comparable row.
     if row["status"] == "ok":
@@ -785,6 +1012,13 @@ def main() -> int:
     ap.add_argument("--attempt-timeout-s", type=int, default=MAX_ATTEMPT_WALL_S)
     ap.add_argument("--out", default=str(REPO / "results" / "mlsys"
                                          / "vllm_baseline.csv"))
+    ap.add_argument("--rasd-target-sidecars", default=None,
+                    help="directory of RASD target-only token sidecars; with "
+                         "--compare-out, the stage cross-checks vLLM's greedy "
+                         "output against RASD's target-only output on the same "
+                         "document, under the tie rule (R7)")
+    ap.add_argument("--compare-out", default=None,
+                    help="where to write the target cross-check table")
     ap.add_argument("--append", action="store_true",
                     help="append to --out instead of overwriting, so the two "
                          "targets can be run with their OWN matched "
@@ -962,6 +1196,13 @@ def main() -> int:
         print("[FAIL] no row is unit_matched=yes: this stage produced no usable "
               "baseline, so it is recorded FAILED rather than ok.")
         return 1
+    if args.compare_out:
+        if not args.rasd_target_sidecars:
+            raise SystemExit("--compare-out needs --rasd-target-sidecars: the "
+                             "cross-check is against RASD's target-only runs")
+        vdir = write_vllm_token_sidecars(rows, args.compare_out)
+        return compare_targets(rows, args.rasd_target_sidecars,
+                               args.compare_out, vllm_sidecars_dir=vdir)
     return 0
 
 

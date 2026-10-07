@@ -1,6 +1,8 @@
 """Target-quality perplexity: chunked NLL, and shard bounds that tile exactly."""
 from __future__ import annotations
 
+import math
+
 import pytest
 import torch
 
@@ -46,21 +48,54 @@ def test_chunked_nll_matches_reference_and_bounds_tile_the_sequence():
     # score a position before `score_from`. A gap or an overlap would silently
     # change the denominator of the perplexity. A rank whose whole slice lies
     # before `score_from` correctly scores nothing, so lo == hi is allowed.
+    #
+    # The scored global position is `own_start + local_index + 1`: hidden[i]
+    # predicts the token one position after it.
     n_total, world, score_from = 64, 4, 40
     claimed: list[int] = []
     for rank in range(world):
-        slice_start, slice_end, lo, hi = local_bounds(
-            rank, world, n_total, score_from)
-        assert slice_start >= 0 and slice_end <= n_total
-        assert 0 <= lo <= hi <= slice_end - slice_start
-        claimed.extend(range(slice_start + lo, slice_start + hi))
-        assert slice_end - slice_start <= n_total // world + 1
+        b = local_bounds(rank, world, n_total, score_from)
+        assert b.own_start >= 0 and b.own_end <= n_total
+        assert 0 <= b.lo <= b.hi <= b.fwd_end - b.own_start
+        claimed.extend(range(b.own_start + b.lo + 1, b.own_start + b.hi + 1))
+        assert b.fwd_end - b.own_start == math.ceil(n_total / world)
     assert sorted(claimed) == list(range(score_from, n_total))
 
     # Rank 0 of that layout owns [0, 16) and scores nothing: below score_from
     # the sequence is prompt, which supplies context but not loss. The bounds
     # stay inside the local slice rather than running off its end.
-    assert local_bounds(0, 4, 64, 40)[2:4] == (16, 16)
+    b0 = local_bounds(0, 4, 64, 40)
+    assert (b0.lo, b0.hi) == (16, 16)
+    assert (b0.score_lo, b0.score_hi) == (16, 16)
+
+
+@pytest.mark.parametrize("n_total,world", [(13, 4), (17, 8), (129, 8),
+                                           (1000, 8), (9, 8), (1, 8)])
+def test_uneven_shards_keep_every_rank_on_the_same_collective_count(n_total,
+                                                                   world):
+    """Equal forwarded length is what makes the ring safe with a remainder.
+
+    The ring rotates each rank's own KV slice, and `_issue_rotation` splits that
+    slice into `ceil(S_local / chunk_size)` chunks, so a rank with a different
+    local length would submit a different number of P2P ops and the ring would
+    hang rather than merely slow down. The padding in `local_bounds` is the
+    mechanism that prevents it, so it is asserted here rather than assumed.
+    """
+    chunk = 512
+    lengths, op_counts, scored = set(), set(), []
+    for rank in range(world):
+        b = local_bounds(rank, world, n_total, score_from=1)
+        local_len = b.fwd_end - b.own_start
+        lengths.add(local_len)
+        op_counts.add(len(range(0, local_len, chunk)))
+        scored.extend(range(b.score_lo, b.score_hi))
+        assert b.own_end <= b.fwd_end
+        assert b.fwd_end - b.own_end <= local_len
+    assert len(lengths) == 1, (
+        f"unequal forward lengths {lengths} -> unequal ring op counts")
+    assert len(op_counts) == 1
+    # Every position except 0 (no predictor) is scored exactly once, in order.
+    assert sorted(scored) == list(range(1, n_total))
 
 
 if __name__ == "__main__":

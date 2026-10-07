@@ -77,6 +77,101 @@ ONLY=${MLSYS_ONLY_STAGES-$DEFAULT_ONLY}
 ONLY_EXPLICIT=0
 [ -n "${MLSYS_ONLY_STAGES+set}" ] && ONLY_EXPLICIT=1
 
+# ---------------------------------------------------------------------------
+# Per-stage wall-clock header, in SECONDS. ONE place, deliberately.
+#
+# The timeout and the cost model (`est_hours` in configs/mlsys_manifest.yml) are
+# two numbers describing the same run, so they have to agree: a header shorter
+# than the projection kills the stage the model says fits -- after the money is
+# spent, and as a timeout rather than as a wrong number. They used to be literals
+# at twelve call sites, where nothing could check them: the 256k rung carried a
+# 12h header against a 13.0h projection, so it would have been killed for being
+# exactly as expensive as predicted.
+#
+# A plain list rather than `declare -A`: the rehearsal runs on this machine's
+# bash 3.2, which has no associative arrays, and a timeout table that only works
+# on the pod is a table nobody can rehearse. `stage()` refuses any stage whose
+# header is missing or non-numeric, so "unset" cannot mean "run unbounded".
+# ---------------------------------------------------------------------------
+STAGE_TIMEOUTS='
+gate_calibration 14400
+engine_cap_smoke 21600
+correction_note_evidence 14400
+coherence_gate 21600
+natural_f1_128k 43200
+natural_f1_128k_diverse 43200
+impl_validation 21600
+natural_spec_gated_256k 64800
+natural_spec_gated_512k 144000
+rope_intervention_gate 14400
+rope_intervention_128k 43200
+rope_intervention_128k_comparison 1800
+vllm_ladder 21600
+synthetic_spec_gated_128k 43200
+synthetic_spec_gated_256k 64800
+natural_f1_128k_losslessness 3600
+natural_f1_128k_doc_intervals 1800
+natural_f1_128k_round_acceptance 1800
+natural_f1_128k_diverse_losslessness 3600
+natural_f1_128k_diverse_doc_intervals 1800
+natural_f1_128k_diverse_round_acceptance 1800
+natural_spec_gated_256k_losslessness 3600
+natural_spec_gated_256k_doc_intervals 1800
+natural_spec_gated_256k_round_acceptance 1800
+natural_spec_gated_512k_losslessness 3600
+natural_spec_gated_512k_doc_intervals 1800
+natural_spec_gated_512k_round_acceptance 1800
+rope_intervention_128k_losslessness 3600
+rope_intervention_128k_doc_intervals 1800
+rope_intervention_128k_round_acceptance 1800
+'
+# Projection in seconds, for the ratio the dry run asserts: the header must clear
+# `est_hours` by 20%. Printed by `stage_timeout --check`.
+STAGE_EST_HOURS='
+gate_calibration 1.0
+engine_cap_smoke 1.5
+correction_note_evidence 2.1
+coherence_gate 2.0
+natural_f1_128k 6.5
+natural_f1_128k_diverse 6.5
+impl_validation 1.0
+natural_spec_gated_256k 13.0
+natural_spec_gated_512k 26.2
+rope_intervention_gate 0.6
+rope_intervention_128k 5.4
+rope_intervention_128k_comparison 0.02
+vllm_ladder 2.5
+synthetic_spec_gated_128k 6.5
+synthetic_spec_gated_256k 13.0
+'
+
+# The vLLM stages must run in the ISOLATED environment (R7): vLLM 0.6.3 pins its
+# own torch, and this campaign's main environment is pinned to a torch/
+# transformers pair every other number depends on. The interpreter is selected BY
+# PATH and the stage REFUSES if it is missing -- running the baseline in the main
+# environment would either break those pins or measure a different build, and
+# both are worse than not running the stage.
+vllm_python() {
+  local py="${MLSYS_VLLM_PYTHON:-$REPO/.venv-vllm/bin/python}"
+  if [ ! -x "$py" ]; then
+    return 1
+  fi
+  echo "$py"
+}
+
+stage_timeout() {  # $1 = stage id; prints seconds, empty if undeclared
+  printf '%s\n' "$STAGE_TIMEOUTS" | awk -v w="$1" '$1 == w { print $2; f = 1 } END { exit !f }'
+}
+
+stage_est_hours() {  # $1 = stage id; prints hours, empty if undeclared
+  local key=$1
+  # helpers share their parent's projection bucket
+  case "$key" in
+    *_losslessness|*_doc_intervals|*_round_acceptance) echo 0.05; return 0 ;;
+  esac
+  printf '%s\n' "$STAGE_EST_HOURS" | awk -v w="$key" '$1 == w { print $2; f = 1 } END { exit !f }'
+}
+
 # Aggregate ceiling for this session. The per-stage guard bounds one stage; this
 # bounds the session, which is the number the operator actually agreed to.
 MAX_COST=${MLSYS_MAX_COST_USD:-850}
@@ -127,6 +222,8 @@ COST_UNKNOWN=0
 STAGE_FAILURES=0
 BUDGET_SKIPS=0
 STAGE_INVALID=0
+TIMEOUT_UNKNOWN=0
+VLLM_MISSING=0
 ONLY_SKIPS=0
 WATCHDOG=${MLSYS_MAX_HOURS:-$(_manifest_field __meta__ max_hours)}
 WATCHDOG=${WATCHDOG:-20}
@@ -274,6 +371,16 @@ helper_allowed() {
 stage() {   # $1=name  $2=timeout_s  $3..=cmd
   local name=$1 tmo=$2; shift 2
   local est rc=0
+  # FAIL CLOSED on the wall-clock header. A stage whose header is missing or
+  # non-numeric would run under `timeout ""`, i.e. unbounded -- and an unbounded
+  # stage is exactly how a watchdog becomes the thing that finds the bug.
+  case "$tmo" in
+    ''|*[!0-9]*)
+      interim "REFUSED name=$name reason=no_declared_timeout header='$tmo'"
+      echo "REFUSE $name: wall-clock header '$tmo' is not a number of seconds" \
+           "(add it to STAGE_TIMEOUTS)"
+      TIMEOUT_UNKNOWN=$((TIMEOUT_UNKNOWN + 1)); return 9 ;;
+  esac
   # FAIL CLOSED. If the projection cannot be read, refuse: an unreadable
   # estimate is not a zero estimate, and the guard below is the only thing
   # standing between an unapproved stage and the budget.
@@ -681,7 +788,7 @@ validate_and_report() {   # $1=stage id  $2=csv  $3=expected rows
 
 report_spec_stage() {   # $1=stage csv path  $2=stage id
   local csv=$1 name=$2
-  stage "${name}_losslessness" 3600 "$PY" scripts/mlsys_losslessness.py \
+  stage "${name}_losslessness" "$(stage_timeout "${name}_losslessness")" "$PY" scripts/mlsys_losslessness.py \
     --results "$csv" --tokens-dir "$(dirname "$csv")/tokens" \
     --out "$(dirname "$csv")/${name}_losslessness.csv"
   # Group by the stratum the PAIRED ARMS SHARE, which is the rung
@@ -692,12 +799,12 @@ report_spec_stage() {   # $1=stage csv path  $2=stage id
   # target-only structural zeros into the speculative number) is now handled
   # inside the script: the marginal means are computed PER ARM, so the stratum
   # can be shared for pairing without the estimates being mixtures.
-  stage "${name}_doc_intervals" 1800 "$PY" scripts/mlsys_document_bootstrap.py \
+  stage "${name}_doc_intervals" "$(stage_timeout "${name}_doc_intervals")" "$PY" scripts/mlsys_document_bootstrap.py \
     --results "$csv" --group-by context_length --ratio-metric decode_tps \
     --out "$(dirname "$csv")/${name}_doc_intervals.csv"
   # --window: the plan compares rungs over a common window of rounds so cells
   # with different output lengths are on equal footing.
-  stage "${name}_round_acceptance" 1800 "$PY" scripts/mlsys_cluster_bootstrap.py \
+  stage "${name}_round_acceptance" "$(stage_timeout "${name}_round_acceptance")" "$PY" scripts/mlsys_cluster_bootstrap.py \
     --traces "$(dirname "$csv")/per_token" --window 15 \
     --out "$(dirname "$csv")/${name}_acceptance_bootstrap.csv"
 }
@@ -713,7 +820,7 @@ interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDO
 echo "spend before manifest: \$$(spend)"
 
 # ---- S0: calibrate the gate on real weights. MUST be first. ---------------
-stage gate_calibration 14400 "$PY" scripts/mlsys_coherence_gate.py \
+stage gate_calibration "$(stage_timeout gate_calibration)" "$PY" scripts/mlsys_coherence_gate.py \
   --candidates configs/mlsys_gate_controls.json \
   --pg19-meta "$DOCS" \
   --out "$OUT/gate_calibration.csv" --gen-dir "$OUT/gate_calibration_generated"
@@ -750,7 +857,7 @@ fi
 # changes, which invalidates the losslessness comparison and makes the
 # acceptance denominator a function of acceptance. So failure here STOPS the run
 # rather than being recorded and skipped.
-stage engine_cap_smoke 21600 "$PY" run_experiment.py \
+stage engine_cap_smoke "$(stage_timeout engine_cap_smoke)" "$PY" run_experiment.py \
   --config configs/mlsys_engine_cap_smoke.yml \
   --output "$OUT/engine_cap_smoke.csv" --stage-id engine_cap_smoke \
   --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
@@ -783,14 +890,14 @@ interim "engine_cap_smoke PASSED: cap enforced and the pair is lossless"
 # ---- S2: correction-note evidence ----------------------------------------
 # Reuses the gate's measurement path with Llama-2 candidates, so the numbers the
 # correction note quotes come from the same code the ladder's gate uses.
-stage correction_note_evidence 14400 "$PY" scripts/mlsys_coherence_gate.py \
+stage correction_note_evidence "$(stage_timeout correction_note_evidence)" "$PY" scripts/mlsys_coherence_gate.py \
   --candidates configs/mlsys_correction_candidates.json \
   --pg19-meta "$DOCS" \
   --out "$OUT/correction_note_evidence.csv" \
   --gen-dir "$OUT/correction_note_generated"
 
 # ---- S3: the gate, now calibrated ---------------------------------------
-stage coherence_gate 21600 "$PY" scripts/mlsys_coherence_gate.py \
+stage coherence_gate "$(stage_timeout coherence_gate)" "$PY" scripts/mlsys_coherence_gate.py \
   --candidates configs/mlsys_rope_candidates.json \
   --pg19-meta "$DOCS" \
   --out "$OUT/coherence_gate.csv" --gen-dir "$OUT/gate_generated"
@@ -833,7 +940,7 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
       interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
       echo "INVALID $name: the planner produced 0 rows for groups '$grp'"
       STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
-    stage "$name" 43200 "$PY" run_experiment.py --config "$cfg" --groups $grp \
+    stage "$name" "$(stage_timeout "$name")" "$PY" run_experiment.py --config "$cfg" --groups $grp \
       --output "$OUT/${name}.csv" --stage-id "$name" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
@@ -842,7 +949,7 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
       interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
       echo "INVALID $name: the planner produced 0 rows"
       STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
-    stage "$name" 43200 "$PY" run_experiment.py --config "$cfg" \
+    stage "$name" "$(stage_timeout "$name")" "$PY" run_experiment.py --config "$cfg" \
       --output "$OUT/${name}.csv" --stage-id "$name" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
@@ -850,27 +957,48 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
   validate_and_report "$name" "$OUT/${name}.csv" "$want"
 done
 
-# ---- S1: implementation validation, vLLM-only against S4's own rows ------
-# No RASD runs here: the comparison uses natural_f1_128k's rows and token
+# ---- S1: implementation validation — a TARGET cross-check (R7) -----------
+# No RASD runs here: the comparison uses natural_f1_128k's own target-only token
 # sidecars, so this stage adds no RASD wall time.
-# vLLM spec decoding on the SAME three documents as natural_f1_128k, given the
-# EXACT prompt ids those RASD runs fed (from their token sidecars), greedy, at
-# the matched 1024-token generation. Anything less and the row is not comparable
-# and is flagged unit_matched=no rather than averaged into a ratio.
-stage impl_validation 21600 "$PY" scripts/mlsys_vllm_baseline.py \
-  --out "$OUT/impl_validation.csv" \
-  --prompt-ids-from-sidecars "$OUT/tokens" \
-  --documents pg19_train_0,pg19_train_1,pg19_train_115 \
-  --context-lengths 131072 --max-new-tokens 1024 --matched-max-new-tokens 1024 \
-  --models meta-llama/Llama-3.1-8B \
-  --target-revisions "$TARGET_REVS_D3"
+#
+# What it claims, after the 2026-10-07 plan revision: vLLM's GREEDY TARGET-ONLY
+# output on the same engine_input_ids agrees token-for-token with RASD's
+# target-only output on the same document, under the tie rule, plus both
+# throughputs in the same unit. It does NOT claim agreement in acceptance:
+# vLLM cannot be given RASD's draft model, its 4k draft window, its ring
+# sharding or its NF4 KV cache, so an acceptance agreement would be a statement
+# about two different speculative implementations.
+#
+# The interpreter is the ISOLATED venv (its own torch), selected by path; if it
+# is missing the stage is refused rather than run against the main environment's
+# pins.
+if VLLM_PY=$(vllm_python); then
+  stage impl_validation "$(stage_timeout impl_validation)" "$VLLM_PY" scripts/mlsys_vllm_baseline.py \
+    --out "$OUT/impl_validation.csv" \
+    --prompt-ids-from-sidecars "$OUT/tokens" \
+    --rasd-target-sidecars "$OUT/tokens" \
+    --compare-out "$OUT/impl_validation_target_crosscheck.csv" \
+    --documents pg19_train_0,pg19_train_1,pg19_train_115 \
+    --context-lengths 131072 --max-new-tokens 1024 --matched-max-new-tokens 1024 \
+    --models meta-llama/Llama-3.1-8B \
+    --target-revisions "$TARGET_REVS_D3"
+else
+  interim "REFUSED name=impl_validation reason=no_vllm_venv"
+  echo "REFUSE impl_validation: no vLLM interpreter at"\
+       "'\''${MLSYS_VLLM_PYTHON:-$REPO/.venv-vllm/bin/python}'\''; run"\
+       "scripts/mlsys_vllm_venv.sh first. The main environment is NOT used for"\
+       "the baseline (its torch/transformers pins are what every other number"\
+       "was measured with)."
+  VLLM_MISSING=$((VLLM_MISSING + 1))
+fi
 
 # ---- S5: the gated rungs, one stage per rung -----------------------------
 # Each is severable so the 512k session can be approved and run on its own
 # instance. 512k needs a 40h watchdog: at ~26h the default 20h would kill it.
-for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
-             "natural_spec_gated_512k:GATED_llama3_f32_512k:144000"; do
-  name=${gated%%:*}; rest=${gated#*:}; prefix=${rest%%:*}; tmo=${rest##*:}
+for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k" \
+             "natural_spec_gated_512k:GATED_llama3_f32_512k"; do
+  name=${gated%%:*}; rest=${gated#*:}; prefix=${rest%%:*}
+  tmo=$(stage_timeout "$name")
   cfg=configs/mlsys_natural_gated.yml
   if [ ! -f "$cfg" ]; then
     interim "SKIPPED name=$name reason=config-missing path=$cfg"
@@ -914,9 +1042,10 @@ for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
 done
 
 # ---- S6: synthetic arm, per rung, secondary ------------------------------
-for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
-           "synthetic_spec_gated_256k:GATED_llama3_f16_256k_SYNTH:64800"; do
-  name=${syn%%:*}; rest=${syn#*:}; prefix=${rest%%:*}; tmo=${rest##*:}
+for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k" \
+           "synthetic_spec_gated_256k:GATED_llama3_f16_256k_SYNTH"; do
+  name=${syn%%:*}; rest=${syn#*:}; prefix=${rest%%:*}
+  tmo=$(stage_timeout "$name")
   cfg=configs/mlsys_synthetic_gated.yml
   [ -f "$cfg" ] || { interim "SKIPPED name=$name reason=config-missing"; continue; }
   # ALLOWLIST FIRST, same reason as the natural rungs: no filtering work, and no
@@ -963,7 +1092,7 @@ done
 # assumption the ARM4 f2 cell punished. The native arm is the control and always
 # runs; without it there is no contrast to report.
 if on_list rope_intervention_128k "$ONLY"; then
-  stage rope_intervention_gate 14400 "$PY" scripts/mlsys_coherence_gate.py \
+  stage rope_intervention_gate "$(stage_timeout rope_intervention_gate)" "$PY" scripts/mlsys_coherence_gate.py \
     --candidates configs/mlsys_rope_intervention_candidates.json \
     --pg19-meta "$DOCS" \
     --out "$OUT/rope_intervention_gate.csv" \
@@ -1018,7 +1147,7 @@ if on_list rope_intervention_128k "$ONLY"; then
     echo "INVALID rope_intervention_128k: the planner produced 0 rows for '$RI_GROUPS'"
     STAGE_INVALID=$((STAGE_INVALID + 1)); want=""; }
   if [ -n "$want" ]; then
-  stage rope_intervention_128k 43200 "$PY" run_experiment.py \
+  stage rope_intervention_128k "$(stage_timeout rope_intervention_128k)" "$PY" run_experiment.py \
     --config configs/mlsys_rope_intervention_128k.yml \
     --groups $RI_GROUPS \
     --output "$OUT/rope_intervention_128k.csv" --stage-id rope_intervention_128k \
@@ -1039,7 +1168,7 @@ if on_list rope_intervention_128k "$ONLY"; then
   # with the pre-registered 0.05 equivalence margin. An arm whose gate failed
   # has no rows, so its contrast is simply absent -- which is the recorded
   # result for that arm, not a missing measurement to be filled in.
-  stage rope_intervention_128k_comparison 1800 "$PY" \
+  stage rope_intervention_128k_comparison "$(stage_timeout rope_intervention_128k_comparison)" "$PY" \
     scripts/mlsys_rope_intervention.py \
     --results "$OUT/rope_intervention_128k.csv" \
     --out "$OUT/rope_intervention_128k_comparison.csv" \
@@ -1055,22 +1184,32 @@ fi
 # Plain (non-speculative) decode at every rung: the production-stack reference
 # where the payoff boundary is claimed. impl_validation covers only 128k and
 # only speculative decoding.
-stage vllm_ladder 21600 "$PY" scripts/mlsys_vllm_baseline.py \
-  --out "$OUT/vllm_baseline.csv" \
-  --prompt-ids-from-sidecars "$OUT/tokens" \
-  --context-lengths 131072 262144 524288 --max-new-tokens 1024 \
-  --matched-max-new-tokens 1024 \
-  --models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf \
-  --target-revisions "$ALL_TARGET_REVS" \
-  --draft-revisions "$ALL_DRAFT_REVS"
+if VLLM_PY=$(vllm_python); then
+  stage vllm_ladder "$(stage_timeout vllm_ladder)" "$VLLM_PY" scripts/mlsys_vllm_baseline.py \
+    --out "$OUT/vllm_baseline.csv" \
+    --prompt-ids-from-sidecars "$OUT/tokens" \
+    --rasd-target-sidecars "$OUT/tokens" \
+    --compare-out "$OUT/vllm_ladder_target_crosscheck.csv" \
+    --context-lengths 131072 262144 524288 --max-new-tokens 1024 \
+    --matched-max-new-tokens 1024 \
+    --models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf \
+    --target-revisions "$ALL_TARGET_REVS" \
+    --draft-revisions "$ALL_DRAFT_REVS"
+else
+  interim "REFUSED name=vllm_ladder reason=no_vllm_venv"
+  echo "REFUSE vllm_ladder: no vLLM interpreter (run scripts/mlsys_vllm_venv.sh)"
+  VLLM_MISSING=$((VLLM_MISSING + 1))
+fi
 
 if [ "$WATCHDOG_SKIPS" -gt 0 ] || [ "$COST_UNKNOWN" -gt 0 ] \
    || [ "$BUDGET_SKIPS" -gt 0 ] || [ "$STAGE_INVALID" -gt 0 ] \
-   || [ "$STAGE_FAILURES" -gt 0 ]; then
-  interim "=== MANIFEST INCOMPLETE watchdog_skips=$WATCHDOG_SKIPS cost_unknown=$COST_UNKNOWN budget_skips=$BUDGET_SKIPS stage_invalid=$STAGE_INVALID stage_failures=$STAGE_FAILURES spend=\$$(spend) ==="
+   || [ "$STAGE_FAILURES" -gt 0 ] || [ "$TIMEOUT_UNKNOWN" -gt 0 ] \
+   || [ "$VLLM_MISSING" -gt 0 ]; then
+  interim "=== MANIFEST INCOMPLETE watchdog_skips=$WATCHDOG_SKIPS cost_unknown=$COST_UNKNOWN budget_skips=$BUDGET_SKIPS stage_invalid=$STAGE_INVALID stage_failures=$STAGE_FAILURES timeout_unknown=$TIMEOUT_UNKNOWN vllm_missing=$VLLM_MISSING spend=\$$(spend) ==="
   echo "MANIFEST INCOMPLETE:" \
        "watchdog=$WATCHDOG_SKIPS cost-unknown=$COST_UNKNOWN" \
-       "budget=$BUDGET_SKIPS invalid=$STAGE_INVALID failed=$STAGE_FAILURES"
+       "budget=$BUDGET_SKIPS invalid=$STAGE_INVALID failed=$STAGE_FAILURES" \
+       "timeout-unknown=$TIMEOUT_UNKNOWN"
   echo "total node cost: \$$(spend)"
   exit 4
 fi

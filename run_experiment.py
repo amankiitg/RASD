@@ -400,13 +400,11 @@ def _measure_target_ppl(engine, prompt: str, continuation_ids: list[int],
     prompt_ids = engine.tokenizer(prompt)["input_ids"]
     ids = torch.tensor([list(prompt_ids) + list(continuation_ids)],
                        dtype=torch.long, device=model.device)
-    n_total = int(ids.shape[1])
-    if world_size > 1 and n_total % world_size != 0:
-        raise RuntimeError(
-            f"target-quality sequence {n_total} is not divisible by "
-            f"world_size {world_size}; shard bounds would not match the "
-            f"engine's contiguous layout"
-        )
+    # A sequence whose length is not divisible by world_size is fine: the last
+    # rank pads its forward to a common length (see `local_bounds`), which is
+    # what keeps the ring's collective count identical on every rank. Refusing
+    # the sequence instead would silently drop rungs whose token count happens
+    # not to divide by 8.
 
     def _forward(local_ids, abs_pos):
         return model.model(
@@ -1182,6 +1180,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # scalar. Only rank 0 receives a non-None trace (others get
         # None per RASDInference.generate's rank-0 guard).
         gen_ids = metrics.pop("generated_token_ids", None)
+        # The target's top-1 minus top-2 logit gap at each emitted position,
+        # aligned with `gen_ids`. The losslessness verdict needs it to tell a
+        # numerics tie (the target was indifferent, so either candidate is
+        # defensible) from a real divergence, and it lives in the sidecar so the
+        # check can be re-run from the artifacts alone.
+        token_gaps = metrics.pop("token_gaps", None)
         # The ids the TARGET was actually fed, BOS included, from the engine's
         # own tensor. `prompt_tokens` and `prompt_sha256` are the prompt WITHOUT
         # the BOS -- that is what the engine's prompt builder is defined over --
@@ -1211,6 +1215,7 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                     "temperature": run.get("temperature", 1.0),
                     "top_p": run.get("top_p", 1.0),
                     "ignore_eos": bool(run.get("ignore_eos", False)),
+                    "token_gaps": token_gaps,
                 })
             if tok_sidecar is not None:
                 log.info("Wrote generated token ids: %s (%d tokens)",

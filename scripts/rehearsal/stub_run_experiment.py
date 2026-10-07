@@ -343,6 +343,12 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
              "spec_steps": row["spec_steps"], "temperature": row["temperature"],
              "top_p": row["top_p"], "ignore_eos": row["ignore_eos"],
              "arm_role": row["arm_role"], "pair_id": row["pair_id"],
+             # The target's top1-top2 gap at each emitted position, in the same
+             # order as the ids. The rehearsal generates a decisive gap (well
+             # above the 0.1 tie threshold) so a real divergence would be a
+             # MISMATCH rather than silently excused as a numerics tie.
+             "token_gaps": [round(3.0 + 0.001 * i, 6)
+                            for i in range(len(emitted_ids))],
              "target_revision": row["target_revision"],
              "draft_revision": row["draft_revision"]})
     if save_text:

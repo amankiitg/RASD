@@ -285,6 +285,11 @@ class RASDConfig:
     # (M3 byte-identical). 2048 is the recommended value at long
     # context (matches kv_block_size for ring rotation granularity).
     nf4_update_chunk_size: int = 2048
+    # Fold a new NF4 chunk into the previous one while both are shorter than
+    # this many tokens (R1). The target-only decode appends one token per step,
+    # so without it the chunk count -- and therefore the per-step dequantize
+    # cost -- grows with the number of steps. The fold is exact. 0 disables.
+    nf4_tail_merge_below: int = 64
     # Memory tracing for paper Figure 3 / attribution. When True,
     # MemoryTracer.snapshot() is called at lifecycle points in
     # generate() and a JSON sidecar is written to
@@ -477,6 +482,26 @@ def _rope_anchor_channel(rope_type: str) -> str:
     return "unused"
 
 
+def _top1_top2_gap(logits: torch.Tensor) -> list:
+    """Top-1 minus top-2 logit at each position, as plain floats.
+
+    Why this is recorded: under greedy decoding two runs that see the same prompt
+    must choose the same token, but a target that is INDIFFERENT between the top
+    two candidates -- a gap near zero -- can choose either for arithmetic reasons
+    (reduction order, and the ring's non-associative online-softmax merge, which
+    is why the engine broadcasts logits between ranks at all). Calling such a
+    divergence a losslessness failure would report a numerics artefact as an
+    implementation defect, so the gap is what decides tie versus mismatch.
+
+    `logits` is (B, S, vocab) and the returned list has length S, one gap per
+    position, in the order of the emitted tokens.
+    """
+    if logits is None or logits.numel() == 0:
+        return []
+    top2 = torch.topk(logits.float(), k=2, dim=-1).values
+    return [float(g) for g in (top2[..., 0] - top2[..., 1])[0].tolist()]
+
+
 def _round_commit_plan(budget: int, n_acc: int, gamma: int) -> tuple:
     """How many tokens a verify round may commit, given the remaining budget.
 
@@ -548,6 +573,94 @@ def _build_per_token_record(
         "accepted":         [bool(x) for x in accepted[0].tolist()],
         "ended_on_eos":     False,
     }
+
+
+def _draft_window(input_ids, window: int):
+    """The sequence the DRAFT is conditioned on: leading BOS + most recent tokens.
+
+    Why the leading token is kept rather than simply taking the last `window`
+    tokens: the engine builds its input with `tokenizer(prompt)`, which prepends
+    the BOS, and position 0 is the attention sink the whole model is trained
+    around. Dropping it makes the draft's first position a mid-document token
+    whose rotary phase is 0 but whose identity is wrong, which is a different
+    (and worse) conditioning than the target ever sees.
+
+    Why this exists at all: `generate_text` used to build its own draft input
+    with `tokenizer(prompt, max_length=draft_max_len, truncation=True)`, and HF
+    truncation with the default `truncation_side='right'` keeps the FIRST
+    `draft_max_len` tokens. At any context longer than the draft window the
+    draft was therefore conditioned on the OPENING of the document while the
+    target was conditioned on its ending -- and the manuscript describes the
+    opposite ("attends over only the most recent 4,096 tokens"). Making
+    `generate` the only place the window is applied removes the possibility of
+    the two disagreeing.
+
+    `window` is the draft's effective window (`draft_max_len`, already capped by
+    `draft_window_cap`). A prompt that already fits is returned unchanged, so
+    short-context runs are bit-identical to before.
+    """
+    if window <= 0 or input_ids.shape[1] <= window:
+        return input_ids
+    keep = window - 1
+    if keep <= 0:
+        return input_ids[:, :1]
+    return torch.cat([input_ids[:, :1], input_ids[:, -keep:]], dim=1)
+
+
+def _broadcast_round_state(draft_seq, target_logits_v, draft_logits,
+                           world_size: int) -> None:
+    """Fix one round's draft tokens and logits to rank 0's, on every rank.
+
+    Ring attention's online-softmax merges K/V slices in a rank-DIFFERENT order,
+    and floating-point merges are not associative, so `target_logits_v` drifts
+    between ranks. When `accept_prob = p_target/p_draft` lands near a `r ~ U[0,1)`
+    threshold, ranks would then flip independently: `n_acc` differs, so
+    `_truncate_kv` leaves different local cache sizes and the next round's ring
+    P2P sizes mismatch. That is the coalesced-timeout path (SeqNum ~3500-3600)
+    this broadcast exists to close.
+
+    The DRAFT TOKENS belong in the same set. Every rank runs the draft model, so
+    its tokens agree under greedy decoding -- which is why leaving `draft_seq`
+    out went unnoticed -- but at temperature > 0 each rank samples its own, and
+    the accept/reject then tests different proposals per rank. Sharing the
+    logits is not enough to make `n_acc` agree if the proposals differ.
+
+    One helper rather than three inline calls so the SET is testable: a missing
+    member is invisible in the round's output and only shows up as a hang at
+    round 3500.
+    """
+    if world_size <= 1:
+        return
+    dist.broadcast(draft_seq, src=0)
+    dist.broadcast(target_logits_v, src=0)
+    dist.broadcast(draft_logits, src=0)
+
+
+def _kv_seq_len(past_kv) -> int:
+    """Positions a cache currently holds, read back FROM the cache.
+
+    The committed length is a claim about the cache, so it is measured rather
+    than recomputed from the arithmetic that was supposed to produce it: an
+    off-by-one in `_truncate_kv` (a dropped bonus, an un-emitted verified tail,
+    a truncation that did not apply to the NF4 store) would otherwise be
+    invisible, because the same expression would appear on both sides of the
+    comparison.
+
+    NF4DynamicCache and HF's DynamicCache both expose `get_seq_length()`; a
+    legacy tuple can only be measured from its own tensor.
+    """
+    if past_kv is None:
+        return 0
+    getter = getattr(past_kv, "get_seq_length", None)
+    if callable(getter):
+        try:
+            return int(getter())
+        except Exception:                                  # noqa: BLE001
+            pass
+    try:
+        return int(past_kv[0][0].shape[2])
+    except Exception:                                      # noqa: BLE001
+        return 0
 
 
 def _truncate_kv(past_kv, new_len: int):
@@ -661,10 +774,9 @@ class RASDInference:
         model we pass False: capping the draft at its native context cap
         (Sheared-LLaMA-1.3B = 4096) saves ~11 GB/rank of replicated KV at
         ctx=64k vs scaling the draft to match the target. Speculative
-        decoding tolerates a smaller draft window — the
-        `draft_ids = raw_draft_ids[:, -self.draft_max_len:]` truncation in
-        generate() already gives the draft only the most recent native_max
-        tokens of context. R6.4 OOM analysis (2026-05-06) showed draft KV
+        decoding tolerates a smaller draft window — `_draft_window` in
+        generate() already gives the draft the leading BOS plus the most
+        recent `draft_max_len - 1` tokens of context. R6.4 OOM analysis (2026-05-06) showed draft KV
         was eating ~12 GB/rank at ctx=64k under the old behaviour.
         """
         from transformers import AutoConfig
@@ -959,9 +1071,10 @@ class RASDInference:
                              getattr(self.draft_model.config, "n_positions", 4096))
 
         # MLSys Phase 1 — optional hard cap on the draft context window.
-        # This is the single place the draft window is enforced: the prefill
-        # truncation in generate() and the tokenizer truncation in
-        # generate_text() both read `self.draft_max_len`.
+        # This is the single place the draft window is SET, and `_draft_window`
+        # in generate() is the single place it is APPLIED. generate_text() used
+        # to apply a second, differently-directed truncation of its own, which
+        # is why the draft's context did not match this number.
         if cfg.draft_window_cap is not None:
             cap = int(cfg.draft_window_cap)
             if cap <= 0:
@@ -1197,6 +1310,11 @@ class RASDInference:
                     dtype=cfg.torch_dtype,
                     bf16_prefix_size=prefix_size,
                     update_chunk_size=cfg.nf4_update_chunk_size,
+                    # Target-only decode appends ONE token per step; without the
+                    # fold the layer accumulates one chunk per step and every
+                    # forward concatenates all of them (R1). Exact, not
+                    # approximate -- see NF4DynamicCache._append_nf4_chunk.
+                    tail_merge_below=cfg.nf4_tail_merge_below,
                 )
 
             # M4 Phase C 2026-05-10 lever #1: only the LAST position's
@@ -1285,12 +1403,16 @@ class RASDInference:
             draft_past_kv = None
             if cfg.spec_steps > 0:
                 # Prefill draft model — same tokenizer/vocab as target
-                # (LLaMA-2 SentencePiece, vocab=32000). Truncate to draft
-                # model's max sequence length if prompt is very long
-                # (TinyLlama=2048, Sheared-LLaMA=4096). Keep last N tokens
-                # for recency.
+                # (LLaMA-2 SentencePiece, vocab=32000). The draft sees the
+                # leading BOS plus the most recent `draft_max_len - 1` tokens
+                # (Sheared-LLaMA=4096, TinyLlama=2048, capped by
+                # cfg.draft_window_cap): recency is the point, and a draft
+                # conditioned on the document's opening proposes tokens the
+                # target then rejects for context it never had.
                 raw_draft_ids = draft_input_ids if draft_input_ids is not None else input_ids
-                draft_ids = raw_draft_ids[:, -self.draft_max_len:]
+                draft_ids = _draft_window(raw_draft_ids, self.draft_max_len)
+                logger.info("[draft-window] draft prefill over %d of %d prompt tokens (window=%d)",
+                            draft_ids.shape[1], raw_draft_ids.shape[1], self.draft_max_len)
                 print(f"[TRACE rank={self._rank}] calling draft prefill, draft_S={draft_ids.shape[1]}", flush=True)
                 _nvtx_push("phase:prefill_draft")
                 with torch.cuda.stream(self.stream_draft):
@@ -1340,6 +1462,11 @@ class RASDInference:
             n_truncated      = 0
             # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
             per_token_trace: List[Dict] = []
+            # Top-1 minus top-2 logit gap at every emitted position, in emission
+            # order, so it lines up element-for-element with `generated` (the
+            # losslessness tie rule needs the gap at the position where two runs
+            # first disagree). Rank 0 only, like the token ids themselves.
+            emitted_gaps: List[float] = []
         else:
             # ============================================================
             # C6 Resume — restore state, skip prefill, jump into the loop
@@ -1373,6 +1500,8 @@ class RASDInference:
             total_accepted   = ckpt.total_accepted
             total_draft_toks = ckpt.total_draft_toks
             per_token_trace  = list(ckpt.per_token_trace)
+            emitted_gaps     = [float(g) for r in per_token_trace
+                                for g in (r.get("emitted_gaps") or [])]
             prefill_len      = ckpt.prefill_len
             # Restore the patched ring attention's prefill boundary so the
             # next decode forward knows where sharded prefill ends.
@@ -1513,6 +1642,11 @@ class RASDInference:
                 # ... and the ids the target was actually fed, BOS included. See
                 # the speculative path.
                 metrics["engine_input_ids"] = input_ids[0].tolist()
+                # The target's top-1 minus top-2 logit gap at every emitted
+                # position, aligned element-for-element with the ids above. The
+                # losslessness tie rule reads the gap at the position where two
+                # arms first disagree, so the two lists must stay in step.
+                metrics["token_gaps"] = [float(g) for g in emitted_gaps]
             if mem_tracer is not None:
                 mem_tracer.snapshot("end", n_rounds=n_rounds)
                 sidecar_path = mem_tracer.write()
@@ -1644,9 +1778,8 @@ class RASDInference:
             # Fix: broadcast target_logits_v and draft_logits from rank 0
             # so all ranks compute identical accept/reject, n_acc, cur_token.
             # Cost: ~1 MB broadcast per round. Negligible.
-            if self._world_size > 1:
-                dist.broadcast(target_logits_v, src=0)
-                dist.broadcast(draft_logits, src=0)
+            _broadcast_round_state(draft_seq, target_logits_v, draft_logits,
+                                   self._world_size)
 
             # === ACCEPT / REJECT ===
             accepted, n_acc = _acceptance_mask(
@@ -1673,6 +1806,24 @@ class RASDInference:
             n_emit, committed, with_bonus, round_truncated = _round_commit_plan(
                 budget, n_acc, cfg.spec_steps)
 
+            # Target KV truncation: drop the verified-but-uncommitted tail and
+            # the un-emitted positions of a truncated round. Done here, before
+            # the trace record, so `kv_len_after` can be MEASURED from the cache
+            # rather than recomputed from the arithmetic the truncation was asked
+            # to perform (which would make the cap smoke's KV assertion a
+            # restatement of this line).
+            past_kv = _truncate_kv(post_verify_kv, prior_target_len + committed)
+            kv_len_after = _kv_seq_len(past_kv)
+            if kv_len_after != prior_target_len + committed:
+                # Not fatal -- the loop continues from the cache, which is the
+                # authority -- but the truncation did not do what the round
+                # accounting believes, so it is reported rather than silently
+                # averaged.
+                logger.warning(
+                    "[KV] round=%d truncate asked for %d, cache holds %d",
+                    n_rounds, prior_target_len + committed, kv_len_after,
+                )
+
             if cfg.log_per_token:
                 rec = _build_per_token_record(
                     round_idx=n_rounds,
@@ -1694,7 +1845,19 @@ class RASDInference:
                 # assert it rather than trust it.
                 rec["n_committed"] = int(committed)
                 rec["kv_len_before"] = int(prior_target_len)
-                rec["kv_len_after"] = int(prior_target_len + committed)
+                rec["kv_len_after"] = int(kv_len_after)
+                # The target's own indifference at every emitted position: the
+                # draft-token positions 0..n_emit-1, plus the bonus position
+                # n_acc when a bonus was emitted. Rank 0 only, like the token
+                # ids themselves.
+                if int(n_rounds) == 0:
+                    gaps = [float(g) for g in
+                            _top1_top2_gap(target_logits_v[:, :n_emit, :])]
+                    if with_bonus:
+                        gaps += _top1_top2_gap(
+                            target_logits_v[:, n_acc:n_acc + 1, :])
+                    rec["emitted_gaps"] = gaps
+                    emitted_gaps.extend(gaps)
                 per_token_trace.append(rec)
 
             total_accepted   += n_emit
@@ -1720,7 +1883,8 @@ class RASDInference:
             # n_acc draft tokens and the bonus are committed; the rest must
             # be dropped so the next round's cur_token arrives at the correct
             # positional offset.
-            past_kv = _truncate_kv(post_verify_kv, prior_target_len + committed)
+            # (Target KV was truncated above, before the trace record was
+            # built, so `kv_len_after` is the cache's own answer.)
 
             # Collect accepted tokens
             for i in range(n_emit):
@@ -1872,6 +2036,9 @@ class RASDInference:
             # sequence, and one token of difference at the front changes every
             # position's rotary phase.
             metrics["engine_input_ids"] = input_ids[0].tolist()
+            # Same measurement as the target-only arm's, in the same order:
+            # one gap per emitted token, aligned with the ids above.
+            metrics["token_gaps"] = [float(g) for g in emitted_gaps]
 
         if mem_tracer is not None:
             mem_tracer.snapshot("end", n_rounds=n_rounds)
@@ -1896,17 +2063,18 @@ class RASDInference:
         """
         device = self._device
         target_inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
-        # Truncate for draft model's positional embedding limit
-        draft_inputs  = self.tokenizer(
-            prompt,
-            return_tensors="pt",
-            max_length=self.draft_max_len,
-            truncation=True,
-        ).to(device)
+        # `draft_input_ids` stays None: the draft window is enforced in ONE
+        # place, `generate`, as the leading BOS + the most recent
+        # (`draft_max_len` - 1) tokens. Building a second, separately truncated
+        # draft input here is how the two definitions of "the draft's context"
+        # came apart -- this call used HF's default right-truncation, which keeps
+        # the FIRST `draft_max_len` tokens, so at every context above the window
+        # the draft was conditioned on the opening of the book while the target
+        # was conditioned on its ending.
         out_ids, metrics = self.generate(
             target_inputs["input_ids"],
             attention_mask=target_inputs.get("attention_mask"),
-            draft_input_ids=draft_inputs["input_ids"],
+            draft_input_ids=None,
             **kwargs,
         )
         text = self.tokenizer.decode(out_ids[0], skip_special_tokens=True)
