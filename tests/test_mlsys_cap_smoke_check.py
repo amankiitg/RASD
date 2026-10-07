@@ -114,14 +114,19 @@ def _write(tmp: Path, cap=64, *, trace=None, partner=True, sidecar_ids=None,
         "\n".join(json.dumps(x) for x in tr) + ("\n" if tr else ""))
     (tmp / "tokens" / "CAP_spec.json").write_text(json.dumps(
         {"run_id": "CAP_spec", "generated_token_ids": spec_ids,
+         # One gap per emitted id, in the shape the engine writes: the cap smoke
+         # asserts this length relationship, so a fixture without it is
+         # incomplete rather than exempt.
+         "token_gaps": [3.0] * len(spec_ids),
          "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
          "context_length": CONTEXT, "max_new_tokens": cap}))
 
     if partner:
         rows.append(_row("CAP_tgt", 0, cap, status=target_status))
+        _tgt_ids = sidecar_ids if sidecar_ids else tgt_ids
         (tmp / "tokens" / "CAP_tgt.json").write_text(json.dumps(
-            {"run_id": "CAP_tgt",
-             "generated_token_ids": sidecar_ids if sidecar_ids else tgt_ids,
+            {"run_id": "CAP_tgt", "generated_token_ids": _tgt_ids,
+             "token_gaps": [3.0] * len(_tgt_ids),
              "prompt_token_ids": [1, 2, 3], "doc_id": "d0",
              "context_length": CONTEXT, "max_new_tokens": cap}))
 

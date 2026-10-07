@@ -118,6 +118,7 @@ def main() -> int:
     ap.add_argument("--prompt-ids-from-sidecars")
     ap.add_argument("--prompt-ids")
     ap.add_argument("--documents")
+    ap.add_argument("--quantizations", nargs="+", default=[])
     ap.add_argument("--rasd-target-sidecars")
     ap.add_argument("--compare-out")
     ap.add_argument("--context-lengths", nargs="+", type=int, default=[])
@@ -200,6 +201,11 @@ def main() -> int:
                     "throughput_tps_decode_only": round(
                         vb.rasd_decode_rate(toks, (toks - 1) / tps), 4),
                     "peak_mem_mb": 78000.0, "error": "", "error_class": "",
+                    # The numerics this engine ran, as the production worker
+                    # reports them: vLLM has no NF4 KV path, which is why the
+                    # cross-check reports token agreement instead of scoring it.
+                    "weight_precision": "bf16" if not args.quantizations else "nf4_4bit",
+                    "kv_dtype": "bf16",
                     # What this "engine" emitted, and its own gap per position.
                     # The ids mirror the RASD target-only sidecar for the same
                     # document -- that is what a working cross-check looks like --

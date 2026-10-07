@@ -95,6 +95,33 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
         else:
             notes.append(f"{rid}: generated exactly {cap}")
 
+        # GAP ALIGNMENT, on every row of BOTH arms. `token_gaps` is a parallel
+        # array to the emitted ids and the losslessness tie rule reads it by
+        # position: a list one short reports the NEXT token's indifference, which
+        # is how a real mismatch gets excused as a numerics tie. The engine
+        # cannot be run on CPU (it requires CUDA streams), so this is the check
+        # that proves the alignment on real hardware -- it runs on the first GPU
+        # stage, before any expensive one.
+        sidecar = _sidecar(tokens_dir, rid)
+        if sidecar is None:
+            problems.append(f"{rid}: no token sidecar, so the gap array cannot "
+                            f"be checked for alignment")
+        else:
+            ids = sidecar.get("generated_token_ids") or []
+            gaps = sidecar.get("token_gaps")
+            if gaps is None:
+                problems.append(f"{rid}: the sidecar carries no token_gaps; the "
+                                f"tie rule would treat every divergence as a "
+                                f"MISMATCH with no evidence either way")
+            elif len(gaps) != len(ids):
+                problems.append(
+                    f"{rid}: token_gaps has {len(gaps)} entries for {len(ids)} "
+                    f"emitted ids; the tie rule would read the wrong position"
+                )
+            else:
+                notes.append(f"{rid}: {len(gaps)} gaps aligned with "
+                             f"{len(ids)} emitted ids")
+
         # The sequence the engine built must be the rung.
         pt, seq = r.get("prompt_tokens"), r.get("sequence_tokens")
         if pt and seq and int(seq) != int(r["context_length"]):
@@ -252,7 +279,12 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
         cap = int(r["max_new_tokens"])
         res = compare_generations(a["generated_token_ids"],
                                   b["generated_token_ids"],
-                                  full_length=cap, min_prefix=cap)
+                                  full_length=cap, min_prefix=cap,
+                                  # Both arms' gaps, so a divergence at an
+                                  # indifferent target is reported as the tie it
+                                  # is rather than as an implementation defect.
+                                  spec_gaps=a.get("token_gaps"),
+                                  target_gaps=b.get("token_gaps"))
         seen += 1
         if res["verdict"] != "LOSSLESS":
             problems.append(f"{r['run_id']}: {res['verdict']} vs "

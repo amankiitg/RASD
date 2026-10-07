@@ -349,6 +349,16 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
              # MISMATCH rather than silently excused as a numerics tie.
              "token_gaps": [round(3.0 + 0.001 * i, 6)
                             for i in range(len(emitted_ids))],
+             # The numerics this run was measured under, exactly as
+             # run_experiment records them. The vLLM cross-check reports these
+             # beside its own, because the two engines cannot share an NF4 KV
+             # path and their token divergence measures precision.
+             "weight_precision": (run.get("weight_quant")
+                                  or run.get("quantization")
+                                  or run.get("dtype") or "bfloat16"),
+             "kv_dtype": ("nf4" if run.get("kv_quant")
+                          else (run.get("dtype") or "bfloat16")),
+             "throughput_tps": row.get("throughput_tps"),
              "target_revision": row["target_revision"],
              "draft_revision": row["draft_revision"]})
     if save_text:

@@ -81,6 +81,12 @@ CSV_FIELDS = [
     # its own torch (R7), so "which vLLM" is only half the provenance: the row
     # also has to say which interpreter produced it.
     "interpreter",
+    # NUMERICS. The campaign's RASD runs use FP4 weights and an NF4 KV cache;
+    # vLLM 0.6.3 has no NF4 KV path. Without these two columns a reader cannot
+    # see that the two engines are not running the same arithmetic, and the
+    # token-level disagreement between them reads as an implementation defect
+    # instead of the precision difference it is.
+    "weight_precision", "kv_dtype",
 ]
 
 # C1: pin vLLM. A speedup ratio is only meaningful against a named release;
@@ -370,6 +376,12 @@ def worker_main(spec_path: Path) -> int:
             "prompt_tokens": prompt_tokens,
             "vllm_version": vllm_version,
             "quantization": quant or "bfloat16",
+            # What this engine actually ran: bits per weight, and the KV cache
+            # dtype. vLLM has no NF4 KV path, so `kv_dtype` here is never the
+            # `nf4` the RASD side uses -- which is the whole reason the
+            # cross-check reports token agreement descriptively.
+            "weight_precision": ("nf4_4bit" if quant else "bf16"),
+            "kv_dtype": "bf16",
             "eos_policy": EOS_POLICY,
             "prompt_source": prompt_source,
             "prompt_sha256": prompt_sha,
@@ -548,7 +560,10 @@ def load_rasd_target_sidecars(tokens_dir) -> dict:
             continue
         key = (sc.get("doc_id") or "", int(sc.get("context_length") or 0))
         out[key] = {"run_id": sc.get("run_id"), "ids": [int(t) for t in ids],
-                    "gaps": sc.get("token_gaps"), "sidecar": f.name}
+                    "gaps": sc.get("token_gaps"), "sidecar": f.name,
+                    "throughput_tps": sc.get("throughput_tps", ""),
+                    "weight_precision": sc.get("weight_precision", ""),
+                    "kv_dtype": sc.get("kv_dtype", "")}
     return out
 
 
@@ -600,8 +615,7 @@ def compare_targets(rows: list, tokens_dir, out_path,
     sharding or NF4 cache, so an acceptance agreement would be a statement about
     two different speculative implementations.
     """
-    from src.analysis.losslessness import (TIE_GAP, compare_generations,
-                                           stage_requirement)
+    from src.analysis.losslessness import _gap_at, first_mismatch
 
     sidecars = load_rasd_target_sidecars(tokens_dir)
     vside = _load_vllm_sidecars(vllm_sidecars_dir)
@@ -619,6 +633,13 @@ def compare_targets(rows: list, tokens_dir, out_path,
             "vllm_run_id": r.get("run_id") or "",
             "rasd_run_id": (ref or {}).get("run_id", ""),
             "vllm_throughput_tps_end_to_end": r.get("throughput_tps_end_to_end"),
+            "rasd_throughput_tps_end_to_end": (ref or {}).get("throughput_tps"),
+            # The numerics on both sides, so the reader can see why token
+            # agreement is reported rather than scored.
+            "vllm_weight_precision": r.get("weight_precision"),
+            "vllm_kv_dtype": r.get("kv_dtype"),
+            "rasd_weight_precision": (ref or {}).get("weight_precision", ""),
+            "rasd_kv_dtype": (ref or {}).get("kv_dtype", ""),
         }
         if r.get("status") != "ok":
             out_rows.append({**base, "verdict": "VLLM_FAILED",
@@ -641,49 +662,63 @@ def compare_targets(rows: list, tokens_dir, out_path,
                              "detail": "the vLLM row carries no emitted ids "
                                        "(no result file, or an older run)"})
             continue
-        res = compare_generations(
-            v_ids, ref["ids"],
-            full_length=int(r.get("output_tokens") or 0) or None,
-            spec_gaps=v_gaps, target_gaps=ref["gaps"],
-        )
-        out_rows.append({**base, **res})
+        # DESCRIPTIVE, never a verdict on correctness. Two engines whose weights
+        # and KV are quantized differently (FP4 weights + NF4 KV here, bf16
+        # both there) are expected to diverge; reporting that as LOSSLESS or
+        # MISMATCH would answer a question about precision and label it
+        # implementation validity.
+        n_common = min(len(v_ids), len(ref["ids"]))
+        pos = first_mismatch(v_ids[:n_common], ref["ids"][:n_common])
+        out_rows.append({
+            **base,
+            "verdict": "NOT_COMPARABLE_PRECISION",
+            "first_divergence_position": ("" if pos is None else int(pos)),
+            "agreement_prefix": int(n_common if pos is None else pos),
+            "compared_tokens": int(n_common),
+            "spec_ids_at_divergence": ("" if pos is None else v_ids[pos]),
+            "rasd_ids_at_divergence": ("" if pos is None else ref["ids"][pos]),
+            "gap_at_divergence_spec": (
+                "" if pos is None else (v_gaps[pos] if v_gaps
+                                        and pos < len(v_gaps) else "")),
+            "gap_at_divergence_rasd": ("" if pos is None
+                                       else _gap_at(ref["gaps"], pos) or ""),
+            "detail": (
+                "identical over the compared prefix"
+                if pos is None else
+                f"first divergence at {pos}: vLLM={v_ids[pos]} "
+                f"RASD={ref['ids'][pos]} (agreement up to {pos})"
+            ),
+        })
 
     p = Path(out_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     fields = ["model", "doc_id", "context_length", "max_model_len",
               "unit_matched", "vllm_version", "interpreter", "vllm_run_id",
-              "rasd_run_id", "verdict", "lossless", "numeric_tie",
-              "tie_gap_threshold", "tie_positions", "verified_prefix",
-              "first_mismatch_position", "gap_at_divergence_spec",
-              "gap_at_divergence_target", "vllm_throughput_tps_end_to_end",
-              "detail"]
+              "rasd_run_id", "verdict", "vllm_weight_precision",
+              "vllm_kv_dtype", "rasd_weight_precision", "rasd_kv_dtype",
+              "agreement_prefix", "compared_tokens",
+              "first_divergence_position", "spec_ids_at_divergence",
+              "rasd_ids_at_divergence", "gap_at_divergence_spec",
+              "gap_at_divergence_rasd",
+              "vllm_throughput_tps_end_to_end",
+              "rasd_throughput_tps_end_to_end", "detail"]
     with p.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(out_rows)
 
-    req = stage_requirement(out_rows,
-                            full_length=max((int(x.get("verified_prefix") or 0)
-                                             for x in out_rows), default=0) or 1)
-    n_tie = sum(1 for x in out_rows if x.get("verdict") == "NUMERIC_TIE")
-    n_mis = sum(1 for x in out_rows if x.get("verdict") == "MISMATCH")
     print(f"\n[compare] {p} ({len(out_rows)} cell(s))")
     for x in out_rows:
-        print(f"    {x.get('verdict',''):<16} {x.get('doc_id','')}@"
-              f"{x.get('context_length','')} ties={x.get('tie_positions','')} "
-              f"{(x.get('detail') or '')[:60]}")
-    print(f"    {n_tie} NUMERIC_TIE (reported, not failures), "
-          f"{n_mis} MISMATCH (failures)")
-    if n_mis:
-        return 1
-    # Only MISMATCH fails (plan revision, 2026-10-07). A cell that agreed, or
-    # that diverged only where the target was indifferent, is a usable
-    # cross-check; a cell that was never compared is not.
-    usable = sum(1 for x in out_rows if str(x.get("verdict", "")).startswith(
-        "LOSSLESS") or x.get("verdict") == "NUMERIC_TIE")
-    if usable == 0:
-        print("[FAIL] no cell produced a token-level comparison: this stage "
-              "produced no usable cross-check, so it is recorded FAILED.")
+        print(f"    {x.get('verdict',''):<24} {x.get('doc_id','')}@"
+              f"{x.get('context_length','')} {(x.get('detail') or '')[:70]}")
+    # WHAT DECIDES THE STAGE: a throughput reference that is not `unit_matched`
+    # is not a reference. Token agreement never fails it -- by construction it
+    # cannot, since the two engines do not share numerics.
+    usable = [x for x in out_rows if x.get("unit_matched") == "yes"]
+    print(f"    {len(usable)}/{len(out_rows)} unit_matched for throughput")
+    if not usable:
+        print("[FAIL] no row is unit_matched for throughput: this stage produced "
+              "no usable reference, so it is recorded FAILED.")
         return 1
     return 0
 

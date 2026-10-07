@@ -1038,3 +1038,49 @@ The stage is redefined, and the claim it supports is renamed:
   absolute interpreter path, so the main environment's pins are untouched. The
   stage records the interpreter path and the vLLM version in every row, and a
   row whose version is not the pin is not `unit_matched`.
+
+### Revision: impl_validation is redefined a SECOND time — a throughput reference, not a correctness check (2026-10-07)
+
+*Before any of these stages has run; no data seen. No metric, unit of
+independence, document count, interval method or comparison changes.*
+
+The 2026-10-07 revision above redefined `impl_validation` from an acceptance
+cross-check to a **target** cross-check, on the grounds that vLLM cannot be given
+RASD's draft model, draft window, ring sharding or NF4 cache. That reasoning was
+right about acceptance and wrong about token agreement, for a reason it did not
+consider: **the two engines do not run the same arithmetic, so their agreement is
+not evidence of correctness.**
+
+The campaign's RASD runs use **FP4 target weights and an NF4 KV cache** (that is
+what the memory budget and the published speedups are measured under). vLLM
+0.6.3, on this model pair, runs bf16 weights and a bf16 KV cache; it has no NF4
+KV path at all. Two engines whose weights and KV are quantized differently will
+disagree on greedy continuations at some position, and the first divergence is
+expected rather than diagnostic. Reading token agreement in that setting as
+"implementation validation" measures the **precision difference** and calls it
+correctness — the same class of error as the acceptance comparison it replaced,
+one level down.
+
+So, recorded here BEFORE the code changes:
+
+* **`impl_validation` becomes a vLLM THROUGHPUT REFERENCE** at 128k on the same
+  documents, given the same `engine_input_ids`, with `max_new_tokens` matched to
+  the RASD target-only cell. That is the claim: *this is what the production
+  stack achieves on this hardware at this context, under its own numerics.*
+* **Each row records the weight precision and the KV dtype of BOTH engines**, so
+  a reader can see the difference rather than being told it is absent.
+* **Token agreement is reported DESCRIPTIVELY** and never fails the stage: the
+  first divergence position, the agreement length up to it, and both arms' gaps
+  at that position, under the verdict literal
+  **`NOT_COMPARABLE_PRECISION`**. It is not `LOSSLESS`, not a `MISMATCH`, and not
+  a pass: it is the statement that these two engines were not run in a way that
+  makes token agreement meaningful.
+* **The stage fails only if no row is `unit_matched` for throughput.** A row that
+  cannot be compared as a throughput reference is a failed stage; a row whose
+  tokens differ is expected information.
+* The **same treatment applies to `vllm_ladder`**: it is a per-rung throughput
+  reference, with the same precision provenance columns and the same descriptive
+  token reporting.
+* The B4 tie rule stays where it is, on the RASD-versus-RASD losslessness check,
+  where both arms DO run the same arithmetic and a divergence really is an
+  implementation defect.

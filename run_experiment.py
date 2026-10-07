@@ -1186,6 +1186,20 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # defensible) from a real divergence, and it lives in the sidecar so the
         # check can be re-run from the artifacts alone.
         token_gaps = metrics.pop("token_gaps", None)
+        # ALIGNMENT CHECK. `token_gaps` is a parallel array to the emitted ids:
+        # the losslessness tie rule reads the gap at the position where two arms
+        # first diverge, so a list that is one short silently reports the wrong
+        # token's indifference -- and it does it in the direction of excusing a
+        # real mismatch as a tie. A misaligned list is worse than no list, so the
+        # run fails loudly here instead of writing it.
+        if gen_ids is not None and token_gaps is not None \
+                and len(token_gaps) != len(gen_ids):
+            raise RuntimeError(
+                f"{run['run_id']}: token_gaps has {len(token_gaps)} entries "
+                f"for {len(gen_ids)} emitted tokens; refusing to write a "
+                f"misaligned gap array (the tie rule would read the wrong "
+                f"position)"
+            )
         # The ids the TARGET was actually fed, BOS included, from the engine's
         # own tensor. `prompt_tokens` and `prompt_sha256` are the prompt WITHOUT
         # the BOS -- that is what the engine's prompt builder is defined over --
@@ -1216,6 +1230,18 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                     "top_p": run.get("top_p", 1.0),
                     "ignore_eos": bool(run.get("ignore_eos", False)),
                     "token_gaps": token_gaps,
+                    # The numerics this run was measured under, so a comparison
+                    # against another engine can say what differs rather than
+                    # implying the two ran the same arithmetic. The campaign's
+                    # RASD cells use FP4 weights and an NF4 KV cache; vLLM has
+                    # no NF4 KV path, so this difference is the reason token
+                    # agreement between them is reported, not scored.
+                    "weight_precision": (run.get("weight_quant")
+                                         or run.get("quantization")
+                                         or run.get("dtype") or ""),
+                    "kv_dtype": ("nf4" if run.get("kv_quant") else
+                                 (run.get("dtype") or "")),
+                    "throughput_tps": row.get("throughput_tps"),
                 })
             if tok_sidecar is not None:
                 log.info("Wrote generated token ids: %s (%d tokens)",

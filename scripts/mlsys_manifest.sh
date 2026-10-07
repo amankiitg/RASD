@@ -961,13 +961,15 @@ done
 # No RASD runs here: the comparison uses natural_f1_128k's own target-only token
 # sidecars, so this stage adds no RASD wall time.
 #
-# What it claims, after the 2026-10-07 plan revision: vLLM's GREEDY TARGET-ONLY
-# output on the same engine_input_ids agrees token-for-token with RASD's
-# target-only output on the same document, under the tie rule, plus both
-# throughputs in the same unit. It does NOT claim agreement in acceptance:
-# vLLM cannot be given RASD's draft model, its 4k draft window, its ring
-# sharding or its NF4 KV cache, so an acceptance agreement would be a statement
-# about two different speculative implementations.
+# What it claims, after the SECOND 2026-10-07 plan revision: this is the
+# production stack's THROUGHPUT at 128k on the same documents and the same
+# engine_input_ids, under its own numerics. It claims nothing about token
+# agreement as evidence of correctness: RASD runs FP4 weights and an NF4 KV
+# cache and vLLM 0.6.3 has no NF4 KV path, so the two engines are not running
+# the same arithmetic and their first divergence measures precision. Token
+# agreement is reported descriptively (first divergence, agreement up to it,
+# gaps there) under NOT_COMPARABLE_PRECISION and NEVER fails the stage; the
+# stage fails only if no row is unit_matched for throughput.
 #
 # The interpreter is the ISOLATED venv (its own torch), selected by path; if it
 # is missing the stage is refused rather than run against the main environment's
@@ -1181,9 +1183,12 @@ else
 fi
 
 # ---- S7: vLLM baseline ---------------------------------------------------
-# Plain (non-speculative) decode at every rung: the production-stack reference
-# where the payoff boundary is claimed. impl_validation covers only 128k and
-# only speculative decoding.
+# Plain (non-speculative) decode at every rung: the production-stack throughput
+# reference where the payoff boundary is claimed. impl_validation covers 128k;
+# this covers the ladder. Same R7 contract as impl_validation: a throughput
+# reference under vLLM's own numerics, with both engines' precision recorded per
+# row, token agreement reported descriptively and never scored, and the stage
+# failing only if no row is unit_matched for throughput.
 if VLLM_PY=$(vllm_python); then
   stage vllm_ladder "$(stage_timeout vllm_ladder)" "$VLLM_PY" scripts/mlsys_vllm_baseline.py \
     --out "$OUT/vllm_baseline.csv" \

@@ -502,6 +502,43 @@ def _top1_top2_gap(logits: torch.Tensor) -> list:
     return [float(g) for g in (top2[..., 0] - top2[..., 1])[0].tolist()]
 
 
+def _step_gap(logit) -> list:
+    """The gap at ONE position, from a `(B, vocab)` step logit.
+
+    The target-only loop and the seed token both sample from a single position
+    and both must record its gap, so they call the SAME function: two call sites
+    computing the same quantity under different conventions is how two arms come
+    to disagree about what a gap is, and the tie rule compares them.
+    """
+    if logit is None:
+        return []
+    return _top1_top2_gap(logit.unsqueeze(1))
+
+
+def _round_emitted_gaps(target_logits_v, n_emit: int, n_acc: int,
+                        with_bonus: bool) -> list:
+    """Gaps for exactly the tokens one verify round EMITS, in emission order.
+
+    A round emits `n_emit` accepted draft tokens and, when there was budget, one
+    bonus token sampled from the target at position `n_acc`. So the list has
+    exactly `n_emit + with_bonus` entries, which is what makes `token_gaps` line
+    up element-for-element with the ids appended to `generated`. The tie rule
+    reads the gap at the position where two arms first disagree, and an
+    off-by-one there reports the wrong token's indifference.
+
+    A round truncated by the budget emits no bonus and is not padded: its emitted
+    tokens are the first `n_emit` positions, and the verified-but-unemitted tail
+    is not part of the generation.
+    """
+    if target_logits_v is None:
+        return []
+    gaps = [float(g) for g in _top1_top2_gap(target_logits_v[:, :n_emit, :])]
+    if with_bonus:
+        gaps += [float(g) for g in
+                 _top1_top2_gap(target_logits_v[:, n_acc:n_acc + 1, :])]
+    return gaps
+
+
 def _round_commit_plan(budget: int, n_acc: int, gamma: int) -> tuple:
     """How many tokens a verify round may commit, given the remaining budget.
 
@@ -1432,6 +1469,13 @@ class RASDInference:
             # Seed the first generated token from target prefill (target-vocab safe)
             cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p).unsqueeze(-1)  # (B,1)
             generated  = [cur_token]
+            # The seed token is the FIRST emitted position, so its gap goes at the
+            # front of the list: `token_gaps` is aligned with `generated`, and
+            # both consumers (the sidecar length check and the tie rule's
+            # position lookup) read it as a parallel array. Recorded HERE, above
+            # the speculative/target-only split, so the two arms cannot drift.
+            seed_gap: List[float] = (
+                _step_gap(next_token_logit) if int(self._rank) == 0 else [])
 
             # TTFT (C12, mentor M4 metric): time from generate() entry to the
             # first output token being sampled. Captures prefill cost (target +
@@ -1466,7 +1510,10 @@ class RASDInference:
             # order, so it lines up element-for-element with `generated` (the
             # losslessness tie rule needs the gap at the position where two runs
             # first disagree). Rank 0 only, like the token ids themselves.
-            emitted_gaps: List[float] = []
+            # Starts with the SEED token's gap: the seed is an emitted token and
+            # the rounds below append theirs, so the list and the ids stay in
+            # step from the first position.
+            emitted_gaps: List[float] = list(seed_gap)
         else:
             # ============================================================
             # C6 Resume — restore state, skip prefill, jump into the loop
@@ -1500,8 +1547,13 @@ class RASDInference:
             total_accepted   = ckpt.total_accepted
             total_draft_toks = ckpt.total_draft_toks
             per_token_trace  = list(ckpt.per_token_trace)
-            emitted_gaps     = [float(g) for r in per_token_trace
-                                for g in (r.get("emitted_gaps") or [])]
+            # On resume the seed token was emitted in an earlier session and its
+            # gap was not checkpointed: the `None` placeholder keeps the ARRAY
+            # aligned with `generated` (a missing entry would shift every later
+            # gap by one) and reads as "no evidence of indifference", which is
+            # the safe direction for the tie rule.
+            emitted_gaps     = [None] + [float(g) for r in per_token_trace
+                                         for g in (r.get("emitted_gaps") or [])]
             prefill_len      = ckpt.prefill_len
             # Restore the patched ring attention's prefill boundary so the
             # next decode forward knows where sharded prefill ends.
@@ -1580,6 +1632,15 @@ class RASDInference:
                     target_logit, cfg.temperature, cfg.top_p,
                 ).unsqueeze(-1)  # (B, 1)
                 generated.append(cur_token)
+                # The same measurement as the speculative arm's, through the same
+                # helper: the target's own top-1 minus top-2 gap at the position
+                # that produced this token. One entry per emitted token, so the
+                # two arms' lists have the same length as their ids by
+                # construction. NOTE this is the one place the target-only arm
+                # can record it -- `target_logit` is the step's own distribution
+                # and nothing else in this loop retains it.
+                if int(self._rank) == 0:
+                    emitted_gaps.extend(_step_gap(target_logit))
                 global_seqlen += 1
                 n_rounds += 1
 
@@ -1824,6 +1885,19 @@ class RASDInference:
                     n_rounds, prior_target_len + committed, kv_len_after,
                 )
 
+            # The target's own indifference at every emitted position of THIS
+            # round, on rank 0, on EVERY round -- not only the first, and not
+            # only when the per-token trace is on. The list is aligned with
+            # `generated`, so a round skipped here shifts every later gap by that
+            # round's length and the tie rule then reads the wrong token's gap.
+            # (This replaces an `n_rounds == 0` guard that was standing in for
+            # "rank 0": it also silently dropped every round after the first.)
+            round_gaps: List[float] = []
+            if int(self._rank) == 0:
+                round_gaps = _round_emitted_gaps(
+                    target_logits_v, n_emit, n_acc, with_bonus)
+                emitted_gaps.extend(round_gaps)
+
             if cfg.log_per_token:
                 rec = _build_per_token_record(
                     round_idx=n_rounds,
@@ -1846,18 +1920,7 @@ class RASDInference:
                 rec["n_committed"] = int(committed)
                 rec["kv_len_before"] = int(prior_target_len)
                 rec["kv_len_after"] = int(kv_len_after)
-                # The target's own indifference at every emitted position: the
-                # draft-token positions 0..n_emit-1, plus the bonus position
-                # n_acc when a bonus was emitted. Rank 0 only, like the token
-                # ids themselves.
-                if int(n_rounds) == 0:
-                    gaps = [float(g) for g in
-                            _top1_top2_gap(target_logits_v[:, :n_emit, :])]
-                    if with_bonus:
-                        gaps += _top1_top2_gap(
-                            target_logits_v[:, n_acc:n_acc + 1, :])
-                    rec["emitted_gaps"] = gaps
-                    emitted_gaps.extend(gaps)
+                rec["emitted_gaps"] = list(round_gaps)
                 per_token_trace.append(rec)
 
             total_accepted   += n_emit

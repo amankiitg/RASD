@@ -696,20 +696,26 @@ PY
 done
 
 # ---------------------------------------------------------------------------
-hdr "17  the target cross-check: the tie rule decides, and it decides both ways"
+hdr "17  the vLLM reference: throughput decides, token agreement is reported"
 # ---------------------------------------------------------------------------
-# `impl_validation` no longer claims acceptance agreement (vLLM cannot be given
-# RASD's draft, its window, its ring sharding or its NF4 cache). It claims that
-# two independent implementations of the same target produce the same greedy
-# continuation -- and the production comparison decides that, under the tie rule.
+# `impl_validation` was redefined a SECOND time (2026-10-07). It is now a
+# THROUGHPUT reference: RASD runs FP4 weights with an NF4 KV cache and vLLM
+# 0.6.3 has no NF4 KV path, so the two engines do not run the same arithmetic and
+# a token divergence between them measures PRECISION, not correctness. The
+# verdict is therefore the literal NOT_COMPARABLE_PRECISION, the divergence is
+# reported descriptively (position, agreement up to it, gaps there), and it never
+# fails the stage. What decides the stage is whether any row is `unit_matched`
+# for throughput.
 #
-# Three cases, all through production code:
-#   agree    -> LOSSLESS (rc 0)
-#   diverge with a DECISIVE gap -> MISMATCH (rc != 0)
-#   diverge where the gap is below the tie threshold -> NUMERIC_TIE (rc 0)
-for cse in "agree::3.0:0" "diverge:40:3.0:1" "tie:40:0.01:0"; do
-  mode=${cse%%:*}; rest=${cse#*:}; pos=${rest%%:*}
-  rest=${rest#*:}; gap=${rest%%:*}; want_rc=${rest##*:}
+# Four cases, all through production code:
+#   agree                -> NOT_COMPARABLE_PRECISION, full agreement_prefix, rc 0
+#   diverge at 40        -> NOT_COMPARABLE_PRECISION, first_divergence=40, rc 0
+#   diverge, small gap   -> same verdict; the gaps are still reported
+#   no unit_matched row  -> the stage FAILS (no usable reference)
+for cse in "agree::1" "diverge:40:0" "gaponly:40:0"; do
+  mode=${cse%%:*}; rest=${cse#*:}; pos=${rest%%:*}; want_rc=${rest##*:}
+  gap=3.0
+  [ "$mode" = "gaponly" ] && gap=0.01
   C=$WORK/cross_$mode; mkdir -p "$C"
   if MLSYS_REHEARSAL_VLLM_DIVERGE=$pos MLSYS_REHEARSAL_VLLM_GAP=$gap "$PY" \
        "$SANDBOX/scripts/mlsys_vllm_baseline.py" \
@@ -725,40 +731,66 @@ for cse in "agree::3.0:0" "diverge:40:3.0:1" "tie:40:0.01:0"; do
   else
     crc=$?
   fi
-  verdict=$("$PY" - "$C/crosscheck.csv" <<'PYX'
+  read -r verdict prefix firstpos <<EOF
+$("$PY" - "$C/crosscheck.csv" <<'PYX'
 import csv, sys
 rows = list(csv.DictReader(open(sys.argv[1])))
-print(rows[0]["verdict"] if rows else "NO_ROWS")
-print(rows[0].get("tie_positions", "") if rows else "")
+r = rows[0] if rows else {}
+print(r.get("verdict", "NO_ROWS"), r.get("agreement_prefix", ""),
+      r.get("first_divergence_position", ""))
 PYX
 )
-  case "$mode" in
-    agree)   want_verdict=LOSSLESS ;;
-    diverge) want_verdict=MISMATCH ;;
-    tie)     want_verdict=NUMERIC_TIE ;;
-  esac
-  got=$(echo "$verdict" | sed -n 1p)
-  if [ "$got" = "$want_verdict" ]; then
-    ok "cross-check '$mode' -> $got (rc=$crc)"
+EOF
+  if [ "$verdict" = "NOT_COMPARABLE_PRECISION" ]; then
+    ok "cross-check '$mode' -> $verdict (prefix=$prefix diverged_at='$firstpos')"
   else
-    bad "cross-check '$mode' -> $got, expected $want_verdict"
+    bad "cross-check '$mode' -> $verdict, expected NOT_COMPARABLE_PRECISION"
   fi
+  case "$mode" in
+    agree)
+      # Full agreement is still reported as agreement, not as a pass.
+      [ "$prefix" = "1024" ] && [ -z "$firstpos" ] \
+        && ok "agreement is reported as the compared prefix" \
+        || bad "full agreement was not reported (prefix=$prefix first='$firstpos')" ;;
+    *)
+      [ "$firstpos" = "40" ] && [ "$prefix" = "40" ] \
+        && ok "the divergence is reported at the right position" \
+        || bad "divergence reported at '$firstpos' with prefix '$prefix', "\
+"expected 40/40" ;;
+  esac
   if [ "$want_rc" = "0" ] && [ "$crc" -ne 0 ]; then
-    bad "cross-check '$mode' should not fail the stage (rc=$crc)"
-  fi
-  if [ "$want_rc" = "1" ] && [ "$crc" -eq 0 ]; then
-    bad "cross-check '$mode' produced a MISMATCH but exited 0: the stage would be recorded ok with two engines that disagree"
+    bad "a token divergence failed the stage (rc=$crc): precision differences "\
+"are expected and cannot be a stage failure"
   fi
 done
-# A tie is reported, not swallowed: the counts have to reach the table.
-"$PY" - "$WORK/cross_tie/crosscheck.csv" <<'PYX' && ok "the tie count is reported in the table" \
-  || bad "a NUMERIC_TIE was not reported as a tie"
+# The precision provenance must be in the table: this is the evidence that the
+# divergence is a precision difference and not an unexplained one.
+"$PY" - "$WORK/cross_diverge/crosscheck.csv" <<'PYX' \
+  && ok "both engines' weight precision and KV dtype are recorded" \
+  || bad "the precision provenance is missing from the cross-check table"
 import csv, sys
 r = next(csv.DictReader(open(sys.argv[1])))
-assert r["verdict"] == "NUMERIC_TIE", r["verdict"]
-assert r["tie_positions"], "the tie position was not recorded"
-assert float(r["tie_gap_threshold"]) == 0.1
+for f in ("vllm_weight_precision", "vllm_kv_dtype", "rasd_weight_precision",
+          "rasd_kv_dtype"):
+    assert r.get(f) not in (None, ""), f"{f} is empty"
+assert r["vllm_kv_dtype"] != r["rasd_kv_dtype"], (
+    "the table claims both engines ran the same KV dtype")
 PYX
+# ... and a stage with no unit-matched row IS a failure: no usable reference.
+C=$WORK/cross_noref; mkdir -p "$C"
+if MLSYS_REHEARSAL_VLLM_IDS=mismatch "$PY" \
+     "$SANDBOX/scripts/mlsys_vllm_baseline.py" \
+     --out "$C/vllm.csv" --prompt-ids-from-sidecars "$OUT/tokens" \
+     --rasd-target-sidecars "$OUT/tokens" --compare-out "$C/crosscheck.csv" \
+     --documents pg19_train_0 --context-lengths 131072 \
+     --max-new-tokens 1024 --matched-max-new-tokens 1024 \
+     --models meta-llama/Llama-3.1-8B \
+     --target-revisions "meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b" \
+     >"$C/log" 2>&1; then
+  bad "a stage with no unit-matched row exited 0: it produced no reference"
+else
+  ok "no unit-matched row -> the stage fails (no usable reference)"
+fi
 
 # ---------------------------------------------------------------------------
 hdr "rehearsal summary"

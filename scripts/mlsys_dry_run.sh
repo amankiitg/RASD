@@ -1554,6 +1554,29 @@ if "no_vllm_venv" not in man:
 vsrc = read("scripts/mlsys_vllm_baseline.py")
 if "compare_targets" not in vsrc or "--rasd-target-sidecars" not in vsrc:
     fails.append("impl_validation is not the target cross-check")
+if "NOT_COMPARABLE_PRECISION" not in vsrc:
+    fails.append("the cross-check scores token agreement between engines that "
+                 "do not share numerics (FP4 weights + NF4 KV vs bf16)")
+for col in ("weight_precision", "kv_dtype"):
+    if f'"{col}"' not in vsrc:
+        fails.append(f"the cross-check does not record {col}, so a divergence "
+                     f"between the two engines has no stated cause")
+if 'usable = [x for x in out_rows if x.get("unit_matched") == "yes"]' not in vsrc:
+    fails.append("the cross-check's exit code is not decided by the throughput "
+                 "unit match")
+if "RASD requires CUDA." not in eng:
+    fails.append("the engine no longer states its CUDA requirement, so the "
+                 "cap smoke's GPU-side alignment check has no stated reason")
+smoke = read("scripts/mlsys_cap_smoke_check.py")
+if "len(gaps) != len(ids)" not in smoke:
+    fails.append("the cap smoke does not assert gap/ids alignment on every row")
+if 'spec_gaps=a.get("token_gaps")' not in smoke or \
+        'target_gaps=b.get("token_gaps")' not in smoke:
+    fails.append("the cap smoke does not pass both arms' gaps into the verdict")
+if "_step_gap(" not in eng or "seed_gap" not in eng:
+    fails.append("the seed token's gap is not recorded")
+if "round_gaps" not in eng:
+    fails.append("the spec arm does not record gaps on every round")
 if "logprobs=2" not in vsrc:
     fails.append("the vLLM side does not record its own top-2 gap, so the tie "
                  "rule cannot be applied to its output")
@@ -1574,9 +1597,13 @@ if "torch" not in vvenv:
     fails.append("the provisioning script does not install its own torch")
 reh = read("scripts/mlsys_rehearsal.sh")
 for want, why in (
-        ("the target cross-check", "the cross-check case is missing"),
+        ("the vLLM reference: throughput decides",
+         "the vLLM reference case is missing"),
         ("MLSYS_REHEARSAL_VLLM_DIVERGE", "no divergence knob"),
-        ("NUMERIC_TIE", "the tie outcome is not rehearsed"),
+        ("NOT_COMPARABLE_PRECISION",
+         "the precision verdict is not rehearsed"),
+        ("no unit-matched row -> the stage fails",
+         "the no-usable-reference case is not rehearsed"),
 ):
     if want not in reh:
         fails.append(why)
