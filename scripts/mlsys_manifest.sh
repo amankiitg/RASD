@@ -21,7 +21,14 @@ COST_LOG=$OUT/gpu_hours.csv
 # Proof-of-start markers for stages that actually began. Kept OUT of results/:
 # results/ is pulled, merged and published, and a scratch bookkeeping file has
 # no business travelling with the data.
-RAN_DIR=${MLSYS_RAN_DIR:-$(mktemp -d)}
+# Per-invocation marker directory: a FRESH SUBDIRECTORY under whatever base the
+# operator set. `MLSYS_RAN_DIR` names a location, and reusing a location reused
+# the state -- a re-run inherited the previous invocation's `.rc` files, so
+# `stage_ok` reported a stage as having succeeded in an attempt where it never
+# ran.
+RAN_BASE=${MLSYS_RAN_DIR:-$(mktemp -d)}
+RAN_DIR="$RAN_BASE/attempt.$(date -u +%Y%m%dT%H%M%SZ).$$"
+mkdir -p "$RAN_DIR"
 
 # Interpreter used for every helper call in this file and for every stage. Bare
 # `python3` is whatever is first on PATH, which on the pod is not necessarily the
@@ -499,8 +506,8 @@ archive_attempt() {   # $1=stage name
 # Does the stage's CSV hold the rows it was supposed to produce, all ok?
 # `--abort-on-failure` makes run_experiment stop at the first error row, but the
 # row count is what says the stage ran to completion.
-check_stage_rows() {   # $1=stage id  $2=csv  $3=expected rows
-  local name=$1 csv=$2 want=$3
+check_stage_rows() {   # $1=stage id  $2=csv  $3=expected rows [ $4=plan ids ]
+  local name=$1 csv=$2 want=$3 plan=${4:-}
   # A stage whose planner says it has runs but whose plan counts zero is broken,
   # not empty. Treating 0 as "skip the check" was the silent path: every
   # assertion below was skipped and the stage was reported as fine.
@@ -538,6 +545,39 @@ PY
     echo "INVALID $name: non-ok rows: $ok"
     STAGE_INVALID=$((STAGE_INVALID + 1)); return 1
   fi
+  # The SET of runs written must be the set that was planned, with no
+  # duplicates. A count alone passes a stage that wrote 20 rows for the wrong 20
+  # runs, and a duplicate run_id means a run was appended twice -- which is how
+  # a stale row enters a file that is supposed to be from this attempt.
+  if [ -n "$plan" ] && [ -s "$plan" ]; then
+    if ! "$PY" - "$csv" "$plan" <<'PYID'
+import csv, sys
+rows = [r.get("run_id", "") for r in csv.DictReader(open(sys.argv[1]))]
+planned = [l.strip() for l in open(sys.argv[2]) if l.strip()]
+seen, dups = set(), []
+for r in rows:
+    if r in seen:
+        dups.append(r)
+    seen.add(r)
+problems = []
+if dups:
+    problems.append("duplicate run_id(s): " + ", ".join(sorted(set(dups))[:5]))
+missing = sorted(set(planned) - seen)
+extra = sorted(seen - set(planned))
+if missing:
+    problems.append("planned but not written: " + ", ".join(missing[:5]))
+if extra:
+    problems.append("written but not planned: " + ", ".join(extra[:5]))
+for p in problems:
+    print("  " + p)
+sys.exit(1 if problems else 0)
+PYID
+    then
+      interim "STAGE_INVALID name=$name reason=run_id_set"
+      echo "INVALID $name: the rows written are not the runs that were planned"
+      STAGE_INVALID=$((STAGE_INVALID + 1)); return 1
+    fi
+  fi
   # Every row of every stage must satisfy the sequence identity
   # prompt_tokens + 1 BOS + tokens_generated == sequence_tokens. It is checked
   # here rather than in the cap smoke alone because it is what makes
@@ -572,7 +612,10 @@ per_run_timeout() {   # $1=context length
 # How many rows the stage is supposed to write: ask the planner, do not guess.
 # A planner failure means the count is unknown, which is a refusal (see the
 # fail-closed note on est_cost) rather than a skipped check.
-expected_rows() {   # $1=config  $2=groups  -> count on stdout, non-zero rc if 0
+# $1=config $2=groups [$3=stage]. With a stage name, the planned run IDS are
+# written to $RAN_DIR/<stage>.plan.ids as well as counted: a stage that wrote the
+# right NUMBER of the wrong runs is not complete.
+expected_rows() {   # $1=config  $2=groups [ $3=stage ]
   local n args=(--config "$1")
   # `--groups ""` is an argparse error ("expected at least one argument"), not
   # an empty selection, so an empty group list means the flag is omitted.
@@ -585,6 +628,12 @@ expected_rows() {   # $1=config  $2=groups  -> count on stdout, non-zero rc if 0
   n=$("$PY" run_experiment.py "${args[@]}" --dry-run 2>"$RAN_DIR/plan.err" \
       | awk 'BEGIN{sep=0} /^-{10,}$/{sep=1; next}
              sep && NF>=4 && $3 ~ /^[0-9]+$/ {n++} END{print n+0}')
+  if [ -n "${3:-}" ]; then
+    "$PY" run_experiment.py "${args[@]}" --dry-run 2>/dev/null \
+      | awk 'BEGIN{sep=0} /^-{10,}$/{sep=1; next}
+             sep && NF>=4 && $3 ~ /^[0-9]+$/ {print $1}' \
+      | sort -u > "$RAN_DIR/$3.plan.ids"
+  fi
   if [ -z "$n" ] || [ "$n" = "0" ]; then
     # Either the planner failed or the config/groups select nothing. Both mean
     # the stage's row count is unknowable, and an unknowable count is a failure
@@ -625,7 +674,7 @@ validate_and_report() {   # $1=stage id  $2=csv  $3=expected rows
     echo "SKIP validation of $name: it did not run in this attempt and exit 0 (rc=$rc)"
     return 1
   fi
-  check_stage_rows "$name" "$csv" "$want" || return 1
+  check_stage_rows "$name" "$csv" "$want" "$RAN_DIR/$name.plan.ids" || return 1
   report_spec_stage "$csv" "$name"
   return 0
 }
@@ -718,7 +767,7 @@ if [ ! -s "$OUT/engine_cap_smoke.csv" ]; then
   echo "STOP: cap smoke produced nothing"
   exit 1
 fi
-cap_want=$(expected_rows configs/mlsys_engine_cap_smoke.yml "") || {
+cap_want=$(expected_rows configs/mlsys_engine_cap_smoke.yml "" engine_cap_smoke) || {
   interim "STOP: the cap smoke's plan could not be counted"
   echo "STOP: the planner produced no rows for the cap smoke"; exit 1; }
 check_stage_rows engine_cap_smoke "$OUT/engine_cap_smoke.csv" "$cap_want" || {
@@ -780,7 +829,7 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
   # means the stage cannot be called complete, so it never starts. Previously a
   # 0 here was passed along and check_stage_rows treated it as "skip the check".
   if [ -n "$grp" ]; then
-    want=$(expected_rows "$cfg" "$grp") || {
+    want=$(expected_rows "$cfg" "$grp" "$name") || {
       interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
       echo "INVALID $name: the planner produced 0 rows for groups '$grp'"
       STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
@@ -789,7 +838,7 @@ for spec_stage in "natural_f1_128k:configs/mlsys_natural_f1_128k.yml:" \
       --timeout-per-run-s "$(per_run_timeout 131072)" --abort-on-failure \
       --log-per-token --memory-trace --save-generated-text --save-generated-tokens
   else
-    want=$(expected_rows "$cfg" "") || {
+    want=$(expected_rows "$cfg" "" "$name") || {
       interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
       echo "INVALID $name: the planner produced 0 rows"
       STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
@@ -851,7 +900,7 @@ for gated in "natural_spec_gated_256k:GATED_llama3_f16_256k:43200" \
     STAGE_INVALID=$((STAGE_INVALID + 1))
     continue
   fi
-  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT") || {
+  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT" "$name") || {
     interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
     echo "INVALID $name: the gate filtered the rung down to nothing runnable"
     STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
@@ -889,7 +938,7 @@ for syn in "synthetic_spec_gated_128k:NATIVE_synth_128k:43200" \
     STAGE_INVALID=$((STAGE_INVALID + 1))
     continue
   fi
-  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT") || {
+  want=$(expected_rows "$filtered" "${prefix}_SPEC ${prefix}_TARGET_FULL ${prefix}_TARGET_SHORT" "$name") || {
     interim "STAGE_INVALID name=$name reason=planner_produced_no_rows"
     echo "INVALID $name: the gate filtered the rung down to nothing runnable"
     STAGE_INVALID=$((STAGE_INVALID + 1)); continue; }
@@ -964,7 +1013,7 @@ if on_list rope_intervention_128k "$ONLY"; then
     echo "  whose coherence is unknown."
   else
 
-  want=$(expected_rows configs/mlsys_rope_intervention_128k.yml "$RI_GROUPS") || {
+  want=$(expected_rows configs/mlsys_rope_intervention_128k.yml "$RI_GROUPS" rope_intervention_128k) || {
     interim "STAGE_INVALID name=rope_intervention_128k reason=planner_produced_no_rows"
     echo "INVALID rope_intervention_128k: the planner produced 0 rows for '$RI_GROUPS'"
     STAGE_INVALID=$((STAGE_INVALID + 1)); want=""; }

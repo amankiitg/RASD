@@ -52,8 +52,9 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 131072,
-      "seed": 7,
-      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "_seed_alignment": "seed 42, the same seed as the candidates at this context: a reference measured on a different window makes the ratio a difference between two samples (was 7)."
     }
   ]
 }

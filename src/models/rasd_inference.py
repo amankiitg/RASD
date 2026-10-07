@@ -1510,6 +1510,9 @@ class RASDInference:
                 # replicated `generated` list and nothing of the prompt.
                 metrics["generated_token_ids"] = generated_ids[
                     0, input_ids.shape[1]:].tolist()
+                # ... and the ids the target was actually fed, BOS included. See
+                # the speculative path.
+                metrics["engine_input_ids"] = input_ids[0].tolist()
             if mem_tracer is not None:
                 mem_tracer.snapshot("end", n_rounds=n_rounds)
                 sidecar_path = mem_tracer.write()
@@ -1861,6 +1864,14 @@ class RASDInference:
             # this slice returns exactly `generated` (see the target-only path).
             metrics["generated_token_ids"] = generated_ids[
                 0, input_ids.shape[1]:].tolist()
+            # The ids the TARGET was actually fed, INCLUDING the leading BOS.
+            # Anything that claims to compare against "the same prompt" -- the
+            # vLLM baseline in particular -- has to be given these, because the
+            # BOS is part of what the target conditioned on: a comparison against
+            # the prompt ids without it is a comparison against a different
+            # sequence, and one token of difference at the front changes every
+            # position's rotary phase.
+            metrics["engine_input_ids"] = input_ids[0].tolist()
 
         if mem_tracer is not None:
             mem_tracer.snapshot("end", n_rounds=n_rounds)

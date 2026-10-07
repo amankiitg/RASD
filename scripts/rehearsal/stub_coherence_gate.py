@@ -86,6 +86,20 @@ def _misanchored(cand: dict) -> bool:
     return rtype == "yarn"
 
 
+def _sample_hash(cand: dict, kind: str) -> str:
+    """The hash of the window this candidate scored.
+
+    In the real gate the window is drawn from the metadata by (context, seed)
+    alone -- the model does not enter the draw -- so two rows with the same
+    context and seed score the SAME document, offset, prompt and continuation,
+    and a row with a different seed scores a different one. Mirroring that is
+    what lets the rehearsal exercise the pairing rule: a reference the config
+    failed to align shows up as an 'unpaired' row rather than passing silently.
+    """
+    key = f"{kind}|{cand.get('context_length')}|{cand.get('seed', 42)}"
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
 def _ppl(cand: dict) -> float:
     rtype = str(cand.get("rope_type") or "none").lower()
     factor = float(cand.get("rope_factor") or 1.0)
@@ -133,8 +147,11 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: pathlib.Path):
         "inv_freq_last": "1e-05",
         "slowest_channel_stretch": 1.0 if not bad else float(ctx),
         "prompt_tokens": ctx,
-        "prompt_sha256": hashlib.sha256(
-            json.dumps([ctx, cand.get("seed", 42)]).encode()).hexdigest()[:16],
+        # The sample identity: the same (context, seed) scores the same window,
+        # so the gate can tell a paired contrast from two different samples.
+        "prompt_sha256": _sample_hash(cand, "prompt"),
+        "continuation_sha256": _sample_hash(cand, "continuation"),
+        "seed": cand.get("seed", 42),
         "ppl_continuation": round(_ppl(cand), 4),
     }
     if bad:

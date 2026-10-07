@@ -874,3 +874,58 @@ after the engine's prompt tensor. A first attempt used the trace's final
 `kv_len_after`, which is ONE LESS than the emitted count -- the last token's keys
 and values are computed by a forward that never happens -- and the identity check
 caught it, which is the evidence that the check now has power.
+
+### Revision: the correction contrast is PAIRED, and the claim it supports (2026-10-06)
+
+*Before the stage has run; no data seen. Supersedes the "two native rows" wording
+of the earlier correction-note revision.*
+
+**The claim this evidence supports is a PAIRED anchored-vs-misanchored contrast
+at each out-of-distribution context, relative to the unscaled OOD reference
+measured on the SAME sample. Nothing about restored quality follows.** At 32k and
+128k no anchoring choice puts Llama-2 back in distribution, so there is no
+in-distribution target for a "restored" claim to be measured against.
+
+**Pairing is enforced, not assumed.** Every candidate and its same-context
+reference carry the SAME SEED, which in this pipeline means the same document,
+the same offset inside it, the same prompt ids and the same continuation ids. The
+gate records both hashes on every row (`prompt_sha256`, `continuation_sha256`,
+plus the reference's two) and applies `pairing_verdict` BEFORE computing any
+ratio:
+
+| pairing | meaning | ratio |
+|---|---|---|
+| `paired` | prompt and continuation hashes agree | computed |
+| `unpaired` | either hash differs, or a hash is missing | **not computed**; the row is recorded as an error (`status=unpaired_reference`) |
+| `cross_context` | an extension judged against the declared native baseline at a different context | computed, and labelled: the plan's coherence comparison, in which the windows differ by construction |
+| `descriptive` | the 4096 in-distribution row | **none**; reported beside the ratios |
+
+Two blank hashes are not agreement: a missing hash is `unpaired`. The reference
+seeds in all four candidate files were aligned to the candidates they score, and
+a test asserts it for every file, so the rule cannot be satisfied by accident in
+one file and violated in another.
+
+**The in-distribution row.** `B_llama2_native_4096` (4096, the training window,
+shipped rope, `in_distribution_reference`) answers "what does this model's
+perplexity look like where it is valid". It is descriptive: no ratio, no
+denominator role, not paired with anything.
+
+### Revision: the vLLM comparison uses the ids the TARGET was fed (2026-10-06)
+
+*Before the stage has run; no data seen.*
+
+The token sidecar now records `engine_input_ids`: the ids the target was actually
+fed, taken from the engine's own tensor, INCLUDING the leading BOS.
+`prompt_tokens` and `prompt_sha256` remain the prompt WITHOUT the BOS, because
+that is the sequence the engine's prompt builder is defined over.
+
+The distinction is not cosmetic. The engine's input is one token longer than the
+recorded prompt, and that token sits at the FRONT, so it shifts every position's
+rotary phase. A vLLM row given the no-BOS ids is a comparison against a sequence
+the target never conditioned on, and it would have looked perfectly matched
+because both sides agreed with each other.
+
+So: vLLM receives `engine_input_ids` as `prompt_token_ids`; the row records
+whether the ids came from the engine (`prompt_ids_from_engine`); the verdict
+refuses a row whose ids are not the engine's; and the loader refuses a sidecar
+that lacks the field, or whose `len(engine_input_ids) != prompt_tokens + 1`.

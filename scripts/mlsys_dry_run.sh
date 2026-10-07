@@ -1277,6 +1277,46 @@ plan = read("docs/mlsys_analysis_plan.md")
 if "unscaled_ood_reference" not in plan:
     fails.append("the plan does not state the reference labels")
 
+# --- 5b. the BOS in the vLLM comparison, and the correction pairing --------
+vllm_src = read("scripts/mlsys_vllm_baseline.py")
+if "engine_input_ids" not in vllm_src:
+    fails.append("the vLLM comparison does not use the engine's input ids, so it "
+                 "replays a prompt without the BOS")
+if "prompt_ids_from_engine" not in vllm_src:
+    fails.append("a vLLM row does not record whether its ids came from the engine")
+if "prompt_tokens + 1" not in vllm_src and "int(ptok) + 1" not in vllm_src:
+    fails.append("the vLLM loader does not check the BOS accounting of the "
+                 "engine ids against prompt_tokens")
+if "engine_input_ids" not in rexp:
+    fails.append("run_experiment does not put engine_input_ids in the sidecar")
+if "engine_input_ids" not in read("src/models/rasd_inference.py"):
+    fails.append("the engine does not report the ids it actually fed")
+if "engine_input_ids" not in read("scripts/rehearsal/stub_run_experiment.py"):
+    fails.append("the stub sidecars lack engine_input_ids, so the rehearsal "
+                 "cannot exercise the BOS rule")
+
+gate_src = read("scripts/mlsys_coherence_gate.py")
+for needle, why in (
+        ("def pairing_verdict", "the gate has no pairing verdict"),
+        ("continuation_sha256", "the gate does not hash the continuation"),
+        ("UNPAIRED", "an unpaired reference does not refuse the ratio"),
+        ("cross_context", "an extension is not labelled cross-context"),
+        ("def gate_sample", "the gate has no single window call path"),
+        ("bos_id=getattr(tok, ", "the gate's window call does not pass the BOS"),
+):
+    if needle not in gate_src:
+        fails.append(why)
+
+# --- 5c. freshness markers and the run-id set -----------------------------
+if "attempt.$(date -u +%Y%m%dT%H%M%SZ).$$" not in man:
+    fails.append("the marker directory is not per-invocation, so a re-run "
+                 "inherits the previous attempt's .rc files")
+if "plan.ids" not in man:
+    fails.append("the planned run ids are not written, so only the COUNT is "
+                 "checked")
+if "reason=run_id_set" not in man:
+    fails.append("check_stage_rows does not compare the run_id set")
+
 # --- 6. the stub shares the real code paths -------------------------------
 stub = read("scripts/rehearsal/stub_run_experiment.py")
 if "_round_commit_plan" not in stub:

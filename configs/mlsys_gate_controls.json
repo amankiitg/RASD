@@ -72,8 +72,9 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 32768,
-      "seed": 7,
-      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "_seed_alignment": "seed 42, the same seed as the candidates at this context: a reference measured on a different window makes the ratio a difference between two samples (was 7)."
     },
     {
       "name": "B_native_64k",
@@ -83,8 +84,9 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 65536,
-      "seed": 7,
-      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "_seed_alignment": "seed 42, the same seed as the candidates at this context: a reference measured on a different window makes the ratio a difference between two samples (was 7)."
     },
     {
       "name": "B_native_128k",
@@ -94,8 +96,9 @@
       "target_model_name": "meta-llama/Llama-3.1-8B",
       "rope_type": "none",
       "context_length": 131072,
-      "seed": 7,
-      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+      "seed": 42,
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "_seed_alignment": "seed 42, the same seed as the candidates at this context: a reference measured on a different window makes the ratio a difference between two samples (was 7)."
     },
     {
       "name": "B_llama2_yarn8_32k_correct",
@@ -107,9 +110,10 @@
       "rope_factor": 8,
       "rope_anchor_base": 4096,
       "context_length": 32768,
-      "seed": 7,
+      "seed": 42,
       "_what_it_is": "Llama-2-7B at 32k with YaRN correctly anchored on the 4096 base. This is the reference the mis-anchored negative is judged against; it measured 14.45 perplexity where the mis-anchored build measured 826.9.",
-      "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9"
+      "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9",
+      "_seed_alignment": "seed 42, the same seed as the candidates at this context: a reference measured on a different window makes the ratio a difference between two samples (was 7)."
     },
     {
       "name": "N1_arm4_f2_construction",

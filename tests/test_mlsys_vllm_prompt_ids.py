@@ -221,7 +221,7 @@ def _good_row(mod, **over):
            "max_new_tokens": 1024, "temperature": 0.0,
            "vllm_version": mod.VLLM_PIN, "doc_id": "pg19_train_0",
            "prompt_sha256": mod._ids_sha(RASD_IDS),
-           "prompt_ids_verified": "yes",
+           "prompt_ids_verified": "yes", "prompt_ids_from_engine": "yes",
            "target_revision": TARGET_REV, "draft_revision": DRAFT_REV}
     row.update(over)
     return row
@@ -303,3 +303,84 @@ def test_an_explicit_per_model_revision_overrides_the_singular_flag():
                                       target_revision=TARGET_REV,
                                       draft_revision="")
     assert ok, why
+
+
+# --- the BOS: vLLM must be given the ids the TARGET was fed ----------------
+
+BOS = 128000
+PROMPT_N0_BOS = [9906, 1917, 527, 264, 13, 42, 7]
+ENGINE_IDS = [BOS] + PROMPT_N0_BOS
+
+
+def _sidecar(tmp_path, ids, prompt_tokens, sha=None):
+    import hashlib
+    d = tmp_path / "tokens"
+    d.mkdir(exist_ok=True)
+    payload = {"run_id": "r1", "doc_id": "pg19_train_0",
+               "context_length": 131072,
+               "prompt_tokens": prompt_tokens,
+               "prompt_token_ids": PROMPT_N0_BOS,
+               "prompt_sha256": hashlib.sha256(
+                   ",".join(str(i) for i in PROMPT_N0_BOS).encode()).hexdigest()}
+    if ids is not None:
+        payload["engine_input_ids"] = ids
+    (d / "r1.json").write_text(json.dumps(payload))
+    return d
+
+
+def test_the_loader_uses_the_engine_input_ids_with_the_bos(tmp_path):
+    mod = _load_module()
+    mod.load_rasd_cells.__globals__.setdefault("__file__", "")
+    cells = mod.load_rasd_cells(_sidecar(tmp_path, ENGINE_IDS, len(PROMPT_N0_BOS)))
+    assert len(cells) == 1
+    assert cells[0]["prompt_ids"] == ENGINE_IDS, (
+        "the prompt handed to vLLM must be the ids the target was fed")
+    assert cells[0]["prompt_ids"][0] == BOS
+    assert cells[0]["engine_input_ids"] is True
+
+
+def test_a_sidecar_without_engine_ids_yields_no_prompt(tmp_path):
+    """The BOS-carrying field is what makes the prompt the target's.
+
+    Without it the document has no usable prompt ids, so the stage refuses
+    rather than comparing vLLM against a prompt the target never saw.
+    """
+    mod = _load_module()
+    with pytest.raises(SystemExit) as e:
+        mod.load_rasd_cells(_sidecar(tmp_path, None, len(PROMPT_N0_BOS)))
+    assert "engine_input_ids" in str(e.value)
+
+
+def test_a_sidecar_missing_the_bos_cannot_be_unit_matched(tmp_path):
+    """`len(engine_input_ids) == prompt_tokens + 1` is the BOS accounting.
+
+    A sidecar whose engine ids are the prompt WITHOUT the BOS is one token short
+    of the sequence the target conditioned on, so it is not the target's prompt
+    and the row must not be unit-matched.
+    """
+    mod = _load_module()
+    # engine_input_ids without the BOS, and prompt_tokens claiming the full count
+    with pytest.raises(SystemExit):
+        mod.load_rasd_cells(_sidecar(tmp_path, PROMPT_N0_BOS,
+                                     len(PROMPT_N0_BOS)))
+    # ... and the row-level guard refuses too, for a cell that arrived some
+    # other way (a rebuilt prompt, an older sidecar read through --prompt-ids).
+    args = _verdict_args(target_revision="", draft_revision="")
+    ok, why = mod._unit_match_verdict(
+        _good_row(mod, prompt_ids_from_engine="", prompt_sha256=None),
+        PROMPT_N0_BOS, args)
+    assert not ok, (
+        "a row whose prompt ids are not the engine's input ids was unit-matched")
+
+
+def test_the_row_records_that_the_ids_are_the_engines():
+    mod = _load_module()
+    args = _verdict_args(target_revision="", draft_revision="")
+    ok, why = mod._unit_match_verdict(
+        _good_row(mod, prompt_ids_from_engine="",
+                  prompt_sha256=mod._ids_sha(ENGINE_IDS)), ENGINE_IDS, args)
+    assert not ok and "engine's input ids" in why
+    ok2, why2 = mod._unit_match_verdict(
+        _good_row(mod, prompt_ids_from_engine="yes",
+                  prompt_sha256=mod._ids_sha(ENGINE_IDS)), ENGINE_IDS, args)
+    assert ok2, why2

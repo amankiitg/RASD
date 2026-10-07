@@ -65,7 +65,7 @@ CSV_FIELDS = [
     "doc_id", "temperature", "prompt_ids_from",
     # vLLM's own ids for the prompt, so "we passed the RASD ids" is checked
     # against what it actually consumed rather than asserted.
-    "prompt_ids_used_sha256", "prompt_ids_verified",
+    "prompt_ids_used_sha256", "prompt_ids_verified", "prompt_ids_from_engine",
     "target_revision", "draft_revision",
 ]
 
@@ -492,9 +492,19 @@ def load_rasd_cells(tokens_dir) -> list[dict]:
     """One cell per (context, document) from the RASD token sidecars.
 
     The sidecars are written by run_experiment for every run that ran with
-    --save-generated-tokens. They carry the EXACT prompt ids the engine fed and
-    the sha256 of those ids, so vLLM can be given the same prompt rather than a
-    rebuilt one -- a rebuilt prompt is a different prompt.
+    --save-generated-tokens. The ids used here are `engine_input_ids`: the ids the
+    TARGET was actually fed, INCLUDING the leading BOS. `prompt_token_ids` is the
+    same prompt WITHOUT the BOS -- it is what `prompt_tokens` counts and what the
+    engine's prompt builder is defined over -- so replaying it into vLLM replays
+    a sequence the target never saw. One token at the front changes every
+    position's rotary phase, which is exactly the kind of difference this
+    comparison exists to eliminate.
+
+    So a sidecar with no `engine_input_ids` yields NO prompt ids, and a row
+    without prompt ids is never unit-matched. `prompt_tokens + 1 ==
+    len(engine_input_ids)` is checked too: the BOS is the one-token difference,
+    and a sidecar whose engine ids do not account for it is a sidecar written by
+    something other than the engine.
 
     A sidecar whose ids do not hash to its own recorded sha256 is a corrupt
     sidecar; it is reported and skipped, never used.
@@ -509,24 +519,40 @@ def load_rasd_cells(tokens_dir) -> list[dict]:
         except Exception as exc:  # noqa: BLE001
             print(f"[warn] unreadable sidecar {f.name}: {exc}")
             continue
-        ids = sc.get("prompt_token_ids")
+        ids = sc.get("engine_input_ids")
         if not ids:
+            print(f"[warn] sidecar {f.name}: no engine_input_ids (the ids the "
+                  f"target was actually fed, BOS included); this document "
+                  f"cannot be given the target's prompt and will not be "
+                  f"unit-matched")
             continue
-        if _ids_sha(ids) != (sc.get("prompt_sha256") or ""):
+        # The no-BOS prompt ids are still checked, because their hash is what the
+        # sidecar records as the prompt's identity.
+        pids = sc.get("prompt_token_ids")
+        if pids and _ids_sha(pids) != (sc.get("prompt_sha256") or ""):
             print(f"[warn] sidecar {f.name}: prompt ids do not match the "
                   f"recorded sha256; skipping")
+            continue
+        ptok = sc.get("prompt_tokens")
+        if ptok is not None and int(ptok) + 1 != len(ids):
+            print(f"[warn] sidecar {f.name}: prompt_tokens={ptok} but the "
+                  f"engine fed {len(ids)} ids; the difference must be exactly "
+                  f"the BOS, so this sidecar did not come from the engine")
             continue
         cells.append({
             "doc_id": sc.get("doc_id") or "",
             "context_length": int(sc.get("context_length") or 0),
             "prompt_ids": [int(i) for i in ids],
             "prompt_sha256": sc.get("prompt_sha256"),
+            "prompt_tokens": (int(ptok) if ptok is not None else None),
+            "engine_input_ids": True,
             "sidecar": f.name,
         })
     if not cells:
         raise SystemExit(
-            f"--prompt-ids-from-sidecars: no usable sidecar in {d}. The vLLM "
-            f"rows would be compared against prompts the RASD runs never used."
+            f"--prompt-ids-from-sidecars: no usable sidecar in {d} (a usable "
+            f"one carries `engine_input_ids`). The vLLM rows would otherwise be "
+            f"compared against prompts the RASD runs never used."
         )
     return cells
 
@@ -580,6 +606,14 @@ def _unit_match_verdict(row: dict, prompt_ids, args,
     why: list[str] = []
     if not prompt_ids:
         why.append("prompt token ids are not the RASD ids (C2)")
+    elif row.get("prompt_ids_from_engine") != "yes":
+        # The ids handed to vLLM must be the ids the TARGET was fed -- BOS and
+        # all. A sidecar that only carries the no-BOS prompt ids would have this
+        # empty, and the row is then a comparison against a sequence the target
+        # never saw.
+        why.append("prompt ids are not the engine's input ids (the BOS-carrying "
+                   "`engine_input_ids`), so they are not the sequence the target "
+                   "conditioned on")
     elif _ids_sha(prompt_ids) != (row.get("prompt_sha256") or ""):
         # The ids must be the ones the row says it used, or "we passed the RASD
         # prompt" is an assertion about a variable, not about the run.
@@ -764,6 +798,12 @@ def main() -> int:
                         "kwargs": kwargs, "env": att["env"], "rope": rope,
                         "quantization": quant,
                         "prompt_ids": prompt_ids,
+                        # Whether these ids are the ENGINE's input ids (with the
+                        # BOS) or a rebuilt/substituted prompt. The verdict reads
+                        # it, so a row can never be unit-matched on ids that are
+                        # not the sequence the target saw.
+                        "prompt_ids_from_engine": (
+                            "yes" if _cell.get("engine_input_ids") else ""),
                         "target_revision": (target_revisions.get(model)
                                             or args.target_revision),
                         "draft_revision": (draft_revisions.get(model)

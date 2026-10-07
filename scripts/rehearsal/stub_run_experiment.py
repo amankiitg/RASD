@@ -329,6 +329,10 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
         real.write_generated_tokens_sidecar(
             output_csv, run["run_id"], emitted_ids,
             {"doc_id": row["doc_id"], "prompt_tokens": row["prompt_tokens"],
+             # The ids the target was fed, BOS included -- the engine's own
+             # tensor, mirrored by the held-sequence object above.
+             "engine_input_ids": list(held[:len(engine_input_ids(prompt_ids))]),
+             "prompt_token_ids": list(prompt_ids),
              # The exact ids the engine fed. run_experiment's pg19_document path
              # records these from the document pool, and the vLLM comparison
              # reads them -- without the field the vLLM stage refuses to run,

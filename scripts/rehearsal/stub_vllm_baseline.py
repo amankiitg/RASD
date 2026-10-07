@@ -139,6 +139,11 @@ def main() -> int:
                     "prompt_sha256": (vb._ids_sha(cell["prompt_ids"])
                                       if cell["prompt_ids"] else ""),
                     "prompt_ids_from": cell["sidecar"],
+                    # The same field the real loader sets from
+                    # `engine_input_ids`: these ids are the engine's input, BOS
+                    # included, not a rebuilt prompt.
+                    "prompt_ids_from_engine": (
+                        "yes" if cell.get("engine_input_ids") else ""),
                     # The equality the real worker asserts on vLLM's own
                     # prompt_token_ids; here it is the sidecar's own ids.
                     # What the ENGINE reported consuming, produced

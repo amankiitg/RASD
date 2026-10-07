@@ -1182,12 +1182,27 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # scalar. Only rank 0 receives a non-None trace (others get
         # None per RASDInference.generate's rank-0 guard).
         gen_ids = metrics.pop("generated_token_ids", None)
+        # The ids the TARGET was actually fed, BOS included, from the engine's
+        # own tensor. `prompt_tokens` and `prompt_sha256` are the prompt WITHOUT
+        # the BOS -- that is what the engine's prompt builder is defined over --
+        # so a consumer that claims to replay the target's input needs this
+        # field, and comparing it against the no-BOS ids is a one-token
+        # difference at the front of every rotary phase.
+        engine_input_ids = metrics.pop("engine_input_ids", None)
+        if engine_input_ids is None:
+            try:
+                # The same call generate_text makes: the engine's real input.
+                engine_input_ids = engine.tokenizer(
+                    prompt, add_special_tokens=True)["input_ids"]
+            except Exception:                       # noqa: BLE001
+                engine_input_ids = None
         trace = metrics.pop("per_token_trace", None)
         prof_summary = metrics.pop("_profiler_summary", None)
         if local_rank == 0:
             tok_sidecar = write_generated_tokens_sidecar(
                 output_csv, run["run_id"], gen_ids, {
                     **doc_prov,
+                    "engine_input_ids": engine_input_ids,
                     "prompt_tokens": row.get("prompt_tokens"),
                     "prompt_sha256": row.get("prompt_sha256"),
                     "context_length": run.get("context_length"),

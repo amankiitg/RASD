@@ -67,6 +67,7 @@ def _row(**kw):
            "max_new_tokens": 1024, "temperature": 0.0,
            "vllm_version": ns["VLLM_PIN"], "doc_id": "pg19_train_0",
            "prompt_sha256": sha, "prompt_ids_verified": "yes",
+           "prompt_ids_from_engine": "yes",
            "target_revision": REV, "draft_revision": REV}
     row.update(kw)
     return ns, row

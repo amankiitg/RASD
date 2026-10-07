@@ -62,6 +62,9 @@ def _ok_row(w, **overrides):
         # vLLM must be shown to have consumed the ids it was given, and the
         # revisions pin WHICH model the comparison is against.
         "prompt_ids_verified": "yes",
+        # The ids must be the ENGINE's input ids (BOS included), not a rebuilt
+        # prompt: that is now one of the fairness conditions.
+        "prompt_ids_from_engine": "yes",
         "target_revision": REV,
         "draft_revision": REV,
     }

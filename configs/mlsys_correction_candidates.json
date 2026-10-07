@@ -14,9 +14,10 @@
     "anchor explains most of the perplexity damage and NOT the degeneration,",
     "which is read off the numbers rather than off a verdict.",
     "",
-    "A DECLARED BASELINE IS REQUIRED. The gate computes each candidate's ratio against a row flagged `native_baseline`, at the candidate's own context; without one it refuses to write any numbers, so these two native rows are part of the evidence rather than decoration. A mis-anchored row with no baseline is not a measurement of damage -- it is a row nobody can interpret.",
     "",
-    "WHAT THE RATIOS MEASURE. Each candidate is scored against the unscaled model at the SAME context (32k or 128k), so a ratio isolates the effect of the ANCHORING CHOICE for a model that is already being shown an out-of-distribution context. It is not a quality comparison against an in-distribution model, and the unscaled 32k/128k rows are therefore labelled `unscaled_ood_reference`, not `native`. The one in-distribution measurement -- Llama-2 native at 4096 -- is included as `in_distribution_reference` and reported descriptively beside the others."
+    "WHAT THE RATIOS MEASURE. Each candidate is scored against the unscaled model at the SAME context (32k or 128k), so a ratio isolates the effect of the ANCHORING CHOICE for a model that is already being shown an out-of-distribution context. It is not a quality comparison against an in-distribution model, and the unscaled 32k/128k rows are therefore labelled `unscaled_ood_reference`, not `native`. The one in-distribution measurement -- Llama-2 native at 4096 -- is included as `in_distribution_reference` and reported descriptively beside the others.",
+    "",
+    "PAIRING. Each OOD reference row (`unscaled_ood_reference`) shares the seed of the candidates at its own context, so the anchored-vs-misanchored contrast is PAIRED: the same sample, scored twice, with only the rope's anchoring differing. The 4096 row is `in_distribution_reference` and is descriptive -- it is reported beside the ratios, never used as a denominator, and it is not paired with anything."
   ],
   "candidates": [
     {
@@ -40,9 +41,9 @@
       "target_model_name": "meta-llama/Llama-2-7b-hf",
       "rope_type": "none",
       "context_length": 32768,
-      "seed": 7,
+      "seed": 42,
       "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9",
-      "_what_it_is": "Llama-2-7B with its SHIPPED rope, shown a 32k context: the unscaled model at an out-of-distribution length. This is the denominator for the anchoring ratios and it is NOT a native reference -- 32k is four times the length the model was trained on. Labelling it 'native' would invite reading a ratio against it as quality relative to an in-distribution model, which is not what the number measures.",
+      "_what_it_is": "Llama-2-7B with its SHIPPED rope, shown a 32k context: the unscaled model at an out-of-distribution length. This is the denominator for the anchoring ratios and it is NOT a native reference -- 32k is four times the length the model was trained on. Labelling it 'native' would invite reading a ratio against it as quality relative to an in-distribution model, which is not what the number measures. Seed 42, the same seed the candidates at this context use, so the reference and the candidate score the SAME document, offset, prompt and continuation.",
       "reference_role": "unscaled_ood_reference"
     },
     {
@@ -53,9 +54,9 @@
       "target_model_name": "meta-llama/Llama-2-7b-hf",
       "rope_type": "none",
       "context_length": 131072,
-      "seed": 7,
+      "seed": 42,
       "target_revision": "01c7f73d771dfac7d292323805ebc428287df4f9",
-      "_what_it_is": "The same unscaled reference at 128k: 32x the training window. Included so that every mis-anchored / correctly-anchored pair has a denominator measured at its OWN context.",
+      "_what_it_is": "The same unscaled reference at 128k: 32x the training window. Included so that every mis-anchored / correctly-anchored pair has a denominator measured at its OWN context. Seed 42, the same seed the candidates at this context use, so the reference and the candidate score the SAME document, offset, prompt and continuation.",
       "reference_role": "unscaled_ood_reference"
     },
     {

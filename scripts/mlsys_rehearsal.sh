@@ -212,9 +212,15 @@ for h in $HELPERS; do
 done
 # A parent that never ran would have SKIPPED its helper's validation; assert
 # explicitly that the helper markers exist in the run directory.
+# The markers live in a per-invocation subdirectory under the base the rehearsal
+# set, which is the point: reusing a location must not reuse the state.
 for h in $HELPERS; do
-  [ -e "$RAN_DIR/$h" ] || bad "helper $h left no ran-marker"
+  [ -n "$(find "$RAN_DIR" -name "$h" -print -quit 2>/dev/null)" ] \
+    || bad "helper $h left no ran-marker"
 done
+[ -n "$(find "$RAN_DIR" -name 'attempt.*' -maxdepth 1 -print -quit 2>/dev/null)" ] \
+  && ok "markers live in a fresh per-invocation subdirectory" \
+  || bad "the marker directory is not per-invocation"
 ok "helper ran-markers checked"
 
 # ---------------------------------------------------------------------------
@@ -458,6 +464,90 @@ r = subprocess.run([sys.executable,
                    capture_output=True, text=True)
 print("  | " + r.stdout.strip().splitlines()[1][:100])
 sys.exit(0 if r.returncode == 1 else 1)
+PY
+
+# ---------------------------------------------------------------------------
+hdr "14b  the pairing labels: paired contrasts, cross-window extensions"
+# ---------------------------------------------------------------------------
+if "$PY" - "$OUT/correction_note_evidence.csv" "$OUT/coherence_gate.csv" <<'PY'
+import csv, sys
+corr = list(csv.DictReader(open(sys.argv[1])))
+ladder = list(csv.DictReader(open(sys.argv[2])))
+problems, notes = [], []
+
+# The correction evidence is a PAIRED contrast: every candidate that reports a
+# ratio must have been scored on the same sample as its reference.
+ratios = [r for r in corr if str(r.get("ppl_ratio") or "").strip()]
+unpaired = [r["candidate"] for r in ratios if r.get("pairing") != "paired"]
+if unpaired:
+    problems.append(f"correction rows with a ratio but not paired: {unpaired}")
+notes.append(f"correction: {len(ratios)} ratio row(s), all paired"
+             if ratios and not unpaired else f"correction: {len(ratios)} ratios")
+if not ratios:
+    problems.append("the correction stage produced no ratio at all")
+
+# The in-distribution row is descriptive: no ratio, and it says so.
+desc = [r for r in corr if r.get("pairing") == "descriptive"]
+if len(desc) != 1:
+    problems.append(f"expected exactly one descriptive row, got {len(desc)}")
+elif str(desc[0].get("ppl_ratio") or "").strip():
+    problems.append("the descriptive in-distribution row carries a ratio")
+notes.append(f"descriptive rows: {len(desc)}")
+
+# The ladder's extension candidates are judged across windows, and the label
+# says so: their reference is at a different context by construction.
+ext = [r for r in ladder if r.get("reference_context")
+       and str(r["reference_context"]) != str(r["context_length"])]
+bad_ext = [r["candidate"] for r in ext if r.get("pairing") != "cross_context"]
+if bad_ext:
+    problems.append(f"extension rows not labelled cross_context: {bad_ext}")
+notes.append(f"extension rows: {len(ext)} cross-context")
+# ... while a SAME-context candidate on the ladder is paired.
+same = [r for r in ladder if not r.get("reference_context")
+        or str(r["reference_context"]) == str(r["context_length"])]
+bad_same = [r["candidate"] for r in same
+            if r.get("pairing") not in ("paired", "descriptive")]
+if bad_same:
+    problems.append(f"same-context rows not paired: {bad_same}")
+
+for n in notes:
+    print("  | " + n)
+for p in problems:
+    print("  | " + p)
+sys.exit(1 if problems else 0)
+PY
+then ok "ratio rows are paired, extensions labelled cross-context"
+else bad "the pairing labels are wrong in the gate output"; fi
+
+# The references must share their candidates' seed, or the ratio is a difference
+# between two samples -- asserted on the shipped configs, not on the stub.
+"$PY" - <<'PY' && ok "every same-context reference shares its candidate's seed" \
+  || bad "a reference uses a different seed from the candidates it scores"
+import json, pathlib, sys
+problems = []
+for f in ("configs/mlsys_gate_controls.json", "configs/mlsys_rope_candidates.json",
+          "configs/mlsys_rope_intervention_candidates.json",
+          "configs/mlsys_correction_candidates.json"):
+    d = json.loads(pathlib.Path(f).read_text())
+    key = "candidates" if "candidates" in d else "coherence_gate"
+    rows = d[key]
+    refs = {(r["context_length"], r["target_model_name"]): r
+            for r in rows if r.get("native_baseline")}
+    for r in rows:
+        if r.get("reference_role") == "in_distribution_reference":
+            continue
+        ref_ctx = r.get("reference_context") or r["context_length"]
+        if int(ref_ctx) != int(r["context_length"]):
+            continue                      # cross-window: pairing does not apply
+        ref = refs.get((ref_ctx, r["target_model_name"]))
+        if ref is None:
+            continue                      # reported as no-reference by the gate
+        if r.get("seed") != ref.get("seed"):
+            problems.append(f"{f}: {r['name']} seed {r.get('seed')} vs reference "
+                            f"{ref['name']} seed {ref.get('seed')}")
+for p in problems:
+    print("  | " + p)
+sys.exit(1 if problems else 0)
 PY
 
 # ---------------------------------------------------------------------------

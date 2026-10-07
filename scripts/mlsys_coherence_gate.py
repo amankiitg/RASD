@@ -402,6 +402,20 @@ def _device_map():
     return {"": 0} if torch.cuda.is_available() else {"": "cpu"}
 
 
+def gate_sample(meta_path: str, ctx: int, seed: int, tok):
+    """The (prompt_ids, continuation_ids) the gate scores.
+
+    ONE function, so every path that needs a window goes through the same call
+    and passes the BOS. The engine prepends one at encode time; a gate that
+    measured the prompt without it would score a sequence one token shorter than
+    the runs it is calibrating against -- and, because the text budget is fixed,
+    it would end 1024 tokens further into the book, i.e. a different sample as
+    well as a different length.
+    """
+    return load_pg19_window(meta_path, ctx, seed,
+                            bos_id=getattr(tok, "bos_token_id", None))
+
+
 def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
     from src.models.rasd_inference import RASDInference
 
@@ -461,12 +475,28 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
     try:
         row.update(assert_effective_rope(model, model_name, intended))
 
-        prompt_ids, cont_ids = load_pg19_window(
-            meta_path, ctx, int(cand.get("seed", 42)))
+        prompt_ids, cont_ids = gate_sample(
+            meta_path, ctx, int(cand.get("seed", 42)), tok)
         row["prompt_tokens"] = len(prompt_ids)
         import hashlib
-        row["prompt_sha256"] = hashlib.sha256(
-            json.dumps(prompt_ids).encode()).hexdigest()[:16]
+
+        def _sample_sha(ids):
+            """The same spelling run_experiment uses for its prompt and
+            continuation hashes, so the gate and the runs agree about what "the
+            same sample" means.
+
+            Both halves are hashed and recorded. Two rows can share a prompt and
+            score different continuations, and a ratio between them would then be
+            a difference between two samples rather than a measurement of the
+            rope's anchoring -- which is the only thing this file is allowed to
+            report.
+            """
+            return hashlib.sha256(
+                ",".join(str(int(i)) for i in ids).encode()).hexdigest()
+
+        row["prompt_sha256"] = _sample_sha(prompt_ids)
+        row["continuation_sha256"] = _sample_sha(cont_ids)
+        row["seed"] = int(cand.get("seed", 42))
 
         row["ppl_continuation"] = round(
             continuation_perplexity(model, prompt_ids, cont_ids), 4)
@@ -485,6 +515,62 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
         del model
         torch.cuda.empty_cache()
     return row
+
+
+# A reference row that is only DESCRIPTIVE is not a denominator: it answers
+# "what does this model look like where it is valid", and it is reported beside
+# the ratios rather than used to divide anything.
+DESCRIPTIVE_ROLES = ("in_distribution_reference",)
+
+
+def pairing_verdict(cand: dict, base: dict) -> tuple[str, str]:
+    """Is this candidate scored on the SAME SAMPLE as its reference?
+
+    Returns `(pairing, reason)` where pairing is one of:
+
+      paired         prompt and continuation hashes agree: the ratio is a paired
+                     contrast on ONE sample
+      unpaired       the hashes disagree: NO ratio is computed, and the row is
+                     reported as an error
+      cross_context  an extension judged against the declared native baseline at
+                     a DIFFERENT context, so the windows differ by construction:
+                     the plan's coherence comparison, labelled as such
+      descriptive    an in-distribution measurement, reported beside the ratios
+                     and never used as their denominator
+
+    A ratio between two different samples is not a measurement of the rope's
+    anchoring: it is a difference between two samples, and the document, offset,
+    prompt and continuation all move with the seed.
+    """
+    role = str(cand.get("reference_role") or "")
+    if role in DESCRIPTIVE_ROLES:
+        return "descriptive", ("in-distribution reference: reported beside the "
+                               "ratios, not a denominator")
+    if base is None:
+        return "unpaired", "no declared reference at this context"
+    # An EXTENSION is judged against the native configuration at the native
+    # window, so the two windows are different lengths and the samples cannot be
+    # the same. That comparison is what the plan declares for >128k -- "does
+    # extending the window keep the target coherent, where coherent is defined by
+    # the native configuration" -- so it is labelled rather than refused.
+    want_ctx = cand.get("reference_context")
+    if want_ctx not in (None, ""):
+        if int(want_ctx) != int(cand.get("context_length", -1)):
+            return "cross_context", (
+                f"extension at {cand.get('context_length')} judged against the "
+                f"declared native baseline at {want_ctx}: a cross-window "
+                f"coherence ratio, not a same-sample contrast")
+    for field in ("prompt_sha256", "continuation_sha256"):
+        a, b = str(cand.get(field) or ""), str(base.get(field) or "")
+        if not a or not b or a != b:
+            return "unpaired", (
+                f"{field} differs between the candidate and its reference "
+                f"({a[:12] or '<none>'} vs {b[:12] or '<none>'}): they are not "
+                f"the same sample, so no ratio is computed")
+    if int(cand.get("seed", -1)) != int(base.get("seed", -2)):
+        return "unpaired", (f"seeds differ ({cand.get('seed')} vs "
+                            f"{base.get('seed')})")
+    return "paired", "prompt and continuation hashes agree"
 
 
 def verdict(row: dict, native_ppl: float) -> dict:
@@ -534,7 +620,11 @@ FIELDS = ["candidate", "target_model_name", "target_revision",
           "effective_rope_match", "effective_rope_maxerr",
           "effective_rope_matches_intent", "native_window",
           "inv_freq_first", "inv_freq_last", "slowest_channel_stretch",
-          "prompt_tokens", "prompt_sha256", "ppl_continuation", "native_ppl_reference", "baseline_context",
+          "prompt_tokens", "prompt_sha256", "continuation_sha256",
+          "ppl_continuation", "native_ppl_reference", "baseline_context",
+          # Whether the ratio is on the SAME SAMPLE as its reference, and the
+          # reference's role. A ratio across two samples is not a measurement.
+          "pairing", "baseline_prompt_sha256", "baseline_continuation_sha256",
           "ppl_ratio", "early_eos", "eos_at", "gen_chars", "gen_blank_share",
           "gen_alpha_share", "gen_repeat_share",
           "gate_pass", "gate_reason", "status", "error"]
@@ -657,10 +747,36 @@ def main() -> int:
         # different measurements, and the CSV has to say which happened.
         r["reference_context"] = (r.get("reference_context")
                                   or r.get("context_length"))
+        r["baseline_prompt_sha256"] = (b.get("prompt_sha256") or "") if b else ""
+        r["baseline_continuation_sha256"] = (
+            (b.get("continuation_sha256") or "") if b else "")
+
+        # PAIRING FIRST. A ratio is only a measurement of the rope's anchoring
+        # if the candidate and the reference scored the SAME sample; otherwise
+        # the first thing a "damage" number contains is the difference between
+        # two documents, which is far larger than the effect under test.
+        pairing, reason = pairing_verdict(r, b)
+        r["pairing"] = pairing
+        if pairing == "descriptive":
+            # An in-distribution measurement, reported beside the ratios and
+            # never used to divide anything.
+            r["ppl_ratio"] = ""
+            r["native_ppl_reference"] = ""
+            r["baseline_context"] = ""
+            r["gate_pass"] = ""
+            r["gate_reason"] = reason
+            continue
+        if pairing == "unpaired":
+            r["ppl_ratio"] = ""
+            r["gate_pass"] = False
+            r["gate_reason"] = f"UNPAIRED: {reason}"
+            r["status"] = "unpaired_reference"
+            r["error"] = reason
+            continue
         if b is None:
             r["gate_pass"] = False
             r["gate_reason"] = (
-                f"no declared native baseline at reference context "
+                f"no declared reference at reference context "
                 f"{r.get('reference_context') or r.get('context_length')} for "
                 f"{r.get('target_model_name')}; cannot compute a ratio against "
                 f"one")
