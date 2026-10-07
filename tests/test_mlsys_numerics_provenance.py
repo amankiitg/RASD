@@ -70,11 +70,20 @@ def test_a_4bit_load_reports_its_own_storage_type():
     assert detect_weight_precision(_FourBit("nf4")) == "nf4"
 
 
-def test_a_4bit_load_that_declares_no_type_is_nf4():
-    """bitsandbytes defaults to nf4 when the type is unset."""
-    assert detect_weight_precision(_FourBit(None)) == "nf4"
+def test_a_4bit_load_that_declares_no_type_is_unknown_never_guessed():
+    """An unstated 4-bit type is `unknown`, not a guess.
+
+    transformers' `BitsAndBytesConfig` defaults to fp4, so a fallback of "nf4"
+    would be wrong in the common case -- and wrong toward a value the cap smoke
+    ACCEPTS, which is how a mislabelled row reaches a table. `unknown` fails
+    that assertion, which is the honest outcome for a precision nobody recorded.
+    """
+    assert detect_weight_precision(_FourBit(None)) == "unknown"
     assert detect_weight_precision(
-        type("M", (), {"is_loaded_in_4bit": True, "config": _Cfg()})()) == "nf4"
+        type("M", (), {"is_loaded_in_4bit": True, "config": _Cfg()})()) == "unknown"
+    # ... and it must not be confused with the fp4/nf4 the smoke accepts.
+    for accepted in ("fp4", "nf4"):
+        assert detect_weight_precision(_FourBit(None)) != accepted
 
 
 def test_a_dense_load_reports_its_parameter_dtype():

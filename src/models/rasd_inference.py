@@ -672,9 +672,13 @@ def detect_weight_precision(model) -> str:
         qtype = getattr(qc, "bnb_4bit_quant_type", None)
         if qtype is None and isinstance(qc, dict):
             qtype = qc.get("bnb_4bit_quant_type")
-        # bitsandbytes defaults to nf4 when the type is unset; iff it is 4-bit
-        # loaded and says nothing, the storage is nf4.
-        return str(qtype or "nf4").lower()
+        # A 4-bit load that does not say WHICH 4-bit type is reported as
+        # "unknown", never guessed. transformers' BitsAndBytesConfig defaults to
+        # fp4, not nf4, so the old `or "nf4"` fallback was wrong in the common
+        # case -- and being wrong in the direction of a value the cap smoke
+        # accepts is exactly how a mislabelled row gets published. "unknown"
+        # fails that assertion loudly and accurately instead.
+        return str(qtype).lower() if qtype else "unknown"
     if getattr(model, "is_loaded_in_8bit", False):
         return "int8"
     try:
