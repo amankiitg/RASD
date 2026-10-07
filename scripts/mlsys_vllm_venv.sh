@@ -36,7 +36,17 @@ fi
 
 if [ ! -x "$VENV/bin/python" ]; then
   echo "--> creating $VENV"
-  "$PY_BASE" -m venv "$VENV" || { echo "FATAL: venv creation failed" >&2; exit 3; }
+  if ! "$PY_BASE" -m venv "$VENV" 2>"$VENV.venv-err"; then
+    # `python3 -m venv` needs the distro's python3-venv/ensurepip on Debian
+    # images. Say WHICH dependency is missing rather than reporting "venv
+    # creation failed" and leaving the operator to guess on a paid instance.
+    echo "FATAL: venv creation failed for $VENV" >&2
+    sed 's/^/  | /' "$VENV.venv-err" 2>/dev/null | tail -5 >&2
+    echo "  hint: 'python3 -m venv' needs the python3-venv package" >&2
+    rm -f "$VENV.venv-err"
+    exit 3
+  fi
+  rm -f "$VENV.venv-err"
 fi
 
 "$VENV/bin/python" -m pip install --quiet --upgrade pip

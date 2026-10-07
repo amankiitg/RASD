@@ -324,6 +324,28 @@ sys.exit(1 if missing else 0)\"" >>"$LOG" 2>&1 \
 done
 
 # --------------------------------------------------------------------------
+# provision the ISOLATED vLLM environment (R7)
+# --------------------------------------------------------------------------
+# The vLLM stages run in their own venv with their own torch, selected by path;
+# if it is missing they REFUSE rather than run against the campaign's pins. So it
+# is provisioned here, on the pod, as part of the setup.
+#
+# Started in the BACKGROUND, not blocking: the install is a multi-GB download
+# and impl_validation is the sixth stage, hours behind gate_calibration and the
+# 128k natural-text rung. Blocking would idle a paid 8xA100 for the length of a
+# pip install; running it concurrently costs nothing and the pin makes a
+# mid-install state impossible to observe (pip writes the venv's python last).
+#
+# A failure is NOT fatal to the campaign: the vLLM stages then refuse and the
+# manifest records that honestly as MANIFEST INCOMPLETE, which is the correct
+# outcome for "we could not build the reference". Killing the 128k stages over a
+# pip failure would be the wrong trade.
+ssh $SSH_OPTS "$SSH_USER@$IP" \
+  "cd ~/RASD && nohup bash scripts/mlsys_vllm_venv.sh > ~/vllm_venv.log 2>&1 & echo started" \
+  >>"$LOG" 2>&1 && say "  vLLM venv provisioning started (log: ~/vllm_venv.log)" \
+  || say "  WARNING: could not start the vLLM venv provisioning (the vLLM stages will refuse)"
+
+# --------------------------------------------------------------------------
 # run the manifest
 # --------------------------------------------------------------------------
 say "starting the manifest"

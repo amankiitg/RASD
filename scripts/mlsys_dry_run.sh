@@ -1752,6 +1752,40 @@ PYX
                || bad "this round's contracts are not in place"
 
 
+# --- 21. the remote setup provisions the isolated vLLM environment ----------
+"$PY" - <<'PYX'
+import sys
+fails = []
+watch = open("scripts/mlsys_watch_and_run.sh").read()
+venv = open("scripts/mlsys_vllm_venv.sh").read()
+man = open("scripts/mlsys_manifest.sh").read()
+
+if "mlsys_vllm_venv.sh" not in watch:
+    fails.append("the watcher does not provision the vLLM venv, so the vLLM "
+                 "stages would refuse on a freshly booted pod")
+if watch.index("mlsys_vllm_venv.sh") > watch.index("MLSYS_ONLY_STAGES="):
+    fails.append("the venv is provisioned after the manifest starts")
+if "nohup bash scripts/mlsys_vllm_venv.sh" not in watch:
+    fails.append("the venv provisioning does not run detached, so a multi-GB "
+                 "install would block the campaign clock")
+# The path the venv script creates must be the path the manifest looks for.
+if "$REPO/.venv-vllm/bin/python" not in man:
+    fails.append("the manifest does not look for $REPO/.venv-vllm/bin/python")
+if "{MLSYS_VLLM_VENV:-$REPO/.venv-vllm}" not in venv:
+    fails.append("the venv script's default path differs from the manifest's")
+for want, why in (("vllm==$VLLM_PIN", "the pin is not applied"),
+                  ("torch==", "no torch is installed into the venv"),
+                  ("python3-venv", "a venv failure gives no actionable hint")):
+    if want not in venv:
+        fails.append(f"mlsys_vllm_venv.sh: {why}")
+for f in fails:
+    print("  check failed: " + f)
+sys.exit(1 if fails else 0)
+PYX
+  [ $? -eq 0 ] && ok "the remote setup provisions the isolated vLLM venv at the path the manifest uses" \
+               || bad "the vLLM venv provisioning is not wired into the remote setup"
+
+
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "every stage of the pipeline ran end to end on a tiny model."
