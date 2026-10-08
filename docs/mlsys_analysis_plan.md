@@ -356,6 +356,79 @@ them taken without a decision:
    0.375), so the honest claim may be that exact losslessness holds without NF4
    KV, and that the NF4 path is a numerics-limited configuration.
 
+### 6.1b Two-criterion gate: shortfall AND non-argmax rate (2026-10-08, **NOT APPLIED -- the rate margin fails**)
+
+**Pre-registered rule.** A cell passes only if BOTH hold:
+
+1. `max shortfall <= TOL_dtype`, where `TOL_dtype = 2 x measured max |delta|`
+   for that KV dtype (bf16 and NF4 separately), with **no fixed cap**; and
+2. `non-argmax fraction <= RATE_MAX`, with `RATE_MAX` set geometrically halfway
+   between the worst positive and the best negative:
+   `RATE_MAX = sqrt(worst_positive * best_negative)`.
+
+Required margin: the negatives' non-argmax fraction must exceed `RATE_MAX` by at
+least 2x. The rate criterion exists to catch a defect that is *frequent but
+mild* -- many wrong tokens, each close to the argmax -- which the shortfall
+criterion alone would not see.
+
+**Measured inputs** (1 rank, 64 tokens per stream, 4 pairs x 3 streams;
+`results/mlsys/teacher_forced/`):
+
+| stream | cell | non-argmax | fraction | max shortfall |
+|---|---|---|---|---|
+| POSITIVE | 8k bf16 | 2/64 | 0.031 | 0.375 |
+| POSITIVE | 8k nf4 | 7/64 | 0.109 | 3.375 |
+| POSITIVE | 32k bf16 | 2/64 | 0.031 | 0.188 |
+| POSITIVE | 32k nf4 | 13/64 | **0.203** | 5.062 |
+| NEG off-by-one | 8k bf16 | 11/64 | 0.172 | 16.125 |
+| NEG unverified draft | 8k bf16 | 12/64 | 0.188 | 6.750 |
+| NEG off-by-one | 8k nf4 | 25/64 | 0.391 | 15.938 |
+| NEG unverified draft | 8k nf4 | 13/64 | 0.203 | 6.625 |
+| NEG off-by-one | 32k bf16 | 12/64 | 0.188 | 12.438 |
+| NEG unverified draft | 32k bf16 | 13/64 | 0.203 | 9.250 |
+| NEG off-by-one | 32k nf4 | 39/64 | 0.609 | 20.438 |
+| NEG unverified draft | 32k nf4 | 14/64 | 0.219 | 8.438 |
+
+`TOL_bf16 = 2 x 0.828 = 1.656`, `TOL_nf4 = 2 x 2.600 = 5.199` (from 8 noise-floor
+positions per dtype; see 6.1a).
+
+**MARGIN CHECK: FAILS.** Globally, the worst positive is 0.203 (32k nf4) and the
+best negative is 0.172 (8k bf16, off-by-one), so
+`RATE_MAX = sqrt(0.203 x 0.172) = 0.187` and the rule needs the best negative to
+reach `2 x 0.187 = 0.374`. It reaches 0.172. **The worst positive has a HIGHER
+non-argmax rate than the best negative**, so no rate threshold separates them:
+
+* per bf16: worst positive 0.031, best negative 0.172, ratio 5.5x,
+  `RATE_MAX = 0.073`, needs 0.147 -- **holds** (by 1.17x over the requirement);
+* per NF4: worst positive 0.203, best negative 0.203, ratio 1.0x,
+  `RATE_MAX = 0.203`, needs 0.406 -- **fails**, because NF4 noise is itself a
+  20%-of-positions effect.
+
+**Why the two metrics are not redundant -- and why this is the right reading.**
+The failure mode is the OPPOSITE of the one the rate criterion was designed for.
+The noise is frequent and mild (NF4 flips 20% of argmaxes with a maximum
+shortfall of 5.06), while the defects are less frequent and much larger (the
+off-by-one flips 17% of args by up to 16.1 logits; the unverified draft 19% by up
+to 9.25). Magnitude separates cleanly; frequency does not.
+
+The CONJUNCTION still separates perfectly on this data, because a cell fails if
+EITHER criterion fails, and the shortfall criterion alone catches all 8
+negatives: bf16 separates 0.375 vs 6.750 (**18x**), NF4 separates 5.062 vs 6.625
+(**1.31x**). But the pre-registered rate criterion does not meet its required
+margin, so per the operating instruction this is a STOP: the rule is **NOT
+applied**, `mlsys_cap_smoke_check.py` is unchanged, and the 8x watcher is **NOT
+re-armed**.
+
+**Fragility that a later measurement must settle.** `TOL_nf4 = 2 x max|delta|`,
+so the NF4 shortfall criterion survives only while `max|delta|_nf4 < 3.3125`
+(= 6.625 / 2, the tightest negative). It measured 2.600 on 8 positions -- 22%
+headroom. Those 8 positions are not enough to bound a maximum, and the NF4 floor
+is the one that matters. The instruction's step 3 (64 positions per cell) was
+designed to settle exactly this; it was **not run**, because step 2's margin had
+already failed and its stated purpose was to firm up `TOL_dtype` before applying.
+If a 64-position floor pushes `max|delta|_nf4` past 3.3125, the NF4 shortfall
+criterion breaks too and NF4 KV cannot support this gate at all.
+
 ### 6.2 Coherence gate (configurations above 128k only)
 
 A rope configuration may only be used if its target is coherent at the context it

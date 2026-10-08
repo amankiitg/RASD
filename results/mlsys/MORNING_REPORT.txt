@@ -857,3 +857,70 @@ COST: 1x A100 (gpu_1x_a100_sxm4, us-west-2, $1.99/hr) up 20:08Z-21:05Z, ~57 min
 = ~$1.90. Cumulative for tasks 1-4: ~$1.90 of the $10 budget. Not added to
 results/mlsys/gpu_hours.csv: that ledger holds campaign stage costs, and this was
 a manual diagnostic run.
+
+
+================================================================================
+21:05Z-21:35Z  2026-10-08  TWO-CRITERION GATE PRE-REGISTERED; RATE MARGIN FAILS
+                           -> STOPPED.  NOT APPLIED.  NOT RE-ARMED.
+================================================================================
+
+MILESTONE: offline analysis of all 12 streams (task 1). Per stream, the fraction
+of positions where the emitted token is NOT the target's argmax, and the max
+shortfall. 64 tokens per stream, 1 rank, results/mlsys/teacher_forced/:
+
+  stream                 cell      non-argmax  fraction   max shortfall
+  POSITIVE               8k bf16    2/64       0.031      0.375
+  POSITIVE               8k nf4     7/64       0.109      3.375
+  POSITIVE              32k bf16    2/64       0.031      0.188
+  POSITIVE              32k nf4    13/64       0.203      5.062   <-- worst positive
+  NEG off-by-one         8k bf16   11/64       0.172     16.125   <-- best negative
+  NEG unverified draft   8k bf16   12/64       0.188      6.750
+  NEG off-by-one         8k nf4    25/64       0.391     15.938
+  NEG unverified draft   8k nf4    13/64       0.203      6.625
+  NEG off-by-one        32k bf16   12/64       0.188     12.438
+  NEG unverified draft  32k bf16   13/64       0.203      9.250
+  NEG off-by-one        32k nf4    39/64       0.609     20.438
+  NEG unverified draft  32k nf4    14/64       0.219      8.438
+
+MILESTONE: rule pre-registered in docs/mlsys_analysis_plan.md 6.1b, BEFORE any
+application: pass only if (1) max shortfall <= TOL_dtype with TOL_dtype =
+2 x measured max |delta| per KV dtype and no cap, AND (2) non-argmax fraction <=
+RATE_MAX = geometric midpoint of worst positive and best negative.
+TOL_bf16 = 1.656, TOL_nf4 = 5.199.
+
+MILESTONE: THE REQUIRED MARGIN FAILS -> STOP.
+Globally: worst positive 0.203 (32k nf4) vs best negative 0.172 (8k bf16
+off-by-one) -> RATE_MAX = 0.187, and the rule needs the best negative to reach
+0.374. It reaches 0.172. THE WORST POSITIVE HAS A HIGHER NON-ARGMAX RATE THAN THE
+BEST NEGATIVE, so no rate threshold separates them.
+  per bf16: 0.031 vs 0.172, ratio 5.5x, needs 2x RATE_MAX=0.147 -> HOLDS.
+  per NF4:  0.203 vs 0.203, ratio 1.0x, needs 0.406              -> FAILS.
+NF4 noise is itself a 20%-of-positions effect.
+
+WHY, and why this is the right reading: the failure mode is the opposite of the
+one the rate criterion was designed for. The noise is FREQUENT AND MILD (NF4
+flips 20% of argmaxes, max shortfall 5.06); the defects are LESS FREQUENT AND
+MUCH LARGER (off-by-one flips 17% by up to 16.1 logits; unverified draft 19% by
+up to 9.25). Magnitude separates; frequency does not.
+
+The CONJUNCTION still separates perfectly on this data (a cell fails if EITHER
+criterion fails, and the shortfall criterion alone catches all 8 negatives):
+bf16 separates 0.375 vs 6.750 = 18x, NF4 separates 5.062 vs 6.625 = 1.31x.
+But the pre-registered rate criterion does not meet its required margin, so this
+is a STOP and not a licence to drop the criterion and proceed.
+
+NOT DONE, deliberately:
+  * step 3 (64-position noise floor, max $5): NOT run. Its stated purpose was to
+    firm up TOL_dtype before applying, and step 2 had already stopped. It matters
+    for one open question, recorded in 6.1b: TOL_nf4 = 2 x max|delta|_nf4, so the
+    NF4 shortfall criterion survives only while max|delta|_nf4 < 3.3125 (the
+    tightest negative, 6.625, halved). It measured 2.600 on 8 positions -- 22%
+    headroom -- and 8 positions cannot bound a maximum. If a 64-position floor
+    pushes it past 3.3125, the NF4 criterion breaks too and NF4 KV cannot support
+    this gate at all. That is the measurement to run next.
+  * step 4: mlsys_cap_smoke_check.py UNCHANGED (all 16 structural assertions
+    untouched, still exact-sequence identity).
+  * step 5: 8x watcher NOT re-armed.
+
+COST: $0 for this block (all offline). Cumulative for tasks 1-4: ~$1.90 of $10.
+0 instances running.
