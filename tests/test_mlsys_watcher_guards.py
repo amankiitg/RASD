@@ -370,3 +370,35 @@ def test_an_unreadable_instance_count_does_not_end_the_wait(tmp_path):
     assert "FATAL" not in r.stdout
     assert "instance_count=unknown" in r.stdout
     assert r.stdout.count("next_sleep=1s (retrying)") >= 2, r.stdout
+
+
+def test_every_fallback_attempt_names_both_its_reason_and_region(tmp_path):
+    """Each attempt in `launch_now`'s region-fallback loop must report BOTH
+    fields, and must report *the region it is trying*.
+
+    The failure this pins is a call whose arguments do not match the callee's
+    signature: the attempt still happens and the line still looks like a launch
+    attempt, so nothing downstream notices, but the log becomes useless for
+    telling "we tried us-midwest-1" apart from "we were told the reason was
+    us-midwest-1" -- and `reason=` is what the campaign's reporting keys on.
+    """
+    import re
+    script, sandbox = _script_with_stubs(
+        tmp_path, dict(NO_NETWORK, regions_with_capacity="true"))
+    (sandbox / "sess").mkdir()
+    (sandbox / "sess" / "LAUNCH_NOW").write_text("")
+    pref = "us-east-1,us-midwest-1,us-west-1,us-south-1,us-west-2"
+
+    r = _run_watcher(script, sandbox, observe_seconds=8,
+                     MLSYS_LAUNCH_DRY_RUN="1", MLSYS_REGION_PREF=pref)
+    attempts = [l for l in r.stdout.splitlines() if "LAUNCH_DRY_RUN" in l]
+
+    assert len(attempts) == 5, r.stdout
+    for wanted, line in zip(pref.split(","), attempts):
+        assert "reason=launch_now" in line, f"reason field is wrong: {line}"
+        assert f"region={wanted}" in line, f"region field is wrong: {line}"
+        # and nothing that is a region may have landed in the reason field
+        assert not re.search(r"reason=us-", line), \
+            f"a region name is in the reason field: {line}"
+        got = re.search(r"\bregion=(\S+)", line)
+        assert got and got.group(1) == wanted, f"wrong region: {line}"

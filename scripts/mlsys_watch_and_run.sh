@@ -340,6 +340,11 @@ while [ "$(date -u +%s)" -lt "$CAPACITY_WAIT_DEADLINE" ]; do
   # a hint to wait for the next tick. Checked before the API work so it cannot
   # be delayed by a slow call.
   if [ -f "$LAUNCH_NOW" ]; then
+    # Record the attempt so the nap's own 10s check cannot immediately repeat
+    # it. Without this, LAST_NOW_ATTEMPT is still 0 on the first pass and the
+    # spacing guard is satisfied by the epoch itself, so the override fired
+    # twice in the same second -- the release decided the attempt spacing.
+    LAST_NOW_ATTEMPT=$(date -u +%s)
     launch_now
     case $? in
       0) break ;;
