@@ -734,3 +734,34 @@ def test_pod_env_applies_the_operator_notes():
         "the cache points at a path that may not exist"
     # the env file is what the manifest sources
     assert ".pod_env.sh" in POD_ENV_SRC
+
+
+def test_the_token_reaches_every_remote_command_that_needs_it():
+    """The 2026-10-08 near-miss: HF_TOKEN was added to the manifest command but
+    not to the provisioning command, so pod_env.sh failed closed on the pod and
+    the watcher terminated an 8x instance ten minutes after launching it.
+
+    Anything that runs on the pod and touches a gated model needs the token. The
+    assert is on the commands THEMSELVES -- extracted from the script -- rather
+    than on the presence of the string somewhere in the file, because "the token
+    appears once" is what was true when this failed."""
+    # the provisioning command
+    i = SRC.index('"cd ~/RASD && HF_TOKEN=')
+    prov = SRC[i:SRC.index('> ~/pod_env.log 2>&1', i)]
+    assert "mlsys_pod_env.sh" in prov, "this is not the provisioning command"
+    assert "HF_TOKEN='$HF_TOKEN_VALUE'" in prov, \
+        "the provisioning command does not carry the token"
+
+    # the manifest command
+    j = SRC.index('"cd ~/RASD && rm -f ~/manifest.rc')
+    man = SRC[j:SRC.index("echo started\"", j)]
+    assert "HF_TOKEN='$HF_TOKEN_VALUE'" in man, \
+        "the manifest command does not carry the token"
+    assert ". ~/RASD/.pod_env.sh" in man, \
+        "the manifest does not inherit the pod environment"
+
+    # and nothing else on the pod needs it: the remaining ssh calls read files,
+    # resolve an interpreter, or check a marker
+    for line in _code_lines(SRC).splitlines():
+        if 'ssh $SSH_OPTS "$SSH_USER@$IP"' in line and "pod_env.sh" in line:
+            assert "HF_TOKEN" in line, line

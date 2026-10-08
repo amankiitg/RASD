@@ -525,8 +525,14 @@ say "  repo staged"
 # standard library, so with the old fallback they passed happily on a pod that
 # had no transformers at all -- a green check that meant nothing.
 say "provisioning the campaign environment on the pod (setup log: ~/pod_env.log)"
+# The token goes to the PROVISIONING too, not only to the manifest. pod_env.sh
+# requires it (it proves gated-model access as part of verification), and on
+# 2026-10-08 this command omitted it: the script failed closed, the watcher
+# terminated the instance ten minutes after launching it, and the campaign never
+# started. Wiring the token into one of the two places that need it is exactly
+# the kind of half-fix that costs an 8x launch.
 if ! ssh $SSH_OPTS "$SSH_USER@$IP" \
-      "cd ~/RASD && bash scripts/mlsys_pod_env.sh > ~/pod_env.log 2>&1"; then
+      "cd ~/RASD && HF_TOKEN='$HF_TOKEN_VALUE' bash scripts/mlsys_pod_env.sh > ~/pod_env.log 2>&1"; then
   say "FATAL: the campaign environment could not be provisioned."
   say "FATAL: ~/pod_env.log tail:"
   ssh $SSH_OPTS "$SSH_USER@$IP" 'tail -25 ~/pod_env.log' 2>&1 | sed 's/^/    /' | tee -a "$LOG"
