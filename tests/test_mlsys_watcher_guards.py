@@ -826,3 +826,46 @@ def test_the_outbound_rsync_leaves_local_results_behind():
     assert "--include 'results/mlsys/gpu_hours.csv'" in block, \
         ("the cumulative cost ledger no longer travels, so the budget guard "
          "would restart from zero each launch")
+
+
+# ---------------------------------------------------------------------------
+# The 10:10Z gate failure: a candidate that took the whole stage with it
+# ---------------------------------------------------------------------------
+
+GATE_SRC = (REPO / "scripts" / "mlsys_coherence_gate.py").read_text()
+
+
+def test_a_candidate_failure_cannot_destroy_the_gates_output():
+    """gate_calibration ran 479s across six candidates and then wrote NOTHING.
+
+    A CUDA device-side assert is reported at the next synchronising call, and
+    `torch.cuda.empty_cache()` in run_candidate's `finally` is one. An exception
+    raised from `finally` BYPASSES the except clauses that record a per-candidate
+    outcome, so it escaped run_candidate, killed the list comprehension in
+    main(), and left the stage with no CSV at all -- for a stage whose entire
+    purpose is to run a candidate that is KNOWN to be broken.
+    """
+    i = GATE_SRC.index("    finally:\n        del model")
+    finally_block = GATE_SRC[i:GATE_SRC.index("    return row", i)]
+    assert "try:" in finally_block, \
+        "the cleanup can still raise out of run_candidate"
+    assert "torch.cuda.empty_cache()" in finally_block
+    # the inner try must wrap the empty_cache call
+    assert finally_block.index("try:") < finally_block.index("torch.cuda.empty_cache()")
+    assert "cuda_poisoned" in finally_block, \
+        "a dead CUDA context is not recorded on the row"
+
+
+def test_a_dead_cuda_context_is_not_reported_as_a_miscalibrated_gate():
+    """The verdict logic reads a failing positive as 'the gate is wrong'. If the
+    GPU died, that is the opposite of what happened, and the report has to say
+    which one it was."""
+    assert "CUDA CONTEXT DIED" in GATE_SRC, \
+        "a dead CUDA context is not distinguished from a calibration failure"
+    assert "cuda_dead" in GATE_SRC
+    # the rows are still written before the distinct exit
+    i = GATE_SRC.index("cuda_dead = ")
+    j = GATE_SRC.index('wrote {out_path}')
+    assert i < j, "the CUDA check runs before the rows are written"
+    assert "return 8" in GATE_SRC[i:], \
+        "a dead CUDA context does not exit with its own code"

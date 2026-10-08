@@ -513,7 +513,21 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
                    traceback=traceback.format_exc()[-400:])
     finally:
         del model
-        torch.cuda.empty_cache()
+        # CLEANUP MUST NOT BE ABLE TO DESTROY THE STAGE'S OUTPUT.
+        #
+        # A CUDA device-side assert is reported at the next synchronising call,
+        # and empty_cache() is one. Raising from `finally` BYPASSES the handlers
+        # above -- so on 2026-10-08 one candidate poisoned the context, the
+        # assert surfaced here, and the exception escaped run_candidate, killed
+        # the list comprehension in main(), and left the gate with NO CSV AT ALL.
+        # That is the worst possible outcome for a stage whose entire purpose is
+        # to run a candidate that is known to be broken.
+        try:
+            torch.cuda.empty_cache()
+        except Exception as e:                      # noqa: BLE001
+            row.setdefault("status", "error")
+            row["cleanup_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+            row["cuda_poisoned"] = True
     return row
 
 
@@ -685,6 +699,26 @@ def main() -> int:
     rows = [run_candidate(c, _tok_for(c["target_model_name"]), args.pg19_meta,
                           gen_dir) for c in candidates]
 
+    # A DEAD GPU IS NOT A MISCALIBRATED GATE.
+    #
+    # If the CUDA context died part-way through, every row after that point fails
+    # for a reason that has nothing to do with the controls, and the verdict
+    # logic below would read those failures as "the positives failed, so the gate
+    # is wrong" -- the exact opposite of what happened. Say so instead, and still
+    # write the rows: the evidence is worth more than the verdict.
+    cuda_dead = [r for r in rows
+                 if r.get("cuda_poisoned")
+                 or "CUDA" in str(r.get("error", ""))
+                 or "CUDA" in str(r.get("cleanup_error", ""))]
+    if cuda_dead:
+        print(f"CUDA CONTEXT DIED during {len(cuda_dead)} of {len(rows)} rows; "
+              f"first at '{cuda_dead[0].get('candidate', cuda_dead[0].get('name', '?'))}'.")
+        print("This is NOT a calibration result: the gate never got to judge the "
+              "controls that follow it.")
+        for r in cuda_dead[:5]:
+            print(f"  {r.get('candidate', r.get('name', '?'))}: "
+                  f"{r.get('error') or r.get('cleanup_error')}")
+
     # The reference every candidate is judged against. It must be DECLARED, and
     # it must be measured at the candidate's own context.
     #
@@ -804,6 +838,13 @@ def main() -> int:
         if not r.get("gate_pass"):
             print(f"      -> {r.get('gate_reason')}")
     print(f"\n  wrote {out_path}")
+    if cuda_dead:
+        # Non-zero, but distinct from a calibration failure: the watcher's
+        # fail-fast treats any non-zero as an incident and pulls the logs, and
+        # the CSV above is what makes the incident diagnosable.
+        print(f"\n  CUDA CONTEXT DIED ({len(cuda_dead)} rows); the rows were "
+              f"written for diagnosis, but the gate did not run to completion.")
+        return 8
     return 0
 
 

@@ -920,7 +920,14 @@ STALL_WATCHDOG_PID=$!
 interim "STALL_WATCHDOG started pid=$STALL_WATCHDOG_PID default=${STALL_DEFAULT_MIN}min thresholds=$STALL_JSON"
 
 # ---- S0: calibrate the gate on real weights. MUST be first. ---------------
-stage gate_calibration "$(stage_timeout gate_calibration)" "$PY" scripts/mlsys_coherence_gate.py \
+# CUDA_LAUNCH_BLOCKING=1 for THIS stage only. The 10:10Z run reported a
+# device-side assert at `torch.cuda.empty_cache()`, which is a synchronising
+# call rather than the failing one -- the actual illegal operation happened
+# earlier and the async report pointed at the wrong place. Serialising kernels
+# costs speed on a stage that has a 4h timeout and used 8 minutes, and it buys
+# an error attributed to the candidate that caused it.
+stage gate_calibration "$(stage_timeout gate_calibration)" \
+  env CUDA_LAUNCH_BLOCKING=1 "$PY" scripts/mlsys_coherence_gate.py \
   --candidates configs/mlsys_gate_controls.json \
   --pg19-meta "$DOCS" \
   --out "$OUT/gate_calibration.csv" --gen-dir "$OUT/gate_calibration_generated"
