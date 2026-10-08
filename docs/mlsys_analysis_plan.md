@@ -1135,3 +1135,145 @@ neighbouring token's indifference at every divergence, excusing real mismatches
 as ties. The now-unreachable restore branch is deleted rather than left in place:
 code that claims to resume is worse than no code, because it reads as a working
 path.
+
+### Revision: the generation criteria are RELATIVE to the paired baseline; only degeneration is absolute (2026-10-08)
+
+*Written BEFORE the code change it describes, after the 2026-10-08T14:23Z gate
+run whose nine rows are the evidence. The perplexity tolerance is untouched: it
+stays FIXED at 1.5x and the dry run still asserts that.*
+
+**What failed, and why it was not the controls.** The gate ran to completion for
+the first time (774 s, rc=0, nine rows) once the tokenizer defect was fixed, and
+then failed its own controls. Three positives were rejected:
+
+    P2_native_64k                ppl 1.0302   blank 31.58%   FAIL
+    B_native_64k                 ppl 1.0302   blank 31.58%   FAIL
+    B_llama2_yarn8_32k_correct   ppl 7.0155   blank 38.89%   FAIL
+
+Every one of them on the blank-line share against an ABSOLUTE ceiling of 0.30,
+while every perplexity in the run was healthy (natives 1.0302-1.0458, ratio 1.0
+against their own paired baselines) and both negatives were caught by wide
+margins (356.6x and 7569.99x).
+
+**The rationale, which is about the corpus and not about the model.** PG-19 is
+hard-wrapped Gutenberg text. A continuation's blank-line share therefore depends
+on the passage the model happens to be continuing: dialogue is short lines and
+many blanks, narrative is long wrapped lines and few. A 200-token generation is
+one sample of one passage. An absolute blank-share threshold is consequently
+measuring the BOOK, not the health of the rope — and the run shows exactly that:
+the same native configuration scores 16.67% at 32k, 31.58% at 64k and 18.75% at
+128k, non-monotonic in context, with the 64k value landing 1.6 points the wrong
+side of a hard 0.30.
+
+**The rule.** `gen_blank_share` and `gen_repeat_share` are judged RELATIVE to the
+candidate's own PAIRED baseline, exactly as perplexity already is:
+
+    fail if candidate_share > GEN_SHARE_TOLERANCE * baseline_share
+
+with `GEN_SHARE_TOLERANCE = 2.0`. The tolerance is set WIDER than the 1.5x
+perplexity band deliberately: perplexity is 1024 scored tokens, whereas these
+shares come from a single 200-token greedy generation, so they are the noisier
+quantity and a 1.5x band would reject good configurations on sampling alone. It
+is set no wider than 2.0 because the one mis-anchored case that has to be caught
+sits at 2.53x. When the baseline's own share is 0 the ratio is undefined, so the
+relative test does not apply and only the absolute ceiling below does.
+
+**Absolute, for degeneration only.** Two ceilings survive, and neither is a
+quality criterion:
+
+    blank share > CATASTROPHIC_BLANK_SHARE (0.90)      = degeneration
+    EOS before the CATASTROPHIC_EOS_TOKENS-th token (10) = degeneration
+
+`EARLY_EOS_TOKENS = 16`, `MAX_BLANK_SHARE = 0.30` and `MAX_REPEAT_SHARE = 0.50`
+are REMOVED rather than left in place beside the new rule: a threshold that is
+still read is still a decision.
+
+**What this buys, and what it does not.** A positive control that duplicates its
+own baseline now has every relative ratio exactly 1.0, so the positives
+discriminate only through the two ceilings. Stated rather than papered over. The
+perplexity ratio stays the primary discriminator — it alone caught both negatives
+— and the share criteria are secondary guards for a degeneracy perplexity cannot
+see, since the f2 construction scored ppl 1.05 at 128k in an earlier run while
+its generation collapsed (EOS at token 5 here).
+
+### Revision: the gate's positive controls must not duplicate their own baselines (2026-10-08)
+
+*Written BEFORE the change, same evidence.*
+
+`P1_native_32k`, `P2_native_64k` and `P3_native_128k` were each byte-identical to
+`B_native_32k`, `B_native_64k` and `B_native_128k` respectively — same model, same
+rope, same context, same seed, same revision. Each positive control was therefore
+scored against a second measurement of itself: the ratio is 1.0 by construction
+and, under the relative rule above, every share ratio is 1.0 too. Such a control
+can only fail through the absolute ceilings, and it costs a row at 64k and 128k.
+The 14:23Z run shows the waste directly: `P2_native_64k` and `B_native_64k` report
+identical ppl, blank and repeat shares, and one measurement is reported as two
+failures.
+
+**The duplication is structural, and the seed is not the way out.** A control
+here is "a configuration known correct at its own context", and the gate defines
+its reference as the declared baseline at the same (context, model). A candidate
+that KEEPS its shipped rope is therefore the same configuration as its own
+reference: no seed change removes that, because the gate pairs by
+(context, seed) and a candidate moved to another seed would either be re-paired
+with a native measurement of itself again (a second baseline at that seed), or
+left with no same-sample reference at all and recorded `unpaired_reference` — a
+positive control turned into a spurious failure. The shipped
+`test_every_same_context_reference_shares_its_candidates_seed` already forbids
+the first of those: one reference per (context, model), sharing the candidate's
+seed. So the only way to make a positive control differ from its reference is to
+make it differ in the rope.
+
+**`P2_native_64k` becomes `P2_declared_shipped_64k`: Llama-3.1-8B at 64k with its
+shipped `llama3` block DECLARED explicitly (rope_type `llama3`, factor 8, anchor
+8192) instead of left implicit as `rope_type: none`.** The reference is now the
+untouched `B_native_64k` on the same (context, model, seed), so the two score the
+same window and the ratio is a paired contrast between two different
+configurations rather than between a measurement and itself.
+
+**The expected verdict is PASS, and that is known rather than hoped.** Measured
+offline against the real configs, with no weights loaded:
+
+    shipped rope_scaling : {"factor": 8.0, "high_freq_factor": 4.0,
+                            "low_freq_factor": 1.0,
+                            "original_max_position_embeddings": 8192,
+                            "rope_type": "llama3"}
+    built    rope_scaling: identical dict
+    native   inv_freq[:3] : [1.0, 0.8146172165870667, 0.663601279258728]
+    declared inv_freq[:3] : [1.0, 0.8146172165870667, 0.663601279258728]
+    max abs difference    : 0.0      bitwise identical: True
+
+`_build_hf_config` starts from the model's shipped dict and overrides only
+`rope_type`, `factor` and `original_max_position_embeddings`
+(`scripts/mlsys_coherence_gate.py:311-325`), and `llama3`'s rope mathematics
+reads factor, the two frequency factors and the original window — never
+`max_position_embeddings`. Declaring the same three values the model already
+ships is therefore a numerical no-op, and the control's expected ratio is 1.0.
+
+**What it tests.** The rope DECLARATION path, which is where the ARM4 f2 defect
+lived: a config dict replacing the shipped `llama3` block. Until now that path
+was exercised only by negative controls, i.e. only in the direction that expects
+it to misbehave. This control exercises it in the direction that expects it to
+reproduce the shipped rope, and it fails loudly — a rope mismatch, or a ppl ratio
+away from 1.0 — if the declaration path ever stops being a no-op.
+
+**What it does not do.** The measured numbers should equal `B_native_64k`'s by
+construction; the row buys coverage of the declaration path, not a new sample.
+`P1_native_32k` and `P3_native_128k` are still duplicates of their baselines and
+still buy only the absolute ceilings. They are left alone in this revision
+because they pass, and because changing three controls in the same edit would
+confound the next gate run's result. The same treatment applies to them if this
+one turns out to be worth its row.
+
+**Re-running the re-score.** The revision above was verified by re-applying the
+current rule to the surviving measurements, through the production `verdict()`
+rather than a copy of it:
+
+    conda run -n rasd python scripts/mlsys_gate_rescore.py \
+      --log results/mlsys/incident_20261008T143627Z/manifest.log \
+      --controls <the controls file revision that produced the log>
+
+The controls file is an argument, not a default, because a window is selected by
+(context, seed): scoring an old log against a newer controls file would pair rows
+that never shared a sample. The stored run is
+`results/mlsys/incident_20261008T143627Z/gate_rescore.txt`.

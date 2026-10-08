@@ -114,7 +114,7 @@ stages:
       its own context: 9 rows instead of 5, and three of them at 128k where a
       row costs ~4x a 32k row. A control with no baseline cannot be measured,
       so the extra rows are the price of the verdicts meaning anything.
-    positive_controls: [P1_native_32k, P2_native_64k, P3_native_128k]
+    positive_controls: [P1_native_32k, P2_declared_shipped_64k, P3_native_128k]
     negative_controls: [N1_arm4_f2_construction, N2_llama2_misanchored]
     sets_threshold: >
       The perplexity tolerance is set from the POSITIVE controls' measured spread

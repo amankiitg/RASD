@@ -697,15 +697,29 @@ ssh $SSH_OPTS "$SSH_USER@$IP" \
 # the evidence and then STOP, rather than sitting on a paid GPU working out what
 # happened.
 #
-# Logs, not results: the normal path already pulls results behind a sha256
-# verification, and doing that here would delay termination, which is the one
-# thing this path exists to avoid. The logs carry the reason, which is what a
-# post-mortem needs; anything the stage wrote stays on the pod.
+# Logs AND results. The original version of this function pulled logs only, on
+# the reasoning that the normal path already pulls results and that pulling
+# again would delay termination. The 2026-10-08T14:23Z gate run disproved it:
+# the gate measured all nine controls, wrote `gate_calibration.csv` and the nine
+# generated continuations, was refused by its own controls, and the watcher
+# captured the logs, terminated, and lost the CSV -- the pod stopped answering
+# ssh within about 30 seconds. The logs carry the REASON a run failed; they do
+# not carry its ROWS, and the rows are what the next attempt has to be planned
+# against. That cost a whole re-run of the gate to learn nothing new.
+#
+# What the pull must NOT do is overwrite good local work with a partial one.
+# So: everything lands in the incident directory first, and merging into
+# `results/` is conservative per file type --
+#   * the cost ledger ACCUMULATES, so it is merged row-by-row, never replaced
+#     (scripts/mlsys_merge_cost_ledger.py);
+#   * every other CSV and generated-text directory is copied in only where
+#     nothing is there yet; an existing local file wins and the pod's copy stays
+#     in the incident directory as the evidence.
 collect_incident() {   # $1 = reason (short, no newlines)
   local reason=$1 INC f
   INC="$REPO/results/mlsys/incident_$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$INC"
-  say "INCIDENT ($reason): logs -> $INC"
+  say "INCIDENT ($reason): logs + results -> $INC"
   {
     echo "reason : $reason"
     echo "utc    : $(date -u +%FT%TZ)"
@@ -727,6 +741,52 @@ collect_incident() {   # $1 = reason (short, no newlines)
     ssh $SSH_OPTS "$SSH_USER@$IP" 'cat ~/RASD/results/mlsys/RUN_LOG.txt' \
       > "$INC/RUN_LOG.txt" 2>/dev/null && say "  pulled RUN_LOG.txt"
   fi
+
+  # --- results, before we terminate anything -------------------------------
+  local POD_RESULTS="$INC/pod_results" n_csv n_gen copied kept rel src
+  mkdir -p "$POD_RESULTS"
+  # `--timeout` bounds the I/O so a wedged transfer cannot hold termination
+  # open; a failure here is reported and does not stop the shutdown.
+  if rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" --timeout=120 \
+         --exclude 'checkpoints/' --exclude 'attempts/' \
+         "$SSH_USER@$IP:~/RASD/results/mlsys/" "$POD_RESULTS/" >>"$LOG" 2>&1; then
+    n_csv=$(find "$POD_RESULTS" -name '*.csv' | wc -l | tr -d ' ')
+    n_gen=$(find "$POD_RESULTS" -type d -name '*_generated' | wc -l | tr -d ' ')
+    say "  pulled results/mlsys ($n_csv csv, $n_gen generated-text dir(s))"
+    # 1. the ledger: merged, never replaced
+    if [ -f "$POD_RESULTS/gpu_hours.csv" ]; then
+      if "$PY" "$REPO/scripts/mlsys_merge_cost_ledger.py" \
+           --local "$REPO/results/mlsys/gpu_hours.csv" \
+           --pod "$POD_RESULTS/gpu_hours.csv" > "$INC/ledger_merge.json" \
+           2>>"$LOG"; then
+        say "  ledger merge: $(cat "$INC/ledger_merge.json")"
+      else
+        say "  !!! ledger merge REFUSED: $(cat "$INC/ledger_merge.json" 2>/dev/null)"
+        say "  !!! the pod's ledger is kept at $POD_RESULTS/gpu_hours.csv"
+      fi
+    fi
+    # 2. everything else: copy only where the local path does not exist
+    copied=0
+    kept=0
+    while IFS= read -r src; do
+      [ -n "$src" ] || continue
+      rel=${src#"$POD_RESULTS/"}
+      case "$rel" in gpu_hours.csv) continue ;; esac
+      if [ -e "$REPO/results/mlsys/$rel" ]; then
+        kept=$((kept + 1))
+      else
+        mkdir -p "$(dirname "$REPO/results/mlsys/$rel")"
+        cp -R "$src" "$REPO/results/mlsys/$rel"
+        copied=$((copied + 1))
+      fi
+    done <<PODLIST
+$(find "$POD_RESULTS" \( -name '*.csv' -o -type d -name '*_generated' \) | sort)
+PODLIST
+    say "  $copied path(s) newly copied into results/mlsys, $kept already present locally (pod copy kept in $POD_RESULTS)"
+  else
+    say "  !!! results rsync FAILED; the incident holds logs only"
+  fi
+
   cp "$LOG" "$INC/watcher.log" 2>/dev/null || true
   say "INCIDENT captured at $INC"
 }

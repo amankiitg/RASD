@@ -51,14 +51,19 @@
       "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
     },
     {
-      "name": "P2_native_64k",
+      "name": "P2_declared_shipped_64k",
       "expect": "pass",
       "role": "positive",
       "target_model_name": "meta-llama/Llama-3.1-8B",
-      "rope_type": "none",
+      "rope_type": "llama3",
+      "rope_factor": 8,
+      "rope_anchor_base": 8192,
       "context_length": 65536,
       "seed": 42,
-      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "_what_it_is": "The 64k rung's positive control: Llama-3.1-8B at 64k with its SHIPPED llama3 block declared explicitly (factor 8, anchor 8192) instead of left implicit as rope_type 'none'. It is judged against B_native_64k on the same (context, model, seed), so the two score the same window and the ratio is a paired contrast. The expected verdict is PASS and it is known rather than hoped: _build_hf_config reproduces the shipped rope_scaling dict bit-for-bit from these three parameters (verified offline: identical dict, identical inv_freq, max abs diff 0.0), so the model's numerics are identical to the baseline's by construction.",
+      "_what_it_replaces": "P2_native_64k, which was byte-identical to B_native_64k (same model, rope, context, seed and revision) and therefore scored a second measurement of itself: two rows reported one measurement, and both were reported as failures. A native candidate at its baseline's own (context, model, seed) has no same-sample reference other than itself, so no seed or window change can remove that duplication without leaving the candidate unpaired; the duplication is structural, not accidental. Declaring the rope removes it, because the candidate and the reference are then different configurations.",
+      "_what_it_tests": "The rope DECLARATION path -- the path the ARM4 f2 defect lived in, where a config dict replaced the shipped llama3 block. Today that path is exercised only by negative controls, i.e. only in the direction of expecting it to fail; this control exercises it in the direction of expecting it to reproduce the shipped rope, and it fails loudly (rope mismatch, or a ppl ratio away from 1.0) if the declaration path ever stops being a no-op."
     },
     {
       "name": "P3_native_128k",

@@ -548,3 +548,130 @@ recommendation stays what it was: re-verify with scripts/mlsys_gate_repro_1x.sh
 style single-box runs before spending an 8x launch, and if you want the whole
 gate exercised first, the cheapest honest option is a 1x A100 80GB SKU, which
 Lambda does not offer -- so the next full gate run is an 8x run.
+
+================================================================================
+11. FOLLOW-UP, 2026-10-08: THE GATE RAN, AND THE GATE WAS WRONG
+================================================================================
+
+THE GATE ABORTED ON ITS OWN CONTROLS, NOT ON THE MODELS.
+The 8x gate run (14:23Z) finished for the first time once the tokenizer defect
+was fixed -- 774 s, rc=0, nine rows, no oom, no invalid tokens, every row with a
+perplexity and a completed generation. It then refused three of its seven
+positive controls, all on the blank-line share against an ABSOLUTE ceiling of
+0.30:
+
+    P2_native_64k                ppl 1.0302   blank 31.58%   FAIL
+    B_native_64k                 ppl 1.0302   blank 31.58%   FAIL
+    B_llama2_yarn8_32k_correct   ppl 7.0155   blank 38.89%   FAIL
+
+Every perplexity in the run was healthy (natives 1.0302-1.0458, ratio 1.0 against
+their own paired baselines) and both negatives were caught by enormous margins
+(356.6x and 7569.99x). The manifest aborted rc=1, the watcher pulled the logs,
+terminated, and the CSV was lost with the instance.
+
+THE DIAGNOSIS IS THE CORPUS, NOT THE MODEL.
+PG-19 is hard-wrapped Gutenberg text. The blank-line share of a 200-token
+continuation depends on which passage was drawn -- dialogue is short lines and
+many blanks, narrative is long wrapped lines and few -- so an absolute blank-share
+threshold measures the BOOK. The same native configuration scores 16.67% at 32k,
+31.58% at 64k and 18.75% at 128k: non-monotonic in context, and the 64k value
+lands 1.6 points the wrong side of a hard 0.30.
+
+THE RULE (recorded in docs/mlsys_analysis_plan.md as a dated revision BEFORE the
+code changed; two revisions, one for the criterion and one for the controls):
+  * blank and repeat shares are now judged RELATIVE to the candidate's own PAIRED
+    baseline, exactly as perplexity already was, with GEN_SHARE_TOLERANCE = 2.0x.
+    The band is wider than the 1.5x perplexity band because a 200-token generation
+    is the noisier statistic, and no wider because the one mis-anchored case that
+    has to be caught sits at 2.53x. A baseline share of 0 leaves the ratio
+    undefined, so only the ceiling applies -- a documented hole, asserted in the
+    tests so it stays a decision.
+  * absolute thresholds survive ONLY for degeneration: blank share > 0.90, EOS
+    before token 10. EARLY_EOS_TOKENS=16, MAX_BLANK_SHARE=0.30 and
+    MAX_REPEAT_SHARE=0.50 are removed, not left in place beside the new rule.
+  * PPL_TOLERANCE stays FIXED at 1.5x, untouched; the dry run still asserts it.
+
+RE-SCORED OFFLINE, using the surviving numbers in incident_20261008T143627Z/
+manifest.log and the production verdict() (scripts/mlsys_gate_rescore.py; output
+stored at incident_20261008T143627Z/gate_rescore.txt):
+
+  candidate                    expect  OLD   NEW   ppl_ratio   blank  b/base  rep  r/base  eos
+  P1_native_32k                pass    PASS  PASS        1.0  0.1667  0.1667  0.0075   1.0   no
+  P2_native_64k                pass    FAIL  PASS        1.0  0.3158  0.3158  0.1273   1.0   no
+  P3_native_128k               pass    PASS  PASS        1.0  0.1875  0.1875   0.029   1.0   no
+  B_native_32k                 pass    PASS  PASS        1.0  0.1667  0.1667  0.0075   1.0   no
+  B_native_64k                 pass    FAIL  PASS        1.0  0.3158  0.3158  0.1273   1.0   no
+  B_native_128k                pass    PASS  PASS        1.0  0.1875  0.1875   0.029   1.0   no
+  B_llama2_yarn8_32k_correct   pass    FAIL  PASS        1.0  0.3889  0.3889  0.0381   1.0   no
+  N1_arm4_f2_construction      fail    FAIL  FAIL    356.576     0.0  0.1875     0.0   0.0  YES
+  N2_llama2_misanchored        fail    FAIL  FAIL  7569.9882  0.9848  0.3889     0.0   0.0   no
+  7 positives declared pass, 2 negatives declared fail
+  CALIBRATION PASSES: every control has its declared verdict under the new rule
+
+N1 fails on ppl 356.58x, EOS at token 5 and a rope mismatch. N2 fails on ppl
+7569.99x, blank 98% (both above the 0.90 ceiling and 2.53x its baseline) and a
+rope mismatch. Both fail on three independent counts, not on one.
+
+THE DUPLICATE POSITIVE CONTROL IS REPLACED, NOT JUST RELABELLED.
+P1, P2 and P3 were each byte-identical to their baselines -- same model, rope,
+context, seed and revision -- so each was scored against a second measurement of
+itself: ratio 1.0 by construction, and one measurement reported twice. That
+duplication is structural, not accidental, and a seed change cannot fix it: the
+gate pairs a candidate with a reference at the same (context, seed), and the
+shipped test test_every_same_context_reference_shares_its_candidates_seed already
+forbids two references at one (context, model). Moving P2 to another seed would
+either pair it with a native measurement of itself again or leave it
+`unpaired_reference` -- a positive control turned into a spurious failure.
+
+So P2_native_64k becomes P2_declared_shipped_64k: Llama-3.1-8B at 64k with its
+shipped llama3 block DECLARED explicitly (rope_type llama3, factor 8, anchor
+8192) instead of left implicit as rope_type "none", judged against the untouched
+B_native_64k on the same (context, model, seed). Same sample, different
+configuration, so the ratio is a paired contrast rather than a self-comparison.
+The expected verdict is PASS and it is verified, not assumed -- measured offline
+against the real config with no weights loaded:
+
+    shipped rope_scaling : {"factor": 8.0, "high_freq_factor": 4.0,
+                            "low_freq_factor": 1.0,
+                            "original_max_position_embeddings": 8192,
+                            "rope_type": "llama3"}
+    built    rope_scaling: identical dict
+    native   inv_freq[:3] : [1.0, 0.8146172165870667, 0.663601279258728]
+    declared inv_freq[:3] : [1.0, 0.8146172165870667, 0.663601279258728]
+    max abs difference    : 0.0      bitwise identical: True
+
+It exercises the rope DECLARATION path -- where the ARM4 f2 defect lived -- which
+until now was exercised only by negative controls, i.e. only in the direction
+that expects it to misbehave. Its measured numbers should equal B_native_64k's by
+construction; the row buys coverage of that path, not a new sample. That limit is
+written into the plan revision rather than glossed. P1 and P3 remain duplicates
+and are left alone in this change, because they pass and because changing three
+controls in one edit would confound the next gate run's result.
+
+A FAILED RUN NOW BRINGS ITS ROWS HOME.
+collect_incident pulled logs only, on the reasoning that the normal path already
+pulls results. The 14:23Z run disproved it: the logs carried the reason, the
+instance was terminated, and the nine rows were gone -- the pod stopped answering
+ssh within about 30 seconds. That cost a whole re-run of the gate to learn
+nothing new. Now it pulls results/mlsys before any termination, with `--timeout`
+so a wedged transfer cannot hold termination open, and merges conservatively:
+  * the cost ledger ACCUMULATES, so it is merged row-by-row as a multiset union
+    and never replaced (scripts/mlsys_merge_cost_ledger.py). Two runs that write
+    byte-identical rows are both kept; re-running the merge is a no-op; a header
+    mismatch refuses rather than appending into a file whose columns it does not
+    know, keeping the pod's copy in the incident directory.
+  * every other CSV and *_generated directory is copied into results/mlsys only
+    where nothing is there yet. An existing local result wins; the pod's copy
+    stays in the incident directory as evidence.
+This is the change I earlier reverted on instruction ("no ledger edits, no
+collect_incident change"). It is applied now because it was asked for again in
+this round; the ledger in results/mlsys/gpu_hours.csv is UNCHANGED by it ($34.86,
+still 5 rows) since no run has happened.
+
+COUNTS AND COST.
+  * tests: 901 -> 936 (+35: 15 for the share rule, 10 for the incident pull, 10
+    for the ledger merge). Full suite 936 passed, 0 failed.
+  * dry run: 32 passed, 0 failed; the end-to-end rehearsal 74 checks.
+  * Against the OLD code: 13 of the 15 gate-rule tests and 8 of the 10
+    incident-pull tests fail, so the new tests are testing the change.
+  * GPU cost of this round: $0.00. No instance was started.

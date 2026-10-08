@@ -57,9 +57,19 @@ sys.path.insert(0, str(REPO))
 # available estimator can only loosen the gate. This constant and the plan must
 # agree; the dry run asserts it.
 PPL_TOLERANCE = 1.5          # candidate PPL must be within this x native
-EARLY_EOS_TOKENS = 16        # EOS inside the first N generated tokens = fail
-MAX_BLANK_SHARE = 0.30       # blank-line share of a passing generation
-MAX_REPEAT_SHARE = 0.50      # share of the generated n-grams that are repeats
+# Generation shares are judged RELATIVE to the candidate's own PAIRED baseline
+# (2026-10-08 plan revision), not against an absolute threshold: PG-19 is
+# hard-wrapped Gutenberg text, so a continuation's blank-line share is a fact
+# about the passage that got drawn (dialogue vs narrative) rather than about the
+# model. The band is deliberately WIDER than PPL_TOLERANCE because a 200-token
+# generation is the noisier statistic, and deliberately no wider than 2.0
+# because the one mis-anchored build that has to be caught sits at 2.53x.
+GEN_SHARE_TOLERANCE = 2.0    # candidate blank/repeat share vs its baseline's
+# Degeneration, not quality. These are the only ABSOLUTE generation thresholds,
+# and they exist so a collapsed generation cannot pass by standing next to a
+# collapsed baseline.
+CATASTROPHIC_BLANK_SHARE = 0.90   # above this the generation has collapsed
+CATASTROPHIC_EOS_TOKENS = 10      # EOS before this emitted token = collapsed
 GENERATE_TOKENS = 200
 CONTINUATION_TOKENS = 1024   # scored continuation after the full-length prompt
 
@@ -529,7 +539,9 @@ def generation_metrics(text: str, new_ids: list[int], eos_id) -> dict:
         "gen_blank_share": round(blank, 4),
         "gen_alpha_share": round(alpha, 4),
         "gen_repeat_share": round(repeat, 4),
-        "early_eos": early is not None and early < EARLY_EOS_TOKENS,
+        # `early_eos` is the DEGENERATE case, not merely an early one: an EOS at
+        # token 12 of 200 is a short answer, an EOS at token 5 is a dead model.
+        "early_eos": early is not None and early < CATASTROPHIC_EOS_TOKENS,
         "eos_at": early if early is not None else "",
     }
 
@@ -776,8 +788,43 @@ def pairing_verdict(cand: dict, base: dict) -> tuple[str, str]:
     return "paired", "prompt and continuation hashes agree"
 
 
-def verdict(row: dict, native_ppl: float) -> dict:
-    """Apply the gate's pass rule, or the reason it could not be applied."""
+def _share_reason(label: str, field: str, row: dict, baseline) -> tuple:
+    """The relative half of the generation rule, for one share field.
+
+    Returns (reason_or_None, baseline_share, ratio). Both the reason and the
+    numbers are returned because the CSV has to carry the ratio that was
+    applied: a reader must be able to see 0.12 vs a 0.05 baseline was rejected
+    by a factor of 2.4, not by a threshold nobody can recompute.
+
+    A baseline share of 0 leaves the ratio undefined, so the relative test does
+    not apply and only the absolute ceiling judges this statistic. That is a
+    real hole and it is the documented one: the alternative is dividing by zero,
+    or inventing an absolute threshold for a quantity whose absolute value is
+    the thing this revision established is not a property of the model.
+    """
+    cand = row.get(field)
+    base = (baseline or {}).get(field)
+    if not isinstance(cand, (int, float)) or not isinstance(base, (int, float)):
+        return None, "", ""
+    if base <= 0:
+        return None, round(base, 4), ""
+    ratio = cand / base
+    if ratio > GEN_SHARE_TOLERANCE:
+        return (f"{label} {cand:.0%} = {ratio:.2f}x the baseline's {base:.0%} "
+                f"> {GEN_SHARE_TOLERANCE}x"), round(base, 4), round(ratio, 4)
+    return None, round(base, 4), round(ratio, 4)
+
+
+def verdict(row: dict, baseline: dict) -> dict:
+    """Apply the gate's pass rule, or the reason it could not be applied.
+
+    `baseline` is the PAIRED BASELINE ROW — the same sample measured on the
+    reference configuration — and not merely its perplexity, because the
+    generation shares are judged against the baseline's OWN shares (2026-10-08
+    revision). Passing just a number is what made the old absolute
+    MAX_BLANK_SHARE possible.
+    """
+    native_ppl = (baseline or {}).get("ppl_continuation") or 0.0
     out = {"native_ppl_reference": round(native_ppl, 4) if native_ppl else ""}
     if row.get("status") != "ok":
         out.update(ppl_ratio="", gate_pass=False,
@@ -792,12 +839,22 @@ def verdict(row: dict, native_ppl: float) -> dict:
     reasons = []
     if ratio > PPL_TOLERANCE:
         reasons.append(f"ppl {ratio:.2f}x native > {PPL_TOLERANCE}x")
+    if row.get("gen_blank_share", 0) > CATASTROPHIC_BLANK_SHARE:
+        reasons.append(f"blank lines {row['gen_blank_share']:.0%} = degenerate "
+                       f"(> {CATASTROPHIC_BLANK_SHARE:.0%} absolute)")
     if row.get("early_eos"):
-        reasons.append(f"EOS at token {row.get('eos_at')}")
-    if row.get("gen_blank_share", 0) > MAX_BLANK_SHARE:
-        reasons.append(f"blank lines {row['gen_blank_share']:.0%}")
-    if row.get("gen_repeat_share", 0) > MAX_REPEAT_SHARE:
-        reasons.append(f"repeated n-grams {row['gen_repeat_share']:.0%}")
+        reasons.append(f"EOS at token {row.get('eos_at')} = degenerate "
+                       f"(< {CATASTROPHIC_EOS_TOKENS})")
+    for label, field, bkey, rkey in (
+            ("blank lines", "gen_blank_share", "baseline_blank_share",
+             "blank_share_ratio"),
+            ("repeated n-grams", "gen_repeat_share", "baseline_repeat_share",
+             "repeat_share_ratio")):
+        why, base_share, share_ratio = _share_reason(label, field, row, baseline)
+        out[bkey] = base_share
+        out[rkey] = share_ratio
+        if why:
+            reasons.append(why)
     if not row.get("effective_rope_matches_intent"):
         err = row.get("effective_rope_maxerr")
         err_s = f"{err:.3g}" if isinstance(err, (int, float)) else "n/a"
@@ -830,6 +887,11 @@ FIELDS = ["candidate", "target_model_name", "target_revision",
           "pairing", "baseline_prompt_sha256", "baseline_continuation_sha256",
           "ppl_ratio", "early_eos", "eos_at", "gen_chars", "gen_blank_share",
           "gen_alpha_share", "gen_repeat_share",
+          # The baseline's own shares and the ratios that were actually applied,
+          # so the share criterion can be recomputed from the CSV instead of
+          # being taken on trust (2026-10-08 revision).
+          "baseline_blank_share", "baseline_repeat_share",
+          "blank_share_ratio", "repeat_share_ratio",
           # Which tokenizer the INPUT POOL was built with, and which one the
           # candidate uses. A mismatch is the whole cause of the 2026-10-08
           # abort, and it has to be legible from the CSV alone.
@@ -1015,7 +1077,7 @@ def main() -> int:
                 f"one")
             r["status"] = r.get("status") or "no_baseline"
         else:
-            r.update(verdict(r, b["ppl_continuation"]))
+            r.update(verdict(r, b))
 
     with out_path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)

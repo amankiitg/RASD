@@ -164,25 +164,38 @@ else bad "gate CSV is missing required fields"; fi
 
 # A gate that cannot reject is not a gate. Check the pure verdict rule against
 # synthetic rows: a clean row passes, and each defect fails on its own reason.
+# The generation shares are judged against the PAIRED BASELINE ROW (2026-10-08
+# revision), so every case passes the row it would have been paired with.
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO" $PY - <<'VEOF'
 import sys
 from scripts.mlsys_coherence_gate import verdict
-NATIVE = 10.0
+BASE = {"status": "ok", "ppl_continuation": 10.0, "gen_blank_share": 0.05,
+        "gen_repeat_share": 0.10}
 clean = {"status": "ok", "ppl_continuation": 12.0, "early_eos": False,
          "gen_blank_share": 0.05, "gen_repeat_share": 0.10,
          "effective_rope_matches_intent": True}
 cases = [
-    ("clean row", clean, True),
-    ("perplexity 1.6x native", {**clean, "ppl_continuation": 16.0}, False),
-    ("early EOS", {**clean, "early_eos": True, "eos_at": 3}, False),
-    ("blank-line collapse", {**clean, "gen_blank_share": 0.98}, False),
-    ("repetition collapse", {**clean, "gen_repeat_share": 0.9}, False),
-    ("rope mismatch", {**clean, "effective_rope_matches_intent": False}, False),
-    ("not measured", {"status": "oom"}, False),
+    ("clean row", clean, BASE, True),
+    ("perplexity 1.6x native", {**clean, "ppl_continuation": 16.0}, BASE, False),
+    ("degenerate EOS", {**clean, "early_eos": True, "eos_at": 3}, BASE, False),
+    ("blank-line collapse", {**clean, "gen_blank_share": 0.98}, BASE, False),
+    # The relative rule, in both directions: 2.4x the baseline's own share is
+    # rejected although it is nowhere near the absolute ceiling, and 1.8x is
+    # not. Without these two the suite would pass a rule that had quietly
+    # reverted to an absolute threshold.
+    ("blank share 2.4x baseline", {**clean, "gen_blank_share": 0.12}, BASE, False),
+    ("blank share 1.8x baseline", {**clean, "gen_blank_share": 0.09}, BASE, True),
+    # A zero baseline share leaves the ratio undefined, so only the ceiling
+    # applies. Documented hole, asserted so it stays a decision.
+    ("zero baseline share", {**clean, "gen_blank_share": 0.5},
+     {**BASE, "gen_blank_share": 0.0}, True),
+    ("repetition collapse", {**clean, "gen_repeat_share": 0.9}, BASE, False),
+    ("rope mismatch", {**clean, "effective_rope_matches_intent": False}, BASE, False),
+    ("not measured", {"status": "oom"}, BASE, False),
 ]
 bad = 0
-for label, row, want in cases:
-    got = verdict(row, NATIVE)["gate_pass"]
+for label, row, base, want in cases:
+    got = verdict(row, base)["gate_pass"]
     mark = "ok " if got == want else "BAD"
     if got != want: bad += 1
     print(f"    {mark} {label:<26} -> gate_pass={got} (want {want})")
