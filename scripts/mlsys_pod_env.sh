@@ -141,6 +141,15 @@ fi
   echo "export TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE"
   echo "export PIP_CACHE_DIR=$PIP_CACHE_DIR"
   echo "export PYTHONPATH=$PYTHONPATH"
+  # No W&B credential is forwarded to the pod, so wandb must be told not to ask
+  # for one. Without this, `wandb.init` raises
+  # `UsageError: No API key configured` -- which killed engine_cap_smoke 24 s in
+  # on 2026-10-08 having done no GPU work, and would have killed all six stages
+  # that run run_experiment. run_experiment now downgrades a wandb failure to a
+  # warning as well; this says the same thing one layer earlier, so the pod
+  # never even tries to reach W&B. `disabled` (not `offline`) because there is
+  # no credential to sync with later.
+  echo "export WANDB_MODE=disabled"
   printf '%s\n' "$NCCL_SETTINGS" | sed 's/^/export /'
 } > "$REPO/.pod_env.sh"
 echo "  wrote $REPO/.pod_env.sh (cache, NCCL and allocator settings)"

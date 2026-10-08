@@ -246,13 +246,24 @@ sys.path.insert(0, repo)
 from run_experiment import _guard_output_collision
 agg = pathlib.Path(work) / "pg19_multiseed.csv"
 agg.write_text("run_id,level_id,group\nPG19_ctx4k_s123,PG19_ctx4k,PG19\n")
+# Ownership is the stage's OWN planned level ids, not a pattern in the stage
+# name. The pattern version could never own the campaign's pairs (stage
+# `engine_cap_smoke`, levels `CAPS_prefix64`) and, called from the worker with
+# no --stage-id, it refused the SECOND ROW of every stage.
 try:
-    _guard_output_collision(agg, "pg19_short_target"); print("  NOT refused"); sys.exit(1)
+    _guard_output_collision(agg, "pg19_short_target",
+                            planned_level_ids={"pg19_short"})
+    print("  NOT refused"); sys.exit(1)
 except SystemExit as e:
     if "REFUSING" not in str(e): raise
     print("  refused the collision with an unrelated aggregate")
-_guard_output_collision(agg, "PG19_ctx4k")
+_guard_output_collision(agg, "PG19_ctx4k", planned_level_ids={"PG19_ctx4k"})
 print("  allowed the file's own stage")
+# ...and the same stage coming back for its second row, which is what failed on
+# the pod: the file now holds a row this stage wrote.
+_guard_output_collision(agg, "PG19_ctx4k",
+                        planned_level_ids={"PG19_ctx4k", "PG19_ctx1M"})
+print("  allowed a later row of the same stage")
 sys.exit(0)
 PYEOF
 [ $? -eq 0 ] && ok "guard refuses a foreign filename and allows the owner" \
@@ -1907,7 +1918,13 @@ for want, why in (("conda create -n", "the env is never created"),
                   ("requirements-lock.txt", "the pins are not the locked ones"),
                   ("--no-build-isolation", "flash-attn cannot build"),
                   ("diptest", "diptest is not in the lock file"),
-                  ("torch.cuda.is_available", "CUDA is never proven")):
+                  ("torch.cuda.is_available", "CUDA is never proven"),
+                  # No W&B credential reaches the pod, so wandb must be told not
+                  # to ask for one. Its absence killed engine_cap_smoke 24 s in
+                  # on 2026-10-08, before any GPU work, and would have killed
+                  # every stage that runs run_experiment.
+                  ("WANDB_MODE=disabled",
+                   "wandb will ask for a credential the pod does not have")):
     if want not in podenv:
         fails.append(f"mlsys_pod_env.sh: {why}")
 for f in fails:

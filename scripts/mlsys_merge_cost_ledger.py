@@ -21,6 +21,16 @@ are both kept, and running the merge twice is a no-op the second time. Order is
 preserved -- local rows first, then the pod's new rows in the order the pod wrote
 them.
 
+LINE ENDINGS ARE PART OF THE DATA
+---------------------------------
+The ledger committed in this repo uses CRLF; the pod appends with `echo` and
+`awk`, which write LF. Reading with universal newlines and writing the result
+back therefore rewrote every line of a file the merge had not been asked to
+change -- a 7-line ledger showed as 7 deletions and 7 insertions. So the text is
+read with `newline=""` and each row keeps its own terminator: rows that are kept
+are re-emitted byte for byte, and appended rows are written in the file's own
+convention. Only the comparison ignores the terminator.
+
 A header mismatch refuses rather than appending rows into a file whose columns it
 does not know. The caller keeps the pod's copy in the incident directory, so
 refusing loses nothing.
@@ -33,12 +43,40 @@ from collections import Counter
 from pathlib import Path
 
 
+def _read_raw(path: Path) -> str:
+    """Read without newline translation: the bytes decide the terminator."""
+    if not path.exists():
+        return ""
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def _lines(text: str) -> list:
+    """The file's rows, each keeping its own line terminator."""
+    if not text.strip():
+        return []
+    rows = text.split("\n")
+    if rows and rows[-1] == "":
+        rows.pop()                      # the piece after the final newline
+    return [r for r in rows if r.strip()]
+
+
+def _bare(row: str) -> str:
+    """A row without its terminator, for comparison and de-duplication."""
+    return row[:-1] if row.endswith("\r") else row
+
+
+def _terminator(rows: list) -> str:
+    """The convention this file uses, taken from its first row."""
+    return "\r" if rows and rows[0].endswith("\r") else ""
+
+
 def parse(text: str) -> tuple:
-    """(header, body lines), ignoring blank lines."""
-    lines = [l for l in text.splitlines() if l.strip()]
-    if not lines:
+    """(header, body lines), terminators intact."""
+    rows = _lines(text)
+    if not rows:
         return "", []
-    return lines[0], lines[1:]
+    return rows[0], rows[1:]
 
 
 def merge(local_text: str, pod_text: str) -> dict:
@@ -54,31 +92,34 @@ def merge(local_text: str, pod_text: str) -> dict:
     if not local_text.strip():
         if not pod_text.strip():
             return {"status": "no_pod_rows", "text": "", "appended": 0}
-        _, prows = parse(pod_text)
-        return {"status": "created", "text": pod_text, "appended": len(prows)}
+        return {"status": "created", "text": pod_text,
+                "appended": len(parse(pod_text)[1])}
 
-    local_header, local_rows = parse(local_text)
-    pod_header, pod_rows = parse(pod_text)
+    local_rows = _lines(local_text)
+    pod_rows = _lines(pod_text)
     if not pod_rows:
         return {"status": "no_pod_rows", "text": local_text, "appended": 0}
-    if local_header != pod_header:
+    if _bare(local_rows[0]) != _bare(pod_rows[0]):
         return {"status": "header_mismatch", "text": local_text, "appended": 0,
-                "local_header": local_header, "pod_header": pod_header}
+                "local_header": _bare(local_rows[0]),
+                "pod_header": _bare(pod_rows[0])}
 
-    have = Counter(local_rows)
+    cr = _terminator(local_rows)
+    have = Counter(_bare(r) for r in local_rows[1:])
     seen = Counter()
     add = []
-    for line in pod_rows:
-        seen[line] += 1
-        if seen[line] > have[line]:
-            add.append(line)
+    for row in pod_rows[1:]:
+        bare = _bare(row)
+        seen[bare] += 1
+        if seen[bare] > have[bare]:
+            add.append(bare + cr)       # written in the LOCAL file's convention
 
-    lines = [local_header] + local_rows + add
+    out = local_rows + add
     return {"status": "merged" if add else "unchanged",
-            "text": "\n".join(lines) + "\n",
+            "text": "\n".join(out) + "\n",
             "appended": len(add),
-            "local_rows": len(local_rows),
-            "total_rows": len(local_rows) + len(add)}
+            "local_rows": len(local_rows) - 1,
+            "total_rows": len(local_rows) - 1 + len(add)}
 
 
 def main() -> int:
@@ -89,12 +130,13 @@ def main() -> int:
                     help="write here instead of in place (default: --local)")
     args = ap.parse_args()
 
-    local_text = args.local.read_text() if args.local.exists() else ""
-    pod_text = args.pod.read_text() if args.pod.exists() else ""
+    local_text = _read_raw(args.local)
+    pod_text = _read_raw(args.pod)
     result = merge(local_text, pod_text)
     out = args.out or args.local
     if result["status"] in ("created", "merged") and result["text"]:
-        out.write_text(result["text"])
+        with open(out, "w", encoding="utf-8", newline="") as f:
+            f.write(result["text"])
     summary = {k: v for k, v in result.items() if k != "text"}
     print(json.dumps(summary, sort_keys=True))
     return 2 if result["status"] == "header_mismatch" else 0

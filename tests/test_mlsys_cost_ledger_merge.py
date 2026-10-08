@@ -133,3 +133,48 @@ def test_the_cli_merges_in_place_and_reports_what_it_did(tmp_path):
     assert json.loads(proc.stdout) == {"appended": 1, "local_rows": 1,
                                        "status": "merged", "total_rows": 2}
     assert local.read_text() == POD
+
+
+# --------------------------------------------------------------------------
+# line endings are part of the data
+#
+# The ledger committed in this repo is CRLF; the pod appends with `echo` and
+# `awk`, which write LF. The first version of this module read with universal
+# newlines and wrote the result back, so a merge that appended two rows also
+# rewrote the five rows it was keeping: `git diff` showed a 7-line file as 7
+# deletions and 7 insertions, which is how the rewrite was caught.
+# --------------------------------------------------------------------------
+
+CRLF_LOCAL = HEADER + "\r\nARM1,600,8,1.3,29.0\r\n"
+LF_POD = HEADER + "\nARM1,600,8,1.3,29.0\nARM2,900,8,2.0,44.64\n"
+
+
+def test_kept_rows_keep_their_bytes_when_the_local_file_is_crlf():
+    m = _load().merge(CRLF_LOCAL, LF_POD)
+    assert m["appended"] == 1
+    assert m["text"].startswith(CRLF_LOCAL), "an existing row was rewritten"
+    assert m["text"].endswith("ARM2,900,8,2.0,44.64\r\n"), (
+        "the appended row did not adopt the local file's line ending")
+    assert m["text"].count("\r\n") == 3, m["text"]
+    assert m["text"].count("\n") == 3, "a bare LF was introduced"
+
+
+def test_a_pod_that_adds_nothing_returns_the_local_file_byte_for_byte():
+    m = _load().merge(CRLF_LOCAL, HEADER + "\nARM1,600,8,1.3,29.0\n")
+    assert m["status"] == "unchanged"
+    assert m["text"] == CRLF_LOCAL
+
+
+def test_the_committed_ledger_is_never_rewritten_by_a_merge():
+    """The regression test, on the real file: merging into it must leave every
+    existing byte where it was."""
+    mod = _load()
+    real = (REPO / "results" / "mlsys" / "gpu_hours.csv").read_bytes()
+    assert b"\r\n" in real, (
+        "the committed ledger is no longer CRLF, so this test's premise no "
+        "longer holds and the bug it catches would go unseen")
+    m = mod.merge(real.decode(), HEADER + "\nnew_stage,60,8,0.1,0.50\n")
+    assert m["appended"] == 1
+    assert m["text"].encode().startswith(real), (
+        "the merge rewrote bytes it was not asked to change")
+    assert m["text"].encode().endswith(b"new_stage,60,8,0.1,0.50\r\n")

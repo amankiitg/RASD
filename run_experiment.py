@@ -56,6 +56,7 @@ RESULTS_DIR = Path("results/ablations")
 RESULTS_CSV  = RESULTS_DIR / "ablations.csv"
 
 def _guard_output_collision(output_csv: str | Path, stage_id: str,
+                            planned_level_ids=None,
                             overwrite: bool = False) -> None:
     """Refuse to write a stage's results over an artifact it does not own.
 
@@ -75,6 +76,28 @@ def _guard_output_collision(output_csv: str | Path, stage_id: str,
     This is deliberately a hard failure: a silently overwritten aggregate is
     indistinguishable from a correct result afterwards, which is the failure
     class this project keeps having to reconstruct from git history.
+
+    OWNERSHIP IS THE STAGE'S OWN LEVEL IDS, NOT A NAME PATTERN
+    ---------------------------------------------------------
+    The first version of this decided ownership by pattern-matching the stage
+    id's first token against the recorded level ids (`stage_id.split("_")[0] in
+    lv`). That can never be true for this campaign: the stage is
+    `engine_cap_smoke` while its levels are `CAPS_prefix64`, so the test failed
+    for every pair and the guard refused. Worse, it was called from the WORKER,
+    whose argv never carried --stage-id, so the stage it compared was the
+    literal string "unnamed" -- and the worker does not even write the CSV: it
+    writes a per-run `.tmp` that the parent reads and appends.
+
+    The effect was that the second row of every stage died with "subprocess
+    produced no output", i.e. every measurement stage in the campaign. Found by
+    the 1x run_experiment probe on 2026-10-08 before it could cost another 8x
+    launch.
+
+    So ownership is now exact and the call moved to the PARENT, the only writer:
+    the file is this stage's if every level id in it is one this stage plans to
+    write. A previous attempt of the same stage passes (its levels are the same),
+    which is what makes a retry or --resume work; a file holding anything else
+    is refused.
     """
     path = Path(output_csv)
     if not path.exists() or overwrite:
@@ -85,19 +108,20 @@ def _guard_output_collision(output_csv: str | Path, stage_id: str,
         existing = sorted({str(x) for x in df.get("level_id", []) if str(x)})
     except Exception:
         existing = []
-    # A stage owns the file if at least one of its rows was produced by a
-    # level under this stage's id, or the file has no level_id column at all
-    # (then it is not a per-stage result CSV and is not ours to check).
+    # No rows, or no level_id column at all, means this is not a per-stage
+    # result CSV and it is not ours to check.
     if not existing:
         return
-    if any(stage_id.split("_")[0] in lv or lv.startswith(stage_id.split("_")[0])
-           for lv in existing):
+    planned = {str(x) for x in (planned_level_ids or []) if str(x)}
+    foreign = [lv for lv in existing if lv not in planned]
+    if not foreign:
         return
     raise SystemExit(
-        f"REFUSING to write {path} for stage {stage_id!r}: the file already "
-        f"holds rows from {existing[:4]}{'...' if len(existing) > 4 else ''}. "
-        f"Give this stage its own filename (recommended) or pass "
-        f"--overwrite-stage if you really mean to replace it."
+        f"REFUSING to write {path} for stage {stage_id!r}: the file holds rows "
+        f"from {foreign[:4]}{'...' if len(foreign) > 4 else ''}, which this "
+        f"stage does not produce. Give this stage its own filename "
+        f"(recommended) or pass --overwrite-stage if you really mean to "
+        f"replace it."
     )
 
 
@@ -515,28 +539,59 @@ def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
 
 # ---------------------------------------------------------------------------
 # wandb helpers
+#
+# W&B is a LOGGING SIDE-CHANNEL. Every run's deliverable is the CSV row written
+# beside these calls, so nothing here may kill a stage: a credentials or network
+# problem with wandb has to downgrade to "no wandb logging" and leave the
+# measurement intact.
+#
+# That intent was already in the code -- `ImportError` was handled with "wandb
+# not installed -- skipping" -- but only for a MISSING wandb. On 2026-10-08 an
+# INSTALLED wandb with no API key raised `wandb.errors.errors.UsageError: No API
+# key configured` out of `wandb.init`, which is not an ImportError. It
+# propagated out of rank 0 of engine_cap_smoke, torchrun turned it into
+# ChildFailedError, and the stage failed after 24 s having done no GPU work at
+# all. Every stage that runs run_experiment would have failed the same way: six
+# of the nine approved ones.
+#
+# So all three calls are non-fatal, and each one reports what it lost.
 # ---------------------------------------------------------------------------
 
 def init_wandb(run: dict, project: str):
     try:
         import wandb
+    except ImportError:
+        log.warning("wandb not installed — skipping wandb logging.")
+        return None
+    try:
         return wandb.init(
             project=project,
             name=run["run_id"],
             config={k: v for k, v in run.items() if k not in ("run_id", "group", "level_id", "debug")},
             reinit=True,
         )
-    except ImportError:
-        log.warning("wandb not installed — skipping wandb logging.")
+    except Exception as e:                      # noqa: BLE001
+        # Auth, network, protocol version, an unloggable config value: the ways
+        # the wandb client can fail are open-ended and none of them is a fact
+        # about the model. Record the reason and carry on.
+        log.warning("wandb init failed (%s: %s) — skipping wandb logging.",
+                    type(e).__name__, e)
         return None
 
 
 def log_wandb(wb_run, metrics: dict):
     if wb_run is None:
         return
-    import wandb
-    wb_run.log(metrics)
-    wb_run.finish()
+    try:
+        import wandb
+        wb_run.log(metrics)
+        wb_run.finish()
+    except Exception as e:                      # noqa: BLE001
+        # Hardened for the same reason as init. A dropped wandb buffer already
+        # cost the 2026-05-10 ctx512k/ctx1M failures their stack-trace context,
+        # and a raise HERE would discard a run that has already been measured.
+        log.warning("wandb log failed (%s: %s) — the row is still written.",
+                    type(e).__name__, e)
 
 
 # ---------------------------------------------------------------------------
@@ -1354,7 +1409,13 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             err_dir.mkdir(parents=True, exist_ok=True)
             (err_dir / f"{run['run_id']}.traceback.txt").write_text(tb_str)
         if wb_run is not None:
-            import wandb; wb_run.finish(exit_code=1)
+            # Never let a wandb failure replace the exception being handled.
+            # This runs INSIDE `except`, and a raise here would lose both the
+            # original error and the CSV row that is still to be written below.
+            try:
+                import wandb; wb_run.finish(exit_code=1)
+            except Exception:                   # noqa: BLE001
+                pass
 
     # Write results BEFORE destroy_process_group — destroy can hang if peers
     # are slow to reach the same barrier, and we don't want to lose metrics.
@@ -1668,8 +1729,11 @@ def main():
     if args._worker:
         run = json.loads(args._worker)
         output_csv = args.output
-        _guard_output_collision(output_csv, args.stage_id or "unnamed",
-                                overwrite=args.overwrite_stage)
+        # NO COLLISION GUARD HERE. The worker writes only a per-run `.tmp`; the
+        # parent reads it and appends to the CSV. Guarding in the worker meant
+        # guarding a file this process does not write, with a stage id this
+        # process was never given (`--stage-id` is not in worker_args), so it
+        # refused the second row of every stage as the stage "unnamed".
         _run_single_worker(run, args.wandb_project, output_csv)
         return
 
@@ -1683,6 +1747,16 @@ def main():
     if args.dry_run:
         print(format_dry_run(all_runs))
         return
+
+    # The parent is the only writer of the CSV, and the only process that knows
+    # which stage is writing it and which level ids that stage will produce.
+    # The canary's id is included because the canary appends its row to this
+    # same file before the grid runs.
+    planned_level_ids = {r.get("level_id") for r in all_runs}
+    if cfg.get("canary"):
+        planned_level_ids.add(cfg["canary"].get("id"))
+    _guard_output_collision(output_csv, args.stage_id or "unnamed",
+                            planned_level_ids, overwrite=args.overwrite_stage)
 
     # ---- Canary run: execute default config before the full grid ----
     canary_cfg = cfg.get("canary")

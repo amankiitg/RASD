@@ -675,3 +675,105 @@ COUNTS AND COST.
   * Against the OLD code: 13 of the 15 gate-rule tests and 8 of the 10
     incident-pull tests fail, so the new tests are testing the change.
   * GPU cost of this round: $0.00. No instance was started.
+
+================================================================================
+12. FOLLOW-UP, 2026-10-08: THE 1x PROBE, AND THE BLOCKER IT FOUND
+================================================================================
+
+The 8x run calibrated its gate and then died in engine_cap_smoke on
+`wandb.errors.errors.UsageError: No API key configured`, before any GPU work.
+That is the kind of failure a $10 launch should not be spent finding, so one
+`run_experiment.py` invocation was run on a single A100-40GB first, through the
+setup probe's own provisioning path, with the real .pod_env.sh.
+
+THE WANDB FIX, VERIFIED
+  * `init_wandb` catches `ImportError` for a missing wandb; it now also catches
+    any failure from `wandb.init` (auth, network, protocol) and returns None, so
+    a logging side-channel cannot kill a stage. `log_wandb` and the error path's
+    `wb_run.finish(exit_code=1)` are hardened the same way -- the latter runs
+    INSIDE `except`, where a raise would replace the exception being handled and
+    skip the CSV row below it.
+  * `.pod_env.sh` now carries `export WANDB_MODE=disabled`, so the pod never
+    tries to reach W&B at all. Two layers: the setting says don't, the code
+    survives it anyway.
+  * Probed: no "No API key configured" and no "wandb init failed" in the log.
+
+THE BLOCKER THE PROBE FOUND: EVERY STAGE WITH TWO ROWS WOULD HAVE DIED
+The first probe run passed the canary (`status=ok tokens=4 rounds=1`) and then
+the speculative row failed:
+
+    REFUSING to write .../runexp_probe.csv for stage 'unnamed': the file
+    already holds rows from ['probe_1x_canary_s42']
+
+That is the filename-collision guard (added after the ARM4 driver pointed a
+stage at an unrelated aggregate's filename). Two independent defects made it
+refuse a stage's OWN file:
+
+  1. It was called from the WORKER. The worker does not write the CSV at all --
+     it writes a per-run `.tmp` that the parent reads and appends -- and
+     `worker_args` never carried `--stage-id`, so `args.stage_id or "unnamed"`
+     made every worker the stage "unnamed".
+  2. Ownership was a NAME PATTERN (`stage_id.split("_")[0] in level_id`). That
+     pattern cannot match this campaign: the stage is `engine_cap_smoke` and its
+     levels are `CAPS_prefix64`.
+
+So after the first row of any stage was written, every later row was refused,
+the worker died, and with --abort-on-failure the stage failed. engine_cap_smoke
+has 4 rows; every measurement stage has more. **The wandb error had been hiding
+this: engine_cap_smoke died at init_wandb on row 1, before the guard could fire
+on row 2.** Without this probe, the next 8xA100 launch would have died the same
+way, one stage later, and cost the whole run.
+
+THE FIX
+  * The guard moved to the PARENT, the only process that writes the CSV and the
+    only one that knows the stage and the level ids it will produce.
+  * Ownership is now exact: the file is this stage's if every level id in it is
+    one this stage plans to write. A previous attempt of the same stage passes,
+    which is what makes a retry or --resume work; anything else is refused with
+    the foreign level names quoted in the message. The canary's id is included
+    because the canary appends to the same file first.
+  * The worker no longer guards. 11 new tests in
+    tests/test_run_experiment_output_guard.py: 11/11 FAIL against the pre-fix
+    code, 11/11 pass after. The ARM4 protection is kept as a test
+    (`pg19_short_target` writing into `pg19_multiseed.csv` is still refused).
+  * The dry run's step 5 documented the old contract; it now tests both halves
+    plus the regression (a stage coming back for its own second row).
+
+WHAT THE PROBE ALSO FOUND, IN THE PROBE ITSELF
+Three harness bugs, all now pinned by tests, each of which had produced a
+misleading result:
+  * `GROUPS` is a special READONLY bash array. `GROUPS="PROBE_SPEC PROBE_TARGET"`
+    was silently ignored and expanded to `20`, so the run planned zero rows for
+    a group called "20". Renamed to PROBE_GROUPS.
+  * `POD_OUT=~/RASD/...` unquoted expanded the tilde on THIS machine, so the pod
+    was asked to `mkdir /Users/<laptop>/RASD`. Quoted now.
+  * The probe assumed the setup probe's earlier rsync was still current, so the
+    guard fix was never exercised and the probe reported the SAME failure twice
+    -- which reads as "the fix did not work". It now rsyncs the working tree and
+    asserts the pod's run_experiment.py is byte-identical (sha256).
+  * It also reported a `GatedRepoError: 401` that was NOT a campaign defect: the
+    probe invoked the right command with the wrong ENVIRONMENT. The watcher
+    starts the manifest with HF_TOKEN (scripts/mlsys_watch_and_run.sh:677) and
+    the stages inherit it; a plain `ssh host "..."` has no token. The probe now
+    passes it the way the watcher does, read by label and never printed.
+
+PROBE RESULT: 16 passed, 0 failed
+    run_experiment exited 0 (53s wall)
+    rows=3  ok=3  tokens=20  rounds=10
+    probe_1x_canary_s42        status=ok tokens=4 rounds=1 acc=0.0
+    PROBE_ctx4k_spec_s42       status=ok tokens=8 rounds=2 acc=1.0
+    PROBE_ctx4k_targetonly_s42 status=ok tokens=8 rounds=7 acc=0.0
+    tps=7.4  mem=1331 MB
+So on real hardware, through the campaign's own provisioning and its command
+form: the gated model loaded (HF_TOKEN), NF4 weights and quantised KV built, the
+draft ran, speculation ran at acceptance 1.0, a forward pass happened, the
+memory trace and generated-token sidecars were written, and the CSV row landed.
+
+WHAT THE 1x CANNOT COVER
+  * `--nproc 1`. The manifest passes no --nproc and so runs 8; a single-GPU node
+    cannot run the 8-way ring, so the torchrun path is not exercised here.
+  * 4k context, 8 tokens, one seed. It is a plumbing probe, not a measurement.
+
+COST: instance up 15:52Z-16:09Z, ~17 min at $1.99/hr = ~$0.56. Not added to
+results/mlsys/gpu_hours.csv: that ledger holds campaign stage costs and this is
+a manual repro, so the campaign guard still reads $39.55 of the $2000 cap.
