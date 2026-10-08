@@ -143,5 +143,41 @@ else
   bad "~/.pod_env.sh is missing or incomplete"
 fi
 
+# --- 6. the MANIFEST's own interpreter resolution -------------------------
+# The 07:37Z run passed every step above and then died on
+# `No module named 'transformers'`, because the manifest re-derived its own
+# interpreter and picked /usr/bin/python3. This phase runs the manifest's
+# resolve_python() -- extracted from the manifest, not re-typed -- on the pod.
+printf '\n== the interpreter resolution inside the manifest (extracted) ==\n'
+python3 - > /tmp/probe_resolve.sh <<'PYMAN'
+import pathlib
+s = pathlib.Path("scripts/mlsys_manifest.sh").read_text()
+i = s.index("resolve_python() {")
+j = s.index("\n}\n", i) + 3
+print(s[i:j])
+# probe both ways: with MLSYS_PYTHON (what the watcher passes) and without
+print('echo "WITH_MLSYS_PYTHON=$(resolve_python)"')
+print('unset MLSYS_PYTHON')
+print('echo "WITHOUT_MLSYS_PYTHON=$(resolve_python)"')
+PYMAN
+pod 'cat > ~/probe_resolve.sh' < /tmp/probe_resolve.sh
+if [ -n "${PY_REMOTE:-}" ]; then
+  RES=$(pod "cd ~/RASD && MLSYS_PYTHON='$PY_REMOTE' bash ~/probe_resolve.sh" 2>&1)
+else
+  RES=$(pod "cd ~/RASD && bash ~/probe_resolve.sh" 2>&1)
+fi
+printf '%s\n' "$RES" | sed 's/^/      /'
+WITH=$(printf '%s\n' "$RES" | sed -n 's/^WITH_MLSYS_PYTHON=//p' | head -1)
+WITHOUT=$(printf '%s\n' "$RES" | sed -n 's/^WITHOUT_MLSYS_PYTHON=//p' | head -1)
+if [ "$WITH" = "$PY_REMOTE" ]; then
+  ok "with MLSYS_PYTHON set, the manifest uses the verified interpreter"
+else
+  bad "with MLSYS_PYTHON set, the manifest resolved '$WITH' instead of '$PY_REMOTE'"
+fi
+case "$WITHOUT" in
+  *rasd-gpu*) ok "without it, the fallback still finds the rasd-gpu env" ;;
+  *)          bad "without MLSYS_PYTHON the fallback resolved '$WITHOUT' (this is the failure that killed the 07:37Z run)" ;;
+esac
+
 printf '\n== SETUP PROBE RESULT: %d passed, %d failed ==\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
