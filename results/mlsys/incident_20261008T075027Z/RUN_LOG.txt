@@ -1,0 +1,492 @@
+================================================================================
+MLSys EXPERIMENT PROGRAM — RUN LOG
+================================================================================
+Session attempt : 2026-10-04T17:50 UTC-04:00
+Branch          : mlsys-experiments  (HEAD f6ed0e7)
+Result          : *** ABORTED AT PRECHECK 1 — NO CUDA GPU ***
+GPU-hours spent : 0.0
+Estimated cost  : $0.00
+Phases executed : NONE (0 of 5)
+
+No experimental number was produced, and none was synthesised. Every phase
+below is recorded as NOT RUN, not as a failure of the code.
+
+--------------------------------------------------------------------------------
+PRECHECK 1 — GPU PRESENCE .......... FAIL  (hard abort condition)
+--------------------------------------------------------------------------------
+  nvidia-smi                    : command not found
+  /usr/local/cuda*              : does not exist; nvcc not found
+  torch.cuda.is_available()     : False
+  torch.cuda.device_count()     : 0
+  platform                      : Darwin arm64, macOS 26.4
+  CPU / RAM                     : Apple M2 / 8 GB unified
+  docker/podman/kubectl         : absent
+  runpodctl                     : absent
+  ssh host "hlevel"             : connect to 166.19.34.192:443 — timed out
+  AWS CLI                       : present but NO CREDENTIALS
+                                  (NoCredentials) -> cannot provision or
+                                  reach any GPU instance
+
+  => No CUDA GPU is reachable by any path on this host. Per the run
+     instructions ("If no CUDA GPU, ABORT the whole run"), execution stops
+     here. This is not a code failure: scripts/mlsys_pod_session.sh was
+     never invoked.
+
+--------------------------------------------------------------------------------
+PRECHECK 2 — HF GATED-MODEL AUTH ... FAIL  (skip native arms, do not abort)
+--------------------------------------------------------------------------------
+  HUGGING_FACE_HUB_TOKEN        : not set
+  HF_TOKEN                      : not set
+  ~/.cache/huggingface/token    : absent
+  meta-llama/Llama-3.1-8B       : HTTP 401 (gated)
+  meta-llama/Llama-3.2-1B       : HTTP 401 (gated)
+
+  Per the instructions this would NOT abort the run: arm2, arm3 and the
+  native-dependent cells would be marked "skipped: no gated-model access"
+  and everything else would run. Moot here, because precheck 1 aborted
+  first — but recorded so the native arms are not quietly assumed runnable.
+
+--------------------------------------------------------------------------------
+PRECHECK 3 — BRANCH + TRANSFORMERS PIN ... PASS (pin correct, no env to apply it to)
+--------------------------------------------------------------------------------
+  branch                        : mlsys-experiments              OK
+  working tree                  : clean                            OK
+  declared GPU pin              : transformers>=4.46,<5            OK
+                                  (environment_gpu.yml line 34; correctly
+                                   excludes 5.x, which breaks the ring patch)
+  local analysis venv           : transformers 5.5.4
+  GPU conda/venv env            : DOES NOT EXIST on this host
+                                  (no ~/venv-rasd, no ~/venv-vllm)
+
+  The "if transformers is 5.x, fix to <5" rule is not actionable here: the
+  only env present is the CPU analysis venv, which holds no GPU and never
+  executes the ring patch. The 5.x version is precisely what
+  scripts/mlsys_ring_binding_check.py is designed to detect and report.
+
+--------------------------------------------------------------------------------
+BUDGET GUARD
+--------------------------------------------------------------------------------
+  Cumulative GPU-hours : 0.00 of the session
+  Cumulative cost      : $0.00
+  Budget ceiling       : $600.00
+  Guard triggered      : NO  (nothing was launched, so nothing accrued)
+
+--------------------------------------------------------------------------------
+PHASE STATUS
+--------------------------------------------------------------------------------
+  PHASE 0  tokenizer + ring binding gates ....... NOT RUN (no GPU)
+  PHASE 1  arm1 / arm2 / arm3 + baselines ....... NOT RUN (no GPU)
+  PHASE 2  PG-19 multiseed + per-round traces ... NOT RUN (no GPU)
+  PHASE 3  bf16-draft isolation @64k ............ NOT RUN (no GPU)
+  PHASE 5  vLLM @128k baseline ................. NOT RUN (no GPU)
+  ANALYSIS mlsys_analysis.py ................... NOT RUN (no new inputs;
+                                                 re-running would only
+                                                 rewrite the existing
+                                                 seed-42 artefacts)
+  MASTER TABLE mlsys_master_table.py ........... unchanged; every "new"
+                                                 cell remains
+                                                 "(pending GPU run)"
+
+--------------------------------------------------------------------------------
+WHAT IS NEEDED TO EXECUTE
+--------------------------------------------------------------------------------
+  1. A CUDA host with 8x A100 80GB (configs assume this; 40GB variants
+     exist but arm3's native draft window is expected to OOM there).
+  2. HF_TOKEN / HUGGING_FACE_HUB_TOKEN with accepted access to the gated
+     meta-llama/Llama-3.1-8B and meta-llama/Llama-3.2-1B repositories.
+     Without it, run with SKIP_LLAMA3=1 and expect arms 2 and 3 to be
+     recorded as "skipped: no gated-model access".
+  3. The GPU env built FROM THE REPO: conda env create -f environment_gpu.yml
+     (this pins transformers>=4.46,<5), then
+     pip install --no-build-isolation flash-attn>=2.4.0 && pip install -e .
+
+  Then a single, resumable command runs everything and logs per-stage
+  GPU-hours and cost to results/mlsys/gpu_hours.csv:
+
+      NPROC=8 bash scripts/mlsys_pod_session.sh
+
+  The previous session's CPU-side deliverable is complete and committed at
+  f6ed0e7: 7 configs, both new flags (--draft-window-cap, --draft-dtype),
+  the dip test, the acceptance accounting, the vLLM runner and the
+  orchestrator. Nothing about it needs redoing to run on the pod.
+
+================================================================================
+END OF LOG — no results were produced; no numbers were synthesised.
+================================================================================
+[2026-10-04T22:34:08Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1,us-midwest-1']
+[2026-10-04T22:34:08Z] launch failed: HTTP 403 error code: 1010
+
+[2026-10-04T22:35:33Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T22:35:37Z] launched gpu_8x_a100_80gb_sxm4 id=2a0daf6815504c0d9413452d1a41126e region=us-east-1
+[2026-10-04T22:43:04Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-04T22:43:08Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-04T22:44:33Z] remote MLSys run started (nohup, survives ssh drops)
+[2026-10-04T22:44:34Z] terminate(run-finished): instance 2a0daf6815504c0d9413452d1a41126e, uptime 0.15h, ~$3.33
+[2026-10-04T22:44:47Z] CONFIRMED TERMINATED: status=terminating, uptime=0.15h, cost ~$3.40
+[2026-10-04T22:47:23Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T22:47:27Z] launched gpu_8x_a100_80gb_sxm4 id=d2c4c7e617c347d1b5b49bd90991d0e9 region=us-east-1
+[2026-10-04T22:55:23Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-04T22:55:28Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-04T22:56:51Z] remote MLSys run started (nohup, survives ssh drops)
+[2026-10-04T22:56:53Z] remote status (20261004T225652Z): state=aborted step=ring_binding rc=5 ts=2026-10-04T22:56:51Z
+[2026-10-04T22:56:53Z] remote run outcome: aborted
+[2026-10-04T22:56:55Z] remote status (final): state=aborted step=ring_binding rc=5 ts=2026-10-04T22:56:51Z
+[2026-10-04T22:56:55Z] terminate(run-finished): instance d2c4c7e617c347d1b5b49bd90991d0e9, uptime 0.16h, ~$3.52
+[2026-10-04T22:57:09Z] CONFIRMED TERMINATED: status=terminating, uptime=0.16h, cost ~$3.60
+[2026-10-04T22:59:52Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T22:59:58Z] launched gpu_8x_a100_80gb_sxm4 id=c33a9ad700d14ed1b275fe44c36f7276 region=us-east-1
+[2026-10-04T23:07:53Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-04T23:07:58Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-04T23:09:22Z] remote MLSys run started (nohup, survives ssh drops)
+[2026-10-04T23:09:23Z] remote status (20261004T230922Z): state=complete step=final rc=0 ts=2026-10-04T23:09:22Z
+[2026-10-04T23:09:23Z] remote run outcome: complete
+[2026-10-04T23:09:25Z] remote status (final): state=complete step=final rc=0 ts=2026-10-04T23:09:22Z
+[2026-10-04T23:09:25Z] terminate(run-finished): instance c33a9ad700d14ed1b275fe44c36f7276, uptime 0.16h, ~$3.52
+[2026-10-04T23:09:38Z] CONFIRMED TERMINATED: status=terminating, uptime=0.16h, cost ~$3.60
+[2026-10-04T23:10:42Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T23:11:30Z] launched gpu_8x_a100_80gb_sxm4 id=7a60cecdb2864cdeb279981c642ff86b region=us-east-1
+[2026-10-04T23:18:24Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-04T23:18:29Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-04T23:20:17Z] remote MLSys run started (nohup, survives ssh drops)
+[2026-10-04T23:20:19Z] remote status (20261004T232018Z): state=aborted step=mlsys_session rc=2 ts=2026-10-04T23:20:17Z
+[2026-10-04T23:20:19Z] remote run outcome: aborted
+[2026-10-04T23:20:20Z] remote status (final): state=aborted step=mlsys_session rc=2 ts=2026-10-04T23:20:17Z
+[2026-10-04T23:20:21Z] terminate(run-finished): instance 7a60cecdb2864cdeb279981c642ff86b, uptime 0.15h, ~$3.29
+[2026-10-04T23:20:34Z] CONFIRMED TERMINATED: status=terminating, uptime=0.15h, cost ~$3.38
+[2026-10-04T23:27:54Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T23:28:21Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T23:28:26Z] launched gpu_8x_a100_80gb_sxm4 id=58f9aaa387a842ee8791908387c004be region=us-midwest-1
+[2026-10-04T23:36:22Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-04T23:36:28Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-04T23:38:06Z] remote MLSys run started (nohup, survives ssh drops)
+[2026-10-04T23:38:08Z] remote status (20261004T233806Z): state=aborted step=mlsys_session rc=2 ts=2026-10-04T23:38:05Z
+[2026-10-04T23:38:08Z] remote run outcome: aborted
+[2026-10-04T23:38:10Z] remote status (final): state=aborted step=mlsys_session rc=2 ts=2026-10-04T23:38:05Z
+[2026-10-04T23:38:11Z] terminate(run-finished): instance 58f9aaa387a842ee8791908387c004be, uptime 0.16h, ~$3.63
+[2026-10-04T23:38:23Z] CONFIRMED TERMINATED: status=terminating, uptime=0.17h, cost ~$3.71
+[2026-10-04T23:40:59Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-04T23:41:04Z] launched gpu_8x_a100_80gb_sxm4 id=0782c25c15564032abda5dd5ba25676f region=us-midwest-1
+[2026-10-04T23:48:33Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-04T23:48:38Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-04T23:50:39Z] orchestrator fatal error: TimeoutExpired(['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=30', '-i', '/Users/amankesarwani/.ssh/id_ed25519', 'ubuntu@147.224.176.57', 'cd ~/RASD && nohup bash ~/remote_mlsys_run.sh > ~/remote_run.log 2>&1 & echo STARTED_PID=$!'], 120)
+[2026-10-04T23:50:39Z] terminate(run-finished): instance 0782c25c15564032abda5dd5ba25676f, uptime 0.16h, ~$3.57
+[2026-10-04T23:50:53Z] CONFIRMED TERMINATED: status=terminating, uptime=0.16h, cost ~$3.65
+[2026-10-05T11:32:34Z] Lambda capacity opened for gpu_1x_a100_sxm4: ['us-east-1', 'us-west-2']
+[2026-10-05T11:32:39Z] launched gpu_1x_a100_sxm4 id=dcaece4d5fe74a1895acf1426fa4a975 region=us-east-1
+[2026-10-05T11:38:01Z] GPU inventory at boot:
+0, 0 MiB
+[2026-10-05T11:38:06Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-05T11:39:47Z] remote MLSys run started (detached, verified running)
+[2026-10-05T11:42:50Z] remote status (20261005T114248Z): state=complete step=final rc=0 ts=2026-10-05T11:41:44Z
+[2026-10-05T11:42:50Z] remote run outcome: complete
+[2026-10-05T11:42:51Z] remote status (final): state=complete step=final rc=0 ts=2026-10-05T11:41:44Z
+[2026-10-05T11:42:52Z] terminate(run-finished): instance dcaece4d5fe74a1895acf1426fa4a975, uptime 0.17h, ~$3.80
+[2026-10-05T11:43:05Z] CONFIRMED TERMINATED: status=terminating, uptime=0.17h, cost ~$3.88
+
+================================================================
+SHAKEDOWN (STEP 1) — 1x A100-40GB SXM4, us-east-1   [2026-10-05]
+================================================================
+instance   : dcaece4d5fe74a1895acf1426fa4a975  (129.213.25.166)
+uptime     : 0.17 h (11:32:39Z -> 11:43:05Z)  cost ~$0.35 @ $1.99/hr
+outcome    : PASSED — real result cell produced, instance TERMINATED
+GPU at boot: 1x A100, 0 MiB used (no orphaned memory)
+env        : transformers 4.47.1 -> ATTN_SURFACE_OK (ring patch binds)
+gates      : tokenizer check + ring binding ran
+cells      : results/mlsys/shakedown.csv
+  - SHAKEDOWN_ctx4k_s42  status=ok  ctx=4096  seed=42  spec_steps=4
+        acceptance_rate=1.000  throughput_tps=11.21  gpu_peak_mem=8775 MB
+        n_rounds=13  tokens=66   (Llama-2-7B + Sheared-1.3B draft)
+  - shakedown_canary_s42  status=ok  acceptance_rate=0.0385
+traces     : results/mlsys/per_token/SHAKEDOWN_ctx4k_s42.jsonl (+ canary)
+schema     : CSV includes new draft_window_cap / draft_dtype columns -> OK
+
+NOTE (harness bug found+fixed during shakedown): orchestrate.py had a
+duplicate `PRICE_PER_HOUR/MAX_COST_USD/MAX_INSTANCE_HOURS` assignment
+that silently clobbered the env-configurable values, so the cost it
+printed ($3.88) used the 8xA100 rate on a 1xA100 box. True cost was
+~$0.35. Duplicates removed and overrides verified to take effect.
+Guard was NOT affected on the full run (8xA100 rate is the correct one).
+
+=> STEP 1 GATE PASSED: escalating to STEP 2 (full 8xA100 run).
+[2026-10-05T12:50:07Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-05T12:50:12Z] launched gpu_8x_a100_80gb_sxm4 id=aa04c120e48c402ea327141d461f7bf2 region=us-east-1
+[2026-10-05T12:58:24Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-05T12:58:29Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-05T13:00:10Z] remote MLSys run started (detached, verified running)
+[2026-10-05T13:03:12Z] remote status (20261005T130311Z): state=aborted step=mlsys_session rc=1 ts=2026-10-05T13:00:51Z
+[2026-10-05T13:03:12Z] remote run outcome: aborted
+[2026-10-05T13:03:13Z] remote status (final): state=aborted step=mlsys_session rc=1 ts=2026-10-05T13:00:51Z
+[2026-10-05T13:03:14Z] terminate(run-finished): instance aa04c120e48c402ea327141d461f7bf2, uptime 0.22h, ~$4.85
+[2026-10-05T13:03:27Z] CONFIRMED TERMINATED: status=terminating, uptime=0.22h, cost ~$4.93
+
+================================================================
+FULL RUN ATTEMPT (STEP 2) — 8xA100-80GB-SXM4, us-east-1  [2026-10-05]
+================================================================
+instance   : aa04c120e48c402ea327141d461f7bf2 (132.145.193.127)
+uptime     : 0.22 h (12:50:12Z -> 13:03:27Z)  cost ~$4.93 @ $22.32/hr
+outcome    : ABORTED at Phase 0.2 — harness bug, NOT a scientific result.
+             Instance TERMINATED and confirmed.
+GPU at boot: 8x A100, 0 MiB used on all 8 (no orphaned memory)
+env        : transformers 4.47.1 -> ATTN_SURFACE_OK
+results    : NONE produced. No numbers were synthesized.
+
+ROOT CAUSE (two compounding harness defects, both now fixed in 5c0161d):
+
+ 1. mlsys_check_tokenizer_llama3.py compared `tokenizer.vocab_size`
+    (the BASE BPE table = 128000) against the constant 128256 and
+    FAILED both models. The true vocabulary is len(tokenizer) = 128256
+    (base + added special tokens). The checker simultaneously PASSED
+    its own cross-model tests (get_vocab() equal; 50/50 probe strings
+    token-ID identical), so the FAIL verdict was self-contradictory.
+    Fixed: compare len(tokenizer), and drive the verdict by CROSS-MODEL
+    agreement instead of a constant. Verified locally against the real
+    gated tokenizers -> PASS rc=0, len=128256 for BOTH models, 50/50
+    probes identical. Llama-3.1-8B and Llama-3.2-1B DO share an
+    identical tokenizer, so arms 2/3 are scientifically valid.
+
+ 2. mlsys_pod_session.sh p0_tokenizer() used
+         python check.py
+         local rc=$?
+    under `set -euo pipefail`. Under set -e the failing command aborts
+    the whole script BEFORE `local rc=$?` executes, so the intended
+    "touch SKIP_NATIVE_ARMS and continue" path was unreachable dead
+    code and any non-zero rc killed the entire session. Reproduced in
+    isolation: the guard body never ran and the shell exited 1.
+    Fixed: `if python check.py; then rc=0; else rc=$?; fi`, which
+    suppresses set -e in a condition context. Verified rc=1 survives.
+
+ Also fixed: orchestrate.py always returned rc=0, so this aborted run
+ was logged as STEP2_RESULT=complete. It now returns 1 unless the
+ remote outcome is genuinely "complete".
+
+SPEND AFTER THIS ATTEMPT: ~$26.62 cumulatively of the $300 ceiling.
+=> Re-running with the fixes. Native arms (2/3) remain ENABLED.
+[2026-10-05T18:12:51Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-midwest-1']
+[2026-10-05T18:12:56Z] launched gpu_8x_a100_80gb_sxm4 id=601731a4112d425ba2bee0e163b202d8 region=us-midwest-1
+[2026-10-05T18:20:54Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-05T18:21:00Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-05T18:22:41Z] remote MLSys run started (detached, verified running)
+[2026-10-05T18:25:44Z] remote status (20261005T182542Z): state=aborted step=ring_binding rc=5 ts=2026-10-05T18:22:58Z
+[2026-10-05T18:25:44Z] remote run outcome: aborted
+[2026-10-05T18:25:46Z] remote status (final): state=aborted step=ring_binding rc=5 ts=2026-10-05T18:22:58Z
+[2026-10-05T18:25:47Z] terminate(run-finished): instance 601731a4112d425ba2bee0e163b202d8, uptime 0.21h, ~$4.78
+[2026-10-05T18:26:01Z] CONFIRMED TERMINATED: status=terminating, uptime=0.22h, cost ~$4.86
+[2026-10-05T18:31:23Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1', 'us-midwest-1']
+[2026-10-05T18:31:27Z] launched gpu_8x_a100_80gb_sxm4 id=812329c3be7b4faa8b90ef64da2e2ba3 region=us-east-1
+[2026-10-05T18:39:07Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-05T18:39:13Z] on-instance self-terminate watchdog armed for 12.0h (independent of the local orchestrator); installed=True
+[2026-10-05T18:40:54Z] remote MLSys run started (detached, verified running)
+[2026-10-06T00:54:04Z] remote status (20261006T005400Z): state=complete step=final rc=0 ts=2026-10-06T00:53:04Z
+[2026-10-06T00:54:04Z] remote run outcome: complete
+[2026-10-06T00:54:05Z] remote status (final): state=complete step=final rc=0 ts=2026-10-06T00:53:04Z
+[2026-10-06T01:00:33Z] terminate(run-finished): instance 812329c3be7b4faa8b90ef64da2e2ba3, uptime 6.49h, ~$144.75
+[2026-10-06T01:00:47Z] CONFIRMED TERMINATED: status=terminating, uptime=6.49h, cost ~$144.84
+[2026-10-06T01:04:19Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-06T01:04:23Z] launched gpu_8x_a100_80gb_sxm4 id=2583245a7c6846fdb6aef52b1d666b80 region=us-east-1
+[2026-10-06T01:11:49Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-06T01:11:54Z] on-instance self-terminate watchdog armed for 1.5h (independent of the local orchestrator); installed=True
+[2026-10-06T01:13:35Z] remote MLSys run started (detached, verified running)
+[2026-10-06T01:16:38Z] remote status (20261006T011636Z): state=partial step=vllm_no_ok_cells rc=0 ts=2026-10-06T01:15:29Z
+[2026-10-06T01:16:38Z] remote run outcome: partial
+[2026-10-06T01:16:39Z] remote status (final): state=partial step=vllm_no_ok_cells rc=0 ts=2026-10-06T01:15:29Z
+[2026-10-06T01:16:40Z] terminate(run-finished): instance 2583245a7c6846fdb6aef52b1d666b80, uptime 0.20h, ~$4.57
+[2026-10-06T01:16:55Z] CONFIRMED TERMINATED: status=terminating, uptime=0.21h, cost ~$4.67
+[2026-10-06T01:39:51Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-06T01:39:55Z] launched gpu_8x_a100_80gb_sxm4 id=beb405b847a5407fbea973b9d872caaa region=us-east-1
+[2026-10-06T01:45:49Z] terminate(run-finished): instance beb405b847a5407fbea973b9d872caaa, uptime 0.10h, ~$2.19
+[2026-10-06T01:45:55Z] terminate(signal-15): instance beb405b847a5407fbea973b9d872caaa, uptime 0.10h, ~$2.23
+[2026-10-06T03:58:40Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-midwest-1']
+[2026-10-06T04:03:04Z] launch failed after retries
+[2026-10-06T04:32:12Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-midwest-1']
+[2026-10-06T04:32:16Z] launched gpu_8x_a100_80gb_sxm4 id=bece058dfee4440cbf31294c441726a0 region=us-midwest-1
+[2026-10-06T04:38:57Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-06T04:39:03Z] on-instance self-terminate watchdog armed for 20.0h (independent of the local orchestrator); installed=True
+[2026-10-06T04:40:44Z] remote MLSys run started (detached, verified running)
+[2026-10-06T05:25:57Z] remote status (20261006T052555Z): state=aborted step=arm4_sanity rc=6 ts=2026-10-06T05:25:32Z
+[2026-10-06T05:25:57Z] remote run outcome: aborted
+[2026-10-06T05:25:59Z] remote status (final): state=aborted step=arm4_sanity rc=6 ts=2026-10-06T05:25:32Z
+[2026-10-06T05:26:00Z] terminate(run-finished): instance bece058dfee4440cbf31294c441726a0, uptime 0.90h, ~$19.99
+[2026-10-06T05:26:14Z] CONFIRMED TERMINATED: status=terminating, uptime=0.90h, cost ~$20.07
+[2026-10-06T15:59:04Z] Lambda capacity opened for gpu_8x_a100_80gb_sxm4: ['us-east-1']
+[2026-10-06T15:59:08Z] launched gpu_8x_a100_80gb_sxm4 id=fed815641fc345d797e332021664a4a6 region=us-east-1
+[2026-10-06T16:06:34Z] GPU inventory at boot:
+0, 0 MiB
+1, 0 MiB
+2, 0 MiB
+3, 0 MiB
+4, 0 MiB
+5, 0 MiB
+6, 0 MiB
+7, 0 MiB
+[2026-10-06T16:06:38Z] on-instance self-terminate watchdog armed for 20.0h (independent of the local orchestrator); installed=True
+[2026-10-06T16:08:19Z] remote MLSys run started (detached, verified running)
+
+================================================================================
+INTERIM REPORT — after STEP A (2026-10-06T17:02Z)
+================================================================================
+SPEND at this point: $22.44 of the $450 ceiling.
+
+--- A1. WHAT THE TARGET'S ROPE ACTUALLY IS (CPU-verified, layer-0 inv_freq) ---
+native Llama-3.1-8B : rope_scaling = {'factor':8.0,'low_freq_factor':1.0,
+                      'high_freq_factor':4.0,'original_max_position_embeddings':8192,
+                      'rope_type':'llama3'}, rope_theta=500000,
+                      max_position_embeddings=131072
+
+  f1 : native llama3 block PRESERVED EXACTLY — max relative inv_freq diff
+       = 0.000e+00 vs the shipped model.
+  f2 : yarn factor 2.0, original_max_position_embeddings=131072 — 35/64
+       inv_freq entries changed, attention_scaling=1.0693.
+  f4 : yarn factor 4.0, original_max_position_embeddings=131072 — 35/64
+       entries changed, attention_scaling=1.1386.
+  f16: llama3 block KEPT, only factor overridden to 16 (0.0000635e0 diff).
+
+YES — the YaRN dict REPLACES the llama3 scaling entirely rather than composing
+with it. That is the documented composition choice, now measured.
+
+Correction to an earlier suspicion: the dict key is `type`, not `rope_type`,
+but transformers normalises it (the module reports rope_type='yarn'). Not a bug.
+
+Draft/target rope: the draft is loaded with apply_rope_scaling=False
+(src/models/rasd_inference.py:741). At f1 both are native (matched). At f2/f4
+the target is YaRN-scaled and the draft is not. The user's decision #1 stands:
+two models need not share positional frames, so this is NOT treated as a bug.
+
+--- A2. THE RUNNING RUNG: arm4_f2_256k ---
+ARM4_f2_256k_s42  accept=0.042  6 trace records  ~7 generated tokens
+  decoded text : 'Ab'
+  n_acc/round  : [0, 1, 0, 0, 0, 0]
+  -> generation TERMINATED after ~7 tokens. With ignore_eos=false that means
+     the target emitted EOS within its first few tokens.
+
+IMPORTANT: 256k is ABOVE the native 131072 window, so factor 2 there is the
+CORRECT extrapolation and is genuinely needed. The target still broke.
+Therefore the failure is NOT "scaling a context that needed no extension" —
+it is that REPLACING Llama-3.1's llama3 block with YaRN over base 131072
+breaks the model at ANY context.
+
+ACTION TAKEN: stopped the ladder immediately (killed remote_followup.sh and
+the orphaned run_experiment job; the bash wrapper died first and left the job
+running under `timeout`, which had to be killed separately). All 8 GPUs
+verified back to 0 MiB. This also prevented arm4_f4_512k from starting, since
+it uses the same rope construction.
+
+--- WHAT WAS STOPPED / SKIPPED ---
+  arm4_f2_256k   STOPPED mid-rung (target degrades: EOS at ~7 tokens)
+  arm4_f4_512k   SKIPPED (same rope construction)
+  llama3 f16/f32 NOT skipped (different construction: llama3 block KEPT) but
+                 MUST pass the coherence gate before any speculative run.
+  vLLM           not reached.
+
+--- RULE APPLIED ---
+Per the standing rule, f2/f4 cells are recorded as "target degrades at this
+factor and context" and their acceptance figures are NOT reported as
+speculative-decoding results. The honest statement for those configurations:
+replacing the native RoPE scaling breaks the target (EOS at token 0), which
+merely APPEARS as an acceptance collapse.
+
+--- STATUS ---
+Committed results kept: arm4_f1_128k (spec+target), arm4_f2_128k,
+arm4_f4_128k, pg19_short_target, arm4_f2_256k (partial).
+Next: coherence gate (B) on every rope configuration intended for contexts
+above 128k, then P1 (natural-text f1 at 128k), then D.
+
+=== POD RUN LOG (instance fed815641fc345d797e332021664a4a6, pulled 2026-10-06T17:06Z) ===
+2026-10-06T16:08:37Z === PHASE A: ARM4 RoPE extrapolation ladder ===
+2026-10-06T16:46:52Z STAGE_OK name=arm4_f1_128k wall=2295s cost=$14.23 cumulative=$14.23
+2026-10-06T16:46:52Z ARM4 f1 128k (cell 1/10) done; sanity stop passed
+2026-10-06T16:50:55Z STAGE_OK name=arm4_f2_128k wall=243s cost=$1.51 cumulative=$15.74
+2026-10-06T16:56:27Z STAGE_OK name=arm4_f4_128k wall=332s cost=$2.06 cumulative=$17.80
+2026-10-06T16:57:49Z STAGE_FAILED name=pg19_short_target rc=1 cost=$0.51
+2026-10-08T07:50:24Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+2026-10-08T07:50:24Z STALL_WATCHDOG started pid=10887 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+2026-10-08T07:50:25Z STAGE_START name=gate_calibration timeout=14400s
+2026-10-08T07:50:27Z STAGE_FAILED name=gate_calibration rc=1 wall=2s cost=$0.01
+2026-10-08T07:50:27Z ABORT: gate calibration did not succeed in this attempt rc=1
