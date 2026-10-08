@@ -6,6 +6,7 @@ unchanged in git history (commit 5bdc618); this is a new session's report.
 
 STATUS AT A GLANCE
   8x A100 80GB campaign      see section 6
+  8x watcher                 STOPPED (see section 9, item 2)
   Instances running          0
   Total spend this session   see section 7, against the approved $850
 
@@ -207,7 +208,7 @@ WHAT REMAINS UNKNOWN
     The underlying assert was not diagnosed: the next run, with blocking
     enabled and a per-candidate row, is what will attribute it. It happened
     between candidates 6 (B_llama2_yarn8_32k_correct, Llama-2-7B at 32k with
-    YaRN) and 7 (N1_arm4_f2_construction, Llama-3.1-8B at 128k). Lloyd: the
+    YaRN) and 7 (N1_arm4_f2_construction, Llama-3.1-8B at 128k). The
     traceback points at a list comprehension, so the index is not in it.
 
 FAIL FAST AND THE STALL WATCHDOGS
@@ -222,10 +223,10 @@ FAIL FAST AND THE STALL WATCHDOGS
 --------------------------------------------------------------------------------
 4. TEST AND DRY-RUN COUNTS
 --------------------------------------------------------------------------------
-  pytest tests/                    882 passed
+  pytest tests/                    886 passed
   scripts/mlsys_dry_run.sh         32 passed, 0 failed
   the end-to-end rehearsal         74 checks, every approved stage and helper ran
-  watcher guard tests              37 (was 10 at the start of this session)
+  watcher guard tests              41 (was 10 at the start of this session)
 
 --------------------------------------------------------------------------------
 5. SHAKEDOWN AND PROBE ON REAL HARDWARE
@@ -280,10 +281,10 @@ Every 8x launch so far, all on real capacity:
   07:37:18Z  12b6fc0e685544ae95449378951376a0  us-east-1
              SETUP GREEN; gate_calibration failed in 2s on the manifest's own
              interpreter (section 3b)                     terminated 07:52:39Z
+  08:12:57Z  (not a launch) watcher re-armed after the setup probe passed 8/8
   09:57:13Z  0a17a52bd63c4c26a0c8edeb0a0b4023  us-midwest-1
              SETUP GREEN, GATE RAN 479s across six candidates, then a CUDA
              device-side assert (section 3c)              terminated 10:20:21Z
-  08:12:57Z  watcher re-armed after the setup probe passed 8/8 on real hardware
 
 A capacity report is not capacity: at 07:22:49Z the watcher detected capacity
 in us-east-1 and attempted the launch 3 seconds later, in the same iteration,
@@ -291,8 +292,10 @@ and was refused with `insufficient-capacity`. It logged the refusal and kept
 polling. The next sighting, at 07:37:11Z, launched.
 
 PER-STAGE STATUS
-  gate_calibration        REACHED, FAILED (interpreter; fix 20788c9, verified
-                          by probe aa9754d on a real pod)
+  gate_calibration        REACHED, FAILED. Its LATEST failure is the CUDA
+                          device-side assert (section 3c), not the interpreter:
+                          the interpreter bug is fixed (20788c9) and verified by
+                          the probe on a real pod (aa9754d).
   engine_cap_smoke        not reached
   coherence_gate          not reached
   the remaining six       not reached
@@ -339,23 +342,26 @@ computed from the LAUNCHED / CONFIRMED TERMINATED timestamps in the watcher log.
 --------------------------------------------------------------------------------
 9. WHAT I WOULD ASK YOU TO DECIDE
 --------------------------------------------------------------------------------
-  1. The four 8x launches cost $61.26 and none of them ran a campaign stage.
-     Every one died in SETUP, not in the science, and three of the four causes
-     were mine rather than the campaign's. The setup path is now exercised on
-     real hardware by two harnesses (14 and 8 checks) before any 8x launch, so
-     the next failure should be a real one. If you would rather not spend
-     another ~$6 per attempt on that basis, say so and I will stop at the
-     probe.
-  2. The 8x watcher is armed again (pid 22940 at the time of writing) and will
-     keep looking until the 72h deadline. Capacity has been appearing every
-     30-90 minutes, usually in us-east-1.
+  1. The five 8x launches cost $69.86. The first four died in SETUP and none of
+     them ran a campaign stage; each of those four causes was mine rather than
+     the campaign's. The fifth reached the gate, ran it for 479s, and produced
+     no measurement at all. The setup path is now exercised on real hardware by
+     two harnesses (14 and 8 checks) before any 8x launch, so the next failure
+     should be a real one. If you would rather not spend another ~$6 per attempt
+     on that basis, say so and I will stop at the probe.
+  2. The 8x watcher is STOPPED. It was re-armed at 08:12:57Z once the probe had
+     passed, and it stopped after the gate failure, per your rule. Nothing is
+     polling and there is no watcher pid. Capacity was appearing every 30-90
+     minutes, usually in us-east-1, but no further launch will happen until you
+     say so.
   3. Nothing in manuscript/, results/final/, or the lcfm-camera-ready tag was
      touched.
  4. The gate failure in 3c is the first one that is about the SCIENCE rather
-     than the plumbing, and I have not diagnosed its root cause. The next run
-     will attribute it. If you would rather review the approach first, the
-     single most useful thing to look at is configs/mlsys_gate_controls.json:
-     candidate 6 is Llama-2-7B with YaRN at 32k and candidate 7 is the ARM4 f2
-     construction that the paper already documented as emitting EOS at token
-     0. A device-side assert there may be the mis-anchored rope being fed
-     something out of range, which would be a real finding rather than a bug.
+    than the plumbing, and I have not diagnosed its root cause. A 1x A100 repro
+    run (section 10, appended after this report was first written) attributes
+    it. If you would rather review the approach first, the single most useful
+    thing to look at is configs/mlsys_gate_controls.json: candidate 6 is
+    Llama-2-7B with YaRN at 32k and candidate 7 is the ARM4 f2 construction
+    that the paper already documented as emitting EOS at token 0. A
+    device-side assert there may be the mis-anchored rope being fed
+    something out of range, which would be a real finding rather than a bug.
