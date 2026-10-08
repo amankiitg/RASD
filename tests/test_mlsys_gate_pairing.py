@@ -142,12 +142,19 @@ def test_the_gate_window_call_passes_the_bos(monkeypatch):
     `load_pg19_window(bos_id=None)` is a legal call that produces a window one
     token short of what the engine sees, so a test of the helper's default would
     prove nothing about what the gate does.
+
+    The TOKENIZER rides along for the same reason, and it is the difference
+    between a gate that measures and a gate that aborts: the pool is tokenized
+    by one model, and a candidate whose tokenizer differs has to be shown the
+    window in its own tokenization. A call that dropped it would hand
+    Llama-2-7B Llama-3.1 ids, which assert in indexSelectLargeIndex.
     """
     gate = _load_gate()
     seen = {}
 
-    def fake(meta_path, ctx, seed, bos_id=None):
+    def fake(meta_path, ctx, seed, bos_id=None, tokenizer=None):
         seen["bos_id"] = bos_id
+        seen["tokenizer"] = tokenizer
         return [1, 2, 3], [4, 5, 6]
 
     monkeypatch.setattr(gate, "load_pg19_window", fake)
@@ -155,10 +162,15 @@ def test_the_gate_window_call_passes_the_bos(monkeypatch):
     class Tok:
         bos_token_id = 128000
 
-    gate.gate_sample("meta.json", 131072, 42, Tok())
+    tok = Tok()
+    gate.gate_sample("meta.json", 131072, 42, tok)
     assert seen["bos_id"] == 128000, (
         "gate_sample did not pass the tokenizer's BOS, so the gate would score "
         "a window the engine never saw")
+    assert seen["tokenizer"] is tok, (
+        "gate_sample did not pass the candidate's tokenizer, so the window "
+        "cannot be re-tokenized for a candidate whose tokenizer differs from "
+        "the pool's -- which is what aborted the gate on 2026-10-08")
 
 
 def test_run_candidate_uses_the_single_window_call():

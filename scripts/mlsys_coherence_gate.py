@@ -68,8 +68,70 @@ CONTINUATION_TOKENS = 1024   # scored continuation after the full-length prompt
 # Natural-text prompt + held-out continuation (d)
 # --------------------------------------------------------------------------
 
+def _norm_tok_name(name) -> str:
+    """Normalize a tokenizer name for comparison.
+
+    `meta-llama/Llama-3.1-8B` and `meta-llama/Llama-3.1-8B/` are the same
+    tokenizer, and a comparison that says otherwise would re-tokenize a window
+    that did not need it -- changing a number that was already valid.
+    """
+    return str(name or "").strip().rstrip("/").lower()
+
+
+def _tokenize_window_for(cand_tok, pool_tok, arr, off, span):
+    """`span` ids in `cand_tok` for the text `arr[off:off+L]` covers.
+
+    The pool is tokenized once, by one model's tokenizer. A token id is only
+    meaningful relative to the embedding that looks it up, so a candidate whose
+    tokenizer is not the pool's must be shown the text in its OWN tokenization.
+    This is not a numerical nicety: 8.7% of the ids in the staged pool exceed
+    Llama-2-7B's 32000-row embedding, and the first one that appears aborts the
+    whole CUDA context in `indexSelectLargeIndex` (measured 2026-10-08).
+
+    The source length is found by BISECTION, not by correcting one estimate.
+    `f(L) = candidate tokens for arr[off:off+L]` is nondecreasing but only
+    piecewise constant, and its slope is ~1.13 for Llama-2 against a Llama-3.1
+    pool: the correction `L += span - f(L)` has a contraction factor of -0.13,
+    so it oscillates around the fixed point without ever landing on it (measured:
+    32767 -> 28403 -> 29001 -> 28928 -> ... and no exact hit in eight probes).
+    Bisection over a monotone f has no such failure mode.
+
+    Falls back, if `span` is not attainable at this offset, to nudging the offset
+    by up to 8 tokens and retrying. `span` can be skipped when one pool id
+    decodes to text worth two candidate tokens. The offset the seed chose moves
+    by at most 8 out of hundreds of thousands, and adjusting the source span is
+    the same rule `run_experiment._exact_token_window` already uses.
+
+    Returns None if no exact-length window exists; the caller then keeps the pool
+    ids and `assert_prompt_in_vocab` records the mismatch instead of the forward
+    aborting.
+    """
+    if pool_tok is None:
+        return None
+
+    def _candidate_ids(local_off, L):
+        text = pool_tok.decode(arr[local_off:local_off + L].astype(int).tolist())
+        return cand_tok.encode(text, add_special_tokens=False)
+
+    for delta in range(9):
+        o = off + delta
+        lo, hi = 1, min(2 * span, len(arr) - o)
+        if hi < 1:
+            return None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            got = _candidate_ids(o, mid)
+            if len(got) == span:
+                return got
+            if len(got) < span:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+    return None
+
+
 def load_pg19_window(meta_path: str, context_length: int, seed: int,
-                     bos_id: int | None = None):
+                     bos_id: int | None = None, tokenizer=None):
     """Return (prompt_ids, continuation_ids) from held-out natural text.
 
     Deterministic per seed: the document and the offset inside it are both drawn
@@ -124,7 +186,28 @@ def load_pg19_window(meta_path: str, context_length: int, seed: int,
     c = suitable[int(rng.integers(0, len(suitable)))]
     arr = np.memmap(c["file"], dtype="int32", mode="r")
     off = int(rng.integers(0, c["length"] - need + 1))
-    ids = arr[off:off + prompt_len + CONTINUATION_TOKENS].astype(int).tolist()
+    span = prompt_len + CONTINUATION_TOKENS
+    ids = arr[off:off + span].astype(int).tolist()
+    # The pool carries ONE model's tokenization. When the candidate's tokenizer
+    # is not that one, re-tokenize the text at the same document and offset with
+    # the candidate's tokenizer, so the target is shown ids its own embedding
+    # can look up. The seed still selects the same document and the same offset,
+    # so the sample stays paired; the source span adjusts (a smaller vocabulary
+    # needs more tokens for the same text) so the token budget is still exactly
+    # right -- the same rule the runs use.
+    #
+    # When the two tokenizers agree -- every Llama-3.1 candidate against this
+    # pool -- `ids` is byte-for-byte what it was before this branch existed, so
+    # numbers already recorded for those controls stay comparable.
+    pool_tok = None
+    pool_name = meta.get("tokenizer")
+    if (tokenizer is not None and pool_name
+            and _norm_tok_name(pool_name)
+            != _norm_tok_name(getattr(tokenizer, "name_or_path", ""))):
+        pool_tok = AutoTokenizer.from_pretrained(pool_name)
+        retok = _tokenize_window_for(tokenizer, pool_tok, arr, off, span)
+        if retok is not None:
+            ids = retok
     prompt = ids[:prompt_len]
     if bos_id is not None:
         prompt = [int(bos_id)] + prompt
@@ -310,8 +393,71 @@ def assert_effective_rope(model, model_name: str, intended: dict) -> dict:
 # Metrics
 # --------------------------------------------------------------------------
 
-def continuation_perplexity(model, prompt_ids, cont_ids) -> float:
-    """Perplexity of `cont_ids` conditioned on `prompt_ids`.
+def assert_prompt_in_vocab(ids: list[int], vocab_size: int) -> dict:
+    """Ids the candidate's embedding cannot look up, as a REPORTED outcome.
+
+    An out-of-range index is not a numerical nuisance to be worked around. On
+    CUDA, `indexSelectLargeIndex` asserts and the whole context dies, taking
+    every later candidate with it and leaving the stage with no output at all
+    (measured 2026-10-08: rows >= Llama-2-7B's 32000-row embedding, from a pool
+    tokenized by Llama-3.1). It also means the candidate was being shown a
+    DIFFERENT model's tokenization, which is a finding about the input pool
+    rather than about the rope under test.
+
+    Returned, never raised: the gate's contract is to record what it measured.
+    """
+    bad = [i for i, t in enumerate(ids) if t < 0 or t >= int(vocab_size)]
+    return {
+        "prompt_ids_out_of_vocab": len(bad),
+        "prompt_first_out_of_vocab_index": bad[0] if bad else "",
+        "prompt_first_out_of_vocab_id": int(ids[bad[0]]) if bad else "",
+        "prompt_max_id": int(max(ids)) if ids else "",
+        "prompt_vocab_size": int(vocab_size),
+    }
+
+
+def _cuda_died(row: dict) -> bool:
+    """Did this row's CUDA CONTEXT die, as opposed to the row merely failing?
+
+    The first version matched the bare substring "CUDA", which is wrong in both
+    directions: it reads a per-row `CUDA OOM` (a resource limit that the row
+    records and the stage can continue past) as a dead context, and it reads any
+    message that merely MENTIONS CUDA the same way -- including the guard's own
+    note that a forward would abort on the GPU. Matching the specific abort
+    signatures keeps "this configuration measured badly" and "the context is
+    gone, so no later row means anything" told apart.
+    """
+    if row.get("cuda_poisoned"):
+        return True
+    blob = f"{row.get('error', '')} {row.get('cleanup_error', '')}"
+    return any(m in blob for m in (
+        "device-side assert", "CUDA error", "an illegal memory access",
+        "unspecified launch failure", "cudaErrorAssert",
+    ))
+
+
+def _first_non_finite_logit_position(model, pred, chunk: int = 8) -> int | None:
+    """First scored position whose logits are not finite, or None.
+
+    The hidden state can stay finite while the head overflows, and it matters
+    which: `torch.multinomial` on a non-finite softmax aborts the CUDA context
+    in the SAMPLING arms, an abort that looks exactly like a hardware fault.
+    The head is applied in small slices so this stays cheap on a 128k window.
+    """
+    if pred is None or pred.shape[1] == 0:
+        return None
+    for start in range(0, pred.shape[1], chunk):
+        logits = model.lm_head(pred[:, start:start + chunk, :])
+        finite = torch.isfinite(logits)
+        if not bool(finite.all()):
+            bad = (~finite).any(dim=-1)[0].nonzero()
+            if bad.numel():
+                return int(start + int(bad[0]))
+    return None
+
+
+def continuation_perplexity(model, prompt_ids, cont_ids):
+    """(perplexity of `cont_ids` given `prompt_ids`, first non-finite position).
 
     Delegates to `src.analysis.target_quality` so the gate and the per-rung
     target-quality measurement score perplexity with the *same* code. Two
@@ -328,10 +474,11 @@ def continuation_perplexity(model, prompt_ids, cont_ids) -> float:
                            past_key_values=None).last_hidden_state
 
     with torch.no_grad():
-        total, n, _ = continuation_nll(
+        total, n, pred = continuation_nll(
             model, ids, score_from=len(prompt_ids), forward=_forward,
         )
-    return perplexity_from_sums(total, n)
+        bad_pos = _first_non_finite_logit_position(model, pred)
+    return perplexity_from_sums(total, n), bad_pos
 
 
 @torch.no_grad()
@@ -413,7 +560,8 @@ def gate_sample(meta_path: str, ctx: int, seed: int, tok):
     well as a different length.
     """
     return load_pg19_window(meta_path, ctx, seed,
-                            bos_id=getattr(tok, "bos_token_id", None))
+                            bos_id=getattr(tok, "bos_token_id", None),
+                            tokenizer=tok)
 
 
 def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
@@ -498,8 +646,49 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
         row["continuation_sha256"] = _sample_sha(cont_ids)
         row["seed"] = int(cand.get("seed", 42))
 
-        row["ppl_continuation"] = round(
-            continuation_perplexity(model, prompt_ids, cont_ids), 4)
+        # WHICH TOKENIZER EACH SIDE USES, and whether the prompt is even in the
+        # candidate's embedding. Checked BEFORE any forward: an out-of-range id
+        # asserts in indexSelectLargeIndex and kills the CUDA context, which
+        # takes every remaining candidate with it and leaves the stage with no
+        # output at all (measured 2026-10-08). Recorded as the candidate's
+        # outcome instead, so the CSV says what happened rather than the stage
+        # dying with nothing written.
+        try:
+            pool_tok_name = (json.loads(Path(meta_path).read_text())
+                             or {}).get("tokenizer") or ""
+        except Exception:                                   # noqa: BLE001
+            pool_tok_name = ""
+        row["pool_tokenizer"] = pool_tok_name
+        row["candidate_tokenizer"] = getattr(tok, "name_or_path", "")
+        vocab = int(getattr(model.config, "vocab_size", 0) or 0)
+        if vocab:
+            row.update(assert_prompt_in_vocab(prompt_ids, vocab))
+            n_bad = row["prompt_ids_out_of_vocab"]
+            if n_bad:
+                row["status"] = "invalid_prompt_tokens"
+                row["error"] = (
+                    f"{n_bad} of {len(prompt_ids)} prompt ids are outside "
+                    f"{model_name}'s embedding (vocab_size={vocab}, max id "
+                    f"{row['prompt_max_id']}); the pool is tokenized by "
+                    f"{pool_tok_name or 'an unknown tokenizer'} and the "
+                    f"candidate by {row['candidate_tokenizer']}. The forward is "
+                    f"not attempted: it would abort the device context in "
+                    f"indexSelectLargeIndex."
+                )
+                # Nothing was measured, so no perplexity exists to report. An
+                # empty field says "not measured"; a 0.0 would read as a number.
+                row["ppl_continuation"] = ""
+                return row
+
+        ppl, bad_pos = continuation_perplexity(model, prompt_ids, cont_ids)
+        row["ppl_continuation"] = round(ppl, 4)
+        # A non-finite logit is a property of the configuration under test, not
+        # a gate malfunction: the f2 construction is a KNOWN-BROKEN negative
+        # control, and recording it is the finding. The position is kept so a
+        # degeneration can be told apart from an arithmetic accident.
+        row["non_finite_logits"] = bad_pos is not None
+        row["non_finite_first_position"] = (
+            bad_pos if bad_pos is not None else "")
 
         text, new_ids = generate_after_prompt(model, tok, prompt_ids)
         (out_dir / f"gen_{name}.txt").write_text(text)
@@ -641,6 +830,19 @@ FIELDS = ["candidate", "target_model_name", "target_revision",
           "pairing", "baseline_prompt_sha256", "baseline_continuation_sha256",
           "ppl_ratio", "early_eos", "eos_at", "gen_chars", "gen_blank_share",
           "gen_alpha_share", "gen_repeat_share",
+          # Which tokenizer the INPUT POOL was built with, and which one the
+          # candidate uses. A mismatch is the whole cause of the 2026-10-08
+          # abort, and it has to be legible from the CSV alone.
+          "pool_tokenizer", "candidate_tokenizer",
+          # Ids the candidate's embedding cannot look up. Recorded, never
+          # raised: see assert_prompt_in_vocab.
+          "prompt_ids_out_of_vocab", "prompt_first_out_of_vocab_index",
+          "prompt_first_out_of_vocab_id", "prompt_max_id", "prompt_vocab_size",
+          # Non-finite logits, with the first scored position that had them.
+          # Reported rather than crashed on, because a NaN logit is a property
+          # of the configuration under test (the ARM4 f2 construction is a
+          # KNOWN-BROKEN negative control), not a gate malfunction.
+          "non_finite_logits", "non_finite_first_position",
           "gate_pass", "gate_reason", "status", "error"]
 
 
@@ -706,10 +908,7 @@ def main() -> int:
     # logic below would read those failures as "the positives failed, so the gate
     # is wrong" -- the exact opposite of what happened. Say so instead, and still
     # write the rows: the evidence is worth more than the verdict.
-    cuda_dead = [r for r in rows
-                 if r.get("cuda_poisoned")
-                 or "CUDA" in str(r.get("error", ""))
-                 or "CUDA" in str(r.get("cleanup_error", ""))]
+    cuda_dead = [r for r in rows if _cuda_died(r)]
     if cuda_dead:
         print(f"CUDA CONTEXT DIED during {len(cuda_dead)} of {len(rows)} rows; "
               f"first at '{cuda_dead[0].get('candidate', cuda_dead[0].get('name', '?'))}'.")

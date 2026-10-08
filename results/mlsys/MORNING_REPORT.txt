@@ -365,3 +365,186 @@ computed from the LAUNCHED / CONFIRMED TERMINATED timestamps in the watcher log.
     that the paper already documented as emitting EOS at token 0. A
     device-side assert there may be the mis-anchored rope being fed
     something out of range, which would be a real finding rather than a bug.
+
+--------------------------------------------------------------------------------
+10. FOLLOW-UP, 2026-10-08: THE CUDA ASSERT, DIAGNOSED AND FIXED
+--------------------------------------------------------------------------------
+The gate failure in 3c was undiagnosed when this report was first written. It
+is now diagnosed, reproduced on a 1x A100, and fixed. Nothing in this section
+was inferred: every number is from the staged data or from a run on the pod.
+
+ROOT CAUSE
+  The gate's prompt came from data/processed/pg19_docs/documents.json, whose
+  own metadata records  "tokenizer": "meta-llama/Llama-3.1-8B"  (vocab 128256).
+  `load_pg19_window` returns those ids VERBATIM (gate, ~line 71) and
+  `run_candidate` feeds them straight to whichever model the candidate names.
+  Candidate `B_llama2_yarn8_32k_correct` is Llama-2-7B (vocab_size 32000), so
+  its embedding was asked to look up ids that do not exist in it.
+
+  Measured on the staged pool: 5,263,360 tokens across 10 books, max id 127889,
+  and 458,919 of them (8.7%) are >= 32000. For that candidate's own window:
+  2391 of 31744 prompt ids (7.5%), first at index 3 with value 40132, max
+  127146.
+
+  The failing op, named by CUDA_LAUNCH_BLOCKING=1 (exit only after the fact):
+
+    transformers/models/llama/modeling_llama.py:891
+        inputs_embeds = self.embed_tokens(input_ids)
+      -> torch/nn/sparse.py:190  F.embedding(...)
+        -> Indexing.cu:1308  indexSelectLargeIndex:
+             Assertion `srcIndex < srcSelectDimSize` failed.
+
+  On the 8x it surfaced at `torch.cuda.empty_cache()` in run_candidate's
+  `finally`, because a device-side assert is reported at the next synchronising
+  call. An exception raised from `finally` bypasses the handlers above it, so
+  it killed the list comprehension in main() and the stage wrote NO CSV. That
+  is why the incident had no rows to diagnose.
+
+  Identity of the victim, from the manifest log: six 4-shard loads
+  (Llama-3.1-8B, candidates 1-6, all completed) then one 2-shard load
+  (Llama-2-7B) -- the FIRST Llama-2 candidate, exactly where a vocab mismatch
+  must first bite.
+
+  This was NOT a memory failure: peak at the abort was 13.75 GB of 40 GB.
+
+THE OTHER THREE QUESTIONS
+  (a) tokenizer / input_ids reuse across vocab sizes -- YES, for input_ids.
+      `scripts/mlsys_coherence_gate.py:687-697` caches one tokenizer PER MODEL,
+      so the tokenizer object is not shared. But `load_pg19_window` never uses
+      it to tokenize: it returns the pool's ids. The tokenizer is only consulted
+      for the BOS, for `decode`, and for the eos id set. So the ids ARE shared
+      across candidates with different vocab sizes.
+      The runs behave differently and are not affected the same way:
+      `run_experiment._build_pg19_document_prompt` (run_experiment.py:337-345)
+      goes through `_exact_token_window` (run_experiment.py:232-260), which does
+      `decode` then `encode` with the TARGET's tokenizer, so the arms get
+      in-range ids. Every approved campaign stage targets Llama-3.1-8B, whose
+      tokenizer IS the pool's, so those stages are correct. The mismatch is
+      confined to the gate's two Llama-2 controls.
+
+  (b) a sampling call that can receive non-finite probabilities -- YES, two,
+      and they are a latent device-side assert rather than a bad number:
+        src/models/rasd_inference.py:322  torch.multinomial(probs, ...)
+        src/models/rasd_inference.py:2039 torch.multinomial(resid, ...)
+      both fed by `F.softmax` on target/draft logits (lines 317-322, 351-352,
+      2035-2039). `torch.multinomial` aborts the CUDA context when the
+      distribution is not finite. The gate does NOT reach these: its own
+      generation is `do_sample=False` (greedy) at
+      `scripts/mlsys_coherence_gate.py:340`. So this is not the 3c failure, but
+      the sampling arms carry the same abort risk if a rope produces NaN logits.
+
+  (c) can position ids exceed the rope cache -- NO, on either version.
+      transformers 4.46.3 (the pod's pin, confirmed in the preflight) and
+      4.47.1 both have a `LlamaRotaryEmbedding.forward` that computes
+      `freqs = inv_freq @ position_ids` directly
+      (modeling_llama.py:147-162) and never indexes a precomputed cos/sin
+      table. `_dynamic_frequency_update` runs only `if "dynamic" in
+      self.rope_type` (line 149) -- never for "yarn", "default" or "linear".
+      There is no cache to overflow. (The field `max_seq_len_cached` exists but
+      is read only by that never-taken branch.)
+
+MEMORY: BOTH CANDIDATES FIT ON ONE GPU
+  The gate loads one model at a time, `device_map={"": 0}`, bf16, unquantized.
+    B_llama2_yarn8_32k_correct   Llama-2-7B    @32k   peak 13.75 GB
+    N1_arm4_f2_construction     Llama-3.1-8B  @128k  peak 31.71 GB
+  Both fit in 40 GB and in 80 GB, with SDPA as the attention backend.
+
+THE FIX  (scripts/mlsys_coherence_gate.py)
+  1. The prompt is tokenized by the CANDIDATE's tokenizer. `load_pg19_window`
+     now takes the candidate tokenizer; when the pool's recorded tokenizer
+     differs, the text at the same document and offset is re-tokenized with the
+     candidate's, so the target is shown ids its own embedding can look up. When
+     the two AGREE -- every Llama-3.1 candidate against this pool -- the ids are
+     byte-for-byte what they were, so the controls already recorded for Llama-3.1
+     stay comparable. There is a test for exactly that.
+     The source length is found by BISECTION. Correcting one estimate at a time
+     does not converge here: the map L <- L + span - f(L) has a contraction
+     factor of -0.13 at Llama-2's 1.13 tokens per pool id, and it was measured
+     oscillating 32767 -> 28403 -> 29001 -> 28928 with no exact hit in eight
+     probes. An exact-length window matters because a longer one would measure
+     extrapolation past the candidate's own context.
+  2. A prompt the embedding cannot index is RECORDED, never run. The row gets
+     `status=invalid_prompt_tokens`, the count, the first index and value, the
+     max id, the vocab size, and both tokenizer names, and the forward is not
+     attempted. Before this the stage wrote no CSV at all; now the CSV says
+     which candidate and why.
+  3. Non-finite logits are recorded with their first position
+     (`non_finite_logits`, `non_finite_first_position`) rather than crashed on.
+     A NaN here is a property of the configuration under test -- the f2
+     construction is a KNOWN-BROKEN negative control -- so it is a finding.
+  4. One tightened classifier: `_cuda_died` now matches the actual abort
+     signatures instead of the bare substring "CUDA". The old test read a
+     per-row `CUDA OOM` as a dead context, and read the guard's own message
+     ("would abort the device context") the same way -- i.e. the change in (2)
+     would have been reported as "CUDA CONTEXT DIED" on the very path that
+     exists to prevent it.
+
+  Deliberately NOT changed: no device map, no context length, no dtype, no
+  sharding, no config. Everything above is device-count independent, and two
+  tests assert the 1x repro cannot reach the campaign
+  (`tests/test_mlsys_gate_tokenizer_vocab.py::test_no_campaign_path_reads_the_
+  1x_repro`, and the gate's `_device_map()` is pinned unchanged).
+
+  `scripts/mlsys_gate_repro_1x.sh` is the separable repro. The manifest does not
+  read it, and there is a test for that. It needs no 1x-specific setting: it
+  runs the campaign's own candidate file, read-only, at its own contexts.
+
+TESTS
+  tests/test_mlsys_gate_tokenizer_vocab.py, 15 tests. All 15 FAIL against the
+  pre-fix gate (verified by running them with `git show HEAD:` restored) and all
+  15 pass after. Full suite 901 passed; dry run 32 passed, 0 failed.
+
+1x A100 40GB CONFIRMATION  (gpu_1x_a100_sxm4, us-east-1, 27 min, $0.90)
+  Provider env from scripts/mlsys_setup_probe.sh: 8 passed, 0 failed,
+  transformers 4.46.3 -- the same pin as the failed 8x run.
+
+  Four rows, the two candidates plus the baselines their ratios need:
+
+    candidate                   ctx     anchor              ppl        status
+    B_native_128k            131072  declared             1.0458       oom
+    B_llama2_yarn8_32k_correct 32768  declared             7.0155       oom
+    N1_arm4_f2_construction  131072  anchor_on_context  372.9072       oom
+    N2_llama2_misanchored     32768  anchor_on_context 53107.2525      oom
+
+  THE ABORT IS GONE. `B_llama2_yarn8_32k_correct` now reports
+  prompt_ids_out_of_vocab=0, prompt_max_id=29999, prompt_vocab_size=32000 --
+  the Llama-2 model is being shown Llama-2 ids -- and produces a perplexity
+  where it previously killed the context. Both Llama-2 rows are also correctly
+  classified: the mis-anchored one matches `anchor_on_context`, not `declared`,
+  and lands at 7570x its paired baseline (53107.25 vs 7.0155); the f2 control
+  lands at 357x (372.91 vs 1.0458). Neither produced non-finite logits.
+  The DIRECTION of the historical result is reproduced -- mis-anchored damage is
+  orders of magnitude worse than correctly anchored -- but the magnitude is NOT
+  comparable to the 57x (826.9 vs 14.45) recorded by anchor_ppl_probe at 32k:
+  that measurement used a different prompt builder and a different (Llama-2
+  tokenized) pool. The numbers here are new, on the corrected prompt, and should
+  not be read as a re-measurement of the old ratio.
+
+  WHAT THE 1x COULD NOT SHOW -- and this is the honest limit. All four rows
+  record `status=oom`: the PERPLEXITY is measured, then the GENERATION phase
+  runs out of memory. 40 GB is genuinely too small for a KV cache on top of the
+  forward (B_native_128k needed 3.47 GiB with 2.98 GiB free; the Llama-2 rows
+  250 MiB with 17.56 MiB free -- a few hundred MiB short, not fragmented).
+  So the 1x confirms the perplexity half of every row and cannot confirm the
+  generation half (early-EOS, blank/repeat shares) for any of them.
+  This is a property of the 40 GB card, not of the campaign: the 8x has 80 GB
+  per device, and the 8x run on 2026-10-08 got six candidates -- two of them
+  at 128k -- through generation before the assert. A ~17 GB KV cache plus a
+  16 GB model is ~33 GB.
+
+TOTAL 1x COST: 27 minutes at $1.99/hr = $0.90. Running session total: $72.12 +
+$0.90 = $73.02 of the approved $850.
+
+WILL THE 8x GATE NOW PASS?  I believe candidate 7 no longer aborts: the cause
+is identified at the instruction level, reproduced twice, and the specific
+integer that caused it is now zero on real data. What I have NOT shown is a
+complete gate run, because the 1x cannot hold the generation phase. The two
+honest risks: (i) each row now builds its prompt with a second tokenizer, so the
+gate needs BOTH gated tokenizers cached -- the pod already has both, and the
+manifest forwards HF_TOKEN; (ii) a candidate whose generation OOMs on 80 GB
+would be recorded as `oom` and the calibration check would call it "could not
+measure it", i.e. the stage would still fail, but with the rows on disk. My
+recommendation stays what it was: re-verify with scripts/mlsys_gate_repro_1x.sh
+style single-box runs before spending an 8x launch, and if you want the whole
+gate exercised first, the cheapest honest option is a 1x A100 80GB SKU, which
+Lambda does not offer -- so the next full gate run is an 8x run.
