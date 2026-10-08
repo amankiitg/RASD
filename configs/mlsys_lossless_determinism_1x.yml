@@ -1,0 +1,78 @@
+# 1x DETERMINISM probe -- NOT a campaign config.
+#
+# WHY IT EXISTS. The losslessness repro showed the speculative and target-only
+# arms of the SAME prompt disagreeing at 1 rank, at 8k AND 32k, with NF4 AND
+# bf16 KV. That is consistent with two very different stories:
+#
+#   (1) the target's logits depend on the SHAPE of its forward -- a 5-token
+#       packed verify vs a 1-token decode -- and a near-tie argmax flips on the
+#       resulting epsilon. Deterministic, and mode-dependent.
+#   (2) the engine is simply not run-to-run deterministic (unseeded RNG, atomics,
+#       a race between the draft and compute streams), in which case two
+#       IDENTICAL arms would also disagree and "losslessness" is not even
+#       well-defined.
+#
+# Those are different findings with different fixes, and the way to separate
+# them is to run the SAME arm twice. So this config is four levels that are
+# pairwise identical except for their level id: two speculative, two
+# target-only. If A==B within each mode, the engine is deterministic and the
+# spec/target difference is real and mode-dependent; if A!=B, story (2).
+#
+# 8k and bf16 KV: the cheapest cell, and the one with the LEAST numerical
+# pretext for divergence (no KV quantisation), so a within-mode difference here
+# could not be blamed on the codec.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: false
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+
+DET_8K:
+  name: determinism_8k
+  factor: context_length
+  levels:
+  - id: DET_8K_specA
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    checkpoint_every: 0
+    notes: 'speculative, attempt A'
+  - id: DET_8K_specB
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    checkpoint_every: 0
+    notes: 'speculative, attempt B -- identical to A apart from the id'
+  - id: DET_8K_targetonlyA
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'target-only, attempt A'
+  - id: DET_8K_targetonlyB
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'target-only, attempt B -- identical to A apart from the id'

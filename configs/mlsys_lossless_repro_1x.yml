@@ -1,0 +1,134 @@
+# 1x LOSSLESSNESS REPRO config -- NOT a campaign config, and no manifest stage
+# or watcher path reads it. tests/test_mlsys_lossless_1x.py asserts that
+# isolation, the same way the runexp probe and the 1x gate repro are isolated.
+#
+# WHY IT EXISTS
+# engine_cap_smoke at 8 ranks / 128k FAILED its losslessness assertions on
+# 2026-10-08T19:33Z: both speculative arms diverged from their target-only
+# partner at token 2-3, at positions where BOTH arms were decided
+# (logit gaps 0.5/0.75 and 1.75/1.75, far above the 0.1 tie gate). The prompts
+# are byte-identical within each pair, the acceptance rule is
+# `target_argmax == draft_token`, and neither arm is a shift of the other -- so
+# the target disagrees with ITSELF depending on which mode computed it.
+#
+# WHAT IT VARIES, AND WHY EXACTLY THESE FOUR CELLS
+# The three candidate causes are context length, rank count, and the numeric
+# path. The 4k runexp probe already showed losslessness holding at 4k/1 rank
+# (1B target). This config holds rank count at 1 and varies only CONTEXT, at two
+# lengths, crossed with the KV dtype that is the other plausible numeric path:
+#
+#     context x { NF4 KV (campaign default), bf16 KV (no quantisation) }
+#
+#   * lossless at BOTH contexts, both dtypes -> context is NOT the cause at
+#     1 rank; the remaining suspect is the 8-rank ring merge, and the next
+#     experiment needs 2x or 4x GPUs.
+#   * lossless at 8k but NOT at 32k, at 1 rank -> context length is sufficient
+#     to break it on its own, with no ring involved.
+#   * lossless only with bf16 KV -> the NF4 KV path is implicated.
+#
+# WHAT IT DELIBERATELY MIRRORS: the campaign's engine_cap_smoke models,
+# revisions, quantisation, prompt source, the SAME document (pg19_train_1) and
+# the same greedy settings. The only deviation is size: 32k/8k and 64 tokens,
+# because 128k does not fit one 40 GB card. The deviation is the experiment.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+
+# `kv_quant: false` is set PER LEVEL, not per group. run_experiment's planner
+# does `run = deepcopy(defaults); run.update(level)`, so a level override wins;
+# but the switch is also read back as the MEASURED kv_dtype in the token
+# sidecar, and the driver asserts nf4 rows really measured nf4 and bf16 rows
+# really measured bf16. A silent no-op override would otherwise be
+# indistinguishable from a real negative result.
+LOSS_32K:
+  name: lossless_repro_32k
+  factor: context_length
+  levels:
+  - id: LOSS_32K_nf4_spec
+    context_length: 32768
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    kv_quant: true
+    checkpoint_every: 0
+    notes: 'NF4 KV, speculative arm, 32k'
+  - id: LOSS_32K_nf4_targetonly
+    context_length: 32768
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    kv_quant: true
+    checkpoint_every: 0
+    notes: 'NF4 KV, target-only partner of LOSS_32K_nf4_spec'
+  - id: LOSS_32K_bf16_spec
+    context_length: 32768
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    kv_quant: false
+    checkpoint_every: 0
+    notes: 'bf16 KV, speculative arm, 32k'
+  - id: LOSS_32K_bf16_targetonly
+    context_length: 32768
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    kv_quant: false
+    checkpoint_every: 0
+    notes: 'bf16 KV, target-only partner of LOSS_32K_bf16_spec'
+
+LOSS_8K:
+  name: lossless_repro_8k
+  factor: context_length
+  levels:
+  - id: LOSS_8K_nf4_spec
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    kv_quant: true
+    checkpoint_every: 0
+    notes: 'NF4 KV, speculative arm, 8k'
+  - id: LOSS_8K_nf4_targetonly
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    kv_quant: true
+    checkpoint_every: 0
+    notes: 'NF4 KV, target-only partner of LOSS_8K_nf4_spec'
+  - id: LOSS_8K_bf16_spec
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    kv_quant: false
+    checkpoint_every: 0
+    notes: 'bf16 KV, speculative arm, 8k'
+  - id: LOSS_8K_bf16_targetonly
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    kv_quant: false
+    checkpoint_every: 0
+    notes: 'bf16 KV, target-only partner of LOSS_8K_bf16_spec'
