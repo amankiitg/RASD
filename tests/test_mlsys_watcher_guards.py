@@ -789,3 +789,40 @@ def test_the_token_reaches_every_remote_command_that_needs_it():
     for line in _code_lines(SRC).splitlines():
         if 'ssh $SSH_OPTS "$SSH_USER@$IP"' in line and "pod_env.sh" in line:
             assert "HF_TOKEN" in line, line
+
+
+def test_the_manifest_uses_the_interpreter_the_watcher_verified():
+    """The 07:37Z run: the setup passed, the preflight passed, and then
+    gate_calibration died on `No module named 'transformers'` because the
+    manifest re-derived its own interpreter and got a different answer.
+
+    Exactly one component may decide which interpreter the stages use."""
+    # the manifest honours MLSYS_PYTHON before it guesses
+    assert "MLSYS_PYTHON" in MANIFEST_SRC, "the manifest ignores MLSYS_PYTHON"
+    i = MANIFEST_SRC.index("resolve_python()")
+    body = MANIFEST_SRC[i:MANIFEST_SRC.index("\n}", i)]
+    assert body.index("MLSYS_PYTHON") < body.index("miniconda3/envs"), \
+        "MLSYS_PYTHON is not checked before the fallback guesses"
+    # the watcher passes the interpreter it already verified
+    start = SRC[SRC.index('say "starting the manifest"'):]
+    start = start[:start.index("echo started\"")]
+    assert "MLSYS_PYTHON='$PY_REMOTE'" in start, \
+        "the watcher does not tell the manifest which interpreter to use"
+    # and the manifest's own guess includes the env the bootstrap creates
+    assert "rasd-gpu" in body, (
+        "the manifest still looks only for `rasd`, which is this Mac's env "
+        "name; on a provisioned pod that resolves to /usr/bin/python3")
+
+
+def test_the_outbound_rsync_leaves_local_results_behind():
+    """results/mlsys was being pushed to the pod wholesale -- 575 files,
+    including a stale RUN_LOG.txt from a macOS pre-flight run, which then came
+    back in the incident pull looking like pod output. Only the cumulative cost
+    ledger travels, because the budget guard reads it."""
+    i = SRC.index("rsync -az --no-perms --no-owner --no-group -e \"ssh $SSH_OPTS\"")
+    block = SRC[i:SRC.index('"$REPO/" "$SSH_USER@$IP:~/RASD/"', i)]
+    assert "--exclude 'results/mlsys/*'" in block, \
+        "local results/mlsys is still pushed to the pod"
+    assert "--include 'results/mlsys/gpu_hours.csv'" in block, \
+        ("the cumulative cost ledger no longer travels, so the budget guard "
+         "would restart from zero each launch")

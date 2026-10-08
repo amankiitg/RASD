@@ -1866,6 +1866,28 @@ if "RPY=$PY_REMOTE" not in watch:
 if _re.search(r"pgrep -f mlsys_manifest", "\n".join(
         l for l in watch.splitlines() if not l.lstrip().startswith("#"))):
     fails.append("the completion check is still a self-matching pgrep")
+# The interpreter the stages use must be decided in ONE place. The 07:37Z run
+# passed every setup check and then died on `No module named 'transformers'`
+# because the manifest re-derived its own answer.
+if "MLSYS_PYTHON" not in man:
+    fails.append("the manifest ignores MLSYS_PYTHON")
+else:
+    _i = man.index("resolve_python()")
+    _body = man[_i:man.index("\n}", _i)]
+    if _body.index("MLSYS_PYTHON") > _body.index("miniconda3/envs"):
+        fails.append("the manifest guesses an interpreter before it checks MLSYS_PYTHON")
+    if "rasd-gpu" not in _body:
+        fails.append("the manifest looks only for `rasd`, this Mac's env name")
+if "MLSYS_PYTHON='$PY_REMOTE'" not in watch:
+    fails.append("the watcher does not pass the interpreter it verified")
+# results/mlsys must not travel outbound: 575 local artifacts used to land on
+# the pod, including a stale RUN_LOG.txt that came back looking like pod output
+_r = watch.index('rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS"')
+_rb = watch[_r:watch.index('"$REPO/" "$SSH_USER@$IP:~/RASD/"', _r)]
+if "--exclude 'results/mlsys/*'" not in _rb:
+    fails.append("local results/mlsys is still pushed to the pod")
+if "--include 'results/mlsys/gpu_hours.csv'" not in _rb:
+    fails.append("the cumulative cost ledger no longer travels")
 if "echo \\$? > ~/manifest.rc" not in watch:
     fails.append("the manifest's exit code is not recorded")
 for want, why in (("conda create -n", "the env is never created"),

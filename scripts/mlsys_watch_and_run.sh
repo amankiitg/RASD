@@ -504,9 +504,19 @@ ssh $SSH_OPTS "$SSH_USER@$IP" "mkdir -p ~/RASD/scripts ~/RASD/configs ~/RASD/res
 # message and the run continued against a pod with stale or missing code.
 # Nothing downstream can recover from that -- every stage reads scripts/ and
 # configs/ -- so it is fatal.
+# results/mlsys is excluded outbound, EXCEPT the cumulative cost ledger. The
+# comment further up has always claimed this exclusion existed; it did not. On
+# 2026-10-08 that pushed 31 local artifacts onto the pod, including a stale
+# RUN_LOG.txt from a 2026-10-04 macOS pre-flight run ("ABORTED AT PRECHECK 1 --
+# NO CUDA GPU") which then appeared in the incident pull as if the pod had
+# written it. Only the ledger travels, because the budget guard reads it to
+# carry cumulative spend across sessions.
 if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
        --exclude '.git' --exclude 'results/final' --exclude 'manuscript' \
        --exclude '.venv*' --exclude '__pycache__' \
+       --include 'results/mlsys/' \
+       --include 'results/mlsys/gpu_hours.csv' \
+       --exclude 'results/mlsys/*' \
        "$REPO/" "$SSH_USER@$IP:~/RASD/" >>"$LOG" 2>&1; then
   say "FATAL: staging the repository to the pod failed; refusing to run"
   say "FATAL: against code we cannot confirm is the code under test"
@@ -665,6 +675,7 @@ say "starting the manifest"
 ssh $SSH_OPTS "$SSH_USER@$IP" \
   "cd ~/RASD && rm -f ~/manifest.rc && set -a && . ~/RASD/.pod_env.sh && set +a && \
    HF_TOKEN='$HF_TOKEN_VALUE' \
+   MLSYS_PYTHON='$PY_REMOTE' \
    NODE_RATE_PER_HOUR=$RATE \
    MLSYS_STALL_MINUTES=${MLSYS_STALL_MINUTES:-20} \
    MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \

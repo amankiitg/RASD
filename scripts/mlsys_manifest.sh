@@ -38,15 +38,25 @@ mkdir -p "$RAN_DIR"
 # Resolved once, then exported so the stages inherit it.
 resolve_python() {
   local c
+  # MLSYS_PYTHON first: the watcher resolved and VERIFIED an interpreter before
+  # it started this manifest, and its answer beats a guess made here. The
+  # 07:37Z run died on `No module named 'transformers'` because this function
+  # re-derived the interpreter on its own and got it wrong.
   if [ -n "${MLSYS_PYTHON:-}" ]; then printf '%s' "$MLSYS_PYTHON"; return; fi
-  for c in "$HOME/miniconda3/envs/rasd/bin/python" \
-           "$HOME/miniconda3/bin/python" /opt/conda/bin/python \
+  # `rasd-gpu` is the env scripts/mlsys_pod_env.sh creates; `rasd` is this Mac's
+  # name and exists only as a legacy fallback. Looking for `rasd` alone is how a
+  # correctly provisioned pod ended up running on /usr/bin/python3.
+  for c in "$HOME/miniconda3/envs/rasd-gpu/bin/python" \
+           "$HOME/miniconda3/envs/rasd/bin/python" \
+           "$HOME/miniconda3/bin/python" \
+           /opt/conda/envs/rasd-gpu/bin/python /opt/conda/bin/python \
            "$(command -v python3 2>/dev/null)"; do
     if [ -n "$c" ] && [ -x "$c" ] && "$c" -c 'import yaml, torch' 2>/dev/null; then
       printf '%s' "$c"; return
     fi
   done
-  for c in "$HOME/miniconda3/envs/rasd/bin/python" /opt/conda/bin/python \
+  for c in "$HOME/miniconda3/envs/rasd-gpu/bin/python" \
+           "$HOME/miniconda3/envs/rasd/bin/python" /opt/conda/bin/python \
            "$(command -v python3 2>/dev/null)"; do
     if [ -n "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return; fi
   done
