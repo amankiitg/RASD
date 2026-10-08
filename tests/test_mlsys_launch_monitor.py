@@ -198,3 +198,97 @@ def test_the_monitor_never_terminates_or_launches_anything(tmp_path):
                       "lambdalabs.com", "curl "):
         assert forbidden not in code, (
             f"the monitor CALLS {forbidden!r}; it must stay read-only")
+
+
+# --------------------------------------------------------------------------
+# an incident from a PREVIOUS arming is not this arming's result
+#
+# On 2026-10-08T17:36Z the monitor started while the previous run's incident was
+# still the newest on disk and reported ITS gates at 17:37:12Z -- before this
+# run's gates existed. It then marked them SEEN, so the real results were never
+# reported at all. The incident directory's name carries its UTC timestamp and
+# the arming marker carries the arming's, so the cutoff is a string comparison
+# of the same 14 digits.
+# --------------------------------------------------------------------------
+
+STALE_LOG = """\
+2026-10-08T15:29:57Z STAGE_OK name=gate_calibration wall=733s cost=$4.54
+2026-10-08T15:30:22Z STAGE_FAILED name=engine_cap_smoke rc=1 wall=24s
+"""
+
+FRESH_LOG = """\
+2026-10-08T18:02:44Z STAGE_OK name=gate_calibration wall=753s cost=$4.67
+2026-10-08T18:11:00Z STAGE_START name=engine_cap_smoke timeout=21600s
+"""
+
+MARKER_NEWER = "===== ARMING 2026-10-08T16:24:55Z =====\n"
+
+
+def test_an_incident_from_before_this_arming_is_not_reported(tmp_path):
+    """Today's case exactly: the previous run's incident is on disk at launch,
+    with gate_calibration OK and engine_cap_smoke FAILED, and it must NOT be
+    reported -- that FAILED belongs to a different run."""
+    sess = _sandbox(
+        tmp_path,
+        MARKER_NEWER +
+        "2026-10-08T17:36:51Z LAUNCHED 5d1f0f61 in us-midwest-1\n"
+        "2026-10-08T18:40:00Z CONFIRMED TERMINATED (0 instances)\n",
+        manifest_log=STALE_LOG, gates_dir="incident_20261008T153023Z")
+    status = _run(tmp_path, sess, seconds=3)
+
+    assert "EVENT=LAUNCHED" in status
+    assert "EVENT=TERMINAL" in status
+    assert "gate=gate_calibration" not in status, (
+        "the PREVIOUS arming's gate_calibration was reported as this one's")
+    assert "gate=engine_cap_smoke" not in status, (
+        "the PREVIOUS arming's engine_cap_smoke FAILED was reported; that is "
+        "the failure this test exists for")
+    assert "ignoring incidents older than" in status
+
+
+def test_this_armings_incident_is_still_reported(tmp_path):
+    """The cutoff must not swallow the current run's own incident."""
+    sess = _sandbox(
+        tmp_path,
+        MARKER_NEWER +
+        "2026-10-08T17:36:51Z LAUNCHED 5d1f0f61 in us-midwest-1\n"
+        "2026-10-08T18:40:00Z CONFIRMED TERMINATED (0 instances)\n",
+        manifest_log=FRESH_LOG, gates_dir="incident_20261008T183500Z")
+    status = _run(tmp_path, sess, seconds=3)
+    assert "gate=gate_calibration verdict=OK" in status
+    assert "source=local:" in status
+
+
+def test_an_old_incident_does_not_shadow_a_new_one(tmp_path):
+    """Both on disk: the newest is read, and the old one's FAILED never appears
+    even though its manifest.log has one."""
+    sess = _sandbox(
+        tmp_path,
+        MARKER_NEWER +
+        "2026-10-08T17:36:51Z LAUNCHED 5d1f0f61 in us-midwest-1\n"
+        "2026-10-08T18:40:00Z CONFIRMED TERMINATED (0 instances)\n",
+        manifest_log=FRESH_LOG, gates_dir="incident_20261008T183500Z")
+    # the stale one, written after so it is also the newest by mtime
+    stale = tmp_path / "repo" / "results" / "mlsys" / "incident_20261008T153023Z"
+    stale.mkdir(parents=True)
+    (stale / "manifest.log").write_text(STALE_LOG)
+    status = _run(tmp_path, sess, seconds=3)
+    assert "incident_20261008T183500Z" in status, \
+        "the current run's incident was not the one read"
+    assert "gate=engine_cap_smoke" not in status, (
+        "the stale incident's engine_cap_smoke FAILED was reported")
+
+
+def test_the_fallback_cutoff_is_the_launch_time_not_zero(tmp_path):
+    """With no marker (an older-style stdout), the cutoff is this arming's
+    LAUNCHED time; an incident from before it is still excluded. Zero would
+    admit every old incident."""
+    sess = _sandbox(
+        tmp_path,
+        "2026-10-08T17:36:51Z LAUNCHED 5d1f0f61 in us-midwest-1\n"
+        "2026-10-08T18:40:00Z CONFIRMED TERMINATED (0 instances)\n",
+        manifest_log=STALE_LOG, gates_dir="incident_20261008T153023Z")
+    status = _run(tmp_path, sess, seconds=3)
+    assert "EVENT=LAUNCHED" in status
+    assert "gate=engine_cap_smoke" not in status
+    assert "017361" in status or "ignoring incidents older than" in status
