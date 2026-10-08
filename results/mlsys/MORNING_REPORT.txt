@@ -1004,3 +1004,61 @@ unlisted precision, which is its purpose.
 
 COST: 1x A100 up ~38 min at $1.99/hr = ~$1.27. Cumulative for tasks 1-4 of this
 round: ~$1.27 of the $5 budget. 0 instances running before re-arming.
+
+
+================================================================================
+21:36Z  2026-10-08  RE-ARMED 8x  (commit bde781a, pushed)
+================================================================================
+
+Pre-flight: 0 instances; HEAD == origin/mlsys-experiments at bde781a; tree clean.
+1029 tests pass (one failure in the full sweep was
+test_an_unreadable_instance_count_does_not_end_the_wait, the known timing-flaky
+watcher test; it passes alone, in 2.1 s). Dry run 32/0.
+
+Armed detached, nohup + disown, caffeinate -dims:
+  watcher   pid 88424  (PPID 1, detached; runs the poll/launch/campaign loop)
+  caffeinate pid 88426 (child of the watcher; dies with it)
+  monitor   pid 88538  (PPID 1, exactly one monitor process)
+Same ARMED_ENV: gpu_8x_a100_80gb_sxm4 only, cap $2000, per-stage ask $300 @
+$22.32/hr, 40 h campaign clock, 72 h capacity wait, 60 +/-20 s cadence, the same
+nine-stage allowlist.
+
+First polls: attempt=1 regions=none capacity=no (21:36:06Z), attempt=2
+regions=none capacity=no (21:37:22Z). 8x A100 capacity has been intermittent all
+day; the 72 h wait is bounded to epoch 1791754565.
+
+The monitor was restarted with an empty SEEN list and this arming's cut-off
+(20261008213605 = the "===== ARMING" marker time). Five stale incident
+directories sit in results/mlsys/ from earlier armings -- including
+incident_20261008T193358Z, which holds gate_calibration OK and
+engine_cap_smoke FAILED -- and NONE of them is reportable now. That is the bug
+that misreported both gates at 17:37Z, and its regression test
+(test_an_incident_from_before_this_arming_is_not_reported, plus the launch-line
+and shadowing cases; 12 monitor tests total) passes.
+
+SPEND, AND WHAT THE CAP IS MEASURED AGAINST -- answering the standing question.
+The ledger holds 9 rows summing to $78.12, and spend() reports $78.12. The
+~$72.12 of failed 8x launches from earlier today is deliberately NOT in it: the
+operator's instruction was "no ledger edits, no collect_incident change", and
+ARMED_ENV records that decision along with the row that would be used if it were
+ever wanted (unledgered_aborts_20261008,11632,8,25.8489,72.12). So the cap is
+measured from the ledger, not from zero: true cumulative is ~$150.24 and $2000
+permits up to $2078.12 of real spend. ARMED_ENV's note still quotes $34.86 as the
+ledger total, which is stale -- it is $78.12 now, because the 19:33Z abort
+brought home its own two rows (gate_calibration $4.67, engine_cap_smoke $33.90)
+via collect_incident's merge. Left untouched, since the instruction was not to
+edit ARMED_ENV.
+
+Rules in force for this arming: any gate fails -> pull results and logs,
+terminate, stop, no 8x retry. All gates pass -> continue the full campaign
+automatically without waiting for approval, reporting each stage as it lands. A
+non-gate stage fails -> keep its rows, let the manifest continue, report it. Stop
+only on a dead CUDA context, a stall, or the cost cap. Anything unanticipated ->
+pull, terminate, stop.
+
+The gate this arming will actually exercise is new: engine_cap_smoke now gates
+on bf16 teacher-forced shortfall <= TOL_bf16 = 1.875 rather than token identity,
+and its own probe logs the 8-rank noise floor. TOL_bf16 was derived at 8k and
+32k; the gate runs at 128k, where bf16 could not be measured at one rank. This
+run is the first measurement of the bf16 floor at the gate's own context, and a
+failure there would be a real finding rather than a threshold to widen.
