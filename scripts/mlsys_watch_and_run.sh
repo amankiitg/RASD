@@ -46,26 +46,31 @@ RATE=22.32
 SSH_KEY=$HOME/.ssh/id_ed25519
 SSH_USER=ubuntu
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -i $SSH_KEY"
-# Interpreter to use ON THE POD. Resolved there, because the local PATH says
-# nothing about the remote machine.
+# Interpreter to use ON THE POD, in two parts, because they are used differently
+# and conflating them cost two 8xA100 launches on 2026-10-08.
 #
-# FAIL CLOSED. The previous form preferred the conda env and then fell back to
-# `command -v python3`. On 2026-10-08 that fallback fired on an image with no
-# conda at all, and gate_calibration died two seconds into a paid 8xA100 run
-# with `No module named 'transformers'`. A wrong interpreter must stop the run,
-# not start it: an unset RPY makes every remote command fail loudly, which is
-# the only outcome that costs nothing.
+#   RPY_RESOLVE  a COMMAND that prints the interpreter's path (no `$( )').
+#   RPY          the resolved absolute path, used by every later remote command.
 #
-# The env is named `rasd-gpu' -- that is what scripts/auto_execute_phase_c.sh
-# creates and what environment_gpu.yml declares. `rasd' is accepted too because
-# that is the name the local dev machine uses, but it is NOT the pod's name and
-# looking for only that is how a provisioned pod went unnoticed.
-RPY='$( for c in "$HOME/miniconda3/envs/rasd-gpu/bin/python" \
-                  "$HOME/miniconda3/envs/rasd/bin/python" \
-                  "/opt/conda/envs/rasd-gpu/bin/python" \
-                  "/opt/conda/envs/rasd/bin/python"; do
-          [ -x "$c" ] && { echo "$c"; exit 0; }
-        done; exit 1 )'
+# The trap: RPY used to be a `$( ... )' EXPRESSION. That happens to work when it
+# is interpolated into something that follows it with arguments --
+# `$(...) -c "..."` runs the path it echoed -- so the data verification looked
+# fine. But `ssh host "$RPY"' passes the expression as the WHOLE command, so the
+# pod ran the echoed path with no arguments: python started, printed nothing,
+# and exited. The resolution came back empty and the run refused to start.
+#
+# So resolution is a command that prints, and anything later is a plain path.
+# The env is named `rasd-gpu': that is what scripts/auto_execute_phase_c.sh
+# creates and what environment_gpu.yml declares. `rasd' is the local dev
+# machine's name, kept as a fallback only.
+RPY_RESOLVE='for c in "$HOME/miniconda3/envs/rasd-gpu/bin/python" \
+                     "$HOME/miniconda3/envs/rasd/bin/python" \
+                     "/opt/conda/envs/rasd-gpu/bin/python" \
+                     "/opt/conda/envs/rasd/bin/python"; do
+              [ -x "$c" ] && { echo "$c"; exit 0; }
+            done
+            exit 1'
+RPY=""   # set by resolve_remote_python; empty means "not resolved yet"
 
 # Local interpreter for this script's own helpers. Never bare `python3`.
 PY=$(command -v python3)
@@ -544,17 +549,38 @@ ssh $SSH_OPTS "$SSH_USER@$IP" 'grep -E "^    " ~/pod_env.log' 2>&1 | sed 's/^/  
 
 # Resolve the interpreter NOW, once the environment exists, and hold it for the
 # rest of the run. Failing here is free; failing inside a stage is not.
-PY_REMOTE=$(ssh $SSH_OPTS "$SSH_USER@$IP" "$RPY" 2>/dev/null)
+#
+# Two sources, because the provisioning script already knows the answer: it
+# prints INTERPRETER=<path> as its last line. Reading that is primary; the
+# RPY_RESOLVE command is the fallback for a pod provisioned by something else.
+# Either way the result must be an absolute path, so a stray message on stdout
+# cannot be mistaken for one.
+PY_REMOTE=$(ssh $SSH_OPTS "$SSH_USER@$IP" \
+  'grep -a "^INTERPRETER=" ~/pod_env.log 2>/dev/null | tail -1 | cut -d= -f2-' 2>/dev/null)
 if [ -z "$PY_REMOTE" ]; then
-  say "FATAL: no campaign interpreter on the pod (looked for the rasd-gpu env)."
-  say "FATAL: scripts/mlsys_pod_env.sh reported success, so this is a bug in"
-  say "FATAL: the resolution order, not in the install. Not starting the run."
+  say "  (no INTERPRETER= line in ~/pod_env.log; resolving it directly)"
+  PY_REMOTE=$(ssh $SSH_OPTS "$SSH_USER@$IP" "$RPY_RESOLVE" 2>/dev/null)
+fi
+case "$PY_REMOTE" in
+  /*) ;;
+  "") say "FATAL: no campaign interpreter on the pod (looked for the rasd-gpu env)."
+      say "FATAL: the environment was provisioned, so either it is not where the"
+      say "FATAL: resolution looks or the resolution itself is broken."
+      say "FATAL: not starting a run that would die in its first stage."
+      terminate_and_confirm
+      exit 6 ;;
+  *)  say "FATAL: interpreter resolution returned '$(printf '%s' "$PY_REMOTE" | head -c 80)',"
+      say "FATAL: which is not an absolute path. Refusing to use it."
+      terminate_and_confirm
+      exit 6 ;;
+esac
+if ! ssh $SSH_OPTS "$SSH_USER@$IP" "test -x '$PY_REMOTE'" 2>/dev/null; then
+  say "FATAL: the resolved interpreter '$PY_REMOTE' is not executable on the pod."
   terminate_and_confirm
   exit 6
 fi
 say "  interpreter: $PY_REMOTE"
-# RPY is now a fixed path, not a command substitution: one resolution, checked
-# once, used by every subsequent command.
+# One resolution, checked once, used by every subsequent command as a plain path.
 RPY=$PY_REMOTE
 
 # The green check that is actually green: prove the interpreter the STAGES will

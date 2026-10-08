@@ -1844,13 +1844,25 @@ else:
     if "import torch, transformers, bitsandbytes, flash_attn, diptest" not in prov:
         fails.append("the stage dependencies are never proven to import")
 import re as _re
-rpy = watch[watch.index("RPY='$("):]
-rpy = rpy[:rpy.index("done; exit 1") + len("done; exit 1")]
-if "command -v python3" in rpy:
+# The pod interpreter: a resolver that PRINTS a path (not a `$( ... )'
+# expression, which ssh would execute as the whole command and which returns
+# nothing), looked up under the env name the bootstrap actually creates.
+_rpy = watch[watch.index("RPY_RESOLVE='"):]
+_rpy = _rpy[:_rpy.index("exit 1") + len("exit 1")]
+if _re.match(r"RPY_RESOLVE='\$\(", _rpy) or "$(" in _rpy:
+    fails.append("the interpreter resolver is a command substitution, so passing "
+                 "it to ssh as a command runs the path with no arguments")
+if "command -v python3" in _rpy:
     fails.append("the pod interpreter still falls back to a bare python3")
-if "rasd-gpu" not in rpy:
+if "rasd-gpu" not in _rpy:
     fails.append("the interpreter resolution does not look for the env the "
                  "bootstrap creates")
+if 'PY_REMOTE=$(ssh $SSH_OPTS "$SSH_USER@$IP" "$RPY_RESOLVE"' not in watch:
+    fails.append("the resolver is not run as a command that prints")
+if "INTERPRETER=" not in watch or "INTERPRETER=" not in podenv:
+    fails.append("the provisioning script does not report the interpreter it built")
+if "RPY=$PY_REMOTE" not in watch:
+    fails.append("the resolved interpreter is not reused as a plain path")
 if _re.search(r"pgrep -f mlsys_manifest", "\n".join(
         l for l in watch.splitlines() if not l.lstrip().startswith("#"))):
     fails.append("the completion check is still a self-matching pgrep")

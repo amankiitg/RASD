@@ -327,4 +327,8 @@ if [ -n "$FLASH_WHEEL_URL" ]; then
 else
   echo "flash_attn_install: source-build"
 fi
+# The watcher reads this line to decide which interpreter the stages will use.
+# Printing it here means there is ONE resolution, made by the script that
+# installed the environment, instead of the watcher re-deriving it.
+echo "INTERPRETER=$PYBIN"
 echo "done."

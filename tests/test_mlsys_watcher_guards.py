@@ -426,21 +426,45 @@ POD_ENV = REPO / "scripts" / "mlsys_pod_env.sh"
 
 def test_the_interpreter_resolution_fails_closed():
     """The old form ended in `else command -v python3`, so a pod with no conda
-    silently ran the campaign on a stock system interpreter. A wrong interpreter
-    must stop the run, not start it."""
-    i = SRC.index("RPY='$(")
-    rpy = SRC[i:SRC.index("'", SRC.index("done; exit 1", i))]
+    silently ran the campaign on a stock system interpreter."""
+    i = SRC.index("RPY_RESOLVE='")
+    rpy = SRC[i:SRC.index("'", SRC.index("exit 1", i))]
     assert "command -v python3" not in rpy, \
         "the pod interpreter still falls back to a bare python3"
     assert "exit 1" in rpy, "the resolution cannot report absence"
     assert "rasd-gpu" in rpy, (
-        "the resolution does not look for the env the bootstrap actually "
-        "creates; looking only for `rasd` is how a provisioned pod went unseen")
-
-    # it is resolved ONCE, and the resolved path is what the stages use
-    assert 'RPY=$PY_REMOTE' in SRC or "RPY=$PY_REMOTE" in SRC
+        "the resolution does not look for the env the bootstrap creates; "
+        "looking only for `rasd` is how a provisioned pod went unseen")
     assert '${RPY:-python3}' not in SRC, \
         "a remote command still falls back to python3"
+
+
+def test_the_interpreter_is_never_a_command_substitution():
+    """The bug that cost a second 8xA100 launch.
+
+    RPY used to be a `$( ... )' EXPRESSION. Interpolated into a command that
+    follows it with arguments (`$(...) -c "..."`) it happens to work, which is
+    why the data verification looked fine. Passed to ssh as the WHOLE command it
+    does not: the pod runs the echoed path with no arguments, python starts and
+    prints nothing, and the resolution comes back empty.
+    """
+    i = SRC.index("RPY_RESOLVE='")
+    rpy = SRC[i:SRC.index("\n", SRC.index("exit 1", i))]
+    assert not rpy.lstrip("RPY_RESOLVE='").startswith("$("), \
+        "the resolver is a command substitution again"
+    assert "$(" not in rpy, "the resolver contains a command substitution"
+
+    # resolution prints the path, and the result is validated before use
+    assert 'PY_REMOTE=$(ssh $SSH_OPTS "$SSH_USER@$IP" "$RPY_RESOLVE"' in SRC, \
+        "the resolver is not run as a command that prints"
+    assert "INTERPRETER=" in SRC, \
+        "the watcher does not read the path the provisioning script printed"
+    i2 = SRC.index("case \"$PY_REMOTE\" in")
+    assert "/*)" in SRC[i2:i2 + 300], \
+        "the resolved interpreter is not required to be an absolute path"
+    assert "test -x" in SRC, "the resolved interpreter is never checked for existence"
+    # and it is used as a plain path afterwards
+    assert "RPY=$PY_REMOTE" in SRC
 
 
 def _code_lines(src: str) -> str:
