@@ -31,6 +31,16 @@ results/lever_validation/
 # is already tracked under the same reasoning.
 !results/mlsys/per_token/
 
+# Incident evidence (2026-10-08). collect_incident exists so that a failed run's
+# evidence survives the instance, and an incident's manifest.log IS that
+# evidence: it holds the gate's nine-row table and the abort reason. The global
+# `*.log` rule was silently hiding it, so the two incidents on disk had their
+# manifest.log, watcher.log, pod_env.log and vllm_venv.log left out of git while
+# committed docs cited them. Narrow negation: only incident directories.
+!results/mlsys/incident_*/
+!results/mlsys/incident_*/*.log
+!results/mlsys/incident_*/**/*.log
+
 # MLSys run-state: created on the pod and pulled back. Markers are
 # per-instance progress flags, meaningless locally, and shipping them
 # back to a fresh instance makes stages skip ("already complete").

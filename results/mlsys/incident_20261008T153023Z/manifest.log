@@ -1,0 +1,179 @@
+2026-10-08T15:17:43Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+spend before manifest: $34.86
+2026-10-08T15:17:43Z STALL_WATCHDOG started pid=9733 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+=== stage gate_calibration (projected $22, 1.0h; watchdog 40h) ===
+2026-10-08T15:17:44Z STAGE_START name=gate_calibration timeout=14400s
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:  25%|██▌       | 1/4 [00:15<00:47, 15.86s/it]Downloading shards:  50%|█████     | 2/4 [00:33<00:34, 17.13s/it]Downloading shards:  75%|███████▌  | 3/4 [00:51<00:17, 17.20s/it]Downloading shards: 100%|██████████| 4/4 [01:00<00:00, 14.15s/it]Downloading shards: 100%|██████████| 4/4 [01:00<00:00, 15.16s/it]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.36s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.14s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.06s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.30it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.10it/s]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.6` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:595: UserWarning: `do_sample` is set to `False`. However, `top_p` is set to `0.9` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_p`.
+  warnings.warn(
+The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12995.52it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.32s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.13s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.06s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.29it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.10it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13241.69it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.46s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.19s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.09s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.26it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.06it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13651.11it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.73s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.30s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.15s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.21it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01s/it]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13443.28it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.33s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.13s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.06s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.29it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.10it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12483.05it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.46s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.19s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.09s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.26it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.06it/s]
+Downloading shards:   0%|          | 0/2 [00:00<?, ?it/s]Downloading shards:  50%|█████     | 1/2 [00:28<00:28, 28.00s/it]Downloading shards: 100%|██████████| 2/2 [00:42<00:00, 20.19s/it]Downloading shards: 100%|██████████| 2/2 [00:42<00:00, 21.36s/it]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:05<00:05,  5.11s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.09s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.39s/it]
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (4096). Depending on the model, you may observe exceptions, performance degradation, or nothing at all.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13325.83it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.50s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.21s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.10s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.25it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.05it/s]
+Downloading shards:   0%|          | 0/2 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 2/2 [00:00<00:00, 10754.63it/s]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:05<00:05,  5.47s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:07<00:00,  3.24s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:07<00:00,  3.57s/it]
+
+  candidate                    ctx     anchor        ppl   ratio   blank    rep   eos  gate
+  P1_native_32k              32768   declared     1.0325     1.0  0.1667 0.0075    no  PASS
+  P2_declared_shipped_64k    65536   declared     1.0302     1.0  0.3158 0.1273    no  PASS
+  P3_native_128k            131072   declared     1.0458     1.0  0.1875  0.029    no  PASS
+  B_native_32k               32768   declared     1.0325     1.0  0.1667 0.0075    no  PASS
+  B_native_64k               65536   declared     1.0302     1.0  0.3158 0.1273    no  PASS
+  B_native_128k             131072   declared     1.0458     1.0  0.1875  0.029    no  PASS
+  B_llama2_yarn8_32k_correct   32768   declared     7.0155     1.0  0.3889 0.0381    no  PASS
+  N1_arm4_f2_construction   131072 anchor_on_context   372.9072 356.576     0.0    0.0   YES  FAIL
+      -> ppl 356.58x native > 1.5x; EOS at token 5 = degenerate (< 10); rope mismatch: built anchor_on_context (err 0), not the intended config
+  N2_llama2_misanchored      32768 anchor_on_context 53107.2525 7569.9882  0.9848    0.0    no  FAIL
+      -> ppl 7569.99x native > 1.5x; blank lines 98% = degenerate (> 90% absolute); blank lines 98% = 2.53x the baseline's 39% > 2.0x; rope mismatch: built anchor_on_context (err 0), not the intended config
+
+  wrote results/mlsys/gate_calibration.csv
+2026-10-08T15:29:57Z STAGE_OK name=gate_calibration wall=733s cost=$4.54 cumulative=$39.40
+--- gate_calibration rc=0 wall=733s cost=$4.54 cumulative=$39.40
+  positive P1_native_32k                want=pass  got=pass  ppl=1.0325       baseline=1.0325       ratio=1.0
+  positive P2_declared_shipped_64k      want=pass  got=pass  ppl=1.0302       baseline=1.0302       ratio=1.0
+  positive P3_native_128k               want=pass  got=pass  ppl=1.0458       baseline=1.0458       ratio=1.0
+  positive B_native_32k                 want=pass  got=pass  ppl=1.0325       baseline=1.0325       ratio=1.0
+  positive B_native_64k                 want=pass  got=pass  ppl=1.0302       baseline=1.0302       ratio=1.0
+  positive B_native_128k                want=pass  got=pass  ppl=1.0458       baseline=1.0458       ratio=1.0
+  positive B_llama2_yarn8_32k_correct   want=pass  got=pass  ppl=7.0155       baseline=7.0155       ratio=1.0
+  negative N1_arm4_f2_construction      want=fail  got=fail  ppl=372.9072     baseline=1.0458       ratio=356.576
+  negative N2_llama2_misanchored        want=fail  got=fail  ppl=53107.2525   baseline=7.0155       ratio=7569.9882
+  positive-control ppl spread max/min = 6.8098  (informational: the tolerance is FIXED at 1.5x by the plan revision; this is the evidence the measurement sits well inside it)
+
+CALIBRATION OK: every control matched its expected verdict.
+=== stage engine_cap_smoke (projected $34, 1.5h; watchdog 40h) ===
+2026-10-08T15:29:58Z STAGE_START name=engine_cap_smoke timeout=21600s
+15:30:00  INFO      Total runs: 4
+15:30:00  INFO      Running 4 jobs → results/mlsys/engine_cap_smoke.csv
+15:30:00  INFO      [1/4]
+15:30:00  INFO      ▶  CAPS_prefix64_pg19_train_1_s42  (seed=42, nproc=8, timeout=9000s)
+W1008 15:30:01.606000 11291 site-packages/torch/distributed/run.py:793] 
+W1008 15:30:01.606000 11291 site-packages/torch/distributed/run.py:793] *****************************************
+W1008 15:30:01.606000 11291 site-packages/torch/distributed/run.py:793] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1008 15:30:01.606000 11291 site-packages/torch/distributed/run.py:793] *****************************************
+[W1008 15:30:07.079293782 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:07.079702306 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:07.601231607 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:07.710713971 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:08.751571180 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:08.805362749 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:08.823096887 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1008 15:30:08.848748002 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+15:30:10  INFO      Device: cuda:5 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Device: cuda:7 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:5]
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:7]
+15:30:10  INFO      Device: cuda:1 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:1]
+15:30:10  INFO      Device: cuda:3 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:3]
+15:30:10  INFO      Device: cuda:2 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:2]
+15:30:10  INFO      Device: cuda:6 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:6]
+15:30:10  INFO      Device: cuda:4 (CUDA — RunPod mode, all features enabled)
+15:30:10  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:4]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/ubuntu/RASD/run_experiment.py", line 1805, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/ubuntu/RASD/run_experiment.py", line 1673, in main
+[rank0]:     _run_single_worker(run, args.wandb_project, output_csv)
+[rank0]:   File "/home/ubuntu/RASD/run_experiment.py", line 993, in _run_single_worker
+[rank0]:     wb_run = init_wandb(run, wandb_project) if local_rank == 0 else None
+[rank0]:   File "/home/ubuntu/RASD/run_experiment.py", line 523, in init_wandb
+[rank0]:     return wandb.init(
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/sdk/wandb_init.py", line 1603, in init
+[rank0]:     get_sentry().reraise(e)
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/analytics/sentry.py", line 190, in reraise
+[rank0]:     raise exc.with_traceback(tb)
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/sdk/wandb_init.py", line 1524, in init
+[rank0]:     wi.maybe_login(init_settings)
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/sdk/wandb_init.py", line 200, in maybe_login
+[rank0]:     wandb_login._login(
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/sdk/wandb_login.py", line 190, in _login
+[rank0]:     auth = _find_or_prompt_for_key(
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/sdk/wandb_login.py", line 266, in _find_or_prompt_for_key
+[rank0]:     auth = wbauth.authenticate_session(
+[rank0]:   File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/wandb/sdk/lib/wbauth/authenticate.py", line 139, in authenticate_session
+[rank0]:     raise UsageError(
+[rank0]: wandb.errors.errors.UsageError: No API key configured. Use `wandb login` to log in.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12336.19it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12390.85it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12885.73it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 11237.25it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 10420.63it/s]
+W1008 15:30:13.469000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11357 closing signal SIGTERM
+W1008 15:30:13.470000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11358 closing signal SIGTERM
+W1008 15:30:13.473000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11359 closing signal SIGTERM
+W1008 15:30:13.473000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11360 closing signal SIGTERM
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]W1008 15:30:13.474000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11361 closing signal SIGTERM
+W1008 15:30:13.475000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11362 closing signal SIGTERM
+W1008 15:30:13.475000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:897] Sending process 11363 closing signal SIGTERM
+E1008 15:30:16.306000 11291 site-packages/torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 11356) of binary: /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python3.10
+Traceback (most recent call last):
+  File "/home/ubuntu/miniconda3/envs/rasd-gpu/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+  File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/torch/distributed/run.py", line 919, in main
+    run(args)
+  File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/torch/distributed/run.py", line 910, in run
+    elastic_launch(
+  File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 138, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 269, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+/home/ubuntu/RASD/run_experiment.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-10-08_15:30:13
+  host      : 147-224-222-154
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 11356)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+15:30:16  ERROR     ✗  CAPS_prefix64_pg19_train_1_s42  FAILED: subprocess produced no output
+15:30:21  ERROR     ✗  ABORT-ON-FAILURE: row CAPS_prefix64_pg19_train_1_s42 status=error; stopping grid (re-run with --resume to pick up after fixing).
+2026-10-08T15:30:22Z STAGE_FAILED name=engine_cap_smoke rc=1 wall=24s cost=$0.15
+--- engine_cap_smoke rc=1 wall=24s cost=$0.15 cumulative=$39.55
+2026-10-08T15:30:22Z STOP: engine_cap_smoke did not succeed in this attempt rc=1
+STOP: the cap smoke rc=1; a stage that failed is not a stage whose
+  cap arithmetic was verified, whatever is in its output directory.
