@@ -264,6 +264,98 @@ on decoded text (text is not injective).
 * This is the check that would have caught the earlier ARM4 rope corruption
   regardless of what the acceptance number looked like.
 
+### 6.1a Teacher-forced losslessness, with a tolerance derived from a measured noise floor (2026-10-08, **NOT APPLIED -- see the blocker**)
+
+**Why 6.1 was replaced.** On 2026-10-08T19:33Z `engine_cap_smoke` failed 6.1 at
+8 ranks and 128k: both speculative arms diverged from their target-only partner
+at token 2-3, with logit gaps of 0.5/0.75 and 1.75/1.75 -- far above the 0.1 tie
+gate, so not excusable as ties. A $0.54 1x reproduction then showed the mechanism
+is not the ring and not context length: **the target model does not agree with
+itself across the two forward shapes it is run in** -- a packed
+`(gamma+1)`-token verify in one forward versus one token per step in target-only
+decode. Two independent runs of the SAME arm are byte-identical
+(`generated_tokens_sha256` matches; the noise-floor control below measures
+exactly 0.0), so this is deterministic, not run-to-run noise. Under bf16 with
+FP4 weights the two shapes pick different kernels and accumulate in a different
+order, which flips near-tie argmax decisions.
+
+Token identity between the two arms therefore does not test the implementation:
+it tests whether two bf16 kernels agree bit-for-bit, and they do not. The
+question that IS about the implementation is whether each token the speculative
+arm emitted is the token the target itself would have chosen.
+
+**The rule.** For a speculative arm with emitted stream `G` and engine input
+`P`, teacher-force the target on `G`'s own prefix -- stepwise, one token per
+forward -- so that `L[i]` is the target's distribution having been shown
+`P + G[:i]`. Position `i` passes when
+
+* `G[i] == argmax(L[i])` (shortfall 0), **or**
+* `argmax(L[i]) - L[i][G[i]] <= TOL` (the decision is inside the measured
+  shape-difference).
+
+A cell passes when every position passes. The shortfall and the worst position
+are always reported. `TOL` is derived, never chosen:
+
+    TOL = min(2 * max_measured_|delta logit| , 2.0)
+
+**Why 2x.** In logit space, if `G[i]` is the argmax under shape A then
+`L_A[G[i]] >= L_A[j]` for all `j`; with `|L_B - L_A| <= eps` it follows that
+`L_B[G[i]] >= max_j L_B[j] - 2*eps`. `2*eps` is therefore the largest shortfall
+a *correct* decision can show, so it is the bound, not a margin.
+
+**The measured noise floor** (`scripts/mlsys_noise_floor.py`, 1 rank, same fixed
+prefix, the same five tokens appended both ways; `max_abs_delta` in logits):
+
+| cell | measured KV | max abs delta | max delta over top-50 | argmax flips |
+|---|---|---|---|---|
+| 8k | bfloat16 | 0.469 | 0.438 | 0/4 |
+| 8k | nf4 | **2.600** | 1.563 | 0/4 |
+| 32k | bfloat16 | 0.828 | 0.813 | 0/4 |
+| 32k | nf4 | 1.973 | 1.500 | 0/4 |
+| control (same computation twice, all cells) | -- | **0.000** | -- | 0/4 |
+
+Two readings of that table matter. The control is exactly zero, so the engine is
+deterministic and everything else is signal. And **NF4 KV is 2.4-5.5x noisier
+than bf16 KV at the same context** -- the KV codec, not the forward shape alone,
+is the dominant source of mode-dependent disagreement.
+
+**The numbers that decide whether the rule works** (`scripts/mlsys_teacher_forced_1x.py`,
+1 rank, the four 1x pairs, 64 tokens each; the two required negative controls are
+an off-by-one KV position and an unverified-draft stream):
+
+| cell | POSITIVE max shortfall | off-by-one worst | unverified draft worst |
+|---|---|---|---|
+| 8k bf16 | 0.375 | 16.12 | 6.75 |
+| 8k nf4 | 3.375 | 15.94 | 6.625 |
+| 32k bf16 | 0.1875 | 12.44 | 9.25 |
+| 32k nf4 | **5.062** | 20.44 | 8.44 |
+
+A `TOL` that passes every positive and still fails every negative must lie in
+`(5.062, 6.625)`. The derived `2*eps = 5.199` falls inside that window, so **the
+rule as derived works**: at `TOL = 5.199`, positives pass 4/4 and both controls
+are caught 4/4. The 2.0 cap is the only thing that breaks it -- at `TOL = 2.0`
+the positives pass only 2/4 (the NF4 cells fail at 5.062 and 3.375), i.e. the
+gate would have failed `engine_cap_smoke` again on legitimate numerics.
+
+**BLOCKER: this rule is NOT APPLIED.** `mlsys_cap_smoke_check.py` still requires
+exact sequence identity as of this entry. The specified cap of 2.0 is below the
+measured `2*eps`, so applying the rule as specified fails its own positive
+control -- and per the operating instruction, a control that does not behave is a
+stop, not a reason to widen a threshold until it passes. The options, none of
+them taken without a decision:
+
+1. **Per-dtype tolerance.** The floor is dtype-specific: bf16 tops out at 0.828
+   (so `TOL = 1.656`, under the cap, and the bf16 positives clear it with
+   ~4x margin), NF4 at 2.600 (so `TOL = 5.199`, over the cap). Deriving TOL per
+   KV dtype is the most defensible form of this rule.
+2. **Raise the cap** to at least 5.2 and accept that the separation between
+   "legitimate flip" (5.062) and "unverified draft" (6.625) is only 1.3x -- a
+   weak gate.
+3. **Report losslessness only where it is meaningful**: the bf16-KV cells are
+   essentially exactly lossless (62/64 positions are the argmax; worst shortfall
+   0.375), so the honest claim may be that exact losslessness holds without NF4
+   KV, and that the NF4 path is a numerics-limited configuration.
+
 ### 6.2 Coherence gate (configurations above 128k only)
 
 A rope configuration may only be used if its target is coherent at the context it

@@ -777,3 +777,83 @@ WHAT THE 1x CANNOT COVER
 COST: instance up 15:52Z-16:09Z, ~17 min at $1.99/hr = ~$0.56. Not added to
 results/mlsys/gpu_hours.csv: that ledger holds campaign stage costs and this is
 a manual repro, so the campaign guard still reads $39.55 of the $2000 cap.
+
+
+================================================================================
+19:15Z-21:00Z  2026-10-08  LOSSELESSNESS DIAGNOSIS: NOISE FLOOR, TEACHER-FORCED
+                           GATE, NEGATIVE CONTROLS  --  STOPPED, NOT APPLIED,
+                           NOT RE-ARMED
+================================================================================
+
+MILESTONE: commit 6acd4ec pushed (the diagnosis). HEAD == origin.
+
+MILESTONE: NOISE FLOOR MEASURED (1x A100, nproc=1, task 2).
+scripts/mlsys_noise_floor.py, one fixed prefix per cell, the SAME five tokens
+appended both ways (packed 5-token forward vs 5 single-token steps), target only,
+max |delta logit| over the vocabulary:
+
+   cell       measured KV   max|delta|   max|delta| top-50   argmax flips
+   8k         bfloat16      0.469        0.438               0/4
+   8k         nf4           2.600        1.563               0/4
+   32k        bfloat16      0.828        0.813               0/4
+   32k        nf4           1.973        1.500               0/4
+   control (same computation twice, every cell) = 0.000     0/4
+
+The control is EXACTLY ZERO, so the engine is deterministic and everything above
+is signal, not jitter. NF4 KV is 2.4-5.5x noisier than bf16 KV at the same
+context: the KV codec, not the forward shape alone, dominates the disagreement.
+
+HARNESS BUG FOUND AND FIXED BEFORE TRUSTING THE NUMBER: the first run produced
+bit-identical "bf16" and "nf4" rows, because the NF4 cache is constructed inside
+RASDInference.generate() and a harness that calls model(...) directly silently
+gets HuggingFace's bf16 DynamicCache whatever kv_quant says. The harness now
+builds the cache the way generate() does AND asserts the MEASURED dtype
+(detect_kv_precision) against the request, so that silent no-op cannot recur.
+
+MILESTONE: TEACHER-FORCED GATE WRITTEN AND EXERCISED (tasks 3 and 4).
+Rule recorded in docs/mlsys_analysis_plan.md section 6.1a BEFORE any use:
+for each spec-arm token, teacher-force the target stepwise on the spec arm's OWN
+prefix and require the token to be the argmax, or within TOL of it.
+TOL = min(2 x max measured |delta|, 2.0 cap) -- the 2x is the bound on the
+shortfall a correct decision can show, derived in 6.1a, not a safety margin.
+
+NEGATIVE CONTROLS (required, both far outside TOL):
+   cell      POSITIVE max shortfall   off-by-one KV worst   unverified draft worst
+   8k bf16   0.375                    16.12                 6.75
+   8k nf4    3.375                    15.94                 6.625
+   32k bf16  0.1875                   12.44                 9.25
+   32k nf4   5.062                    20.44                 8.438
+
+THE CONTROLS BEHAVE PERFECTLY: both negatives are caught 4/4, by 3x-10x TOL.
+THE POSITIVES DO NOT: at the specified cap of 2.0 only 2/4 pass (the NF4 cells
+fail at 5.062 and 3.375), so the gate would have failed engine_cap_smoke again
+on legitimate numerics.
+
+A TOL that passes every positive AND fails every negative must lie in
+(5.062, 6.625). The derived 2 x 2.59961 = 5.199 falls inside that window, so the
+RULE IS SOUND AND ONLY THE CAP BREAKS IT: at TOL=5.199 positives pass 4/4 and
+both controls are caught 4/4. Re-scored offline at 0.5/1/2/3/4/5/5.199/6/6.5/7:
+every TOL from 5.199 to 6.5 works; 7.0 starts missing the draft control (2/4).
+
+STOPPED HERE, per the operating instruction that a control which does not behave
+is a stop rather than a licence to widen a threshold until it passes.
+  * mlsys_cap_smoke_check.py is UNCHANGED: exact-sequence identity is still the
+    rule, and engine_cap_smoke would still fail on a legitimate run.
+  * The 8x watcher is NOT re-armed. No instances running.
+  * Three options are written up in docs/mlsys_analysis_plan.md 6.1a, none taken
+    without a decision: per-dtype TOL (bf16 1.656 -- under the cap and with ~4x
+    margin -- vs NF4 5.199), raising the cap to >= 5.2 (separating legitimate
+    from broken by only 1.3x, a weak gate), or claiming exact losslessness only
+    for bf16 KV and reporting the NF4 path as numerics-limited.
+
+WHERE THIS LEAVES THE SCIENTIFIC CLAIM. The bf16 KV cells are essentially exactly
+lossless at 1 rank: 62 of 64 positions are the target's own argmax and the worst
+shortfall is 0.375 logits. Every problem is in the NF4 KV path, which is the
+campaign's default. That is the finding to act on, and it is a numerics property
+of the configuration rather than a defect in the speculative machinery --
+acceptance, gap alignment, round accounting and KV accounting all held.
+
+COST: 1x A100 (gpu_1x_a100_sxm4, us-west-2, $1.99/hr) up 20:08Z-21:05Z, ~57 min
+= ~$1.90. Cumulative for tasks 1-4: ~$1.90 of the $10 budget. Not added to
+results/mlsys/gpu_hours.csv: that ledger holds campaign stage costs, and this was
+a manual diagnostic run.

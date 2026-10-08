@@ -1,0 +1,1507 @@
+{
+  "cell": "8K_nf4",
+  "context_length": 8192,
+  "kv_quant": true,
+  "measured_kv": "nf4",
+  "tokens": 64,
+  "tol": 2.0,
+  "positive": {
+    "verdict": "TF_MISMATCH",
+    "checked": 64,
+    "tol": 2.0,
+    "positions": [
+      {
+        "position": 0,
+        "emitted_token": 757,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 1,
+        "emitted_token": 311,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 2,
+        "emitted_token": 387,
+        "is_argmax": false,
+        "shortfall": 0.125,
+        "within_tol": true
+      },
+      {
+        "position": 3,
+        "emitted_token": 2262,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 4,
+        "emitted_token": 198,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 5,
+        "emitted_token": 262,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 6,
+        "emitted_token": 3161,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 7,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 8,
+        "emitted_token": 902,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 9,
+        "emitted_token": 568,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 10,
+        "emitted_token": 52677,
+        "is_argmax": false,
+        "shortfall": 1.0,
+        "within_tol": true
+      },
+      {
+        "position": 11,
+        "emitted_token": 2884,
+        "is_argmax": false,
+        "shortfall": 3.375,
+        "within_tol": false
+      },
+      {
+        "position": 12,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 13,
+        "emitted_token": 2646,
+        "is_argmax": false,
+        "shortfall": 0.1875,
+        "within_tol": true
+      },
+      {
+        "position": 14,
+        "emitted_token": 1436,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 15,
+        "emitted_token": 3351,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 16,
+        "emitted_token": 4286,
+        "is_argmax": false,
+        "shortfall": 0.125,
+        "within_tol": true
+      },
+      {
+        "position": 17,
+        "emitted_token": 3909,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 18,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 19,
+        "emitted_token": 1272,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 20,
+        "emitted_token": 198,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 21,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 22,
+        "emitted_token": 12040,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 23,
+        "emitted_token": 682,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 24,
+        "emitted_token": 3201,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 25,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 26,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 27,
+        "emitted_token": 617,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 28,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 29,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 30,
+        "emitted_token": 4018,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 31,
+        "emitted_token": 757,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 32,
+        "emitted_token": 1022,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 33,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 34,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 35,
+        "emitted_token": 3092,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 36,
+        "emitted_token": 449,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 37,
+        "emitted_token": 388,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 38,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 39,
+        "emitted_token": 856,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 40,
+        "emitted_token": 12822,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 41,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 42,
+        "emitted_token": 719,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 43,
+        "emitted_token": 856,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 44,
+        "emitted_token": 7060,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 45,
+        "emitted_token": 282,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 46,
+        "emitted_token": 32737,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 47,
+        "emitted_token": 512,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 48,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 49,
+        "emitted_token": 386,
+        "is_argmax": false,
+        "shortfall": 1.9375,
+        "within_tol": true
+      },
+      {
+        "position": 50,
+        "emitted_token": 2222,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 51,
+        "emitted_token": 24014,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 52,
+        "emitted_token": 449,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 53,
+        "emitted_token": 43632,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 54,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 55,
+        "emitted_token": 2225,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 56,
+        "emitted_token": 43632,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 57,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 58,
+        "emitted_token": 24014,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 59,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 60,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 61,
+        "emitted_token": 3861,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 62,
+        "emitted_token": 10788,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 63,
+        "emitted_token": 5149,
+        "is_argmax": false,
+        "shortfall": 1.5,
+        "within_tol": true
+      }
+    ],
+    "failures": [
+      {
+        "position": 11,
+        "emitted_token": 2884,
+        "is_argmax": false,
+        "shortfall": 3.375,
+        "within_tol": false
+      }
+    ],
+    "first_failure_position": 11,
+    "worst_position": 11,
+    "worst_shortfall": 3.375,
+    "n_argmax": 57,
+    "n_within_tol": 63
+  },
+  "negative_off_by_one": {
+    "verdict": "TF_MISMATCH",
+    "checked": 64,
+    "tol": 2.0,
+    "positions": [
+      {
+        "position": 0,
+        "emitted_token": 757,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 1,
+        "emitted_token": 757,
+        "is_argmax": false,
+        "shortfall": 6.5,
+        "within_tol": false
+      },
+      {
+        "position": 2,
+        "emitted_token": 311,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 3,
+        "emitted_token": 10707,
+        "is_argmax": false,
+        "shortfall": 3.6875,
+        "within_tol": false
+      },
+      {
+        "position": 4,
+        "emitted_token": 2262,
+        "is_argmax": false,
+        "shortfall": 15.8125,
+        "within_tol": false
+      },
+      {
+        "position": 5,
+        "emitted_token": 198,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 6,
+        "emitted_token": 262,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 7,
+        "emitted_token": 3161,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 8,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 9,
+        "emitted_token": 902,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 10,
+        "emitted_token": 568,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 11,
+        "emitted_token": 10395,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 12,
+        "emitted_token": 539,
+        "is_argmax": false,
+        "shortfall": 10.8125,
+        "within_tol": false
+      },
+      {
+        "position": 13,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 14,
+        "emitted_token": 841,
+        "is_argmax": false,
+        "shortfall": 5.0625,
+        "within_tol": false
+      },
+      {
+        "position": 15,
+        "emitted_token": 1436,
+        "is_argmax": false,
+        "shortfall": 11.25,
+        "within_tol": false
+      },
+      {
+        "position": 16,
+        "emitted_token": 3351,
+        "is_argmax": false,
+        "shortfall": 6.5625,
+        "within_tol": false
+      },
+      {
+        "position": 17,
+        "emitted_token": 345,
+        "is_argmax": false,
+        "shortfall": 1.6875,
+        "within_tol": true
+      },
+      {
+        "position": 18,
+        "emitted_token": 3909,
+        "is_argmax": false,
+        "shortfall": 9.0625,
+        "within_tol": false
+      },
+      {
+        "position": 19,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 20,
+        "emitted_token": 1272,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 21,
+        "emitted_token": 198,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 22,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 23,
+        "emitted_token": 12040,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 24,
+        "emitted_token": 682,
+        "is_argmax": false,
+        "shortfall": 0.75,
+        "within_tol": true
+      },
+      {
+        "position": 25,
+        "emitted_token": 3201,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 26,
+        "emitted_token": 430,
+        "is_argmax": false,
+        "shortfall": 1.25,
+        "within_tol": true
+      },
+      {
+        "position": 27,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 28,
+        "emitted_token": 617,
+        "is_argmax": false,
+        "shortfall": 0.375,
+        "within_tol": true
+      },
+      {
+        "position": 29,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 30,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 31,
+        "emitted_token": 4018,
+        "is_argmax": false,
+        "shortfall": 0.375,
+        "within_tol": true
+      },
+      {
+        "position": 32,
+        "emitted_token": 757,
+        "is_argmax": false,
+        "shortfall": 0.875,
+        "within_tol": true
+      },
+      {
+        "position": 33,
+        "emitted_token": 1022,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 34,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 35,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 36,
+        "emitted_token": 3092,
+        "is_argmax": false,
+        "shortfall": 3.875,
+        "within_tol": false
+      },
+      {
+        "position": 37,
+        "emitted_token": 449,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 38,
+        "emitted_token": 388,
+        "is_argmax": false,
+        "shortfall": 1.375,
+        "within_tol": true
+      },
+      {
+        "position": 39,
+        "emitted_token": 323,
+        "is_argmax": false,
+        "shortfall": 3.75,
+        "within_tol": false
+      },
+      {
+        "position": 40,
+        "emitted_token": 856,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 41,
+        "emitted_token": 12822,
+        "is_argmax": false,
+        "shortfall": 5.8125,
+        "within_tol": false
+      },
+      {
+        "position": 42,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 43,
+        "emitted_token": 719,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 44,
+        "emitted_token": 856,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 45,
+        "emitted_token": 7060,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 46,
+        "emitted_token": 282,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 47,
+        "emitted_token": 32737,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 48,
+        "emitted_token": 512,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 49,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 50,
+        "emitted_token": 578,
+        "is_argmax": false,
+        "shortfall": 1.125,
+        "within_tol": true
+      },
+      {
+        "position": 51,
+        "emitted_token": 2222,
+        "is_argmax": false,
+        "shortfall": 15.9375,
+        "within_tol": false
+      },
+      {
+        "position": 52,
+        "emitted_token": 24014,
+        "is_argmax": false,
+        "shortfall": 6.375,
+        "within_tol": false
+      },
+      {
+        "position": 53,
+        "emitted_token": 449,
+        "is_argmax": false,
+        "shortfall": 4.25,
+        "within_tol": false
+      },
+      {
+        "position": 54,
+        "emitted_token": 43632,
+        "is_argmax": false,
+        "shortfall": 1.5625,
+        "within_tol": true
+      },
+      {
+        "position": 55,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 56,
+        "emitted_token": 2225,
+        "is_argmax": false,
+        "shortfall": 1.5625,
+        "within_tol": true
+      },
+      {
+        "position": 57,
+        "emitted_token": 43632,
+        "is_argmax": false,
+        "shortfall": 0.625,
+        "within_tol": true
+      },
+      {
+        "position": 58,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 59,
+        "emitted_token": 24014,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 60,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 61,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 62,
+        "emitted_token": 3861,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 63,
+        "emitted_token": 10788,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      }
+    ],
+    "failures": [
+      {
+        "position": 1,
+        "emitted_token": 757,
+        "is_argmax": false,
+        "shortfall": 6.5,
+        "within_tol": false
+      },
+      {
+        "position": 3,
+        "emitted_token": 10707,
+        "is_argmax": false,
+        "shortfall": 3.6875,
+        "within_tol": false
+      },
+      {
+        "position": 4,
+        "emitted_token": 2262,
+        "is_argmax": false,
+        "shortfall": 15.8125,
+        "within_tol": false
+      },
+      {
+        "position": 12,
+        "emitted_token": 539,
+        "is_argmax": false,
+        "shortfall": 10.8125,
+        "within_tol": false
+      },
+      {
+        "position": 14,
+        "emitted_token": 841,
+        "is_argmax": false,
+        "shortfall": 5.0625,
+        "within_tol": false
+      },
+      {
+        "position": 15,
+        "emitted_token": 1436,
+        "is_argmax": false,
+        "shortfall": 11.25,
+        "within_tol": false
+      },
+      {
+        "position": 16,
+        "emitted_token": 3351,
+        "is_argmax": false,
+        "shortfall": 6.5625,
+        "within_tol": false
+      },
+      {
+        "position": 18,
+        "emitted_token": 3909,
+        "is_argmax": false,
+        "shortfall": 9.0625,
+        "within_tol": false
+      },
+      {
+        "position": 36,
+        "emitted_token": 3092,
+        "is_argmax": false,
+        "shortfall": 3.875,
+        "within_tol": false
+      },
+      {
+        "position": 39,
+        "emitted_token": 323,
+        "is_argmax": false,
+        "shortfall": 3.75,
+        "within_tol": false
+      },
+      {
+        "position": 41,
+        "emitted_token": 12822,
+        "is_argmax": false,
+        "shortfall": 5.8125,
+        "within_tol": false
+      },
+      {
+        "position": 51,
+        "emitted_token": 2222,
+        "is_argmax": false,
+        "shortfall": 15.9375,
+        "within_tol": false
+      },
+      {
+        "position": 52,
+        "emitted_token": 24014,
+        "is_argmax": false,
+        "shortfall": 6.375,
+        "within_tol": false
+      },
+      {
+        "position": 53,
+        "emitted_token": 449,
+        "is_argmax": false,
+        "shortfall": 4.25,
+        "within_tol": false
+      }
+    ],
+    "first_failure_position": 1,
+    "worst_position": 51,
+    "worst_shortfall": 15.9375,
+    "n_argmax": 39,
+    "n_within_tol": 50
+  },
+  "negative_unverified_draft": {
+    "verdict": "TF_MISMATCH",
+    "checked": 64,
+    "tol": 2.0,
+    "positions": [
+      {
+        "position": 0,
+        "emitted_token": 757,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 1,
+        "emitted_token": 311,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 2,
+        "emitted_token": 3021,
+        "is_argmax": false,
+        "shortfall": 1.9375,
+        "within_tol": true
+      },
+      {
+        "position": 3,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 4,
+        "emitted_token": 810,
+        "is_argmax": false,
+        "shortfall": 0.125,
+        "within_tol": true
+      },
+      {
+        "position": 5,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 6,
+        "emitted_token": 220,
+        "is_argmax": false,
+        "shortfall": 6.625,
+        "within_tol": false
+      },
+      {
+        "position": 7,
+        "emitted_token": 1628,
+        "is_argmax": false,
+        "shortfall": 1.0,
+        "within_tol": true
+      },
+      {
+        "position": 8,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 9,
+        "emitted_token": 358,
+        "is_argmax": false,
+        "shortfall": 0.625,
+        "within_tol": true
+      },
+      {
+        "position": 10,
+        "emitted_token": 3021,
+        "is_argmax": false,
+        "shortfall": 0.8125,
+        "within_tol": true
+      },
+      {
+        "position": 11,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 12,
+        "emitted_token": 810,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 13,
+        "emitted_token": 11,
+        "is_argmax": false,
+        "shortfall": 1.25,
+        "within_tol": true
+      },
+      {
+        "position": 14,
+        "emitted_token": 323,
+        "is_argmax": false,
+        "shortfall": 1.1875,
+        "within_tol": true
+      },
+      {
+        "position": 15,
+        "emitted_token": 430,
+        "is_argmax": false,
+        "shortfall": 1.625,
+        "within_tol": true
+      },
+      {
+        "position": 16,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 17,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 18,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 19,
+        "emitted_token": 810,
+        "is_argmax": false,
+        "shortfall": 0.375,
+        "within_tol": true
+      },
+      {
+        "position": 20,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 21,
+        "emitted_token": 220,
+        "is_argmax": false,
+        "shortfall": 1.25,
+        "within_tol": true
+      },
+      {
+        "position": 22,
+        "emitted_token": 1628,
+        "is_argmax": false,
+        "shortfall": 0.6875,
+        "within_tol": true
+      },
+      {
+        "position": 23,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 24,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 25,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 26,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 27,
+        "emitted_token": 810,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 28,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 29,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 30,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 31,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 32,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 33,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 34,
+        "emitted_token": 810,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 35,
+        "emitted_token": 345,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 36,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 37,
+        "emitted_token": 1628,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 38,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 39,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 40,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 41,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 42,
+        "emitted_token": 810,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 43,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 44,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 45,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 46,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 47,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 48,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 49,
+        "emitted_token": 810,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 50,
+        "emitted_token": 345,
+        "is_argmax": false,
+        "shortfall": 1.125,
+        "within_tol": true
+      },
+      {
+        "position": 51,
+        "emitted_token": 220,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 52,
+        "emitted_token": 1628,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 53,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 54,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 55,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 56,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 57,
+        "emitted_token": 810,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 58,
+        "emitted_token": 11,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 59,
+        "emitted_token": 323,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 60,
+        "emitted_token": 430,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 61,
+        "emitted_token": 358,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 62,
+        "emitted_token": 3021,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      },
+      {
+        "position": 63,
+        "emitted_token": 40344,
+        "is_argmax": true,
+        "shortfall": 0.0,
+        "within_tol": true
+      }
+    ],
+    "failures": [
+      {
+        "position": 6,
+        "emitted_token": 220,
+        "is_argmax": false,
+        "shortfall": 6.625,
+        "within_tol": false
+      }
+    ],
+    "first_failure_position": 6,
+    "worst_position": 6,
+    "worst_shortfall": 6.625,
+    "n_argmax": 51,
+    "n_within_tol": 63
+  },
+  "draft_agreement": 5
+}
