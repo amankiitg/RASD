@@ -92,6 +92,8 @@ d6c4d6d  RPY was a `$( ... )` EXPRESSION. Interpolated into a command that
          longer ships local results to the pod. Detail in section 3b.
 aa9754d  The probe now tests the MANIFEST's resolve_python() too — the step that
          killed the 07:37Z run — both with MLSYS_PYTHON set and without.
+3708f9e  The first failure that got INTO the science: a CUDA device-side assert
+         in gate_calibration destroyed the stage's only output. Detail in 3c.
 
 Three of these were found by running against real hardware, not by review, and
 two of the four were in my code rather than the campaign's.
@@ -166,6 +168,48 @@ THE FAIL-FAST PATH WORKED, ON ITS FIRST REAL OUTING
   first run, which sat idle for two hours because the completion check could
   not fire. That is the whole point of the change.
 
+3c. THE 09:57Z RUN: INTO THE SCIENCE, THEN A CUDA ASSERT (3708f9e)
+--------------------------------------------------------------------------------
+This is the first run whose setup was entirely green AND which got as far as
+measuring. The interpreter fix worked — the manifest ran under
+/home/ubuntu/miniconda3/envs/rasd-gpu, five models downloaded and loaded, and
+gate_calibration ran 479 seconds across six candidates before:
+
+  RuntimeError: CUDA error: device-side assert triggered
+    at torch.cuda.empty_cache()      <- a synchronising call, not the failing one
+
+and the stage then wrote NO CSV AT ALL. Three defects, in a chain:
+
+  A CANDIDATE FAILURE DESTROYED THE STAGE'S OUTPUT
+    run_candidate catches per-candidate failures, but the assert surfaced
+    inside its `finally:` block — and an exception raised from `finally`
+    BYPASSES the except clauses above it. It escaped run_candidate, killed
+    the list comprehension in main(), and took the whole stage with it. That
+    is the worst outcome for a stage whose entire purpose is to run a
+    candidate that is KNOWN to be broken. The cleanup is now itself guarded,
+    and a dead context is recorded on the row.
+
+  A DEAD GPU WOULD HAVE BEEN REPORTED AS A MISCALIBRATED GATE
+    The verdict logic reads a failing positive control as "the gate is
+    wrong". With the context dead, every later row fails for a reason that
+    has nothing to do with the controls, so that reading would have been
+    exactly backwards — the misdiagnosis the gate exists to prevent. Rows
+    are now written for diagnosis, then the stage exits 8 with
+    "CUDA CONTEXT DIED", so the incident says which of the two it was.
+
+  THE ERROR WAS ATTRIBUTED TO THE WRONG PLACE
+    A device-side assert is reported at the next synchronising call, which
+    is why this one names empty_cache() rather than the operation that
+    caused it. gate_calibration now runs under CUDA_LAUNCH_BLOCKING=1 —
+    that stage only; it has a 4h timeout and used 8 minutes.
+
+WHAT REMAINS UNKNOWN
+    The underlying assert was not diagnosed: the next run, with blocking
+    enabled and a per-candidate row, is what will attribute it. It happened
+    between candidates 6 (B_llama2_yarn8_32k_correct, Llama-2-7B at 32k with
+    YaRN) and 7 (N1_arm4_f2_construction, Llama-3.1-8B at 128k). Lloyd: the
+    traceback points at a list comprehension, so the index is not in it.
+
 FAIL FAST AND THE STALL WATCHDOGS
   manifest.rc != 0 -> logs to results/mlsys/incident_<UTC>/ then
   terminate_and_confirm and exit 7, BEFORE the normal verify-and-merge path.
@@ -236,6 +280,9 @@ Every 8x launch so far, all on real capacity:
   07:37:18Z  12b6fc0e685544ae95449378951376a0  us-east-1
              SETUP GREEN; gate_calibration failed in 2s on the manifest's own
              interpreter (section 3b)                     terminated 07:52:39Z
+  09:57:13Z  0a17a52bd63c4c26a0c8edeb0a0b4023  us-midwest-1
+             SETUP GREEN, GATE RAN 479s across six candidates, then a CUDA
+             device-side assert (section 3c)              terminated 10:20:21Z
   08:12:57Z  watcher re-armed after the setup probe passed 8/8 on real hardware
 
 A capacity report is not capacity: at 07:22:49Z the watcher detected capacity
@@ -250,6 +297,10 @@ PER-STAGE STATUS
   coherence_gate          not reached
   the remaining six       not reached
 
+  THE WATCHER IS NOW STOPPED, deliberately. Your instruction was: any gate
+  failure means pull the logs, terminate, and stop, and do not retry on the
+  8x. gate_calibration failed, so that is where this session ends.
+
 Each failure was caught by a fail-closed guard rather than by a stage dying
 mid-run, and each was terminated through the watcher's own verified path.
 
@@ -262,12 +313,13 @@ Measured from instance lifetimes in the watcher log, not estimated:
   8x launch 2  05:38:53Z -> 05:48:47Z    9.9 min @ $22.32/hr   $ 3.68
   8x launch 3  05:52:23Z -> 06:05:19Z   12.9 min @ $22.32/hr   $ 4.81
   8x launch 4  07:37:18Z -> 07:52:39Z   15.4 min @ $22.32/hr   $ 5.71
+  8x launch 5  09:57:13Z -> 10:20:21Z   23.1 min @ $22.32/hr   $ 8.61
   shakedown    1x A100 40GB             32 min @ $1.99/hr      $ 1.06
   setup probe  1x A100 40GB (first)    ~21 min @ $1.99/hr      $ 0.70
   setup probe  1x A100 40GB (second)   ~15 min @ $1.99/hr      $ 0.50
   ---------------------------------------------------------------
-  TOTAL                                                       $63.52
-  Remaining of the approved $850                             $786.48
+  TOTAL                                                       $72.12
+  Remaining of the approved $850                             $777.88
   (No campaign stage has produced a measurement.)
 
 CORRECTION: an earlier revision of this file said $10.32. It counted launch 1
@@ -299,3 +351,11 @@ computed from the LAUNCHED / CONFIRMED TERMINATED timestamps in the watcher log.
      30-90 minutes, usually in us-east-1.
   3. Nothing in manuscript/, results/final/, or the lcfm-camera-ready tag was
      touched.
+ 4. The gate failure in 3c is the first one that is about the SCIENCE rather
+     than the plumbing, and I have not diagnosed its root cause. The next run
+     will attribute it. If you would rather review the approach first, the
+     single most useful thing to look at is configs/mlsys_gate_controls.json:
+     candidate 6 is Llama-2-7B with YaRN at 32k and candidate 7 is the ARM4 f2
+     construction that the paper already documented as emitting EOS at token
+     0. A device-side assert there may be the mis-anchored rope being fed
+     something out of range, which would be a real finding rather than a bug.
