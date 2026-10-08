@@ -253,10 +253,17 @@ for mod, attr in (("torch", "__version__"), ("transformers", "__version__"),
                   ("jsonlines", None), ("yaml", None), ("diptest", None)):
     try:
         m = importlib.import_module(mod)
-        versions[mod] = getattr(m, attr, None) or "ok"
+        # attr is None for packages that carry no version attribute: calling
+        # getattr(m, None) is a TypeError, which used to be reported as "the
+        # module is missing" and failed the whole environment check on a pod
+        # where it had imported perfectly well.
+        versions[mod] = (getattr(m, attr, None) or "ok") if attr else "ok"
     except Exception as e:                      # noqa: BLE001 - report, don't crash
         missing.append(f"{mod} ({type(e).__name__}: {e})")
-for mod in ("flash_attn", "rasd"):
+# The project package is `src` (pyproject installs `src*`), which is what the
+# stages import from. Importing the DISTRIBUTION name "rasd" fails even on a
+# correctly installed pod.
+for mod in ("flash_attn", "src.models.rasd_inference"):
     try:
         importlib.import_module(mod)
         versions[mod] = "ok"
