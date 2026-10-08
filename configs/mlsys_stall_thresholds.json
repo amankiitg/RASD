@@ -4,11 +4,12 @@
     "A stage that has produced no new progress line for this long is treated as stalled: the watcher (on the operator's machine) and the manifest (on the pod, independently) both pull the logs, terminate the instance, and stop.",
     "20 minutes is the default because a stage that is working prints a line per run, and the shortest run in the campaign is minutes.",
     "The per-stage overrides exist for the stages whose INDIVIDUAL runs are long enough that the runner legitimately prints nothing between run boundaries. They are sized to the longest single run, not to the whole stage: the stage's own declared wall-clock timeout (STAGE_TIMEOUTS in scripts/mlsys_manifest.sh) remains the hard backstop, so a wrong value here cannot cost more than a stage's budget.",
-    "Both sides read THIS file, so the two watchdogs cannot drift apart. A per-stage value must be justified; an override with no reason is how a watchdog quietly stops watching."
+    "Both sides read THIS file, so the two watchdogs cannot drift apart. A per-stage value must be justified; an override with no reason is how a watchdog quietly stops watching.",
+    "WARNING (2026-10-08T18:29Z): every per-stage value here is sized to the longest SINGLE RUN, but the progress signal is only written BETWEEN STAGES. Any stage whose total wall time exceeds its value will be killed by the watchdog while it is working. engine_cap_smoke was raised for that reason; the others (natural_f1_128k 90 vs 6.5h, natural_spec_gated_256k 180 vs 13.0h, correction_note_evidence 40 vs 2.1h) need the same review."
   ],
   "stages": {
     "gate_calibration": 20,
-    "engine_cap_smoke": 30,
+    "engine_cap_smoke": 240,
     "coherence_gate": 30,
     "correction_note_evidence": 40,
     "natural_f1_128k": 90,
@@ -20,7 +21,7 @@
   },
   "_justification": {
     "gate_calibration": "9 short controls; several rows each. Never quiet for long; from 1.0h total.",
-    "engine_cap_smoke": "a handful of short smokes plus one 128k forward. From 1.5h total.",
+    "engine_cap_smoke": "RAISED 30 -> 240 on 2026-10-08T18:29Z, mid-run, because 30 would have killed the stage that was working. PROGRESS IS WRITTEN ONLY AT STAGE BOUNDARIES, not per run: the runner's per-run lines go to ~/manifest.log and never reach RUN_LOG.txt, so the idle clock runs from STAGE_START to the stage's own STAGE_OK/STAGE_FAILED. The old 30 was sized to a single run, which is the wrong unit. Measured on the first two rows of this run (ctx 131072, all four rows at that context): cap=64 spec 122.7s, cap=64 target-only 245.7s, i.e. 1.92 and 3.84 s/token. Rows 3 and 4 are cap=1024, 16x the tokens, so ~33 min and ~66 min; the stage is ~106 min end to end against a 106-min estimate. 240 is 2.26x that estimate and still 2h inside the stage's own 6h timeout, which remains the hard backstop.",
     "coherence_gate": "short generations per candidate. From 2.0h total.",
     "correction_note_evidence": "one 128k and one 32k perplexity pass per candidate; a single 128k pass is the long pole. From 2.1h total.",
     "natural_f1_128k": "the longest single run is a 128k full-document generation, ~1h; the stage is 6.5h across ~10 runs. 90 min covers the longest run with margin.",
