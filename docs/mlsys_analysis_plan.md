@@ -429,6 +429,112 @@ already failed and its stated purpose was to firm up `TOL_dtype` before applying
 If a 64-position floor pushes `max|delta|_nf4` past 3.3125, the NF4 shortfall
 criterion breaks too and NF4 KV cannot support this gate at all.
 
+### 6.1c The gate: teacher-forced shortfall on the bf16-KV pair only (2026-10-08)
+
+**The rate criterion is DROPPED, and the reason is a property of the control, not
+of the data.** The unverified-draft negative control is built by letting
+`Llama-3.2-1B` continue greedily from the prompt -- a *good* draft. A good draft
+is right most of the time, so the defect it represents is **rare but large**: it
+gets ~81% of positions right and is badly wrong (up to 16 logits) at the rest.
+That is the opposite of what a frequency threshold discriminates. And rarity is
+not peculiar to the control: a draft that agrees with the target 80% of the time
+is exactly what speculative decoding is *for*, so any defect that rides on
+unverified draft tokens inherits that sparsity. Frequency therefore cannot
+separate this defect class from NF4 KV noise, which is *frequent but mild*
+(20% of argmaxes flipped, none by more than 5.06 logits). The measured margin in
+6.1b confirms it: worst positive 0.203 non-argmax against best negative 0.172.
+Magnitude separates the two; frequency does not.
+
+**Pre-registered rule.**
+
+* **GATE.** In `engine_cap_smoke`, the **bf16-KV** speculative arm must pass the
+  teacher-forced check with `max shortfall <= TOL_bf16`, where
+  `TOL_bf16 = 2 x measured bf16 max |delta|` from the 64-position
+  packed-vs-stepwise noise floor, **no fixed cap**. `TOL_bf16` is fixed below
+  before this rule is applied, and validated by the requirement that the bf16
+  negatives' BEST case (the 6.75-logit unverified draft at 8k) is at least
+  `2 x TOL_bf16`.
+* **REPORT ONLY, NOT GATING.** The NF4-KV pairs' max shortfall, non-argmax
+  fraction and noise floor are measured and reported every run, but do not gate.
+  NF4 KV cannot support an exact gate at this context (6.1a, 6.1b): its own noise
+  produces non-argmax rates comparable to real defects, and its shortfall
+  separation is only 1.31x.
+* **UNCHANGED GATES.** All 16 structural assertions in `mlsys_cap_smoke_check.py`
+  remain gates: exact generated length, `token_gaps` aligned 1:1 with emitted
+  ids, measured numerics, and the round/KV accounting identity. Nothing that is
+  currently a gate is demoted.
+
+**Why gating only bf16 is the honest choice.** The bf16 cells are essentially
+exactly lossless at 1 rank -- 62 of 64 positions are the target's own argmax and
+the worst shortfall is 0.375 logits, against a 6.75-logit best negative, an 18x
+separation. Gating the one configuration where the claim is strong, and reporting
+the one where it is not, states exactly what the evidence supports. It also means
+the gate is a real test: at `TOL_bf16 ~ 1.66` the bf16 negatives fail it by
+4x-10x.
+
+**The gate runs at 128k; the floor was measured at 8k and 32k. Stated plainly
+because it is a real extrapolation.** `TOL_bf16 = 1.875` comes from
+`max|delta|_bf16 = 0.9375` at 32k. At 8k it is 0.688, so the floor GROWS with
+context, and 128k is 4x beyond the largest measured point.
+
+* **128k bf16 cannot be measured on one 40 GB card**: the bf16 KV cache for
+  130k tokens is ~16 GB by itself and the prefill OOMs at 38.9/39.5 GiB, with and
+  without `expandable_segments`. So the 128k bf16 floor has NO 1-rank
+  measurement, and the 8-rank probe inside `engine_cap_smoke` is its first
+  measurement at the gate's own context.
+* **128k nf4 was measured** (1 rank, 63 positions): `max|delta| = 4.594`,
+  argmax flips 10/63 = **15.9%**, control 0.000. That is the same order as the 32k
+  NF4 figure and it confirms the decision to keep NF4 report-only: at 128k its
+  noise flips roughly one argmax in six.
+* **Consequence, recorded before the run rather than after**: if the 8-rank bf16
+  floor exceeds 0.9375 then `TOL_bf16 = 1.875` is too tight and the gate will
+  fail on legitimate numerics. That is a FINDING, not a reason to widen the
+  threshold: an 8-rank floor above 1.875 would mean the bf16 configuration
+  cannot support this gate either, and the honest response is to report it. The
+  probe logs the floor on every arm, so the failure would arrive with its own
+  explanation.
+
+**The engine's own probe was validated against the standalone one before the
+campaign was allowed to depend on it** (1 rank, 8k, bf16, the real cap-smoke
+config): `max_shortfall = 0.375` at worst, `non_argmax = 2/63`,
+`noise_floor.max_abs_delta = 0.75`, `control = 0.000`, `measured_kv =
+"bfloat16"`. The standalone floor measured 0.375 and 0.688 for the same cell, so
+the two agree -- the engine path was not written a second time from scratch.
+
+**TOL_bf16, fixed before application (task 2, 1x A100, 63 measured positions per
+cell, 126 per dtype; `results/mlsys/noise_floor_64/`):**
+
+| cell | measured KV | positions | max abs delta | top-50 max | argmax flips |
+|---|---|---|---|---|---|
+| 8k | bfloat16 | 63 | 0.688 | 0.688 | 1/63 |
+| 8k | nf4 | 63 | 7.750 | 7.750 | 10/63 |
+| 32k | bfloat16 | 63 | 0.938 | 0.938 | 0/63 |
+| 32k | nf4 | 63 | 6.500 | 6.500 | 9/63 |
+| control (same computation twice, every cell) | -- | 4 | **0.000** | -- | 0/4 |
+
+`max|delta|_bf16 = 0.9375` over 126 positions, so
+
+    TOL_bf16 = 2 x 0.9375 = 1.875
+
+**The required margin HOLDS.** The bf16 negatives' best case is the 6.75-logit
+unverified draft at 8k, and `6.75 >= 2 x 1.875 = 3.75`, i.e. **1.80x the
+requirement** (equivalently `max|delta|_bf16` must stay at or below 1.6875 and it
+measured 0.9375). Against `TOL_bf16 = 1.875` the four bf16 streams separate
+cleanly: positives at 0.188 and 0.375 (5x and 10x inside the gate) and negatives
+at 6.75, 9.25, 12.44 and 16.13 (3.6x to 8.6x outside it).
+
+**The 4-position floor was a serious underestimate, and this is why the rule is
+not pre-registered on a small sample.** Restricting the same measurement to the
+first 4 positions gave `max|delta|_bf16 = 0.828` (TOL 1.656) and
+`max|delta|_nf4 = 2.600`; over 63 positions both grow, to 0.938 and to **7.750**
+-- the NF4 figure nearly triples. The bf16 gate absorbed the growth (TOL 1.656 ->
+1.875, margin 2.04x -> 1.80x) and the NF4 figure confirms that NF4 KV cannot
+support a gate at this context: `TOL_nf4` would be 15.5 logits, which is no gate
+at all. NF4 is therefore measured and reported, never gated.
+
+The 7.9% aggregate argmax-flip rate (20/252) is almost entirely NF4: bf16 flips
+1 of 126 positions, NF4 flips 19 of 126.
+
 ### 6.2 Coherence gate (configurations above 128k only)
 
 A rope configuration may only be used if its target is coherent at the context it

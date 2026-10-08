@@ -62,7 +62,10 @@ sys.path.insert(0, str(REPO))
 # `if __name__ == "__main__"`, so importing it is side-effect free.
 from run_experiment import _build_pg19_document_prompt  # noqa: E402
 
-APPEND_TOKENS = 5          # gamma+1 with the campaign's spec_steps=4
+# gamma+1 with the campaign's spec_steps=4. A full 64-position window
+# needs 64 appended tokens (65 prediction positions, of which position 0
+# is the control), which is what --append-tokens sets.
+APPEND_TOKENS = 5
 PREFILL_CHUNK = 4096       # tokens per prefill forward, to bound peak memory
 
 
@@ -218,7 +221,7 @@ def _delta(a: torch.Tensor, b: torch.Tensor) -> dict:
 
 
 def run_cell(engine, tok, doc_json, context_length, kv_quant, doc_id,
-             gen_tokens, rank, world_size, outdir: Path):
+             gen_tokens, rank, world_size, outdir: Path, append_tokens: int = APPEND_TOKENS):
     model = engine.target_model
     device = next(model.parameters()).device
 
@@ -227,8 +230,11 @@ def run_cell(engine, tok, doc_json, context_length, kv_quant, doc_id,
         doc_json, context_length, doc_id, tok, gen_tokens=gen_tokens)
     enc = tok(prompt_text, return_tensors="pt")
     prefix_ids = enc.input_ids.to(device)
-    toks = [int(t) for t in cont_ids[:APPEND_TOKENS]]
-    assert len(toks) == APPEND_TOKENS, "the document ran out of continuation"
+    toks = [int(t) for t in cont_ids[:append_tokens]]
+    assert len(toks) == append_tokens, (
+        "the document ran out of continuation: got %d of %d tokens; raise "
+        "--gen-tokens so the prompt leaves a long enough continuation"
+        % (len(toks), append_tokens))
 
     # A fresh cache per pass: the two shapes must not share state, and the
     # stepwise pass would otherwise see the packed pass's appends.
@@ -249,8 +255,11 @@ def run_cell(engine, tok, doc_json, context_length, kv_quant, doc_id,
     for i, (s, k) in enumerate(zip(step_preds, pack_preds)):
         d = _delta(s, k)
         d.update({
-            "cell": "%s_%s" % ("32k" if context_length >= 32768 else "8k",
-                               "nf4" if kv_quant else "bf16"),
+            # Derived from the context, not from a two-way branch: the branch
+            # version labelled a 131072 run "32k", so the 128k floor landed in a
+            # directory named for a different context.
+            "cell": "%dk_%s" % (context_length // 1024,
+                                "nf4" if kv_quant else "bf16"),
             "context_length": context_length,
             "kv_quant": kv_quant,
             "world_size": world_size,
@@ -279,7 +288,9 @@ def run_cell(engine, tok, doc_json, context_length, kv_quant, doc_id,
         cell_dir.mkdir(parents=True, exist_ok=True)
         (cell_dir / "noise_floor.json").write_text(json.dumps(
             {"control": control, "rows": rows, "tokens": toks,
-             "prompt_tokens": int(prefix_ids.shape[1]), "gen_tokens": gen_tokens},
+             "prompt_tokens": int(prefix_ids.shape[1]), "gen_tokens": gen_tokens,
+             "append_tokens": append_tokens,
+             "measured_positions": sum(1 for r in rows if not r["is_control"])},
             indent=2) + "\n")
     return cell, rows, control
 
@@ -294,6 +305,9 @@ def main() -> int:
                     help="prompt window = C - gen_tokens - 1, as the campaign "
                          "sizes it; only the first 5 continuation tokens are used")
     ap.add_argument("--contexts", default="8192,32768")
+    ap.add_argument("--append-tokens", type=int, default=APPEND_TOKENS,
+                    help="tokens appended both ways; 64 gives a full 64-position "
+                         "window (63 measured after the control position)")
     ap.add_argument("--kv", default="bf16,nf4",
                     help="bf16 = no KV quantisation, nf4 = the campaign default")
     args = ap.parse_args()
@@ -328,7 +342,7 @@ def main() -> int:
             tok = engine.tokenizer
             cell, rows, control = run_cell(
                 engine, tok, args.doc_json, ctx, kv_quant, args.doc_id,
-                args.gen_tokens, rank, world_size, outdir)
+                args.gen_tokens, rank, world_size, outdir, args.append_tokens)
             control["cell"] = cell
             controls.append(control)
             all_rows.extend(rows)

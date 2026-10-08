@@ -1740,18 +1740,34 @@ if "numerics_report(" not in stub:
 if '"_real_run_experiment"' in stub and "real.numerics_report" in stub:
     fails.append("the stub calls numerics_report on the wrong module")
 
-# 2. the cap smoke follows the plan for ties, and asserts the numerics
-if 'if res["verdict"] == "MISMATCH"' not in smoke:
-    fails.append("the cap smoke does not fail specifically on MISMATCH")
-if 'elif res["verdict"] == "NUMERIC_TIE"' not in smoke:
-    fails.append("the cap smoke does not pass a NUMERIC_TIE")
-if "tie_positions" not in smoke:
-    fails.append("the cap smoke does not report the tie positions")
-for needle in ('if wp != "fp4"', 'if kvd != "nf4"'):
+# 2. the cap smoke gates on the teacher-forced check and still asserts numerics
+#    (analysis plan 6.1c). Token identity is REPORTED, not gated: the two arms run
+#    the target in different forward shapes and in bf16 those do not agree
+#    bit-for-bit, which is measured rather than assumed.
+for needle, why in (
+        ("TOL_BF16 = 1.875",
+         "the derived bf16 tolerance is missing or has been changed without "
+         "re-deriving it from the noise floor"),
+        ('GATED_KV = ("bfloat16",)',
+         "no KV dtype is gated, so nothing is actually tested"),
+        ('DECLARED_KV = ("nf4", "bfloat16")',
+         "the declared KV set is missing"),
+        ('if kvd not in DECLARED_KV', "the KV dtype is not asserted per row"),
+        ('if wp != "fp4"', "the weight precision is not asserted per row"),
+        ("teacher-forced MISMATCH", "the gate cannot fail"),
+        ("UNVERIFIED, which is not a pass",
+         "a missing probe is not treated as unverified"),
+        ("REPORT ONLY, not gated",
+         "the non-gated dtypes are not reported as such"),
+        ("GATED_KV dtype", "the gate can vanish without a problem being raised"),
+):
     if needle not in smoke:
-        fails.append(f"the cap smoke does not assert {needle}")
+        fails.append(f"the cap smoke: {why} (missing {needle!r})")
 if "no measured precision" not in smoke:
     fails.append("a row with no measured precision is not a failure")
+if 'spec_gaps=a.get("token_gaps")' not in smoke:
+    fails.append("the cap smoke no longer passes both arms' gaps into the "
+                 "reported identity verdict")
 
 # 3. the ladder is Llama-3.1-8B at bf16 only, at the recomputed cost
 if "--models meta-llama/Llama-3.1-8B meta-llama/Llama-2-7b-hf" in man:

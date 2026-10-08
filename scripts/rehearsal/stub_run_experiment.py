@@ -49,6 +49,7 @@ import _real_run_experiment as real          # noqa: E402
 # produced during a real run. Importing it (rather than copying the dict) means
 # a schema change there reaches this stub.
 from src.models.rasd_inference import (                          # noqa: E402
+    detect_kv_precision,
     _build_per_token_record, _round_commit_plan, numerics_report)
 
 CSV_FIELDS = real.CSV_FIELDS
@@ -325,6 +326,27 @@ def emit_run(run: dict, output_csv: pathlib.Path, log_per_token: bool,
         row["target_ppl"] = round(7.0 + ppl_rng.random() * 1.5, 6)
         row["ppl_tokens"] = 512
 
+    # The teacher-forced probe sidecar, when the level asks for it. The
+    # rehearsal must write this or the capped pair is UNVERIFIED and the cap
+    # smoke refuses -- which is how the missing writer was found. The shortfall
+    # is a knob so a rehearsal can exercise the FAILING gate too.
+    if run.get("teacher_forced_check") and save_tokens:
+        tf_dir = pathlib.Path(output_csv).resolve().parent / "tokens"
+        tf_dir.mkdir(parents=True, exist_ok=True)
+        tf_short = float(os.environ.get("MLSYS_REHEARSAL_TF_SHORTFALL", "0.05"))
+        n_positions = max(1, len(emitted_ids) - 1)
+        (tf_dir / f"{run['run_id']}.tflossless.json").write_text(json.dumps({
+            "run_id": run["run_id"],
+            "world_size": int(os.environ.get("WORLD_SIZE", 8)),
+            "measured_kv": detect_kv_precision(_fake_kv_cache(run)) or "bfloat16",
+            "tokens": len(emitted_ids), "positions": n_positions,
+            "max_shortfall": tf_short, "worst_position": 1,
+            "non_argmax": 0, "non_argmax_fraction": 0.0,
+            "first_non_argmax_position": None, "failures": [],
+            "noise_floor": {"max_abs_delta": 0.9, "control_max_abs_delta": 0.0,
+                            "positions": n_positions},
+        }, indent=2) + "\n")
+
     if log_per_token and trace:
         real.write_per_token_sidecar(trace, output_csv, run["run_id"])
     if save_tokens:
@@ -421,16 +443,29 @@ def _dense_model():
     return _M()
 
 
-def _fake_kv_cache(run):
-    """The cache object the run would really hold: NF4 when kv_quant, else None.
+def _bf16_kv_cache():
+    """Stand-in for the bf16 KV cache a NON-quantised run actually holds.
 
-    `detect_kv_precision` reads the CLASS, so a real NF4DynamicCache is the only
-    honest stand-in for the quantized case; `None` is what a non-quantized run
-    leaves behind (HF builds its own bf16 DynamicCache, which the engine does not
-    retain).
+    `detect_kv_precision` reads the class first, then a layer's key dtype, so a
+    stand-in has to expose both. Returning `None` here (as this stub first did)
+    reports kv_dtype="" for every bf16 row, which is NOT what the engine does:
+    the real engine reports "bfloat16" for a bf16 run -- verified against the
+    1x repro sidecars in results/mlsys/lossless_repro/tokens/. The rehearsal
+    caught the difference only because the cap smoke asserts the measured value
+    on every row, which is the assertion's whole purpose.
     """
+    class _BF16Cache:
+        def __init__(self):
+            self._k = torch.zeros(1, dtype=torch.bfloat16)
+        def __getitem__(self, i):
+            return (self._k, self._k)     # (key, value) for one layer
+    return _BF16Cache()
+
+
+def _fake_kv_cache(run):
+    """The cache object the run would really hold: NF4 when kv_quant, else bf16."""
     if not run.get("kv_quant"):
-        return None
+        return _bf16_kv_cache()
     from src.models.nf4_dynamic_cache import NF4DynamicCache
     return NF4DynamicCache(block_size=64, dtype=torch.bfloat16,
                            bf16_prefix_size=0, update_chunk_size=0)

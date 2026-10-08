@@ -924,3 +924,83 @@ NOT DONE, deliberately:
 
 COST: $0 for this block (all offline). Cumulative for tasks 1-4: ~$1.90 of $10.
 0 instances running.
+
+
+================================================================================
+21:35Z-22:20Z  2026-10-08  TOL_bf16 FIRMED; GATE BUILT AND APPLIED; READY TO RE-ARM
+================================================================================
+
+MILESTONE: RATE CRITERION DROPPED, reason recorded (plan 6.1c). The
+unverified-draft control is a GOOD draft, so the defect it represents is RARE BUT
+LARGE -- it agrees ~81% of the time and is badly wrong (up to 16 logits) at the
+rest. Frequency cannot separate that from NF4 noise, which is FREQUENT BUT MILD
+(20% of argmaxes, none by more than 5 logits). A draft that agrees 80% of the
+time is exactly what speculative decoding is FOR, so the sparsity is inherent to
+the defect class, not an artefact of the control.
+
+MILESTONE: TOL_bf16 FIRMED = 1.875, pre-registered before applying.
+64-position floor (63 measured per cell, 126 per dtype), 1x A100, nproc=1:
+   cell      KV        max|delta|   argmax flips
+   8k        bf16      0.688        1/63
+   8k        nf4       7.750        10/63
+   32k       bf16      0.938        0/63
+   32k       nf4       6.500        9/63
+   control (same computation twice, every cell) = 0.000
+TOL_bf16 = 2 x 0.9375 = 1.875. REQUIRED MARGIN HOLDS: the bf16 negatives' best
+case (6.75) is 1.80x 2 x TOL = 3.75. The 4-position floor was a serious
+underestimate -- it gave 0.828 for bf16 and 2.600 for NF4, and over 63 positions
+both grow (NF4 nearly triples, to 7.750). The bf16 gate absorbed the growth
+(margin 2.04x -> 1.80x); the NF4 figure confirms NF4 cannot support a gate at all
+(TOL_nf4 would be 15.5 logits).
+
+MILESTONE: 128k floor measured where it could be, and the gap declared.
+  * 128k NF4 (1 rank, 63 positions): max|delta| 4.594, flips 10/63 = 15.9%.
+    Same order as 32k; NF4 stays report-only.
+  * 128k BF16 CANNOT BE MEASURED on one 40 GB card: the bf16 KV for 130k tokens
+    is ~16 GB alone and the prefill OOMs at 38.9/39.5 GiB, with and without
+    expandable_segments. So TOL_bf16 is an EXTRAPOLATION from 8k/32k to the
+    gate's 128k context, and that is recorded in 6.1c before the run rather than
+    after. If the 8-rank bf16 floor exceeds 0.9375 the gate fails on legitimate
+    numerics -- which is a FINDING, not a reason to widen TOL.
+
+MILESTONE: GATE APPLIED (task 3-4). mlsys_cap_smoke_check.py now:
+  * GATES on the bf16-KV pair: teacher-forced max shortfall <= TOL_bf16 = 1.875.
+    A missing or errored probe is UNVERIFIED and FAILS -- "not measured" is not
+    "measured clean".
+  * REPORTS (never gates) the NF4 pairs' max shortfall, non-argmax fraction and
+    noise floor.
+  * KEEPS all 16 structural assertions. Token identity between the arms is still
+    computed and printed, but no longer gates: the two arms run the target in
+    different forward SHAPES, so identity was testing the kernels.
+  * TWO NEW GUARDS so the gate cannot quietly disappear: the pairing key now
+    includes the measured KV dtype (it did not, so a bf16 arm could have been
+    paired with the NF4 baseline), and the stage FAILS if no speculative pair
+    measured a gated dtype (an inert kv_quant would otherwise leave everything
+    report-only and the stage would pass having tested nothing).
+
+engine_cap_smoke grew one bf16 pair (CAPS_prefix64_bf16 + its target-only
+partner, 64 tokens at 128k) and now runs 6 rows; the teacher-forced probe runs on
+the four 64-token levels. No science stage's config was touched. The probe is
+bounded to the 64-token rows on purpose: a 1024-token probe is 1024 stepwise
+forwards, ~66 min on 8 ranks, which would put the stage near its watchdog.
+
+VALIDATED BEFORE THE CAMPAIGN DEPENDS ON IT: the engine's own probe reproduces
+the standalone harness on real hardware (1 rank, 8k, bf16, the real cap-smoke
+config): max shortfall 0.375, non-argmax 2/63, noise floor 0.75, control 0.000,
+measured_kv "bfloat16". The stub rehearsal also had to be fixed -- it reported
+kv_dtype="" for every bf16 row while the real engine reports "bfloat16" (checked
+against the 1x sidecars), and it wrote no probe sidecar at all, so the capped
+pair was UNVERIFIED. Both are now modelled, and the rehearsal's freshness
+expectation is derived from the config instead of hardcoded at 4 rows.
+
+FOUND WHILE DOING THIS: two latent defects, both of the silent kind. The
+cap-smoke pairing key omitted kv_quant, so two pairs differing only in KV dtype
+collided at the same doc/context/cap and an arm could be compared against the
+wrong baseline. And the KV-dtype assertion required exactly "nf4" for every row,
+which is now declared as a set -- the guard still catches an unstated or
+unlisted precision, which is its purpose.
+
+1029 tests pass; the dry run is 32/0 and the rehearsal 74/0.
+
+COST: 1x A100 up ~38 min at $1.99/hr = ~$1.27. Cumulative for tasks 1-4 of this
+round: ~$1.27 of the $5 budget. 0 instances running before re-arming.

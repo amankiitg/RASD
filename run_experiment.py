@@ -226,6 +226,22 @@ def _generated_tokens_dir(output_csv: str | Path) -> Path:
     return Path(output_csv).resolve().parent / "tokens"
 
 
+def write_teacher_forced_sidecar(output_csv: str | Path, run_id: str,
+                                 payload: dict) -> Path | None:
+    """Write the teacher-forced probe for one run: `<tokens_dir>/<run_id>.tflossless.json`.
+
+    A SEPARATE file from the generated-token sidecar on purpose. That sidecar's
+    schema is read by the losslessness and cap-smoke stages, and adding fields to
+    it would change the shape of an artifact other stages already validate.
+    """
+    path = _generated_tokens_dir(output_csv) / f"{run_id}.tflossless.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = {"run_id": run_id}
+    out.update(payload or {})
+    path.write_text(json.dumps(out, indent=2, default=str) + "\n")
+    return path
+
+
 def write_generated_tokens_sidecar(
     output_csv: str | Path, run_id: str, token_ids: list[int] | None,
     provenance: dict | None = None,
@@ -1280,8 +1296,26 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                     prompt, add_special_tokens=True)["input_ids"]
             except Exception:                       # noqa: BLE001
                 engine_input_ids = None
+        # ---- teacher-forced probe (the MLSys losslessness gate) -----------
+        # Runs on EVERY rank: the forwards go through ring attention when
+        # world_size > 1, so calling it on rank 0 alone would leave the other
+        # ranks outside a collective. An error is captured into the sidecar
+        # rather than raised, so a probe failure is reported as a missing
+        # measurement instead of killing a stage whose real work succeeded --
+        # and the checker treats a missing probe as UNVERIFIED, never as a pass.
+        tf_probe = None
+        if run.get("teacher_forced_check") and gen_ids and engine_input_ids:
+            try:
+                tf_probe = engine.teacher_forced_probe(engine_input_ids, gen_ids)
+                tf_probe["spec_steps"] = run.get("spec_steps")
+                tf_probe["context_length"] = run.get("context_length")
+            except Exception as e:                      # noqa: BLE001
+                tf_probe = {"error": f"{type(e).__name__}: {e}",
+                            "world_size": int(os.environ.get("WORLD_SIZE", 1))}
         trace = metrics.pop("per_token_trace", None)
         prof_summary = metrics.pop("_profiler_summary", None)
+        if local_rank == 0 and tf_probe is not None:
+            write_teacher_forced_sidecar(output_csv, run["run_id"], tf_probe)
         if local_rank == 0:
             # No sidecar at all when the gap array is misaligned: a written
             # sidecar is read later by the losslessness and cap-smoke stages,

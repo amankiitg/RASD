@@ -46,6 +46,7 @@ CAP_SMOKE:
     documents: [pg19_train_1]
     max_new_tokens: 64
     checkpoint_every: 0
+    teacher_forced_check: true
     notes: 'cap=64: the truncated final round has a different remainder than 1024'
   - id: CAPS_prefix64_targetonly
     context_length: 131072
@@ -53,6 +54,7 @@ CAP_SMOKE:
     max_new_tokens: 64
     spec_steps: 0
     checkpoint_every: 0
+    teacher_forced_check: true
     notes: 'target-only partner at cap=64'
   - id: CAPS_prefix1024
     context_length: 131072
@@ -67,3 +69,26 @@ CAP_SMOKE:
     spec_steps: 0
     checkpoint_every: 0
     notes: 'target-only partner at cap=1024; the losslessness reference'
+  # The bf16-KV pair carries the LOSSLESSNESS GATE (analysis plan 6.1c). At
+  # bf16 the two forward shapes agree to within 0.375 logits on the emitted
+  # tokens (measured at 1 rank), against a 6.75-logit best negative, so a gate
+  # with TOL_bf16 = 1.875 is a real test. The NF4 pairs are still measured and
+  # reported, but they do NOT gate: NF4 KV noise alone flips 20% of argmaxes at
+  # this context, which is the same order as the defects a gate must catch.
+  - id: CAPS_prefix64_bf16
+    context_length: 131072
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    kv_quant: false
+    checkpoint_every: 0
+    teacher_forced_check: true
+    notes: 'bf16 KV: the pair the teacher-forced losslessness gate runs on'
+  - id: CAPS_prefix64_bf16_targetonly
+    context_length: 131072
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    kv_quant: false
+    checkpoint_every: 0
+    teacher_forced_check: true
+    notes: 'target-only partner of CAPS_prefix64_bf16'

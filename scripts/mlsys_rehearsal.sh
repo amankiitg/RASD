@@ -597,7 +597,8 @@ grep -q "STAGE_OK name=natural_f1_128k" "$RUNLOG2" \
   && bad "a dependent stage ran on a failed prerequisite" \
   || ok "no dependent stage ran after the failure"
 
-# And the freshness itself. Attempt 1 wrote four ok rows; attempt 2 wrote three
+# And the freshness itself. Attempt 1 wrote one ok row per configured level;
+# attempt 2 wrote three
 # ok rows and then aborted. If the archive did not happen, the live file would
 # still be attempt 1's, or a merge of the two -- which is the failure that looks
 # like a complete stage.
@@ -613,10 +614,19 @@ else
   bad "the previous attempt's CSV was not archived"
 fi
 arch_ok=$(count_ok "$ARCH"); live_ok=$(count_ok "$OUT/engine_cap_smoke.csv")
-if [ "${arch_ok:-0}" = "4" ] && [ "${live_ok:-0}" = "3" ]; then
-  ok "the live file is THIS attempt's (3 ok rows); attempt 1's four are archived"
+# Attempt 1 writes one ok row per level, so the expected count is DERIVED from
+# the config rather than written down here. Hardcoding it (this said "4") goes
+# stale the moment a level is added, and the failure reads as a freshness bug
+# instead of a stale expectation -- which is exactly what adding the bf16 pair
+# did.
+WANT_ARCH=$("$PY" -c "
+import yaml
+d = yaml.safe_load(open('configs/mlsys_engine_cap_smoke.yml'))
+print(len(d['CAP_SMOKE']['levels']))" 2>/dev/null || echo 0)
+if [ "${arch_ok:-0}" = "${WANT_ARCH:-1}" ] && [ "${live_ok:-0}" = "3" ]; then
+  ok "the live file is THIS attempt's (3 ok rows); attempt 1's ${WANT_ARCH} are archived"
 else
-  bad "freshness: archived ok-rows=${arch_ok:-?} (want 4), live ok-rows=${live_ok:-?} (want 3)"
+  bad "freshness: archived ok-rows=${arch_ok:-?} (want ${WANT_ARCH:-?}), live ok-rows=${live_ok:-?} (want 3)"
 fi
 # The earlier results are still there for the operator: attempt 2 never reached
 # them, so their archive was never taken.

@@ -187,20 +187,37 @@ class TestNF4DynamicCacheWired:
         )
 
     def test_nf4_cache_constructed_under_kv_quant_flag(self):
-        """generate() must construct an NF4DynamicCache only when
-        cfg.kv_quant=True. Default off must leave initial_cache=None
-        so HF creates its own bf16 DynamicCache."""
+        """An NF4DynamicCache is constructed only when cfg.kv_quant=True, and
+        the default-off path leaves None so HF creates its own bf16
+        DynamicCache.
+
+        The construction moved into `RASDInference._make_initial_cache` (2026-10-08)
+        so the teacher-forced probe cannot build a DIFFERENT cache than the run it
+        judges -- the cache has to be passed INTO the model, and a second
+        construction site is a second chance to get that wrong. The gate is now
+        an inverted guard with an early return, which is the same semantics, so
+        this asserts the semantics rather than one spelling of them.
+        """
         from pathlib import Path
         rasd_inf = (Path(__file__).resolve().parent.parent
                     / "src" / "models" / "rasd_inference.py").read_text()
-        # Look for the gated construction (allow generous whitespace
-        # for the outlier-keep comment block added 2026-05-10).
-        assert re.search(
-            r"if cfg\.kv_quant:[\s\S]{0,800}NF4DynamicCache\(",
-            rasd_inf,
-        ), (
-            "C11 (b) regression: NF4DynamicCache construction not gated "
-            "by `if cfg.kv_quant:`"
+        assert "def _make_initial_cache" in rasd_inf, (
+            "C11 (b) regression: the single cache-construction site is gone"
+        )
+        body = rasd_inf.split("def _make_initial_cache", 1)[1].split(
+            "def teacher_forced_probe", 1)[0]
+        assert re.search(r"if not cfg\.kv_quant:[\s\S]{0,80}return None", body), (
+            "C11 (b) regression: the default-off path must return None so HF "
+            "builds its own bf16 DynamicCache"
+        )
+        assert "NF4DynamicCache(" in body, (
+            "C11 (b) regression: the cache is not constructed under kv_quant"
+        )
+        # ...and generate() must go through that site, or a run could still
+        # build a plain bf16 cache while the probe measured the NF4 one.
+        assert "self._make_initial_cache(cfg)" in rasd_inf, (
+            "C11 (b) regression: generate() no longer uses the shared "
+            "cache-construction site"
         )
 
     def test_initial_cache_passed_to_target_model(self):

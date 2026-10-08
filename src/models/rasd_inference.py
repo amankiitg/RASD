@@ -1472,29 +1472,7 @@ class RASDInference:
         # append time. The cache object is mutated in place across
         # the rest of the verify loop, so we keep a single instance
         # for the duration of generate().
-        initial_cache = None
-        if cfg.kv_quant:
-            from src.models.nf4_dynamic_cache import NF4DynamicCache
-            # Outlier-keep: only the rank holding global position 0
-            # (rank 0 under sequence-parallel sharding) gets a bf16
-            # prefix. Other ranks' caches are pure NF4. The prefix
-            # protects the first ~128 tokens (attention sinks per
-            # StreamingLLM) which are disproportionately attended to
-            # and account for most of the NF4 acceptance loss.
-            prefix_size = (
-                cfg.kv_outlier_prefix_size if self._rank == 0 else 0
-            )
-            initial_cache = NF4DynamicCache(
-                block_size=cfg.kv_block_size_nf4,
-                dtype=cfg.torch_dtype,
-                bf16_prefix_size=prefix_size,
-                update_chunk_size=cfg.nf4_update_chunk_size,
-                # Target-only decode appends ONE token per step; without the
-                # fold the layer accumulates one chunk per step and every
-                # forward concatenates all of them (R1). Exact, not
-                # approximate -- see NF4DynamicCache._append_nf4_chunk.
-                tail_merge_below=cfg.nf4_tail_merge_below,
-            )
+        initial_cache = self._make_initial_cache(cfg)
 
         # M4 Phase C 2026-05-10 lever #1: only the LAST position's
         # logits are used downstream (`local_last_logit = ...[:, -1, :]`).
@@ -2187,6 +2165,141 @@ class RASDInference:
     # ------------------------------------------------------------------
     # Convenience
     # ------------------------------------------------------------------
+
+
+    def _make_initial_cache(self, cfg):
+        """The KV cache this engine runs with, built in exactly ONE place.
+
+        Factored out of `generate` so the teacher-forced probe cannot measure a
+        different cache than the run it is judging. The cache has to be passed
+        INTO the model -- HuggingFace builds its own bf16 `DynamicCache` when
+        `past_key_values` is None, whatever `kv_quant` says -- so a second
+        construction site is a second chance to get that wrong. That is not
+        hypothetical: the 1x noise-floor harness first did exactly this and
+        produced bit-identical "bf16" and "nf4" cells.
+
+        Outlier-keep: only the rank holding global position 0 (rank 0 under
+        sequence-parallel sharding) gets a bf16 prefix. Other ranks' caches are
+        pure NF4. The prefix protects the first ~128 tokens (attention sinks per
+        StreamingLLM) which are disproportionately attended to and account for
+        most of the NF4 acceptance loss.
+        """
+        if not cfg.kv_quant:
+            return None
+        from src.models.nf4_dynamic_cache import NF4DynamicCache
+        prefix_size = (cfg.kv_outlier_prefix_size if self._rank == 0 else 0)
+        return NF4DynamicCache(
+            block_size=cfg.kv_block_size_nf4,
+            dtype=cfg.torch_dtype,
+            bf16_prefix_size=prefix_size,
+            update_chunk_size=cfg.nf4_update_chunk_size,
+            # Target-only decode appends ONE token per step; without the fold the
+            # layer accumulates one chunk per step and every forward
+            # concatenates all of them (R1). Exact, not approximate -- see
+            # NF4DynamicCache._append_nf4_chunk.
+            tail_merge_below=cfg.nf4_tail_merge_below,
+        )
+
+    # ------------------------------------------------------------------
+    # Teacher-forced losslessness probe
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def teacher_forced_probe(self, prompt_ids, tokens, chunk: int = 4096) -> Dict:
+        """Judge an emitted stream against the target's own argmax, and measure
+        the packed-vs-stepwise noise floor that justifies the tolerance.
+
+        WHY THIS IS A CLAIM ABOUT THE ENGINE. The same target is run in two
+        forward shapes: a packed (gamma+1)-token verify in ONE forward, and one
+        token per step. In bf16 the two pick different kernels and accumulate in
+        a different order, so their argmaxes differ at marginal positions even
+        though both are "the target". Comparing a speculative arm against its
+        target-only partner therefore tests whether two kernels agree, not
+        whether the implementation is right. Teacher forcing asks the question
+        that IS about the implementation: given the stream's OWN prefix, is each
+        emitted token the token the target would have chosen?
+
+        Returns the per-position shortfalls against the STEPWISE logits (the
+        target-only shape), plus the noise floor between the two shapes:
+
+          max_shortfall        max over positions of (max logit - logit[emitted])
+          non_argmax           positions where the emitted token is not the argmax
+          max_abs_delta        the noise floor: max |stepwise - packed| per logit
+          control_max_abs_delta  the same difference at position 0, which is the
+                               prefill's last logit in BOTH passes -- the same
+                               computation twice. Non-zero here means the run is
+                               not deterministic and nothing else is meaningful.
+        """
+        device = next(self.target_model.parameters()).device
+        prompt = torch.as_tensor(prompt_ids, dtype=torch.long,
+                                 device=device).view(1, -1)
+        toks = [int(t) for t in tokens]
+        n = len(toks)
+        if n < 2:
+            return {"error": "need >= 2 tokens", "tokens": n}
+
+        def prefill(cache):
+            out = None
+            for start in range(0, prompt.shape[1], chunk):
+                piece = prompt[:, start:min(start + chunk, prompt.shape[1])]
+                out = self.target_model(piece, past_key_values=cache,
+                                        use_cache=True)
+                cache = out.past_key_values
+            return out.logits[:, -1, :].float(), cache
+
+        cfg = self.cfg
+        # --- shape A: the target-only shape, one token per step -------------
+        cache = self._make_initial_cache(cfg)
+        step_logits, cache = prefill(cache)
+        step_rows = [step_logits]
+        for i in range(n - 1):
+            step = torch.tensor([[toks[i]]], device=device, dtype=torch.long)
+            out = self.target_model(step, past_key_values=cache, use_cache=True)
+            cache = out.past_key_values
+            step_rows.append(out.logits[:, -1, :].float())
+        measured_kv = detect_kv_precision(cache)
+
+        # --- shape B: the packed verify shape, ONE forward for n tokens -----
+        cache = self._make_initial_cache(cfg)
+        packed_first, cache = prefill(cache)
+        packed_in = torch.tensor([toks], device=device, dtype=torch.long)
+        out = self.target_model(packed_in, past_key_values=cache, use_cache=True)
+        # logits[:, i] predicts toks[i+1], so position i uses index i-1.
+        packed_rows = [packed_first] + [out.logits[:, i - 1, :].float()
+                                        for i in range(1, n)]
+
+        shortfalls, non_argmax, failures = [], 0, []
+        max_delta = 0.0
+        for i in range(1, n):
+            row = step_rows[i][0]
+            top = int(row.argmax())
+            short = float(row.max() - row[toks[i]])
+            shortfalls.append(short)
+            is_argmax = top == toks[i]
+            if not is_argmax:
+                non_argmax += 1
+                failures.append({"position": i, "emitted_token": toks[i],
+                                 "argmax_token": top, "shortfall": short})
+            d = float((step_rows[i] - packed_rows[i]).abs().max())
+            max_delta = max(max_delta, d)
+        control = float((step_rows[0] - packed_rows[0]).abs().max())
+        return {
+            "world_size": int(self._world_size),
+            "measured_kv": measured_kv,
+            "tokens": n,
+            "positions": n - 1,
+            "max_shortfall": max(shortfalls),
+            "worst_position": int(shortfalls.index(max(shortfalls))) + 1,
+            "non_argmax": non_argmax,
+            "non_argmax_fraction": non_argmax / float(n - 1),
+            "first_non_argmax_position": (failures[0]["position"]
+                                          if failures else None),
+            "failures": failures[:32],
+            "noise_floor": {
+                "max_abs_delta": max_delta,
+                "control_max_abs_delta": control,
+                "positions": n - 1,
+            },
+        }
 
     def generate_text(self, prompt: str, **kwargs) -> Tuple[str, Dict]:
         """String-in, string-out wrapper around generate().

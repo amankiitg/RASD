@@ -14,8 +14,15 @@ This script is the gate on that change. It asserts, for every cell of
   2. the final per-round trace record's `n_emitted` / `round_truncated` are
      consistent with the cap: the emitted tokens across all rounds sum to the
      cap, and a round is flagged truncated only when the budget cut it short.
-  3. the speculative/target-only pair is token-identical (losslessness), which
-     is the property the cap exists to keep checkable.
+  3. the speculative/target-only pair is lossless. The GATE is the
+     teacher-forced check on the bf16-KV pair: each token the speculative arm
+     emitted must be the token the target itself would have chosen, given the
+     stream's own prefix, within TOL_bf16 logits. Token identity between the two
+     arms is still computed and reported, but it does NOT gate -- the two arms
+     run the target in different forward SHAPES (a packed (gamma+1)-token verify
+     versus one token per step), and in bf16 those shapes do not agree
+     bit-for-bit, so identity tested the kernels rather than the implementation.
+     See docs/mlsys_analysis_plan.md 6.1a-6.1c for the measurement and the rule.
 
 Exit non-zero if any assertion fails. The manifest stops before the
 speculative stages on a non-zero exit.
@@ -35,6 +42,31 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.analysis.losslessness import compare_generations, require_same_request
+
+#: The teacher-forced tolerance for the bf16-KV pair, in logits.
+#:
+#: DERIVED, not chosen: 2 x the measured max |delta logit| between the packed and
+#: stepwise forward shapes on a 63-position-per-cell floor at 8k and 32k, which
+#: is 2 x 0.9375. The 2x is the bound on the shortfall a CORRECT decision can
+#: show (docs/mlsys_analysis_plan.md 6.1a), and there is no cap. It is valid for
+#: as long as the bf16 negatives' best case (the 6.75-logit unverified draft at
+#: 8k) stays at or above 2 x TOL_bf16, i.e. at or above 3.75 -- it does, by
+#: 1.80x. Re-derive it if the engine's precision or the shapes change.
+TOL_BF16 = 1.875
+
+#: KV precisions whose pairs must PASS the teacher-forced gate. NF4 is measured
+#: and reported but never gated: at this context its own noise flips 20% of
+#: argmaxes, which is the same order as the defects a gate has to catch, and its
+#: shortfall separation is only 1.31x (6.1b).
+GATED_KV = ("bfloat16",)
+
+#: KV precisions this stage declares. `nf4` is the campaign's default and the
+#: baseline every comparison rests on; the `bfloat16` pair exists because NF4's
+#: own noise cannot support the gate (6.1c). Naming both keeps the original
+#: guard -- a blank or unknown measured dtype is still a failure -- while
+#: admitting the one deliberate exception, which is declared rather than
+#: inferred. A dtype outside this tuple is a problem, not a new configuration.
+DECLARED_KV = ("nf4", "bfloat16")
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -66,6 +98,24 @@ def _sidecar(tokens_dir: Path, run_id: str) -> dict | None:
         return None
 
 
+def _read_probes(tokens_dir: Path, rows: list[dict]) -> dict:
+    """The teacher-forced probe sidecars, keyed by run_id.
+
+    A missing probe is NOT an empty probe: the caller must be able to tell
+    "measured and clean" from "never measured", and only the first is a pass.
+    """
+    out = {}
+    for r in rows:
+        p = tokens_dir / f"{r['run_id']}.tflossless.json"
+        if not p.exists():
+            continue
+        try:
+            out[r["run_id"]] = json.loads(p.read_text())
+        except Exception as e:                                  # noqa: BLE001
+            out[r["run_id"]] = {"error": f"unreadable probe sidecar: {e}"}
+    return out
+
+
 def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str], list[str]]:
     """Returns (problems, notes)."""
     problems: list[str] = []
@@ -75,6 +125,7 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
     tokens_dir = tokens_dir or (results_dir / "tokens")
 
     ok_rows = [r for r in rows if r.get("status") == "ok"]
+
     if not ok_rows:
         return ([f"no row completed successfully in {results_csv}"], notes)
 
@@ -142,12 +193,15 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                         f"{rid}: weight_precision={wp!r}, expected 'fp4' — the "
                         f"campaign's cells are FP4 and a different precision "
                         f"makes them incomparable with the published numbers")
-                if kvd != "nf4":
+                if kvd not in DECLARED_KV:
                     problems.append(
-                        f"{rid}: kv_dtype={kvd!r}, expected 'nf4' — the KV cache "
-                        f"is what the vLLM comparison cannot reproduce")
-                if wp == "fp4" and kvd == "nf4":
-                    notes.append(f"{rid}: numerics fp4 weights + nf4 KV "
+                        f"{rid}: kv_dtype={kvd!r}, expected one of "
+                        f"{DECLARED_KV} — the KV cache is what the vLLM "
+                        f"comparison cannot reproduce, and an unlisted dtype "
+                        f"means the run is not the configuration this stage "
+                        f"declares")
+                if wp == "fp4" and kvd in DECLARED_KV:
+                    notes.append(f"{rid}: numerics fp4 weights + {kvd} KV "
                                  f"(measured)")
 
         # The sequence the engine built must be the rung.
@@ -273,71 +327,149 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
             f"kv {tr[0].get('kv_len_before')}->{kv_expected_prev}"
         )
 
+    # ------------------------------------------------------------------
     # Losslessness between each spec row and its target-only partner.
+    #
+    # The pairing key INCLUDES the measured KV precision. Without it, two pairs
+    # that differ only in kv_quant land on the same key and a spec arm is
+    # silently paired with the wrong baseline -- comparing an NF4 stream against
+    # a bf16 one, which is exactly the numerics difference this stage exists to
+    # quantify. The precision is read from each sidecar's MEASURED `kv_dtype`,
+    # never from the run's config, for the same reason the numerics block is
+    # measured: `kv_quant` is an instruction and an instruction can be inert.
+    # ------------------------------------------------------------------
+    side = {}
+    for r in ok_rows:
+        p = tokens_dir / f"{r['run_id']}.json"
+        if p.exists():
+            try:
+                side[r["run_id"]] = json.loads(p.read_text())
+            except Exception:                                  # noqa: BLE001
+                side[r["run_id"]] = None
+
+    probes = _read_probes(tokens_dir, ok_rows)
+
+    def _pair_key(row):
+        return (row.get("doc_id"), row.get("context_length"),
+                row.get("max_new_tokens"),
+                str((side.get(row["run_id"]) or {}).get("kv_dtype", "")))
+
     by_key = {}
     for r in ok_rows:
         if str(r.get("spec_steps", "")).strip() in ("", "0"):
-            by_key[(r.get("doc_id"), r.get("context_length"),
-                    r.get("max_new_tokens"))] = r
+            by_key[_pair_key(r)] = r
+
+
     seen = 0
     for r in ok_rows:
         if str(r.get("spec_steps", "")).strip() in ("", "0"):
             continue
-        partner = by_key.get((r.get("doc_id"), r.get("context_length"),
-                              r.get("max_new_tokens")))
+        key = _pair_key(r)
+        partner = by_key.get(key)
         if partner is None:
             problems.append(f"{r['run_id']}: no target-only partner at the same "
-                            f"cap, so losslessness is unverified")
+                            f"doc/context/cap/KV ({key[1]} ctx, {key[2]} tokens, "
+                            f"kv={key[3] or 'unknown'}), so losslessness is "
+                            f"unverified")
             continue
         bad = require_same_request(r, partner)
         if bad:
             problems.append(f"{r['run_id']}: pair refused: {'; '.join(bad)}")
             continue
-        a = json.loads((tokens_dir / f"{r['run_id']}.json").read_text()) \
-            if (tokens_dir / f"{r['run_id']}.json").exists() else None
-        b = json.loads((tokens_dir / f"{partner['run_id']}.json").read_text()) \
-            if (tokens_dir / f"{partner['run_id']}.json").exists() else None
+        a, b = side.get(r["run_id"]), side.get(partner["run_id"])
         if a is None or b is None:
             problems.append(f"{r['run_id']}: missing token sidecar for a pair "
                             f"member")
             continue
-        # Both arms of the smoke use the SAME cap, so the verdict must be
-        # LOSSLESS (or a NUMERIC_TIE) rather than a prefix verdict: a prefix here
-        # would mean the partner stopped short, which for this stage is itself a
-        # failure.
+        seen += 1
         cap = int(r["max_new_tokens"])
+        kv = str(a.get("kv_dtype", ""))
+
+        # --- REPORTED, not gated: token identity between the arms ----------
         res = compare_generations(a["generated_token_ids"],
                                   b["generated_token_ids"],
                                   full_length=cap, min_prefix=cap,
-                                  # Both arms' gaps, so a divergence at an
-                                  # indifferent target is reported as the tie it
-                                  # is rather than as an implementation defect.
                                   spec_gaps=a.get("token_gaps"),
                                   target_gaps=b.get("token_gaps"))
-        seen += 1
-        # PLAN RULE (B4 revision): a stage fails ONLY on MISMATCH. NUMERIC_TIE
-        # passes and is REPORTED with its positions, because the target was
-        # indifferent at the divergence and no implementation defect is implied.
-        # Treating a tie as a failure here would fail a stage for being honest
-        # about a numerics artefact.
-        if res["verdict"] == "MISMATCH":
-            problems.append(f"{r['run_id']}: MISMATCH vs {partner['run_id']} — "
-                            f"{res['detail']}")
-        elif res["verdict"] == "NUMERIC_TIE":
-            notes.append(
-                f"NUMERIC_TIE at {res['tie_positions']} vs "
-                f"{partner['run_id']}: gaps {res['gap_at_divergence_spec']}/"
-                f"{res['gap_at_divergence_target']} below "
-                f"{res['tie_gap_threshold']} — reported, not a failure "
-                f"({res['compared_tokens']} tokens compared)")
-        elif res["verdict"] != "LOSSLESS":
-            problems.append(f"{r['run_id']}: {res['verdict']} vs "
-                            f"{partner['run_id']} — {res['detail']}")
+        notes.append(f"{r['run_id']}: token identity vs {partner['run_id']} -> "
+                     f"{res['verdict']} ({res.get('detail', '')}) [REPORTED, "
+                     f"not a gate: the two arms run the target in different "
+                     f"forward shapes]")
+
+        # --- the GATE: the teacher-forced check on the bf16 pair -----------
+        pr = probes.get(r["run_id"])
+        if kv in GATED_KV:
+            if pr is None:
+                problems.append(
+                    f"{r['run_id']}: kv={kv} is gated but has NO "
+                    f"teacher-forced probe sidecar (<run_id>.tflossless.json); "
+                    f"losslessness is UNVERIFIED, which is not a pass")
+            elif pr.get("error"):
+                problems.append(f"{r['run_id']}: teacher-forced probe failed: "
+                                f"{pr['error']} -- UNVERIFIED, not a pass")
+            else:
+                ms = float(pr["max_shortfall"])
+                notes.append(
+                    f"{r['run_id']}: teacher-forced max shortfall {ms:.4f} <= "
+                    f"TOL_bf16 {TOL_BF16} ({pr['non_argmax']}/{pr['positions']} "
+                    f"positions not the argmax, worst at "
+                    f"{pr['worst_position']})")
+                if ms > TOL_BF16:
+                    problems.append(
+                        f"{r['run_id']}: teacher-forced MISMATCH -- max "
+                        f"shortfall {ms:.4f} > TOL_bf16 {TOL_BF16}, worst at "
+                        f"position {pr['worst_position']}; "
+                        f"{pr['non_argmax']}/{pr['positions']} positions are not "
+                        f"the target's argmax")
         else:
-            notes.append(f"losslessness OK at cap {cap} "
-                         f"({res['compared_tokens']} tokens)")
+            # REPORT ONLY for everything else.
+            if pr is None:
+                notes.append(f"{r['run_id']}: kv={kv or 'unknown'} not gated, and "
+                             f"no teacher-forced probe was recorded")
+            elif pr.get("error"):
+                notes.append(f"{r['run_id']}: kv={kv} probe failed ({pr['error']}) "
+                             f"[REPORT ONLY]")
+            else:
+                notes.append(
+                    f"{r['run_id']}: kv={kv} [REPORT ONLY, not gated] "
+                    f"max shortfall {float(pr['max_shortfall']):.4f}, "
+                    f"non-argmax {pr['non_argmax']}/{pr['positions']} "
+                    f"({100 * float(pr['non_argmax_fraction']):.1f}%), "
+                    f"noise floor max|delta| "
+                    f"{float(pr['noise_floor']['max_abs_delta']):.4f}, "
+                    f"control {float(pr['noise_floor']['control_max_abs_delta']):.4f}")
+
+    # The 8-rank noise floor, reported per arm and compared across arms, so a
+    # rank-dependent blow-up is visible in the gate's own output rather than
+    # only in a sidecar nobody reads.
+    for rid, pr in sorted(probes.items()):
+        if pr.get("error"):
+            continue
+        nf = pr.get("noise_floor") or {}
+        notes.append(f"noise_floor {rid}: world_size={pr.get('world_size')} "
+                     f"kv={pr.get('measured_kv')} "
+                     f"max|delta|={nf.get('max_abs_delta')} over "
+                     f"{nf.get('positions')} positions, "
+                     f"control={nf.get('control_max_abs_delta')}")
+    # The gate must not be able to VANISH. If no speculative pair measured a
+    # GATED_KV dtype -- e.g. the bf16 level's kv_quant override was silently
+    # inert so it ran as NF4 and was treated as report-only -- then every pair
+    # was reported and none was gated, and the stage would pass having tested
+    # nothing. Same silent-no-op class the measured-dtype assertion exists for.
+    gated_pairs = [
+        r["run_id"] for r in ok_rows
+        if str(r.get("spec_steps", "")).strip() not in ("", "0")
+        and str((side.get(r["run_id"]) or {}).get("kv_dtype", "")) in GATED_KV
+    ]
+    if not gated_pairs:
+        problems.append(
+            f"no speculative pair measured a GATED_KV dtype {GATED_KV}; every "
+            f"pair is report-only, so this stage would pass without gating "
+            f"anything")
+
     if seen == 0:
         problems.append("no speculative/target-only pair was checked")
+
     return problems, notes
 
 
