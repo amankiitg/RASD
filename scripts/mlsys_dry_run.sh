@@ -910,6 +910,10 @@ step "15  the watcher's lifecycle: refuse, verify, terminate-to-zero"
 "$PY" - scripts/mlsys_watch_and_run.sh <<'PYWBLK'
 import re, sys
 watch = open(sys.argv[1]).read()
+# The pod side of the stall watchdog lives in the manifest; the two halves are
+# asserted together because a watchdog that exists on only one side is not the
+# guarantee the plan claims.
+man = open("scripts/mlsys_manifest.sh").read()
 fails = []
 approv = ("gate_calibration,engine_cap_smoke,coherence_gate,"
           "correction_note_evidence,natural_f1_128k,impl_validation,"
@@ -947,11 +951,50 @@ if "NOT CONFIRMED TERMINATED" not in term:
 if "re-issuing terminate" not in term:
     fails.append("termination is not retried")
 
-# ssh failure is UNKNOWN
-if '"$rc" -eq 1' not in watch:
-    fails.append("the manifest-running check does not distinguish ssh failure")
-if "state UNKNOWN" not in watch:
+# ssh failure is UNKNOWN. Both failure shapes must be distinguished from a
+# completion: an unreachable pod (ssh exits non-zero) and a readable pod whose
+# marker cannot be read. Neither may break the wait, and neither may be read as
+# "the manifest finished" -- that would pull, and terminate, mid-run.
+loop = watch[watch.index("MANIFEST_RC="):]
+loop = loop[:loop.index('interruptible_sleep "$MANIFEST_POLL"')]
+if not re.search(r'if \[ "\$rc" -ne 0 \]; then', loop):
+    fails.append("an ssh failure is not routed to the UNKNOWN state")
+if "state UNKNOWN" not in loop:
     fails.append("an ssh failure is still treated as the manifest finishing")
+if not re.search(r"elif printf '%s' \"\$marker\" \| grep -qE '\^\[0-9\]\+\$'", loop):
+    fails.append("a completion is not required to be a numeric exit code")
+if "break" not in loop[loop.index("MANIFEST_RC=$marker"):]:
+    fails.append("a completion does not end the wait")
+if "MANIFEST_RC=$marker" not in loop:
+    fails.append("the manifest's exit code is not carried past the wait")
+# the marker must be read only under an ssh that succeeded
+if loop.index('if [ "$rc" -ne 0 ]') > loop.index("MANIFEST_RC=$marker"):
+    fails.append("the marker is believed before the connection is checked")
+# an ABORT (non-zero rc) must be an incident: logs collected, run stopped, and
+# no normal verify-and-merge over a run that already declared itself broken
+if "collect_incident" not in loop:
+    fails.append("an aborted manifest does not collect its logs")
+if "MANIFEST_ABORTED=1" not in loop:
+    fails.append("an aborted manifest is not flagged as an incident")
+after = watch[watch.index('if [ "${MANIFEST_ABORTED:-0}" = "1" ];'):]
+after = after[:after.index("\nfi\n") + 4]
+if "terminate_and_confirm" not in after or "exit 7" not in after:
+    fails.append("an incident does not terminate and exit non-zero")
+if watch.index('if [ "${MANIFEST_ABORTED:-0}" = "1" ];') > watch.index("per-run staged pull"):
+    fails.append("the incident path runs after the normal pull, so it is not fail-fast")
+# the stall watchdog: no new progress line, or the process gone with no marker
+if "PROGRESS_SINCE" not in loop or "stall_minutes_for" not in loop:
+    fails.append("the operator side has no stall detection")
+if "no completion marker" not in loop:
+    fails.append("a manifest that vanished without writing rc is not detected")
+if loop.count("collect_incident") < 2:
+    fails.append("a stall or a vanished manifest does not collect its logs")
+if 'pgrep -f "[b]ash scripts/mlsys_manifest.sh"' not in loop:
+    fails.append("the liveness pattern can match the shell that runs it")
+if "mlsys_stall_thresholds.json" not in watch or "mlsys_stall_thresholds.json" not in man:
+    fails.append("the two watchdogs do not share one threshold table")
+if "stall_watchdog &" not in man or 'interim "STAGE_START name=' not in man:
+    fails.append("the pod has no self-enforced stall watchdog")
 
 # pull integrity: the merge is delegated to a script that refuses to copy an
 # unverified pull, and the watcher's failure paths mark the result clearly.
@@ -1765,6 +1808,7 @@ fails = []
 watch = open("scripts/mlsys_watch_and_run.sh").read()
 venv = open("scripts/mlsys_vllm_venv.sh").read()
 man = open("scripts/mlsys_manifest.sh").read()
+podenv = open("scripts/mlsys_pod_env.sh").read()
 
 if "mlsys_vllm_venv.sh" not in watch:
     fails.append("the watcher does not provision the vLLM venv, so the vLLM "
@@ -1784,12 +1828,47 @@ for want, why in (("vllm==$VLLM_PIN", "the pin is not applied"),
                   ("python3-venv", "a venv failure gives no actionable hint")):
     if want not in venv:
         fails.append(f"mlsys_vllm_venv.sh: {why}")
+
+# --- the CAMPAIGN environment -------------------------------------------
+# The 2026-10-08 run died in gate_calibration because the pod had no conda and
+# the interpreter resolution fell back to a bare python3. Both halves are pinned.
+if "mlsys_pod_env.sh" not in watch:
+    fails.append("the watcher never provisions the campaign environment, so a "
+                 "pod without one fails in its first stage")
+elif watch.index("mlsys_pod_env.sh") > watch.index('say "starting the manifest"'):
+    fails.append("the campaign environment is provisioned after the manifest starts")
+else:
+    prov = watch[watch.index("mlsys_pod_env.sh"):watch.index('say "starting the manifest"')]
+    if "terminate_and_confirm" not in prov or "exit 6" not in prov:
+        fails.append("a failed campaign provisioning leaves a paid instance running")
+    if "import torch, transformers, bitsandbytes, flash_attn, diptest" not in prov:
+        fails.append("the stage dependencies are never proven to import")
+import re as _re
+rpy = watch[watch.index("RPY='$("):]
+rpy = rpy[:rpy.index("done; exit 1") + len("done; exit 1")]
+if "command -v python3" in rpy:
+    fails.append("the pod interpreter still falls back to a bare python3")
+if "rasd-gpu" not in rpy:
+    fails.append("the interpreter resolution does not look for the env the "
+                 "bootstrap creates")
+if _re.search(r"pgrep -f mlsys_manifest", "\n".join(
+        l for l in watch.splitlines() if not l.lstrip().startswith("#"))):
+    fails.append("the completion check is still a self-matching pgrep")
+if "echo \\$? > ~/manifest.rc" not in watch:
+    fails.append("the manifest's exit code is not recorded")
+for want, why in (("conda create -n", "the env is never created"),
+                  ("requirements-lock.txt", "the pins are not the locked ones"),
+                  ("--no-build-isolation", "flash-attn cannot build"),
+                  ("diptest", "diptest is not in the lock file"),
+                  ("torch.cuda.is_available", "CUDA is never proven")):
+    if want not in podenv:
+        fails.append(f"mlsys_pod_env.sh: {why}")
 for f in fails:
     print("  check failed: " + f)
 sys.exit(1 if fails else 0)
 PYX
-  [ $? -eq 0 ] && ok "the remote setup provisions the isolated vLLM venv at the path the manifest uses" \
-               || bad "the vLLM venv provisioning is not wired into the remote setup"
+  [ $? -eq 0 ] && ok "the remote setup provisions the campaign env and the isolated vLLM venv, and fails closed" \
+               || bad "the remote setup does not provision the environments it needs"
 
 
 printf "\n\033[1m== DRY RUN RESULT: %d passed, %d failed ==\033[0m\n" "$PASS" "$FAIL"

@@ -1,0 +1,33 @@
+{
+  "default_minutes": 20,
+  "_why": [
+    "A stage that has produced no new progress line for this long is treated as stalled: the watcher (on the operator's machine) and the manifest (on the pod, independently) both pull the logs, terminate the instance, and stop.",
+    "20 minutes is the default because a stage that is working prints a line per run, and the shortest run in the campaign is minutes.",
+    "The per-stage overrides exist for the stages whose INDIVIDUAL runs are long enough that the runner legitimately prints nothing between run boundaries. They are sized to the longest single run, not to the whole stage: the stage's own declared wall-clock timeout (STAGE_TIMEOUTS in scripts/mlsys_manifest.sh) remains the hard backstop, so a wrong value here cannot cost more than a stage's budget.",
+    "Both sides read THIS file, so the two watchdogs cannot drift apart. A per-stage value must be justified; an override with no reason is how a watchdog quietly stops watching."
+  ],
+  "stages": {
+    "gate_calibration": 20,
+    "engine_cap_smoke": 30,
+    "coherence_gate": 30,
+    "correction_note_evidence": 40,
+    "natural_f1_128k": 90,
+    "impl_validation": 30,
+    "rope_intervention_128k": 90,
+    "natural_spec_gated_256k": 180,
+    "vllm_ladder": 40,
+    "rope_intervention_gate": 30
+  },
+  "_justification": {
+    "gate_calibration": "9 short controls; several rows each. Never quiet for long; from 1.0h total.",
+    "engine_cap_smoke": "a handful of short smokes plus one 128k forward. From 1.5h total.",
+    "coherence_gate": "short generations per candidate. From 2.0h total.",
+    "correction_note_evidence": "one 128k and one 32k perplexity pass per candidate; a single 128k pass is the long pole. From 2.1h total.",
+    "natural_f1_128k": "the longest single run is a 128k full-document generation, ~1h; the stage is 6.5h across ~10 runs. 90 min covers the longest run with margin.",
+    "impl_validation": "vLLM target cross-check, one model. Download dominates, and the download is not visible to this log.",
+    "rope_intervention_128k": "128k interventions; the same long single run as natural_f1_128k at comparable cost (5.4h total).",
+    "natural_spec_gated_256k": "256k runs are the longest in the campaign: 13.0h for the stage, and a single 256k speculative run can hold the GPU for ~2-3h. 180 min is sized to that, and the stage timeout is still the backstop.",
+    "vllm_ladder": "one model, bf16 only after the narrowing; a single long-context decode is the long pole.",
+    "rope_intervention_gate": "a short gate before the intervention stage."
+  }
+}

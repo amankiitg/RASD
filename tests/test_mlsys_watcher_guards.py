@@ -198,6 +198,11 @@ def test_an_unobtainable_remote_manifest_is_not_verified(tmp_path):
 
 POLL_LOOP_ANCHOR = 'avail=$(regions_with_capacity)'
 
+# A token value that must never appear in any log, output or file the watcher
+# writes. Runtime-checked rather than grepped for, because "does this line print
+# the value" is not a question a regex answers reliably.
+HF_TOKEN_SENTINEL = "hf_SENTINEL_do_not_leak_2851b1d1f"
+
 
 def _script_with_stubs(tmp_path: Path, extra: dict[str, str]) -> tuple[Path, Path]:
     """A copy of the watcher with the network functions stubbed out.
@@ -209,7 +214,9 @@ def _script_with_stubs(tmp_path: Path, extra: dict[str, str]) -> tuple[Path, Pat
     import re
     sandbox = tmp_path
     (sandbox / "sub").mkdir(parents=True, exist_ok=True)
-    (sandbox / "runpod_creds.md").write_text("LAMBDA_API_KEY = dummy\n")
+    (sandbox / "runpod_creds.md").write_text(
+        "LAMBDA_API_KEY = dummy-lambda-key\n"
+        f"HF_TOKEN = {HF_TOKEN_SENTINEL}\n")
 
     src = SRC
     for name, body in extra.items():
@@ -402,3 +409,328 @@ def test_every_fallback_attempt_names_both_its_reason_and_region(tmp_path):
             f"a region name is in the reason field: {line}"
         got = re.search(r"\bregion=(\S+)", line)
         assert got and got.group(1) == wanted, f"wrong region: {line}"
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-08 run: three ways the setup lied about being ready
+# ---------------------------------------------------------------------------
+#
+# The run reached a paid 8xA100, staged everything, reported every dataset
+# "verified", started the manifest, and died two seconds later with
+# `No module named 'transformers'`. Then it billed for two more hours, because
+# the completion check could not fire either. Each of the three causes is
+# pinned here.
+
+POD_ENV = REPO / "scripts" / "mlsys_pod_env.sh"
+
+
+def test_the_interpreter_resolution_fails_closed():
+    """The old form ended in `else command -v python3`, so a pod with no conda
+    silently ran the campaign on a stock system interpreter. A wrong interpreter
+    must stop the run, not start it."""
+    i = SRC.index("RPY='$(")
+    rpy = SRC[i:SRC.index("'", SRC.index("done; exit 1", i))]
+    assert "command -v python3" not in rpy, \
+        "the pod interpreter still falls back to a bare python3"
+    assert "exit 1" in rpy, "the resolution cannot report absence"
+    assert "rasd-gpu" in rpy, (
+        "the resolution does not look for the env the bootstrap actually "
+        "creates; looking only for `rasd` is how a provisioned pod went unseen")
+
+    # it is resolved ONCE, and the resolved path is what the stages use
+    assert 'RPY=$PY_REMOTE' in SRC or "RPY=$PY_REMOTE" in SRC
+    assert '${RPY:-python3}' not in SRC, \
+        "a remote command still falls back to python3"
+
+
+def _code_lines(src: str) -> str:
+    """The script with comment lines removed.
+
+    Assertions about what the script DOES have to look at code: a comment that
+    names a removed hazard would otherwise keep a "the hazard is gone" check
+    green, which is how the old MLSYS_ADOPT_EXISTING check passed on a comment.
+    """
+    return "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+
+
+def test_the_completion_check_cannot_match_itself():
+    """The check must not embed a process pattern its own command line carries.
+
+    `ssh host 'pgrep -f mlsys_manifest.sh'` runs a remote shell whose argv holds
+    that pattern, so pgrep matched the checker and returned 0 forever -- verified
+    on the pod on 2026-10-08: rc=0 with no manifest running, and therefore no
+    reachable "finished" state. This is asserted structurally rather than by
+    running pgrep, because the semantics being relied on are the pod's procps,
+    not macOS's.
+    """
+    # the COMPLETION decision must not involve a process pattern at all
+    i = SRC.index('if [ -f ~/manifest.rc ]; then printf "rc=%s')
+    cmd = SRC[i:SRC.index("else echo \"rc=RUNNING\"", i)]
+    assert "pgrep" not in cmd, "the completion check is a process match again"
+    assert "mlsys_manifest" not in cmd, (
+        "the completion check embeds the manifest's own command string, which is "
+        "exactly what made the pattern match the checker")
+    assert "pgrep -f mlsys_manifest" not in _code_lines(SRC), \
+        "the self-matching liveness check is back in the code"
+    # the LIVENESS check may use a pattern, but only a self-excluding one
+    live = _code_lines(SRC).splitlines()
+    live = [l for l in live if "pgrep" in l]
+    assert live, "there is no liveness check at all"
+    for l in live:
+        assert "[b]ash scripts/mlsys_manifest.sh" in l, (
+            f"a liveness pattern can match its own command line: {l.strip()}")
+
+
+def test_completion_is_read_from_a_marker_not_from_a_process_list():
+    # the wrapper records the manifest's own exit code
+    assert "echo \\$? > ~/manifest.rc" in SRC, \
+        "the manifest is not wrapped, so its exit code is lost"
+    # a stale marker from an earlier attempt must not report a completion
+    assert "rm -f ~/manifest.rc" in SRC, \
+        "a stale completion marker can report a run that never started"
+    # read only after a successful ssh, and only a numeric value counts
+    assert 'if [ -f ~/manifest.rc ]; then printf "rc=%s' in SRC, \
+        "the marker is not read"
+    assert 'echo "rc=RUNNING"' in SRC, \
+        "a running manifest is not distinguishable from a finished one"
+    assert "grep -qE '^[0-9]+$'" in SRC, (
+        "a non-numeric marker is not distinguished from a completion")
+    assert "MANIFEST_RC=" in SRC, "the manifest's exit code is not kept"
+    # the ssh status is checked BEFORE the marker is believed
+    loop = _wait_loop()
+    assert loop.index('if [ "$rc" -ne 0 ]') < loop.index("MANIFEST_RC=$marker"), \
+        "an ssh failure can be read as a completion"
+    # an aborted manifest is an incident, not a clean finish
+    assert "ABORTED" in loop
+
+
+def test_the_remote_setup_provisions_the_campaign_environment():
+    """The watcher must BUILD the environment, not hope for one. The image this
+    ran on had no conda at all."""
+    assert POD_ENV.exists(), "scripts/mlsys_pod_env.sh is missing"
+    env = POD_ENV.read_text()
+    assert "mlsys_pod_env.sh" in SRC, \
+        "the watcher never provisions the campaign environment"
+    assert SRC.index("mlsys_pod_env.sh") < SRC.index('say "starting the manifest"'), \
+        "the environment is provisioned after the manifest starts"
+    # a failure is fatal, and it terminates first
+    tail = SRC[SRC.index("mlsys_pod_env.sh"):]
+    tail = tail[:tail.index('say "starting the manifest"')]
+    assert "terminate_and_confirm" in tail and "exit 6" in tail, (
+        "a failed provisioning leaves a paid instance running")
+    # the provisioning script's own prerequisites
+    for want, why in (
+            ("conda create -n", "the env is never created"),
+            ("requirements-lock.txt", "the pins are not the locked ones"),
+            ("--no-build-isolation", "flash-attn cannot build without it"),
+            ("diptest", "diptest is missing from the lock file but the dip test needs it"),
+            ("torch.cuda.is_available", "the check does not prove CUDA works"),
+            ("exit 2", "a failure does not exit non-zero")):
+        assert want in env, f"mlsys_pod_env.sh: {why}"
+
+
+def test_the_environment_is_proven_before_a_single_stage_runs():
+    """`pip` exiting 0 is not "the campaign can run". The last word is an import
+    of what the stages import, through the interpreter they will use."""
+    before_manifest = SRC[:SRC.index('say "starting the manifest"')]
+    assert "import torch, transformers, bitsandbytes, flash_attn, diptest" in before_manifest, \
+        "nothing proves the stage dependencies import before the run starts"
+    check = before_manifest[before_manifest.index("import torch, transformers"):]
+    assert "terminate_and_confirm" in check, (
+        "an unusable environment does not stop the run before it bills")
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-08 run, part two: stopping the meter
+# ---------------------------------------------------------------------------
+
+POD_ENV_SRC = (REPO / "scripts" / "mlsys_pod_env.sh").read_text()
+MANIFEST_SRC = (REPO / "scripts" / "mlsys_manifest.sh").read_text()
+STALL_JSON_PATH = REPO / "configs" / "mlsys_stall_thresholds.json"
+
+
+def _incident_block() -> str:
+    """The watcher's post-wait handling of an aborted manifest."""
+    i = SRC.index("collect_incident() {")
+    return SRC[i:SRC.index("MANIFEST_RC=\"\"", i)]
+
+
+def _wait_loop() -> str:
+    i = SRC.index("MANIFEST_RC=\"\"")
+    return SRC[i:SRC.index("interruptible_sleep \"$MANIFEST_POLL\"", i)]
+
+
+def test_an_aborted_manifest_pulls_logs_and_terminates():
+    """rc != 0 is an incident, not a result: capture the logs, stop the meter,
+    and do NOT run the normal verify-and-merge path over a broken run."""
+    loop = _wait_loop()
+    assert 'MANIFEST_ABORTED=1' in loop, "an aborted manifest is not flagged"
+    # the aborting branch must be the numeric-marker branch, not the ssh one
+    aborted = loop[loop.index("ABORTED"):]
+    assert "collect_incident" in aborted, "no logs are collected on an abort"
+
+    after = SRC[SRC.index("if [ \"${MANIFEST_ABORTED:-0}\" = \"1\" ];"):]
+    head = after[:after.index("\nfi\n") + 4]
+    assert "terminate_and_confirm" in head, "an incident does not terminate"
+    assert "exit 7" in head, "an incident does not exit non-zero"
+    # and it stops BEFORE the pull/merge section
+    assert SRC.index("if [ \"${MANIFEST_ABORTED:-0}\" = \"1\" ];") \
+        < SRC.index("per-run staged pull"), \
+        "the incident path runs after the normal pull, so it is not fail-fast"
+
+
+def test_the_incident_directory_is_named_and_populated_as_the_plan_says():
+    blk = _incident_block()
+    assert 'results/mlsys/incident_$(date -u +%Y%m%dT%H%M%SZ)' in blk, \
+        "incidents do not land in results/mlsys/incident_<UTC>/"
+    assert "mkdir -p" in blk
+    for f in ("manifest.log", "manifest.rc", "pod_env.log", "RUN_LOG.txt"):
+        assert f in blk, f"the incident does not capture {f}"
+    assert "incident.txt" in blk, "the incident does not state its own reason"
+
+
+def test_a_stall_or_a_vanished_manifest_stops_the_run():
+    loop = _wait_loop()
+    # (a) process gone with no marker
+    assert 'alive=0' in loop or '[ "$alive" = "0" ]' in loop
+    assert "no completion marker" in loop, \
+        "a manifest that vanished without writing rc is not detected"
+    # (b) no progress for the stage's limit
+    assert "stall_minutes_for" in loop, "the stall limit is not read per stage"
+    assert "PROGRESS_SINCE" in loop and "idle" in loop
+    assert "STALL:" in loop, "a stall is not reported"
+    # both paths are incidents, and both set the flag that terminates
+    assert loop.count("collect_incident") >= 2
+    assert loop.count("MANIFEST_ABORTED=1") >= 2
+    # liveness must not self-match: the bracket form cannot match its own argv
+    assert 'pgrep -f "[b]ash scripts/mlsys_manifest.sh"' in loop, \
+        "the liveness pattern can match the shell running it"
+
+
+def test_both_watchdogs_read_one_threshold_table():
+    """Two watchdogs that disagree about 'quiet' are worse than one: the pod
+    would kill a run the operator's side still considers healthy, or vice versa."""
+    assert STALL_JSON_PATH.exists(), "the shared threshold file is missing"
+    import json
+    d = json.loads(STALL_JSON_PATH.read_text())
+    assert isinstance(d.get("default_minutes"), int) and d["default_minutes"] > 0
+    assert d.get("stages"), "no per-stage thresholds"
+    # the watcher reads it, the manifest reads it, from the same path
+    assert "mlsys_stall_thresholds.json" in SRC
+    assert "mlsys_stall_thresholds.json" in MANIFEST_SRC
+    # a stage that is not in the table is not exempt
+    assert 'd.get("stages", {}).get(name, d.get("default_minutes"' in SRC
+    assert 'd.get("stages", {}).get(name, d.get("default_minutes"' in MANIFEST_SRC
+
+
+def test_every_stage_override_is_justified():
+    """An override with no reason is how a watchdog quietly stops watching."""
+    import json
+    d = json.loads(STALL_JSON_PATH.read_text())
+    just = d.get("_justification", {})
+    for stage, minutes in d["stages"].items():
+        assert stage in just, f"stage '{stage}' has a threshold with no reason"
+        assert isinstance(minutes, int) and minutes > 0
+    # the long stages are the ones with raised limits, and they are raised
+    assert d["stages"]["natural_spec_gated_256k"] > d["default_minutes"]
+
+
+def test_the_pod_watchdog_is_self_enforcing_and_cannot_kill_a_reused_pid():
+    assert "stall_watchdog()" in MANIFEST_SRC, \
+        "the pod has no stall watchdog of its own"
+    assert "stall_watchdog &" in MANIFEST_SRC, "the pod watchdog is never started"
+    # it must be started before the first stage, or stage 1 is unwatched
+    assert MANIFEST_SRC.index("stall_watchdog &") < MANIFEST_SRC.index("stage gate_calibration")
+    # the progress signal both sides read
+    assert 'interim "STAGE_START name=$name' in MANIFEST_SRC, \
+        "no stage-start line, so a long stage looks like a stall"
+    # interim must reach stdout as well as RUN_LOG.txt
+    assert "| tee -a \"$OUT/RUN_LOG.txt\"" in MANIFEST_SRC
+    # a stall exits NON-ZERO so the watcher's fail-fast path sees it
+    assert "exit 9" in MANIFEST_SRC and "SIGNALLED" in MANIFEST_SRC
+    # and the watchdog never signals a PID it no longer owns
+    assert 'ps -p "$MANIFEST_PID" >/dev/null 2>&1' in MANIFEST_SRC, \
+        "the watchdog can signal a reused PID"
+    assert "STALL_WATCHDOG_PID" in MANIFEST_SRC, \
+        "the watchdog is not cleaned up when the manifest exits"
+
+
+def test_the_hf_token_is_required():
+    """Every target model is a gated repo (meta-llama/Llama-2-7b-hf and
+    meta-llama/Llama-3.1-8B both return 200 only with a token). Missing must stop
+    the run before it launches and bills."""
+    assert "HF_TOKEN_VALUE" in SRC, "the HF token is not read at all"
+    i = SRC.index("HF_TOKEN_VALUE=$(grep")
+    block = SRC[i:SRC.index("say \"HF token: present", i) + 60]
+    assert "exit 2" in block, "a missing HF token does not stop the run"
+    assert "HF_TOKEN='$HF_TOKEN_VALUE'" in SRC, "the token is not forwarded"
+    # and the run really does refuse without it
+    assert "gated" in block
+
+
+def test_a_missing_hf_token_stops_the_watcher(tmp_path):
+    """Behavioural: the value is deleted from the sandbox credentials and the
+    watcher must refuse before doing anything else."""
+    script, sandbox = _script_with_stubs(tmp_path, dict(NO_NETWORK))
+    (sandbox / "runpod_creds.md").write_text("LAMBDA_API_KEY = dummy\n")
+    r = _run_watcher(script, sandbox, observe_seconds=8)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "no HF_TOKEN line" in r.stdout
+
+
+def test_the_hf_token_value_never_reaches_a_log(tmp_path):
+    """Behavioural, with a sentinel: whatever the watcher writes -- stdout, the
+    watcher log, the incident dir -- must not contain the token."""
+    script, sandbox = _script_with_stubs(
+        tmp_path, dict(NO_NETWORK, regions_with_capacity="echo us-east-1"))
+    (sandbox / "sess").mkdir()
+    r = _run_watcher(script, sandbox, observe_seconds=8,
+                     MLSYS_LAUNCH_DRY_RUN="1")
+    leaked = []
+    if HF_TOKEN_SENTINEL in (r.stdout + r.stderr):
+        leaked.append("stdout/stderr")
+    for f in sandbox.rglob("*"):
+        # the credentials file IS the input; it is supposed to contain the token.
+        # Everything else is output the watcher produced.
+        if f.is_file() and f.name != "runpod_creds.md":
+            try:
+                if HF_TOKEN_SENTINEL in f.read_text(errors="ignore"):
+                    leaked.append(str(f.relative_to(sandbox)))
+            except Exception:                    # noqa: BLE001
+                pass
+    assert not leaked, f"the HF token leaked into: {leaked}"
+    assert "not shown" in r.stdout, "the log should record presence only"
+
+
+def test_the_manifest_run_sources_the_pod_env_and_the_token():
+    start = SRC[SRC.index('say "starting the manifest"'):]
+    start = start[:start.index("manifest.rc' > ~/manifest.log")] 
+    assert ". ~/RASD/.pod_env.sh" in start, \
+        "the manifest does not inherit the HF cache / NCCL env"
+    assert "HF_TOKEN=" in start, "the token is not in the manifest's environment"
+    assert "MLSYS_STALL_MINUTES" in start, \
+        "the stall limit is not passed to the pod watchdog"
+
+
+def test_pod_env_applies_the_operator_notes():
+    """Everything that used to live only in runpod_creds.md."""
+    for want, why in (
+            ("HF_HOME", "the HF cache root is not set"),
+            ("HF_HUB_CACHE", "HF_HUB_CACHE is not set"),
+            ("TRANSFORMERS_CACHE", "TRANSFORMERS_CACHE is not set"),
+            ("PIP_CACHE_DIR", "the pip cache is not set"),
+            ("mkdir -p \"$HF_HUB_CACHE\"", "the hub/ dir is not pre-created"),
+            ("NCCL_TIMEOUT", "the NCCL settings from the validated flow are missing"),
+            ("PYTORCH_CUDA_ALLOC_CONF", "the allocator setting is missing"),
+            ("src/__init__.py", "zero-byte __init__.py files are not restored"),
+            ("flash_attn-", "no prebuilt flash-attn wheel is constructed"),
+            ("_GLIBCXX_USE_CXX11_ABI", "the wheel ABI is guessed, not probed"),
+            ("--no-build-isolation", "the source-build fallback is gone"),
+            ("model_info", "gated model access is not proven"),
+            ("nvidia-smi", "a dirty GPU is not detected")):
+        assert want in POD_ENV_SRC, f"mlsys_pod_env.sh: {why}"
+    # a mounted filesystem is used only if it IS mounted
+    assert "if [ -d \"$FS_ROOT\" ]" in POD_ENV_SRC, \
+        "the cache points at a path that may not exist"
+    # the env file is what the manifest sources
+    assert ".pod_env.sh" in POD_ENV_SRC

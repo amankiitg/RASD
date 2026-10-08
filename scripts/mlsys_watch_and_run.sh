@@ -48,11 +48,29 @@ SSH_USER=ubuntu
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -i $SSH_KEY"
 # Interpreter to use ON THE POD. Resolved there, because the local PATH says
 # nothing about the remote machine.
-RPY='$( if [ -x "$HOME/miniconda3/envs/rasd/bin/python" ]; then echo "$HOME/miniconda3/envs/rasd/bin/python"; else command -v python3; fi )'
+#
+# FAIL CLOSED. The previous form preferred the conda env and then fell back to
+# `command -v python3`. On 2026-10-08 that fallback fired on an image with no
+# conda at all, and gate_calibration died two seconds into a paid 8xA100 run
+# with `No module named 'transformers'`. A wrong interpreter must stop the run,
+# not start it: an unset RPY makes every remote command fail loudly, which is
+# the only outcome that costs nothing.
+#
+# The env is named `rasd-gpu' -- that is what scripts/auto_execute_phase_c.sh
+# creates and what environment_gpu.yml declares. `rasd' is accepted too because
+# that is the name the local dev machine uses, but it is NOT the pod's name and
+# looking for only that is how a provisioned pod went unnoticed.
+RPY='$( for c in "$HOME/miniconda3/envs/rasd-gpu/bin/python" \
+                  "$HOME/miniconda3/envs/rasd/bin/python" \
+                  "/opt/conda/envs/rasd-gpu/bin/python" \
+                  "/opt/conda/envs/rasd/bin/python"; do
+          [ -x "$c" ] && { echo "$c"; exit 0; }
+        done; exit 1 )'
 
 # Local interpreter for this script's own helpers. Never bare `python3`.
 PY=$(command -v python3)
-for c in "$HOME/miniconda3/envs/rasd/bin/python" /opt/conda/bin/python; do
+for c in "$HOME/miniconda3/envs/rasd-gpu/bin/python" \
+         "$HOME/miniconda3/envs/rasd/bin/python" /opt/conda/bin/python; do
   [ -x "$c" ] && PY="$c" && break
 done
 
@@ -69,6 +87,21 @@ if [ -z "${KEY:-}" ]; then
 fi
 
 api_get() { curl -sS --max-time 60 -u "$KEY:" "https://cloud.lambda.ai/api/v1/$1"; }
+
+# The HF token, required for the same reason and read the same way. Every target
+# model in this campaign is a GATED repo (meta-llama/Llama-2-7b-hf,
+# meta-llama/Llama-3.1-8B); without a token that can read them, the stages fail
+# at model load. That failure used to be discovered hours in, so it is checked
+# here, before anything is launched. NEVER echoed: not in `say`, not in a log.
+HF_TOKEN_VALUE=$(grep -E '^[[:space:]]*HF_TOKEN[[:space:]]*=' runpod_creds.md 2>/dev/null \
+      | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]')
+if [ -z "${HF_TOKEN_VALUE:-}" ]; then
+  say "FATAL: no HF_TOKEN line found in runpod_creds.md (looked up by label)."
+  say "FATAL: the campaign's models are gated; without a token every arm fails"
+  say "FATAL: at model load. Refusing to launch and bill for that."
+  exit 2
+fi
+say "HF token: present ($(printf '%s' "$HF_TOKEN_VALUE" | wc -c | tr -d ' ') chars, not shown)"
 
 count_instances() {
   local n
@@ -477,6 +510,60 @@ if ! rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
 fi
 say "  repo staged"
 
+# --------------------------------------------------------------------------
+# provision the CAMPAIGN environment, before anything is measured
+# --------------------------------------------------------------------------
+# In the FOREGROUND, unlike the vLLM venv below, because nothing can run
+# without it: every stage imports transformers through this interpreter. The
+# install is multi-GB and flash-attn compiles, so it costs real minutes of paid
+# GPU time -- but the alternative is what happened on 2026-10-08: the run
+# started, gate_calibration died in two seconds, and the instance billed for two
+# hours because the completion check could not fire either.
+#
+# Provisioning FIRST also means the data-verification commands below run under
+# the campaign interpreter rather than a stock `python3'. They only import the
+# standard library, so with the old fallback they passed happily on a pod that
+# had no transformers at all -- a green check that meant nothing.
+say "provisioning the campaign environment on the pod (setup log: ~/pod_env.log)"
+if ! ssh $SSH_OPTS "$SSH_USER@$IP" \
+      "cd ~/RASD && bash scripts/mlsys_pod_env.sh > ~/pod_env.log 2>&1"; then
+  say "FATAL: the campaign environment could not be provisioned."
+  say "FATAL: ~/pod_env.log tail:"
+  ssh $SSH_OPTS "$SSH_USER@$IP" 'tail -25 ~/pod_env.log' 2>&1 | sed 's/^/    /' | tee -a "$LOG"
+  say "FATAL: refusing to start a campaign that cannot import transformers."
+  terminate_and_confirm
+  exit 6
+fi
+ssh $SSH_OPTS "$SSH_USER@$IP" 'grep -E "^    " ~/pod_env.log' 2>&1 | sed 's/^/  /' | tee -a "$LOG"
+
+# Resolve the interpreter NOW, once the environment exists, and hold it for the
+# rest of the run. Failing here is free; failing inside a stage is not.
+PY_REMOTE=$(ssh $SSH_OPTS "$SSH_USER@$IP" "$RPY" 2>/dev/null)
+if [ -z "$PY_REMOTE" ]; then
+  say "FATAL: no campaign interpreter on the pod (looked for the rasd-gpu env)."
+  say "FATAL: scripts/mlsys_pod_env.sh reported success, so this is a bug in"
+  say "FATAL: the resolution order, not in the install. Not starting the run."
+  terminate_and_confirm
+  exit 6
+fi
+say "  interpreter: $PY_REMOTE"
+# RPY is now a fixed path, not a command substitution: one resolution, checked
+# once, used by every subsequent command.
+RPY=$PY_REMOTE
+
+# The green check that is actually green: prove the interpreter the STAGES will
+# use can import what the stages import, before the manifest is started.
+if ! ssh $SSH_OPTS "$SSH_USER@$IP" \
+      "$RPY -c \"import torch, transformers, bitsandbytes, flash_attn, diptest; \
+print('  torch', torch.__version__, '| transformers', transformers.__version__, \
+'| cuda', torch.cuda.is_available(), torch.cuda.device_count(), 'devices')\"" \
+      2>&1 | tee -a "$LOG" | grep -q "torch"; then
+  say "FATAL: the campaign interpreter cannot import the stage dependencies."
+  say "FATAL: not starting a run that would die in its first stage."
+  terminate_and_confirm
+  exit 6
+fi
+
 # The metadata names relative paths; the memmap files must travel with it or the
 # stage dies exactly like pg19_short_target did. Verify AFTER the copy, from the
 # run directory, for both metadata shapes (per-book `documents` and the older
@@ -493,7 +580,7 @@ for d in data/processed/pg19_docs data/processed/pg19_docs_diverse \
   fi
   # The pod's own interpreter, preferring the environment that has torch and
   # transformers. Bare `python3` on the pod may be a stock system python.
-  ssh $SSH_OPTS "$SSH_USER@$IP" "cd ~/RASD && ${RPY:-python3} -c \"
+  ssh $SSH_OPTS "$SSH_USER@$IP" "cd ~/RASD && $RPY -c \"
 import json,pathlib,sys
 m=json.load(open('$d/documents.json')) if pathlib.Path('$d/documents.json').exists() else json.load(open('$d/pg19_validation_metadata.json'))
 items=m.get('documents') or m.get('chunks') or []
@@ -534,42 +621,184 @@ ssh $SSH_OPTS "$SSH_USER@$IP" \
 # run the manifest
 # --------------------------------------------------------------------------
 say "starting the manifest"
+# The manifest runs behind a wrapper that writes its exit code to ~/manifest.rc.
+# Liveness via `pgrep -f mlsys_manifest.sh' could not work: the remote shell
+# that runs the check has that pattern in ITS OWN argv, so pgrep matched the
+# checker and returned 0 forever. On 2026-10-08 that meant the loop below could
+# never break -- the manifest had aborted after two seconds, and the instance
+# would have billed until the 40h deadline. A marker file is unambiguous, and it
+# carries the exit code, so "finished" and "finished badly" stop looking alike.
+# The marker is removed first: a stale one from an earlier attempt would report
+# a completion that has not happened.
 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "cd ~/RASD && NODE_RATE_PER_HOUR=$RATE \
+  "cd ~/RASD && rm -f ~/manifest.rc && set -a && . ~/RASD/.pod_env.sh && set +a && \
+   HF_TOKEN='$HF_TOKEN_VALUE' \
+   NODE_RATE_PER_HOUR=$RATE \
+   MLSYS_STALL_MINUTES=${MLSYS_STALL_MINUTES:-20} \
    MLSYS_ASK_OVER_USD=${MLSYS_ASK_OVER_USD:-300} \
    MLSYS_MAX_HOURS=${MLSYS_CAMPAIGN_HOURS:-40} \
    MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-850} \
    MLSYS_ONLY_STAGES='${ONLY_STR}' \
    MLSYS_APPROVED_STAGES='${ONLY_STR}' \
-   nohup bash scripts/mlsys_manifest.sh > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
+   nohup bash -c 'bash scripts/mlsys_manifest.sh; echo \$? > ~/manifest.rc' > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
 
 # A failed ssh says NOTHING about whether the manifest is still running. Treating
 # it as "finished" ends the run and, worse, moves on to terminate an instance
-# whose work is still in progress. Only exit code 1 from `pgrep` (no match, on a
-# successful connection) means finished; 255 means the connection failed and is
-# retried.
+# whose work is still in progress. The marker file is only read after an ssh
+# that exited 0, so an unreachable pod is retried, never mistaken for "done".
+# --------------------------------------------------------------------------
+# incident collection: logs only, then stop the meter
+# --------------------------------------------------------------------------
+# Used by every unexpected ending: an aborted manifest (rc != 0), a manifest
+# process that vanished without a marker, and a stall. The point is to preserve
+# the evidence and then STOP, rather than sitting on a paid GPU working out what
+# happened.
+#
+# Logs, not results: the normal path already pulls results behind a sha256
+# verification, and doing that here would delay termination, which is the one
+# thing this path exists to avoid. The logs carry the reason, which is what a
+# post-mortem needs; anything the stage wrote stays on the pod.
+collect_incident() {   # $1 = reason (short, no newlines)
+  local reason=$1 INC f
+  INC="$REPO/results/mlsys/incident_$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$INC"
+  say "INCIDENT ($reason): logs -> $INC"
+  {
+    echo "reason : $reason"
+    echo "utc    : $(date -u +%FT%TZ)"
+    echo "instance: ${INSTANCE_ID:-none}"
+    echo "region : $(cat "$FOUND" 2>/dev/null || echo unknown)"
+    echo "manifest_rc: ${MANIFEST_RC:-<none>}"
+    echo "host   : $(hostname)"
+  } > "$INC/incident.txt"
+  for f in manifest.log manifest.rc pod_env.log vllm_venv.log manifest_watchdog.log; do
+    if ssh $SSH_OPTS "$SSH_USER@$IP" "test -f ~/$f" 2>/dev/null; then
+      ssh $SSH_OPTS "$SSH_USER@$IP" "cat ~/$f" > "$INC/$f" 2>/dev/null \
+        && say "  pulled ~/$f ($(wc -l < "$INC/$f" | tr -d ' ') lines)" \
+        || say "  ~/$f exists but could not be read"
+    else
+      say "  ~/$f not present"
+    fi
+  done
+  if ssh $SSH_OPTS "$SSH_USER@$IP" 'test -f ~/RASD/results/mlsys/RUN_LOG.txt' 2>/dev/null; then
+    ssh $SSH_OPTS "$SSH_USER@$IP" 'cat ~/RASD/results/mlsys/RUN_LOG.txt' \
+      > "$INC/RUN_LOG.txt" 2>/dev/null && say "  pulled RUN_LOG.txt"
+  fi
+  cp "$LOG" "$INC/watcher.log" 2>/dev/null || true
+  say "INCIDENT captured at $INC"
+}
+
+MANIFEST_RC=""
 SSH_UNKNOWN=0
+STALL_MIN=${MLSYS_STALL_MINUTES:-20}
+STALL_S=$(( STALL_MIN * 60 ))
+PROGRESS_SIG=""
+PROGRESS_SINCE=$(date -u +%s)
+MANIFEST_POLL=${MLSYS_MANIFEST_POLL_S:-60}
+
+# The threshold the operator's side applies, per stage, read from the SAME file
+# the pod watchdog reads so the two cannot disagree about what "quiet" means.
+STALL_JSON="$REPO/configs/mlsys_stall_thresholds.json"
+stall_minutes_for() {   # $1 = stage name (may be empty)
+  local name=$1 v
+  v=$("$PY" - "$STALL_JSON" "$name" "$STALL_MIN" <<'PYSTALL' 2>/dev/null
+import json, sys
+path, name, fallback = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    d = json.load(open(path))
+except Exception:
+    print(fallback); raise SystemExit
+print(int(d.get("stages", {}).get(name, d.get("default_minutes", fallback))))
+PYSTALL
+)
+  case "$v" in ''|*[!0-9]*) v=$STALL_MIN ;; esac
+  printf '%s' "$v"
+}
+
 while true; do
-  ssh $SSH_OPTS "$SSH_USER@$IP" 'pgrep -f mlsys_manifest.sh >/dev/null' 2>/dev/null
+  # One round trip for the marker, the progress signature and the current stage.
+  probe=$(ssh $SSH_OPTS "$SSH_USER@$IP" '
+    f=~/manifest.log; r=~/RASD/results/mlsys/RUN_LOG.txt
+    if [ -f ~/manifest.rc ]; then printf "rc=%s\n" "$(cat ~/manifest.rc)"; else echo "rc=RUNNING"; fi
+    if [ -f "$r" ]; then
+      printf "lines=%s\n" "$(wc -l < "$r" | tr -d " ")"
+      printf "mtime=%s\n" "$(stat -c %Y "$r" 2>/dev/null || echo 0)"
+      printf "stage=%s\n" "$(grep -oE "STAGE_START name=[A-Za-z0-9_]+" "$r" 2>/dev/null | tail -1 | cut -d= -f2)"
+    else
+      printf "lines=0\nmtime=0\nstage=\n"
+    fi
+    if pgrep -f "[b]ash scripts/mlsys_manifest.sh" >/dev/null; then echo "alive=1"; else echo "alive=0"; fi
+  ' 2>/dev/null)
   rc=$?
-  if [ "$rc" -eq 1 ]; then
-    say "manifest finished (ssh ok, no manifest process)"
-    break
-  elif [ "$rc" -eq 0 ]; then
-    SSH_UNKNOWN=0
-  else
+  marker=$(printf '%s\n' "$probe" | sed -n 's/^rc=//p')
+  if [ "$rc" -ne 0 ]; then
     SSH_UNKNOWN=$((SSH_UNKNOWN + 1))
     say "ssh check failed (rc=$rc) — state UNKNOWN, retry $SSH_UNKNOWN"
     if [ "$SSH_UNKNOWN" -ge "${MLSYS_SSH_UNKNOWN_LIMIT:-30}" ]; then
       say "!!! $SSH_UNKNOWN consecutive ssh failures: cannot tell whether the"
       say "!!! manifest is running. Continuing to wait rather than guessing."
     fi
+  elif printf '%s' "$marker" | grep -qE '^[0-9]+$'; then
+    MANIFEST_RC=$marker
+    if [ "$MANIFEST_RC" = "0" ]; then
+      say "manifest finished rc=0"
+      break
+    fi
+    # FAIL FAST. An aborted manifest is an incident: capture the logs, stop the
+    # meter, and do not run the normal verification path over a run that has
+    # already declared itself broken.
+    say "manifest finished rc=$MANIFEST_RC — ABORTED"
+    collect_incident "manifest aborted rc=$MANIFEST_RC"
+    MANIFEST_ABORTED=1
+    break
+  elif [ "$marker" != "RUNNING" ]; then
+    # "ssh ok, marker unreadable" is its own state: treating it as finished
+    # would pull and terminate mid-run; treating it as running hides a broken
+    # pod.
+    SSH_UNKNOWN=$((SSH_UNKNOWN + 1))
+    say "completion marker unreadable ('$(printf '%s' "$marker" | head -c 60)') — state UNKNOWN, retry $SSH_UNKNOWN"
+  else
+    SSH_UNKNOWN=0
+    alive=$(printf '%s\n' "$probe" | sed -n 's/^alive=//p')
+    sig=$(printf '%s\n' "$probe" | sed -n 's/^lines=//p')/$(printf '%s\n' "$probe" | sed -n 's/^mtime=//p')
+    stage=$(printf '%s\n' "$probe" | sed -n 's/^stage=//p')
+    now=$(date -u +%s)
+    if [ "$sig" != "$PROGRESS_SIG" ]; then
+      PROGRESS_SIG=$sig
+      PROGRESS_SINCE=$now
+    fi
+    # (a) the process is gone and no marker was written: it crashed or was
+    #     killed without recording an exit code.
+    if [ "$alive" = "0" ]; then
+      say "manifest process is gone with no completion marker — crashed"
+      collect_incident "manifest process gone, no marker"
+      MANIFEST_ABORTED=1
+      break
+    fi
+    # (b) no new progress line. The threshold is per stage, because some stages
+    #     run a single long job and legitimately print nothing between runs.
+    limit=$(stall_minutes_for "$stage")
+    idle=$(( now - PROGRESS_SINCE ))
+    if [ "$idle" -gt $(( limit * 60 )) ]; then
+      say "STALL: no progress for ${idle}s in stage '${stage}' (limit ${limit}min)"
+      collect_incident "stall in ${stage:-unknown} (${idle}s idle, limit ${limit}min)"
+      MANIFEST_ABORTED=1
+      break
+    fi
   fi
   if [ "${DEADLINE:-0}" -gt 0 ] && [ "$(date -u +%s)" -gt "$DEADLINE" ]; then
     say "campaign deadline hit mid-manifest"; break
   fi
-  interruptible_sleep 120
+  interruptible_sleep "$MANIFEST_POLL"
 done
+
+# An incident is a stop, not a pause: terminate through the verified path and
+# leave with a code that says the campaign did not complete.
+if [ "${MANIFEST_ABORTED:-0}" = "1" ]; then
+  say "terminating the instance and stopping: the campaign did not complete"
+  terminate_and_confirm
+  exit 7
+fi
 
 # --------------------------------------------------------------------------
 # per-run staged pull, sha256-verified, NEVER --delete

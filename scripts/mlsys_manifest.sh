@@ -15,6 +15,7 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+REPO=$PWD
 OUT=${MLSYS_OUT:-results/mlsys}
 MANIFEST=${MLSYS_MANIFEST:-configs/mlsys_manifest.yml}
 COST_LOG=$OUT/gpu_hours.csv
@@ -229,7 +230,83 @@ WATCHDOG=${MLSYS_MAX_HOURS:-$(_manifest_field __meta__ max_hours)}
 WATCHDOG=${WATCHDOG:-20}
 elapsed_hours() { awk -v n="$(date -u +%s)" -v s="$START_EPOCH" 'BEGIN{printf "%.3f", (n-s)/3600.0}'; }
 
-interim() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$OUT/RUN_LOG.txt"; }
+interim() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$OUT/RUN_LOG.txt"; }
+
+# --------------------------------------------------------------------------
+# pod-side stall watchdog
+# --------------------------------------------------------------------------
+# Independent of the operator's machine: if the watcher dies, or the Mac sleeps,
+# or nobody is watching at all, the POD still stops a run that has gone silent
+# and frees the GPU. The two watchdogs read the SAME threshold file
+# (configs/mlsys_stall_thresholds.json) so they cannot drift apart.
+#
+# "Progress" is a line in RUN_LOG.txt. interim() tees to stdout as well, so the
+# operator's ~/manifest.log sees the same lines in the same order.
+STALL_JSON="$REPO/configs/mlsys_stall_thresholds.json"
+WATCHDOG_LOG="$HOME/manifest_watchdog.log"
+STALL_DEFAULT_MIN=${MLSYS_STALL_MINUTES:-20}
+
+# The threshold for a stage, in minutes. Falls back to the file's default, then
+# to the environment default. A stage the file does not name is NOT exempt: it
+# gets the default, because "unknown stage" is not a reason to watch less.
+stall_minutes_for() {
+  local name=$1 v
+  v=$("$PY" - "$STALL_JSON" "$name" "$STALL_DEFAULT_MIN" <<'PYSTALL' 2>/dev/null
+import json, sys
+path, name, fallback = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    d = json.load(open(path))
+except Exception:
+    print(fallback); raise SystemExit
+print(int(d.get("stages", {}).get(name, d.get("default_minutes", fallback))))
+PYSTALL
+)
+  case "$v" in ''|*[!0-9]*) v=$STALL_DEFAULT_MIN ;; esac
+  printf '%s' "$v"
+}
+
+current_stage() {   # last STAGE_START in the progress log
+  grep -oE 'STAGE_START name=[A-Za-z0-9_]+' "$OUT/RUN_LOG.txt" 2>/dev/null \
+    | tail -1 | cut -d= -f2
+}
+
+stall_watchdog() {
+  local name limit idle now mtime
+  while true; do
+    sleep 60
+    # The manifest may have finished normally between iterations. Its PID would
+    # then be reusable, and signalling a reused PID means killing an unrelated
+    # process -- so never signal without confirming the parent is still there.
+    if ! ps -p "$MANIFEST_PID" >/dev/null 2>&1; then
+      return 0
+    fi
+    [ -f "$OUT/RUN_LOG.txt" ] || continue
+    now=$(date -u +%s)
+    mtime=$(stat -c %Y "$OUT/RUN_LOG.txt" 2>/dev/null || echo "$now")
+    idle=$(( now - mtime ))
+    name=$(current_stage)
+    limit=$(stall_minutes_for "$name")
+    [ "$idle" -gt $(( limit * 60 )) ] || continue
+    # Log, then stop the manifest. The message goes to the progress log too, so
+    # whatever is watching from outside sees WHY the run ended rather than
+    # inferring it from silence.
+    printf '%s STALL name=%s limit=%smin idle=%ss\n' \
+      "$(date -u +%FT%TZ)" "$name" "$limit" "$idle" >> "$WATCHDOG_LOG"
+    interim "STALL_ABORT name=$name limit=${limit}min idle=${idle}s"
+    echo "STALL: no progress for ${idle}s (limit ${limit}min for stage '${name}')"
+    echo "STALL: stopping the manifest; the watcher pulls logs and terminates."
+    kill -TERM $MANIFEST_PID 2>/dev/null
+    return 0
+  done
+}
+
+MANIFEST_PID=$$
+# A stall is not a crash: it must exit NON-ZERO and say so, so the watcher's
+# fail-fast path picks it up instead of reading a clean finish.
+trap 'interim "SIGNALLED name=$(current_stage) reason=stall-watchdog-or-operator"; echo "SIGNALLED: stopping"; exit 9' TERM INT
+# Never leave the watchdog behind: it would outlive the manifest and, on a PID
+# it no longer owns, be a loaded gun pointed at whatever inherited that number.
+trap 'kill ${STALL_WATCHDOG_PID:-0} 2>/dev/null' EXIT
 
 # Projected cost per stage, read from the manifest so the number the guard uses
 # is the same number the plan quotes.
@@ -531,6 +608,9 @@ stage() {   # $1=name  $2=timeout_s  $3..=cmd
   : > "$RAN_DIR/$name.attempt"  # ... and its outputs are from this attempt
   t0=$(date -u +%s)
   echo "=== stage $name (projected \$$est, ${est_h}h; watchdog ${WATCHDOG}h) ==="
+  # The progress signal BOTH watchdogs read: a stage that started is a line, and
+  # the line names the stage so each side can apply that stage's threshold.
+  interim "STAGE_START name=$name timeout=${tmo}s"
   # `if cmd; then rc=0; else rc=$?; fi` — NOT `cmd; rc=$?`, which under
   # `set -e` never reaches the guard because the shell exits first. The command
   # must be run EXACTLY ONCE here; running it a second time to capture rc would
@@ -820,6 +900,14 @@ DOCS=${MLSYS_DOCUMENTS_JSON:-data/processed/pg19_docs/documents.json}
 TARGET_REVS_D3="meta-llama/Llama-3.1-8B=d04e592bb4f6aa9cfee91e2e20afa771667e1d4b"
 interim "=== MANIFEST START rate=\$$RATE ask_over=\$$ASK_OVER watchdog=${WATCHDOG}h only='${ONLY:-<none>}' approved='$APPROVED' ==="
 echo "spend before manifest: \$$(spend)"
+
+# The pod's own stall watchdog, started before the first stage so a stall in
+# stage 1 is covered. Detached from the stage list on purpose: it must keep
+# running across stages, which is exactly when a per-stage timeout does not
+# help.
+stall_watchdog &
+STALL_WATCHDOG_PID=$!
+interim "STALL_WATCHDOG started pid=$STALL_WATCHDOG_PID default=${STALL_DEFAULT_MIN}min thresholds=$STALL_JSON"
 
 # ---- S0: calibrate the gate on real weights. MUST be first. ---------------
 stage gate_calibration "$(stage_timeout gate_calibration)" "$PY" scripts/mlsys_coherence_gate.py \
