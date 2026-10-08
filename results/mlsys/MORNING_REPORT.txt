@@ -88,6 +88,10 @@ d6c4d6d  RPY was a `$( ... )` EXPRESSION. Interpolated into a command that
 06416d2  scripts/mlsys_setup_probe.sh — run the WATCHER'S OWN setup commands on
          a pod. The shakedown re-implemented those steps, which is why it passed
          while the watcher's versions of them were broken.
+20788c9  The interpreter is now decided in ONE place, and the outbound rsync no
+         longer ships local results to the pod. Detail in section 3b.
+aa9754d  The probe now tests the MANIFEST's resolve_python() too — the step that
+         killed the 07:37Z run — both with MLSYS_PYTHON set and without.
 
 Three of these were found by running against real hardware, not by review, and
 two of the four were in my code rather than the campaign's.
@@ -121,6 +125,46 @@ hours, because the completion check could not fire either. Four causes:
     Every target model is gated (meta-llama/Llama-2-7b-hf and
     meta-llama/Llama-3.1-8B both return 200 only with a token). The watcher now
     refuses to launch without it, forwards it, and never logs it.
+
+3b. THE 07:37Z RUN: SETUP GREEN, AND STILL TWO BUGS (20788c9)
+--------------------------------------------------------------------------------
+This launch is the most informative of the four, because every setup step
+PASSED — staging, provisioning (with the token), interpreter resolution, the
+dependency preflight — and gate_calibration then died in 2 seconds with the
+same `No module named 'transformers'` as the very first run. Two causes, both
+found by reading the incident rather than by guessing:
+
+  THE MANIFEST RE-DERIVED ITS OWN INTERPRETER
+    scripts/mlsys_manifest.sh has its own resolve_python(), and it looked for
+    `rasd` (this Mac's env name), ~/miniconda3/bin/python, /opt/conda, then
+    `command -v python3`. On a pod provisioned as `rasd-gpu` the only one of
+    those that existed was /usr/bin/python3. The watcher had already resolved
+    AND verified the right interpreter with the preflight — it simply was not
+    telling the manifest, which was free to guess differently. The watcher now
+    passes MLSYS_PYTHON='<the verified path>', resolve_python honours it first,
+    and `rasd-gpu` is in the fallback list.
+
+  575 LOCAL RESULT FILES WERE PUSHED TO THE POD
+    The outbound rsync's own comment claims it excludes results/mlsys. It did
+    not. Each run therefore began with the pod's results/mlsys pre-populated
+    by older CSVs, per-token traces and incident directories — and with a
+    RUN_LOG.txt from a 2026-10-04 macOS pre-flight run that reads "ABORTED AT
+    PRECHECK 1 — NO CUDA GPU". That file came back in this incident's pull
+    looking exactly like something the pod had written. Measured: the filter
+    sent 575 entries from results/mlsys, and now sends 2 (the directory and
+    gpu_hours.csv, which still travels because the budget guard reads it to
+    carry cumulative spend across sessions).
+
+THE FAIL-FAST PATH WORKED, ON ITS FIRST REAL OUTING
+    07:50:27Z  manifest finished rc=1 — ABORTED
+    07:50:27Z  INCIDENT captured at results/mlsys/incident_20261008T075027Z
+               (manifest.log, manifest.rc, pod_env.log, vllm_venv.log,
+                RUN_LOG.txt, watcher.log)
+    07:50:32Z  terminating the instance
+    07:52:39Z  CONFIRMED TERMINATED (0 instances)
+  Total cost of the failed run: 15.4 minutes, $5.71 — against $47.05 for the
+  first run, which sat idle for two hours because the completion check could
+  not fire. That is the whole point of the change.
 
 FAIL FAST AND THE STALL WATCHDOGS
   manifest.rc != 0 -> logs to results/mlsys/incident_<UTC>/ then
@@ -189,10 +233,19 @@ Every 8x launch so far, all on real capacity:
              died in provisioning (no HF_TOKEN)           terminated 05:48:47Z
   05:52:23Z  fc01233ad8ce4185917c7f31b61d4bd1  us-east-1
              died at interpreter resolution               terminated 06:05:19Z
-  06:25:47Z  watcher re-armed after the setup probe passed
+  07:37:18Z  12b6fc0e685544ae95449378951376a0  us-east-1
+             SETUP GREEN; gate_calibration failed in 2s on the manifest's own
+             interpreter (section 3b)                     terminated 07:52:39Z
+  08:12:57Z  watcher re-armed after the setup probe passed 8/8 on real hardware
+
+A capacity report is not capacity: at 07:22:49Z the watcher detected capacity
+in us-east-1 and attempted the launch 3 seconds later, in the same iteration,
+and was refused with `insufficient-capacity`. It logged the refusal and kept
+polling. The next sighting, at 07:37:11Z, launched.
 
 PER-STAGE STATUS
-  gate_calibration        not reached
+  gate_calibration        REACHED, FAILED (interpreter; fix 20788c9, verified
+                          by probe aa9754d on a real pod)
   engine_cap_smoke        not reached
   coherence_gate          not reached
   the remaining six       not reached
@@ -203,14 +256,25 @@ mid-run, and each was terminated through the watcher's own verified path.
 --------------------------------------------------------------------------------
 7. SPEND
 --------------------------------------------------------------------------------
-  shakedown (1x A100 40GB)        32 min @ $1.99/hr      $ 1.06
-  8x launch 1                    10 min @ $22.32/hr      $ 3.72
-  8x launch 2                    13 min @ $22.32/hr      $ 4.84
-  setup probe (1x A100 40GB)     ~21 min @ $1.99/hr      $ 0.70
+Measured from instance lifetimes in the watcher log, not estimated:
+
+  8x launch 1  02:21:18Z -> 04:27:47Z  126.5 min @ $22.32/hr   $47.05
+  8x launch 2  05:38:53Z -> 05:48:47Z    9.9 min @ $22.32/hr   $ 3.68
+  8x launch 3  05:52:23Z -> 06:05:19Z   12.9 min @ $22.32/hr   $ 4.81
+  8x launch 4  07:37:18Z -> 07:52:39Z   15.4 min @ $22.32/hr   $ 5.71
+  shakedown    1x A100 40GB             32 min @ $1.99/hr      $ 1.06
+  setup probe  1x A100 40GB (first)    ~21 min @ $1.99/hr      $ 0.70
+  setup probe  1x A100 40GB (second)   ~15 min @ $1.99/hr      $ 0.50
   ---------------------------------------------------------------
-  TOTAL                                                  $10.32
-  Remaining of the approved $850                        $839.68
-  (No campaign stage has run; nothing has been spent on measurements.)
+  TOTAL                                                       $63.52
+  Remaining of the approved $850                             $786.48
+  (No campaign stage has produced a measurement.)
+
+CORRECTION: an earlier revision of this file said $10.32. It counted launch 1
+as ten minutes, taking that figure from the provisioning window instead of the
+instance's lifetime — but that instance was up 2h06m after its abort, which is
+the exact failure the fail-fast work exists to prevent. The lifetimes above are
+computed from the LAUNCHED / CONFIRMED TERMINATED timestamps in the watcher log.
 
 --------------------------------------------------------------------------------
 8. CONFIRMATION
@@ -219,3 +283,19 @@ mid-run, and each was terminated through the watcher's own verified path.
   manuscript/, results/final/ and the lcfm-camera-ready tag: untouched.
   Nothing pushed to any branch other than mlsys-experiments.
   No API key or token appears in this report or in any log.
+
+--------------------------------------------------------------------------------
+9. WHAT I WOULD ASK YOU TO DECIDE
+--------------------------------------------------------------------------------
+  1. The four 8x launches cost $61.26 and none of them ran a campaign stage.
+     Every one died in SETUP, not in the science, and three of the four causes
+     were mine rather than the campaign's. The setup path is now exercised on
+     real hardware by two harnesses (14 and 8 checks) before any 8x launch, so
+     the next failure should be a real one. If you would rather not spend
+     another ~$6 per attempt on that basis, say so and I will stop at the
+     probe.
+  2. The 8x watcher is armed again (pid 22940 at the time of writing) and will
+     keep looking until the 72h deadline. Capacity has been appearing every
+     30-90 minutes, usually in us-east-1.
+  3. Nothing in manuscript/, results/final/, or the lcfm-camera-ready tag was
+     touched.
