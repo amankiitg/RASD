@@ -84,7 +84,13 @@ count_instances() {
 # hours, and counting that wait against the campaign would silently shorten it.
 # The wait is bounded separately (MLSYS_CAPACITY_WAIT_HOURS); the CAMPAIGN clock
 # starts when an instance is actually acquired.
-CAPACITY_WAIT_DEADLINE=$(( $(date -u +%s) + ${MLSYS_CAPACITY_WAIT_HOURS:-72} * 3600 ))
+# Through awk, not $(( )): the hours can legitimately be fractional (a short
+# rehearsal uses 0.05h), and bash arithmetic is integer-only -- it does not
+# round a fractional operand, it fails the assignment and leaves the variable
+# unset, which then trips `set -u` a few lines later with a message that points
+# at the wrong place.
+CAPACITY_WAIT_DEADLINE=$(awk -v now="$(date -u +%s)" \
+  -v h="${MLSYS_CAPACITY_WAIT_HOURS:-72}" 'BEGIN{printf "%d", now + h * 3600}')
 # The instance's own watchdog is the OUTER campaign clock, not a separate
 # number. If they disagree, the inside guard can kill a stage the outside clock
 # still considers in budget, or the outside clock can end the run while the
@@ -183,60 +189,234 @@ trap terminate_and_confirm EXIT
 trap 'terminate_and_confirm; exit 130' INT
 trap 'terminate_and_confirm; exit 143' TERM
 
-attempt=0
-while [ "$(date -u +%s)" -lt "$CAPACITY_WAIT_DEADLINE" ]; do
-  attempt=$((attempt+1))
-  nap=$(( 90 + RANDOM % 510 ))
+# --------------------------------------------------------------------------
+# capacity wait: detect -> LAUNCH, in the same iteration
+# --------------------------------------------------------------------------
+# The failure this replaces: capacity for this GPU type appears and disappears
+# within a couple of minutes (measured 2026-10-08: a window was visible at
+# 00:49:14Z and gone by the 00:50:38Z poll). Anything that detects capacity in
+# one tick and launches in the next is racing a window that is shorter than the
+# tick, which is a bug in the cadence, not bad luck.
+#
+# So: the check and the launch are ONE step, the interval is sized to the window
+# (~3 min), a human's "go now" is honoured within 10 s, and every launch attempt
+# -- scheduled, detected or manual -- passes the same guard.
+LAUNCH_NOW=$SESSION_DIR/LAUNCH_NOW
+POLL_BASE=${MLSYS_POLL_BASE_S:-180}      # base cadence
+POLL_JITTER=${MLSYS_POLL_JITTER_S:-45}   # +/- uniform, so 135-225s
+BACKOFF_MAX=${MLSYS_BACKOFF_MAX_S:-900}  # ceiling for 429/5xx backoff
+REGION_PREF=${MLSYS_REGION_PREF:-us-east-1,us-midwest-1,us-west-1,us-south-1,us-west-2}
+
+# The ONLY path that starts an instance. Every caller routes through it, which
+# is the only way the guard can be a property of the system rather than of each
+# call site.
+try_launch() {   # $1 = reason, $2 = region
+  local reason=$1 region=$2 n resp
   n=$(count_instances)
-  if [ "$n" = "0" ]; then
-    avail=$(api_get instance-types 2>/dev/null | "$PY" -c "
-import json,sys
-d=json.load(sys.stdin).get('data',{})
-t=d.get('$INSTANCE_TYPE',{})
-print(','.join(r['name'] for r in t.get('regions_with_capacity_available',[])))" 2>/dev/null)
-    if [ -n "$avail" ]; then
-      say "attempt $attempt: capacity reported in [$avail] (advisory; the launch may still be refused)"
-      region=${avail%%,*}
-      resp=$(curl -sS --max-time 120 -u "$KEY:" -X POST \
-        "https://cloud.lambda.ai/api/v1/instance-operations/launch" \
-        -H 'Content-Type: application/json' \
-        -d "{\"region_name\":\"$region\",\"instance_type_name\":\"$INSTANCE_TYPE\",\"ssh_key_names\":[\"rasd-amank\"],\"name\":\"rasd-mlsys\",\"quantity\":1}" 2>&1)
-      INSTANCE_ID=$(printf '%s' "$resp" | "$PY" -c "
+  if [ "$n" != "0" ]; then
+    say "LAUNCH_ABORT reason=$reason already_running=$n region=$region"
+    say "  exactly one 8xA100 at a time; not launching a second"
+    return 2
+  fi
+  if [ -z "$region" ]; then
+    say "LAUNCH_ABORT reason=$reason no_region"
+    return 2
+  fi
+  # Rehearsal path: exercises the whole decision chain -- guard, region choice,
+  # override handling -- without creating a billable instance. It reports a
+  # REFUSED outcome on purpose, so a dry run never deletes LAUNCH_NOW and never
+  # sets INSTANCE_ID (the caller would otherwise believe it had a pod).
+  if [ -n "${MLSYS_LAUNCH_DRY_RUN:-}" ]; then
+    say "LAUNCH_DRY_RUN reason=$reason region=$region (no instance created)"
+    return 1
+  fi
+  resp=$(curl -sS --max-time 120 -u "$KEY:" -X POST \
+    "https://cloud.lambda.ai/api/v1/instance-operations/launch" \
+    -H 'Content-Type: application/json' \
+    -d "{\"region_name\":\"$region\",\"instance_type_name\":\"$INSTANCE_TYPE\",\"ssh_key_names\":[\"rasd-amank\"],\"name\":\"rasd-mlsys\",\"quantity\":1}" 2>&1)
+  INSTANCE_ID=$(printf '%s' "$resp" | "$PY" -c "
 import json,sys
 try: print(json.loads(sys.stdin.read())['data']['instance_ids'][0])
 except Exception: print('')" 2>/dev/null)
-      if [ -n "$INSTANCE_ID" ]; then
-        say "LAUNCHED $INSTANCE_ID in $region"
-        echo "$region" > "$FOUND"
-        break
+  if [ -n "$INSTANCE_ID" ]; then
+    say "LAUNCHED $INSTANCE_ID in $region (reason=$reason)"
+    echo "$region" > "$FOUND"
+    return 0
+  fi
+  say "LAUNCH_REFUSED reason=$reason region=$region: $(printf '%s' "$resp" | head -c 160)"
+  return 1
+}
+
+# Regions that list this instance type, in preference order, comma-separated.
+regions_with_capacity() {
+  api_get instance-types 2>/dev/null | "$PY" -c "
+import json,sys
+try: d=json.load(sys.stdin).get('data',{})
+except Exception: d={}
+t=d.get('$INSTANCE_TYPE',{})
+print(','.join(r['name'] for r in t.get('regions_with_capacity_available',[])))" 2>/dev/null
+}
+
+# HTTP status of the capacity call, so 429/5xx can back off.
+capacity_status() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 60 -u "$KEY:" \
+    "https://cloud.lambda.ai/api/v1/instance-types" 2>/dev/null
+}
+
+# Manual override: attempt a launch now, whatever the schedule says. Kept until
+# a launch SUCCEEDS, so a refused attempt is retried rather than silently lost.
+launch_now() {
+  local avail region rc
+  avail=$(regions_with_capacity)
+  region=${avail%%,*}
+  if [ -z "$region" ]; then
+    # The advisory list is often empty when capacity is actually available (and
+    # sometimes non-empty when it is not), so a human's go-signal is not
+    # discarded just because the list is empty: try the preferred regions.
+    for region in $(printf '%s' "$REGION_PREF" | tr ',' ' '); do
+      rc=0; try_launch "launch_now" "$region" || rc=$?
+      [ "$rc" = "0" ] && { rm -f "$LAUNCH_NOW"; return 0; }
+      [ "$rc" = "2" ] && return 2                     # already running: stop
+    done
+    say "LAUNCH_NOW: all preferred regions refused; keeping the file and retrying"
+    return 1
+  fi
+  rc=0; try_launch "launch_now" "$region" || rc=$?
+  if [ "$rc" = "0" ]; then rm -f "$LAUNCH_NOW"; return 0; fi
+  [ "$rc" = "2" ] && return 2
+  say "LAUNCH_NOW: $region refused; keeping the file and retrying"
+  return 1
+}
+
+# Sleep in 10 s slices so a LAUNCH_NOW written mid-sleep is honoured within 10 s
+# rather than after the remaining nap. Returns 0 when the caller should exit its
+# loop (launched, or another instance appeared).
+interruptible_nap() {   # $1 = seconds
+  local left=$1 slice=10
+  while [ "$left" -gt 0 ]; do
+    if [ -f "$LAUNCH_NOW" ]; then
+      # The FILE is checked every 10s, as specified. The ATTEMPTS are spaced by
+      # 30s so a standing override against a full fleet does not turn into a
+      # launch request every 10s for hours -- a refusal and a rate limit look
+      # the same from here, and only one of them is safe to generate.
+      local tnow
+      tnow=$(date -u +%s)
+      if [ $(( tnow - ${LAST_NOW_ATTEMPT:-0} )) -ge 30 ]; then
+        LAST_NOW_ATTEMPT=$tnow
+        say "LAUNCH_NOW seen (${left}s left in this nap); attempting launch"
+        launch_now
+        case $? in
+          0) return 0 ;;
+          2) EXIT_REASON="other_instance"; return 0 ;;
+        esac
       fi
-      say "  launch refused: $(printf '%s' "$resp" | head -c 160) — retrying"
-    else
-      # Heartbeat on EVERY attempt, not every tenth: over an 18h wait "polling,
-      # no capacity" must be distinguishable at a glance from "hung", and the
-      # next poll time makes the gap itself a liveness signal.
-      say "attempt $attempt: no capacity for $INSTANCE_TYPE; next poll in ~${nap}s"
+      slice=10; [ "$left" -lt 10 ] && slice=$left
+      interruptible_sleep $slice
+      left=$((left - slice))
+      continue
     fi
-  else
-    # REFUSE. Adopting an instance this script did not launch means it would
-    # report on, and later TERMINATE, someone else's machine -- and the run it
-    # is watching would be one nobody sized or approved. Stop and say so.
+    # The last slice is shortened to what is left. Sleeping a flat 10 s made
+    # every nap overshoot by up to 10 s -- invisible at a 3 min cadence, but it
+    # also meant a 1 s backoff waited 10 s, i.e. the function did not honour its
+    # argument.
+    slice=10; [ "$left" -lt 10 ] && slice=$left
+    interruptible_sleep $slice
+    left=$((left - slice))
+  done
+  return 1
+}
+
+attempt=0
+BACKOFF=0
+LAST_NOW_ATTEMPT=0
+# Why the wait ended when nothing was launched. The guard returning 2 is
+# "somebody else's instance exists", which is NOT an expired wait: it needs
+# the exit code and the message of the refusal path (5), not the deadline's (3).
+EXIT_REASON="expired"
+while [ "$(date -u +%s)" -lt "$CAPACITY_WAIT_DEADLINE" ]; do
+  attempt=$((attempt+1))
+
+  # A human saying "capacity is available" is an instruction to launch now, not
+  # a hint to wait for the next tick. Checked before the API work so it cannot
+  # be delayed by a slow call.
+  if [ -f "$LAUNCH_NOW" ]; then
+    launch_now
+    case $? in
+      0) break ;;
+      2) INSTANCE_ID=""; EXIT_REASON="other_instance"; break ;;
+    esac
+  fi
+
+  status=$(capacity_status)
+  case "$status" in
+    429|5*)
+      BACKOFF=$(( BACKOFF == 0 ? POLL_BASE : BACKOFF * 2 ))
+      [ "$BACKOFF" -gt "$BACKOFF_MAX" ] && BACKOFF=$BACKOFF_MAX
+      nap=$BACKOFF
+      say "attempt=$attempt regions=- capacity=unknown http=$status next_sleep=${nap}s (backoff)"
+      interruptible_nap $nap && break
+      continue ;;
+  esac
+  BACKOFF=0
+
+  n=$(count_instances)
+  case "$n" in
+    ''|*[!0-9]*)
+      # An unreadable count is NOT "an instance exists". Treating it as one
+      # would end the watch -- permanently, and for the wrong reason -- on a
+      # single transient API failure. Back off and re-read instead. (The launch
+      # guard still fails CLOSED on an unreadable count: it refuses to launch.)
+      BACKOFF=$(( BACKOFF == 0 ? POLL_BASE : BACKOFF * 2 ))
+      [ "$BACKOFF" -gt "$BACKOFF_MAX" ] && BACKOFF=$BACKOFF_MAX
+      say "attempt=$attempt regions=- capacity=unknown instance_count=$n next_sleep=${BACKOFF}s (retrying)"
+      interruptible_nap "$BACKOFF" && break
+      continue ;;
+  esac
+  if [ "$n" != "0" ]; then
     OTHER=$(api_get instances | "$PY" -c \
       "import json,sys;d=json.load(sys.stdin)['data'];print(','.join(x['id'] for x in d))")
-    # NO ADOPTION PATH, deliberately. An adopted instance is one this script
-    # did not launch, was not sized for this campaign, and would later
-    # TERMINATE. `MLSYS_ADOPT_EXISTING` existed as an escape hatch and is gone:
-    # the invariant "we only ever terminate the id we launched" is worth more
-    # than the convenience of reusing a machine whose provenance we do not know.
+    # REFUSE, with no adoption path at all. An adopted instance is one this
+    # script did not launch, was not sized for this campaign, and would later
+    # TERMINATE. An opt-in escape hatch for reusing a running instance existed
+    # and is gone: the invariant "we only ever terminate the id we launched" is
+    # worth more than the convenience of reusing a machine whose provenance we
+    # do not know. No variable, flag or env var may reintroduce it, so this
+    # block names none -- `mlsys_dry_run.sh` step 15 asserts that.
     say "FATAL: $n instance(s) already exist ($OTHER)."
     say "This watcher only runs on an instance IT launches, so that it only ever"
     say "terminates one it launched. Terminate them yourself, then re-run."
     exit 5
   fi
-  interruptible_sleep $nap
+
+  avail=$(regions_with_capacity)
+  nap=$(( POLL_BASE - POLL_JITTER + RANDOM % (2 * POLL_JITTER + 1) ))
+  [ "$nap" -lt 30 ] && nap=30
+  if [ -n "$avail" ]; then
+    say "attempt=$attempt regions=$avail capacity=yes next_sleep=${nap}s"
+    # LAUNCH IN THIS ITERATION. No handoff, no second loop, no waiting for the
+    # next tick: the window can be shorter than the tick.
+    for region in $(printf '%s' "$avail" | tr ',' ' '); do
+      rc=0; try_launch "detected" "$region" || rc=$?
+      [ "$rc" = "0" ] && break
+      [ "$rc" = "2" ] && break
+    done
+    if [ -n "$INSTANCE_ID" ]; then break; fi
+    say "  every listed region refused; re-polling rather than treating the"
+    say "  advisory list as a reservation"
+  else
+    say "attempt=$attempt regions=none capacity=no next_sleep=${nap}s"
+  fi
+  interruptible_nap $nap && break
 done
 
 if [ -z "$INSTANCE_ID" ]; then
+  if [ "$EXIT_REASON" = "other_instance" ]; then
+    say "REFUSING TO ADOPT an instance this watcher did not launch."
+    say "It only ever terminates the id it launched, so it will not run this"
+    say "campaign on a machine it did not size or approve. Nothing was acquired"
+    say "by this watcher, so nothing it will bill. Terminate it yourself, then re-run."
+    exit 5
+  fi
   say "CAPACITY WAIT EXPIRED after ${MLSYS_CAPACITY_WAIT_HOURS:-72}h with nothing launched."
   say "Nothing was acquired, so nothing is billing."
   exit 3

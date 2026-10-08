@@ -184,3 +184,189 @@ def test_an_unobtainable_remote_manifest_is_not_verified(tmp_path):
     r = _merge(stage, tmp_path / "missing.sha256", tmp_path / "dest")
     assert r.returncode == 2
     assert "NOT MERGED" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# The capacity wait: detect and launch are ONE step
+# ---------------------------------------------------------------------------
+#
+# The failure being guarded: capacity for this GPU type appears and disappears
+# inside ~90s (measured 2026-10-08: visible at 00:49:14Z, gone by the 00:50:38Z
+# poll). A watcher that checks in one tick and launches in the next is racing a
+# window shorter than its own tick, so the launch has to happen in the same
+# iteration as the detection, and a human's "go now" has to interrupt the sleep.
+
+POLL_LOOP_ANCHOR = 'avail=$(regions_with_capacity)'
+
+
+def _script_with_stubs(tmp_path: Path, extra: dict[str, str]) -> tuple[Path, Path]:
+    """A copy of the watcher with the network functions stubbed out.
+
+    The script resolves the repo from its own location, so the copy goes in a
+    sandbox with a dummy credentials file -- no real key is read and no request
+    leaves the machine.
+    """
+    import re
+    sandbox = tmp_path
+    (sandbox / "sub").mkdir(parents=True, exist_ok=True)
+    (sandbox / "runpod_creds.md").write_text("LAMBDA_API_KEY = dummy\n")
+
+    src = SRC
+    for name, body in extra.items():
+        i = src.index(f"{name}() {{")
+        j = src.index("\n}\n", i) + 3
+        # The `;` before the closing brace is load-bearing: `{ echo 0 }` is a
+        # syntax error, because after a complete command the `}` is read as an
+        # argument and the group never closes.
+        src = src[:i] + f"{name}() {{ {body}; }}\n" + src[j:]
+    p = sandbox / "sub" / "watcher.sh"
+    p.write_text(src)
+    import subprocess
+    check = subprocess.run(["bash", "-n", str(p)], capture_output=True, text=True)
+    assert check.returncode == 0, f"the stubbed watcher does not parse: {check.stderr}"
+    assert re.search(r"^count_instances\(\) \{ echo", src, re.M), "stub not applied"
+    return p, sandbox
+
+
+def _run_watcher(script: Path, sandbox: Path,
+                 observe_seconds: float | None = None, **env):
+    """Run the stubbed watcher, optionally only long enough to see the first
+    iteration.
+
+    The loop's own deadline is in whole seconds (awk truncates the hours), so a
+    sub-second value skips the body entirely -- `observe_seconds` stops the
+    process from outside instead, and every `say` is its own `tee` that has
+    already flushed by the time it returns, so the lines logged so far survive
+    the signal.
+    """
+    import subprocess
+    e = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+         "HOME": str(sandbox),
+         "MLSYS_SESSION_DIR": str(sandbox / "sess"),
+         "MLSYS_PYTHON": "/usr/bin/python3",
+         "MLSYS_CAPACITY_WAIT_HOURS": "0.01",
+         "MLSYS_POLL_BASE_S": "30", "MLSYS_POLL_JITTER_S": "5"}
+    e.update(env)
+    proc = subprocess.Popen(["bash", str(script)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=e)
+    if observe_seconds is None:
+        out, err = proc.communicate(timeout=120)
+    else:
+        try:
+            out, err = proc.communicate(timeout=observe_seconds)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            out, err = proc.communicate(timeout=20)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+NO_NETWORK = {"count_instances": "echo 0",
+              "regions_with_capacity": "true",
+              "capacity_status": "echo 200"}
+
+
+def test_the_launch_sits_in_the_detection_iteration(tmp_path):
+    """Not a handoff to a second loop: the launch call is inside the same
+    iteration that read the capacity report."""
+    i = SRC.index(POLL_LOOP_ANCHOR)
+    body = SRC[i:SRC.index("\ndone\n", i)]
+    assert 'try_launch "detected"' in body, (
+        "the launch left the iteration that detected capacity")
+    assert body.index(POLL_LOOP_ANCHOR) < body.index('try_launch "detected"')
+
+
+def test_the_guard_is_the_only_path_that_launches(tmp_path):
+    """A second launch site would be a second place for the guard to be
+    forgotten -- the shape that orphans a second instance."""
+    posts = [l for l in SRC.splitlines()
+             if "instance-operations/launch" in l
+             and not l.lstrip().startswith("#")]
+    assert len(posts) == 1, f"{len(posts)} launch POST sites; expected 1"
+    i = SRC.index(posts[0])
+    guard = SRC.rindex("already_running", 0, i)
+    assert SRC.index("try_launch() {") < guard < i, (
+        "the instance-count check is not between the entry point and the POST")
+
+
+def test_a_human_override_is_checked_before_the_api_work(tmp_path):
+    """LAUNCH_NOW must not wait behind a slow capacity call."""
+    loop = SRC.index('while [ "$(date -u +%s)" -lt "$CAPACITY_WAIT_DEADLINE" ]')
+    override = SRC.index('[ -f "$LAUNCH_NOW" ]; then', loop)
+    first_api = SRC.index("status=$(capacity_status)", loop)
+    assert override < first_api
+    assert "interruptible_sleep 10" in SRC, "the nap is not sliced for an override"
+
+
+def test_the_backoff_covers_rate_limits_and_server_errors(tmp_path):
+    assert "429|5*)" in SRC
+    assert "BACKOFF_MAX" in SRC and "MLSYS_BACKOFF_MAX_S" in SRC
+    assert "BACKOFF=0" in SRC, "the backoff never resets after a good poll"
+
+
+def test_a_foreign_instance_is_refused_not_adopted(tmp_path):
+    """Behaviour, not shape: an instance this watcher did not launch must stop
+    it -- with the refusal's exit code (5), not the deadline's (3) -- even when
+    a human has just asked it to launch."""
+    script, sandbox = _script_with_stubs(
+        tmp_path, dict(NO_NETWORK, count_instances="echo 1"))
+    (sandbox / "sess").mkdir()
+    (sandbox / "sess" / "LAUNCH_NOW").write_text("")
+    r = _run_watcher(script, sandbox, MLSYS_LAUNCH_DRY_RUN="1")
+    assert r.returncode == 5, r.stdout + r.stderr
+    assert "REFUSING TO ADOPT" in r.stdout
+    assert "CAPACITY WAIT EXPIRED" not in r.stdout
+
+
+def test_a_detected_window_launches_in_the_same_poll_line(tmp_path):
+    """The whole point: one iteration produces both the detection and the
+    attempt. In dry-run mode the attempt cannot create an instance, so the
+    evidence is that both lines carry the same attempt number."""
+    script, sandbox = _script_with_stubs(
+        tmp_path, dict(NO_NETWORK,
+                       regions_with_capacity="echo us-east-1",
+                       count_instances="echo 0"))
+    r = _run_watcher(script, sandbox, observe_seconds=8,
+                     MLSYS_LAUNCH_DRY_RUN="1")
+    out = r.stdout
+    assert "capacity=yes" in out, out
+    lines = out.splitlines()
+    detect = [l for l in lines if "capacity=yes" in l][0]
+    assert "regions=us-east-1" in detect
+    attempt = detect.split("attempt=")[1].split()[0]
+    launched = [l for l in lines if "LAUNCH_DRY_RUN reason=detected" in l]
+    assert launched, out
+    assert "attempt={}".format(attempt) in detect
+    assert "region=us-east-1" in launched[0]
+    # same iteration: nothing was polled between the report and the attempt
+    assert lines.index(detect) < lines.index(launched[0])
+    assert not [l for l in lines[lines.index(detect) + 1:lines.index(launched[0])
+                     ] if "attempt=" in l]
+
+
+def test_a_refused_launch_keeps_the_override_and_bills_nothing(tmp_path):
+    """A refusal is not a success: the file stays so the attempt is retried,
+    and no instance id is set (so nothing is terminated later by mistake)."""
+    script, sandbox = _script_with_stubs(tmp_path, dict(NO_NETWORK))
+    (sandbox / "sess").mkdir()
+    now = sandbox / "sess" / "LAUNCH_NOW"
+    now.write_text("")
+    r = _run_watcher(script, sandbox, observe_seconds=8,
+                     MLSYS_LAUNCH_DRY_RUN="1")
+    assert now.exists(), "a refused launch discarded the override"
+    assert "LAUNCH_DRY_RUN reason=launch_now" in r.stdout
+    assert "TERMINATING" not in r.stdout, "a dry run must not terminate anything"
+
+
+def test_an_unreadable_instance_count_does_not_end_the_wait(tmp_path):
+    """`count_instances` failing is not evidence an instance exists; exiting on
+    it would end a 72h watch on one transient API error. The guard still fails
+    closed, because it refuses to launch on an unknown count."""
+    script, sandbox = _script_with_stubs(
+        tmp_path, dict(NO_NETWORK, count_instances="echo unknown"))
+    # a 1s retry cadence and a 2s horizon so the test sees two full iterations
+    r = _run_watcher(script, sandbox, MLSYS_POLL_BASE_S="1",
+                     MLSYS_CAPACITY_WAIT_HOURS="0.0006")
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "FATAL" not in r.stdout
+    assert "instance_count=unknown" in r.stdout
+    assert r.stdout.count("next_sleep=1s (retrying)") >= 2, r.stdout

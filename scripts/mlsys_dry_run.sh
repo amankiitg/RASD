@@ -923,11 +923,17 @@ if approv not in watch:
 if re.search(r"(?m)\bpython3 -c", watch):
     fails.append("the watcher still calls bare python3")
 
-# refuse rather than adopt
+# refuse rather than adopt. The opt-in escape hatch is gone ENTIRELY, so the
+# check is now the absence of any adoption path, not the presence of a gate:
+# asserting the string existed was satisfied by a comment, which is how the
+# previous version of this check passed while proving nothing.
 if "already exist" not in watch or "exit 5" not in watch:
     fails.append("the watcher does not refuse to start when an instance exists")
-if "MLSYS_ADOPT_EXISTING" not in watch:
-    fails.append("adopting an existing instance is not gated on an explicit opt-in")
+if "MLSYS_ADOPT_EXISTING" in watch:
+    fails.append("an adoption opt-in is back; the watcher would terminate an "
+                 "instance it did not launch")
+if re.search(r'INSTANCE_ID=\$\(api_get instances', watch):
+    fails.append("an existing instance is adopted into INSTANCE_ID")
 
 # TERMINATED means confirmed
 term = watch[watch.index("terminate_and_confirm()"):]
