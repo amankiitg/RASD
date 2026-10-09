@@ -39,8 +39,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import contextlib
 import math
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -705,7 +707,9 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
 
         print(f"[GATE] {name}: ppl forward over "
               f"{len(prompt_ids) + len(cont_ids)} tokens", flush=True)
-        ppl, bad_pos = continuation_perplexity(model, prompt_ids, cont_ids)
+        with _phase_heartbeat(f"{name}: ppl over "
+                              f"{len(prompt_ids) + len(cont_ids)} tokens"):
+            ppl, bad_pos = continuation_perplexity(model, prompt_ids, cont_ids)
         print(f"[GATE] {name}: ppl done in {time.time() - t_phase:.0f}s",
               flush=True)
         t_phase = time.time()
@@ -720,7 +724,8 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
 
         print(f"[GATE] {name}: generating {GENERATE_TOKENS} tokens from a "
               f"{len(prompt_ids)}-token prompt", flush=True)
-        text, new_ids = generate_after_prompt(model, tok, prompt_ids)
+        with _phase_heartbeat(f"{name}: generating {GENERATE_TOKENS} tokens"):
+            text, new_ids = generate_after_prompt(model, tok, prompt_ids)
         print(f"[GATE] {name}: generation done in {time.time() - t_phase:.0f}s "
               f"(candidate total {time.time() - t_cand:.0f}s)", flush=True)
         (out_dir / f"gen_{name}.txt").write_text(text)
@@ -755,6 +760,48 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
 # A reference row that is only DESCRIPTIVE is not a denominator: it answers
 # "what does this model look like where it is valid", and it is reported beside
 # the ratios rather than used to divide anything.
+#: Seconds between "still in this phase" lines. See _phase_heartbeat.
+PHASE_HEARTBEAT_S = 60.0
+
+
+@contextlib.contextmanager
+def _phase_heartbeat(label: str, every_s: float = PHASE_HEARTBEAT_S):
+    """Say the phase is still running, every `every_s`, while it runs.
+
+    WHY THIS IS NOT ENOUGH TO STAMP THE PHASE BOUNDARIES ONLY. The 512k
+    candidates forward ~512k tokens in ONE call, and that single call is ~72
+    PFLOPs of attention plus ~8 PFLOPs of parameters. Scaling the campaign's own
+    measured 1M-token prefill (6.29 min on 8 GPUs, attention work scaling with
+    S^2) to one GPU at 512k gives ~12.6 minutes -- i.e. one phase can reach the
+    15-minute liveness limit that stops a stage, with nothing wrong.
+
+    WHAT THIS TRADES, stated plainly: a line here says the process is alive, in
+    this phase, N seconds in. It does NOT prove the phase is progressing, so a
+    hang INSIDE a phase is left to the stage timeout rather than to the 15-minute
+    rule. That is acceptable for THIS stage and not for the engine stages: the
+    gate is single-device (`_device_map()` is {"": 0}), so there is no collective
+    to deadlock in, and its realistic failure modes -- OOM, a dead CUDA context,
+    an out-of-vocab prompt -- all raise and are recorded on the row. It is the
+    same wall-clock signal the vLLM stage uses, for the same reason.
+
+    Host-side only: a thread counting seconds in the parent process. No device
+    call, no collective, no barrier, and it is outside every measured quantity.
+    """
+    stop = threading.Event()
+    t0 = time.time()
+
+    def _beat():
+        while not stop.wait(every_s):
+            print(f"[GATE] {label} still running, elapsed={time.time() - t0:.0f}s",
+                  flush=True)
+
+    thread = threading.Thread(target=_beat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+
 DESCRIPTIVE_ROLES = ("in_distribution_reference",)
 
 

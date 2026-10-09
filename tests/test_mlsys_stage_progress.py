@@ -227,3 +227,44 @@ def test_a_silent_attempt_prints_a_heartbeat(monkeypatch, tmp_path, capsys):
     assert "[VLLM] still running" in out, (
         "an attempt that says nothing for its first third of a second produced "
         "no heartbeat:\n" + out)
+
+
+def test_a_slow_phase_reports_itself_while_it_runs(capsys):
+    """A 512k forward is ONE call, so the phase stamps alone are not a bound.
+
+    Scaling the campaign's measured 1M/8-GPU prefill to one GPU at 512k gives
+    ~12.6 minutes for that single call, which reaches the 15-minute liveness
+    limit with nothing wrong. This is the line that keeps the log growing.
+    """
+    gate = _load(GATE, "_gate_phase_heartbeat_under_test")
+    with gate._phase_heartbeat("cand_x: ppl over N tokens", every_s=0.05):
+        time.sleep(0.3)
+    out = capsys.readouterr().out
+    assert "cand_x: ppl over N tokens still running" in out
+    assert "elapsed=" in out
+    # and it must STOP: a heartbeat that outlives its phase reports a run that
+    # has already moved on, or one that has already died.
+    n_before = out.count("still running")
+    time.sleep(0.2)
+    assert capsys.readouterr().out.count("still running") == 0, \
+        f"the heartbeat kept printing after its phase ({n_before} lines did print)"
+
+
+def test_the_gate_heartbeat_is_tighter_than_the_liveness_rule():
+    gate = _load(GATE, "_gate_heartbeat_cadence_under_test")
+    assert gate.PHASE_HEARTBEAT_S * 4 < 15 * 60, \
+        "the phase heartbeat must land several times inside the 15-minute rule"
+
+
+def test_the_heartbeat_cannot_sync_a_device():
+    """It runs around the measurement, so it must not touch the device."""
+    tree = _tree(GATE)
+    hb = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "_phase_heartbeat")
+    banned = {"item", "cpu", "numpy", "tolist", "synchronize", "cuda", "device"}
+    for node in ast.walk(hb):
+        if isinstance(node, ast.Attribute) and node.attr in banned:
+            raise AssertionError(f"the heartbeat calls .{node.attr}")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in ("empty_cache", "barrier"):
+                raise AssertionError(f"the heartbeat calls .{node.func.attr}()")
