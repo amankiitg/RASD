@@ -1831,3 +1831,62 @@ that stage: rows 1-3 took 127s + 243s + 965s and rows 4-6 (the target-only at
 cap 1024, then the two bf16 rows) had not started. Then coherence_gate (watch
 the 512k rows' status), correction_note_evidence, natural_f1_128k,
 impl_validation, rope_intervention_128k, natural_spec_gated_256k, vllm_ladder.
+
+================================================================================
+2026-10-09T22:38Z  MILESTONE: campaign clock 40h -> 48h, re-armed (fifth arming)
+================================================================================
+
+THE CHANGE. MLSYS_CAMPAIGN_HOURS and MLSYS_MAX_HOURS both go 40 -> 48 in
+ARMED_ENV. They must move together: the watcher refuses a mismatch
+(verified live -- 48 with MLSYS_MAX_HOURS=40 gives "FATAL: MLSYS_MAX_HOURS=40
+but the campaign clock is 48h", and 48/48 is accepted). Nothing else changed:
+cap $2000, ask $300, nine-stage allowlist, 72h capacity wait, 60 +/-20s cadence,
+gpu_8x_a100_80gb_sxm4 only. A diff of the MLSYS lines before and after the edit
+is empty apart from those two.
+
+WHY. The nine allowlisted stages project to 35.0h of the 40h clock -- 5h of
+headroom, 12% -- with natural_spec_gated_256k alone projected at 13.0h and
+unmeasured. The estimate is conservative per stage (gate_calibration was
+budgeted 1.0h and measured 0.19h and 0.21h), but one long stage or one retry
+could reach 40h before the last stages.
+
+COST. 48h x $22.32/hr = $1071.28 for one uninterrupted instance, inside the
+unchanged $2000 cap. The cap is measured against the ledger ($82.29 over 10
+rows), so it permits up to $2082.29 of real spend; the campaign clock is what
+bounds a single run. The clock starts at INSTANCE LAUNCH, not at arming
+(mlsys_watch_and_run.sh:472), and capacity wait is bounded separately at 72h, so
+no amount of waiting shortens the campaign.
+
+RE-ARMED: marker ===== ARMING 2026-10-09T22:37:57Z =====, watcher pid 1184
+(caffeinate 1186) polling (attempt=1), monitor pid 1270 phase A polls=1 and
+scoped to "ignoring incidents older than 20261009223757", 0 instances. The
+watcher log reads "instance watchdog = campaign clock = 48h" and "campaign
+deadline is set when the instance is acquired (+48h)".
+
+SELF-INFLICTED, RECORDED IN FULL, BOTH FULLY REPAIRED:
+
+1. I ran `bash scripts/mlsys_manifest.sh --help` to inspect it. There is no
+   --help flag: the script started the MANIFEST ON THE MAC. It wrote three
+   lines to results/mlsys/RUN_LOG.txt, moved results/mlsys/gate_calibration.csv
+   into results/mlsys/attempts/20261009T223536Z/gate_calibration/, and started a
+   stall watchdog. It never had a pod, so nothing ran and nothing billed.
+   REPAIR: both files are tracked, so `git checkout --` restored them exactly
+   (RUN_LOG.txt 490 -> 487 lines, gate_calibration.csv back at 7961 bytes),
+   attempts/ removed, `git status` clean, no process left, 0 instances. Lesson:
+   scripts that do not implement --help must not be probed with it; read the
+   usage comment or grep for the flag.
+
+2. The ARMED_ENV resume comment from 22:2xZ WAS NEVER WRITTEN, and the command
+   that reported success was the cause. `conda run -n rasd python - <<'PY'`
+   silently does nothing with a heredoc on stdin: it prints no output and
+   performs no write. Proven with a three-way test -- heredoc via conda run: NO
+   file, no output; the same script from a file: file written; `python3 -c` via
+   conda run: file written. So the previous arming's note is absent from
+   ARMED_ENV, and this header corrects the timestamp it would have carried: the
+   fourth arming was at 2026-10-09T22:28:23Z, not 18:2xZ. Everything else
+   written that way is intact (MORNING_REPORT entries used plain `cat >>`, and
+   the code edits used plain `python3`), which I checked explicitly: the
+   heartbeat and gate work is present on disk and the resume commit 600adc8 is
+   pushed.
+   Lesson: never write files through `conda run` with a heredoc. Use a script
+   file, or plain `python3`.
