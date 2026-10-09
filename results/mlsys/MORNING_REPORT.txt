@@ -1596,3 +1596,56 @@ Repo staged onto the pod at 10:01:29Z, i.e. AFTER commit a8e7e3a was pushed at
 the committed ones and contain the progress lines. Provisioning started
 10:01:29Z. The armed watcher was not touched -- no restart, and
 mlsys_watch_and_run.sh has not been edited since 6009f96.
+
+================================================================================
+2026-10-09T10:1xZ  DECISION: the 512k gate rows may be oom BY DESIGN
+================================================================================
+
+ANSWERED FROM THE CODE, before changing anything:
+
+1. A candidate with status=oom does NOT abort the campaign.
+   * src/scripts/mlsys_coherence_gate.py:709-710 catches
+     torch.cuda.OutOfMemoryError per candidate and records `status=oom` on the
+     row; the process still exits 0 (line 1202 `return 0`), and only a DEAD CUDA
+     CONTEXT exits non-zero (line 1201 `return 8`). An OOM does not kill the
+     context, so the stage's rc stays 0.
+   * scripts/mlsys_manifest.sh:1177-1183 aborts the campaign on `cg_rc != 0`
+     (`exit 1`), and :1184-1189 aborts if the CSV is empty. A row that FAILS its
+     verdict is only PRINTED (:1190-1196). So an oom row costs the campaign
+     nothing at this stage.
+   * Its only downstream effect is at a gated rung: mlsys_gate_filter.py:78-95
+     drops the level ("gate verdict was FAIL"), and if nothing survives the rung
+     the manifest records STAGE_INVALID and CONTINUES
+     (mlsys_manifest.sh:1298-1307, `STAGE_INVALID=$((STAGE_INVALID + 1));
+     continue`). STAGE_INVALID only makes the FINAL summary read INCOMPLETE
+     (mlsys_manifest.sh:1481-1490); it is not a mid-run stop.
+
+2. NOTHING in this arming consumes the 512k candidates.
+   * The only rung that maps to them is
+     `natural_spec_gated_512k:GATED_llama3_f32_512k`
+     (mlsys_manifest.sh:1266-1267).
+   * `natural_spec_gated_512k` is NOT in MLSYS_ONLY_STAGES / MLSYS_APPROVED_STAGES
+     (the nine-stage allowlist), so `on_list` fails and the stage is skipped with
+     reason=needs_approval BEFORE any gate filtering is done
+     (mlsys_manifest.sh:1286-1290). It counts as ONLY_SKIPS, not STAGE_INVALID.
+   * `vllm_ladder` does run a 524288 rung, but it reads NO gate CSV (no `gate`
+     reference anywhere in scripts/mlsys_vllm_baseline.py) and supplies its own
+     rope via DEFAULT_ROPE, which for Llama-3.1-8B is None (:108-116).
+   * natural_f1_128k, impl_validation, rope_intervention_128k and
+     natural_spec_gated_256k all sit at <=256k and match the 128k/256k
+     candidates.
+
+CONSEQUENTLY: NOTHING CHANGED. In particular `_device_map()` was NOT switched to
+"auto" for >=512k candidates, because the condition for that change -- a 512k
+failure ABORTING the campaign AND a later approved stage needing it -- is false
+on both halves. The two 512k rows may come back status=oom (about 64 GiB of KV
+cache plus 16 GB of weights on an 80 GB card, with plain HF generate that pages
+nothing); that is expected, it is recorded on the row, it fails those two
+verdicts, and it stops nothing. Nothing was scp'd.
+
+LIVE EVIDENCE THAT THE PROGRESS LINES ARE IN THIS RUN: the manifest started
+2026-10-09T10:07:07Z (gate_calibration), and the pod's manifest.log now carries
+`[GATE] P3_native_128k: generating 200 tokens from a 130048-token prompt` --
+one of the lines added in d15266c/a8e7e3a, running on the pod. The pod's two
+gate/vLLM scripts were verified byte-identical to the committed ones by sha256
+before the manifest started.
