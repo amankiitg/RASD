@@ -237,6 +237,27 @@ fi
 TIMINGS+=("P7_stall=${P7}s")
 
 # --------------------------------------------------------------------------
+phase_start "P8  the byte-level liveness watchdog (silent manifest.log)"
+# One implementation, shared with the operator's own validation run so the two
+# cannot drift: the script extracts the watchdog from the real manifest, runs it
+# against a manifest that stops writing mid-stage (case A) and against one with
+# no stage started at all (case B, the negative control). Case A's per-stage
+# threshold is 9999 min so the ONLY rule that can stop it is the liveness one --
+# which is the point: the stage-level rule never saw the 2026-10-09T00:00Z
+# deadlock, because engine_cap_smoke's own limit is 240 min.
+SELFTEST_OUT=$(pod 'cd ~/RASD && bash scripts/mlsys_watchdog_selftest.sh; echo "EXIT=$?"' 2>&1 | tail -24)
+printf '%s\n' "$SELFTEST_OUT" | sed 's/^/      /'
+case "$SELFTEST_OUT" in
+  *"8 passed, 0 failed"*) ok "the liveness watchdog self-test passed on the pod" ;;
+  *)                      bad "the liveness watchdog self-test failed on the pod" ;;
+esac
+case "$SELFTEST_OUT" in
+  *"EXIT=0"*) ok "the self-test exited 0" ;;
+  *)          bad "the self-test did not exit 0" ;;
+esac
+TIMINGS+=("P8_liveness")
+
+# --------------------------------------------------------------------------
 printf '\n== timings ==\n'
 for t in "${TIMINGS[@]}"; do printf '   %s\n' "$t"; done
 printf '\n== SHAKEDOWN RESULT: %d passed, %d failed ==\n' "$PASS" "$FAIL"

@@ -226,6 +226,79 @@ def _generated_tokens_dir(output_csv: str | Path) -> Path:
     return Path(output_csv).resolve().parent / "tokens"
 
 
+# How long the teacher-forced probe may run before it is declared failed. It is
+# a wall-clock budget, not a per-forward timeout: the probe is a few hundred
+# forwards and takes seconds, and anything past this is a fault. The same number
+# bounds the process group's own watchdog (see PROBE_PG_TIMEOUT_MIN), because an
+# in-process check cannot rescue a rank already blocked INSIDE a collective.
+PROBE_BUDGET_S = float(os.environ.get("MLSYS_PROBE_BUDGET_S", 900))
+PROBE_PG_TIMEOUT_MIN = float(os.environ.get("MLSYS_PG_TIMEOUT_MINUTES", 15))
+
+
+def _agree_on_probe(probe: dict | None, world_size: int,
+                    local_rank: int) -> dict | None:
+    """Every rank takes the SAME verdict on the probe.
+
+    A rank that fails alone is the divergence that killed the 2026-10-09T00:00Z
+    run: the failing rank leaves the collectives its peers are still entering, so
+    the failure surfaces as a watchdog timeout an hour later instead of as an
+    error now. `all_gather_object` settles it in one collective that every rank
+    enters -- if ANY rank's probe failed, every rank records an error, with the
+    failing rank's own message so the reason is not an unattributed
+    "something failed somewhere".
+    """
+    if world_size <= 1:
+        return probe
+    import torch.distributed as dist
+    own = "" if probe is None else str(probe.get("error") or "")
+    gathered: list = [None] * world_size
+    dist.all_gather_object(gathered, own)
+    messages = [m for m in gathered if m]
+    if not messages:
+        return probe
+    return {"error": messages[0], "world_size": world_size,
+            "rank_errors": len(messages)}
+
+
+def run_teacher_forced_probe(engine, run: dict, gen_ids, engine_input_ids,
+                             world_size: int, local_rank: int) -> dict | None:
+    """The probe, driven so that every rank enters it with the same input.
+
+    Split out of `_run_single_worker` so the two properties that matter can be
+    tested without a ring: (1) the entry condition is the run flag -- NOT the
+    rank-local presence of `gen_ids`, which is None on ranks 1-7 by
+    construction; and (2) all ranks agree to fail, so a single rank's error
+    cannot strand the others in a collective.
+    """
+    if world_size > 1:
+        import torch.distributed as dist
+        box = [gen_ids, engine_input_ids] if local_rank == 0 else [None, None]
+        try:
+            dist.broadcast_object_list(box, src=0)
+        except Exception as e:                          # noqa: BLE001
+            # The ids cannot be agreed on, so the probe cannot be run by all
+            # ranks. Report it rather than letting each rank decide for itself.
+            return {"error": f"probe input broadcast failed: "
+                             f"{type(e).__name__}: {e}",
+                    "world_size": world_size}
+        gen_ids, engine_input_ids = box[0], box[1]
+
+    if not gen_ids:
+        # Reachable only when the run genuinely emitted nothing. It is checked
+        # AFTER the broadcast so every rank reaches the same verdict.
+        return {"error": f"no emitted tokens to judge (gen_ids={gen_ids!r})",
+                "world_size": world_size}
+
+    try:
+        probe = engine.teacher_forced_probe(engine_input_ids, gen_ids,
+                                            budget_s=PROBE_BUDGET_S)
+        probe["spec_steps"] = run.get("spec_steps")
+        probe["context_length"] = run.get("context_length")
+    except Exception as e:                              # noqa: BLE001
+        probe = {"error": f"{type(e).__name__}: {e}", "world_size": world_size}
+    return _agree_on_probe(probe, world_size, local_rank)
+
+
 def write_teacher_forced_sidecar(output_csv: str | Path, run_id: str,
                                  payload: dict) -> Path | None:
     """Write the teacher-forced probe for one run: `<tokens_dir>/<run_id>.tflossless.json`.
@@ -1051,7 +1124,15 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         dist.init_process_group(
             backend="nccl",
             device_id=torch.device(f"cuda:{local_rank}"),
-            timeout=timedelta(hours=1),
+            # This is the ONLY thing that can end a rank that is blocked inside a
+            # collective: an in-process budget check never gets a turn, because
+            # the rank is waiting on NCCL. It was an hour, which is why the
+            # 2026-10-09T00:00Z divergence burned 3600 s before it reported
+            # anything (the DistBackendError in the probe sidecar is this
+            # watchdog, not the probe). Bounded by the probe budget instead. The
+            # longest legitimate collective in this campaign is seconds: a ring
+            # exchange of one chunk's KV, or a logits broadcast.
+            timeout=timedelta(minutes=PROBE_PG_TIMEOUT_MIN),
         )
     else:
         torch.cuda.set_device(0)
@@ -1297,21 +1378,29 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             except Exception:                       # noqa: BLE001
                 engine_input_ids = None
         # ---- teacher-forced probe (the MLSys losslessness gate) -----------
-        # Runs on EVERY rank: the forwards go through ring attention when
-        # world_size > 1, so calling it on rank 0 alone would leave the other
-        # ranks outside a collective. An error is captured into the sidecar
-        # rather than raised, so a probe failure is reported as a missing
-        # measurement instead of killing a stage whose real work succeeded --
-        # and the checker treats a missing probe as UNVERIFIED, never as a pass.
+        # Runs on EVERY rank, and every rank must ENTER it: the forwards go
+        # through ring attention when world_size > 1, so a rank that skips the
+        # probe leaves its peers inside a collective it never issues.
+        #
+        # That is not hypothetical. `gen_ids` and `engine_input_ids` are
+        # RANK-0-ONLY (the metric guards in RASDInference.generate are
+        # `self._rank == 0`, so ranks 1-7 pop None), and this block used to be
+        # driven off their rank-local truthiness -- `and gen_ids and
+        # engine_input_ids`. On 2026-10-09T00:00Z rank 0 therefore entered the
+        # probe alone, completed 7036 collectives by itself, and then sat in the
+        # NCCL watchdog for 3600 s until it died with DistBackendError while
+        # ranks 1-7 waited somewhere else entirely. The ids are BROADCAST now and
+        # the entry condition is the run flag alone.
+        #
+        # An error is captured into the sidecar rather than raised, so a probe
+        # failure is reported as a missing measurement instead of killing a stage
+        # whose real work succeeded -- and the checker treats a missing probe as
+        # UNVERIFIED, never as a pass.
         tf_probe = None
-        if run.get("teacher_forced_check") and gen_ids and engine_input_ids:
-            try:
-                tf_probe = engine.teacher_forced_probe(engine_input_ids, gen_ids)
-                tf_probe["spec_steps"] = run.get("spec_steps")
-                tf_probe["context_length"] = run.get("context_length")
-            except Exception as e:                      # noqa: BLE001
-                tf_probe = {"error": f"{type(e).__name__}: {e}",
-                            "world_size": int(os.environ.get("WORLD_SIZE", 1))}
+        if run.get("teacher_forced_check"):
+            tf_probe = run_teacher_forced_probe(
+                engine, run, gen_ids, engine_input_ids,
+                world_size=world_size, local_rank=local_rank)
         trace = metrics.pop("per_token_trace", None)
         prof_summary = metrics.pop("_profiler_summary", None)
         if local_rank == 0 and tf_probe is not None:

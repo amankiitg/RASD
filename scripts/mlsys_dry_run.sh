@@ -1019,6 +1019,19 @@ if "mlsys_stall_thresholds.json" not in watch or "mlsys_stall_thresholds.json" n
     fails.append("the two watchdogs do not share one threshold table")
 if "stall_watchdog &" not in man or 'interim "STAGE_START name=' not in man:
     fails.append("the pod has no self-enforced stall watchdog")
+# The byte-level liveness rule, on BOTH sides. The per-stage thresholds only
+# move at stage boundaries, so a hang inside a stage is invisible to them: that
+# is how the 2026-10-09T00:00Z probe deadlock cost 62 minutes (~$43) unnoticed.
+if '"liveness_minutes"' not in open("configs/mlsys_stall_thresholds.json").read():
+    fails.append("no liveness_minutes in the shared threshold table")
+if "MANIFEST_LOG" not in man or 'stat -c %s "$MANIFEST_LOG"' not in man:
+    fails.append("the pod does not measure byte-level liveness on manifest.log")
+if "LIVENESS name=" not in man:
+    fails.append("a liveness stall is not distinguishable from a stage stall")
+if 'stat -c %s "$f"' not in watch or "logbytes=" not in watch:
+    fails.append("the operator's probe does not carry the pod's manifest.log size")
+if "LIVE_MIN * 60" not in loop:
+    fails.append("the operator side does not apply the liveness rule")
 
 # pull integrity: the merge is delegated to a script that refuses to copy an
 # unverified pull, and the watcher's failure paths mark the result clearly.

@@ -1,0 +1,54 @@
+=== campaign environment ===
+  repo        : /home/ubuntu/RASD
+  conda       : /home/ubuntu/miniconda3
+  env         : rasd-gpu
+  lock        : /home/ubuntu/RASD/requirements-lock.txt
+  flash-attn  : 2.8.3
+--> no conda at /home/ubuntu/miniconda3; installing Miniconda
+--> creating conda env rasd-gpu (python 3.10)
+  interpreter : /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python (Python 3.10.22)
+  no persistent filesystem at /lambda/nfs/rasd-fs (ephemeral disk this run);
+  model weights download again and are lost on termination
+  wrote /home/ubuntu/RASD/.pod_env.sh (cache, NCCL and allocator settings)
+--> pip install -r requirements-lock.txt
+  flash-attn target: cu12 / torch2.5 / cxx11abiFALSE / cp310
+  prebuilt wheel found; installing it (no compile)
+--> pip install diptest==0.9.0
+--> pip install -e .
+  recreated missing src/__init__.py (rsync drops zero-byte files)
+  recreated missing src/models/__init__.py (rsync drops zero-byte files)
+  recreated missing src/baselines/__init__.py (rsync drops zero-byte files)
+=== verifying the environment can actually run the campaign ===
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+The cache for model files in Transformers v4.22.0 has been updated. Migrating your old cache. This is a one-time only operation. You can interrupt this and resume the migration later on by calling `transformers.utils.move_cache()`.
+0it [00:00, ?it/s]0it [00:00, ?it/s]
+    accelerate           0.33.0
+    bitsandbytes         0.49.2
+    datasets             4.8.5
+    diptest              ok
+    flash_attn           ok
+    hf:Llama-2-7b-hf     accessible
+    hf:Llama-3.1-8B      accessible
+    jsonlines            ok
+    numpy                1.26.4
+    scipy                1.15.3
+    src.models.rasd_inference ok
+    tokenizers           0.20.3
+    torch                2.5.1+cu124
+    transformers         4.46.3
+    yaml                 ok
+    cuda available   True (8 devices)
+  environment verified
+--- GPU state (expect 0 MiB used on every device) ---
+    0, 4 MiB, 81920 MiB
+    1, 4 MiB, 81920 MiB
+    2, 4 MiB, 81920 MiB
+    3, 4 MiB, 81920 MiB
+    4, 4 MiB, 81920 MiB
+    5, 4 MiB, 81920 MiB
+    6, 4 MiB, 81920 MiB
+    7, 4 MiB, 81920 MiB
+flash_attn_install: prebuilt-wheel
+INTERPRETER=/home/ubuntu/miniconda3/envs/rasd-gpu/bin/python
+done.

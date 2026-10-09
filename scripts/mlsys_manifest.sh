@@ -255,6 +255,11 @@ interim() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$OUT/RUN_LOG.tx
 STALL_JSON="$REPO/configs/mlsys_stall_thresholds.json"
 WATCHDOG_LOG="$HOME/manifest_watchdog.log"
 STALL_DEFAULT_MIN=${MLSYS_STALL_MINUTES:-20}
+# The manifest's own stdout, which is what the byte-level liveness check reads.
+# Defaulted rather than assumed, so a caller that redirects elsewhere still
+# gets a watched file instead of a path that never exists.
+MANIFEST_LOG=${MLSYS_MANIFEST_LOG:-$HOME/manifest.log}
+MLSYS_MANIFEST_LIVENESS_MIN=${MLSYS_MANIFEST_LIVENESS_MIN:-15}
 
 # The threshold for a stage, in minutes. Falls back to the file's default, then
 # to the environment default. A stage the file does not name is NOT exempt: it
@@ -280,8 +285,45 @@ current_stage() {   # last STAGE_START in the progress log
     | tail -1 | cut -d= -f2
 }
 
+# How long manifest.log may go without GROWING, in bytes, while a stage runs.
+# Read from the same file as the per-stage thresholds, and deliberately not
+# overridable per stage: this is the tight rule that catches a hang inside a
+# stage, and a per-stage value would let exactly the stage that hangs opt out.
+# The floor of 15 min is 2.4x the longest legitimate silence measured in the
+# campaign's logs (a 1M-token prefill, 6.29 min).
+liveness_minutes() {
+  local v
+  v=$("$PY" - "$STALL_JSON" "$MLSYS_MANIFEST_LIVENESS_MIN" <<'PYLIVE' 2>/dev/null
+import json, sys
+path, fallback = sys.argv[1], int(sys.argv[2])
+try:
+    d = json.load(open(path))
+except Exception:
+    print(fallback); raise SystemExit
+print(int(d.get("liveness_minutes", fallback)))
+PYLIVE
+)
+  case "$v" in ''|*[!0-9]*) v=$MLSYS_MANIFEST_LIVENESS_MIN ;; esac
+  printf '%s' "$v"
+}
+
 stall_watchdog() {
   local name limit idle now mtime
+  # Byte-level liveness, tracked independently of RUN_LOG.txt.
+  #
+  # The threshold above only moves when a STAGE_* line is written, so it cannot
+  # see a hang INSIDE a stage: on 2026-10-09T00:00Z the probe deadlocked and
+  # engine_cap_smoke's threshold (240 min) was not reached until 62 minutes of
+  # silence had already been paid for. `manifest.log` is the manifest's own
+  # stdout, so it grows continuously while a run is doing anything at all --
+  # tqdm every second, a TRACE line at each phase boundary.
+  #
+  # The limit is `liveness_minutes` from the same thresholds file. It is NOT a
+  # per-stage override and must not be turned into one: this check exists to be
+  # tighter than every stage threshold, and the measured longest legitimate
+  # silence in the campaign's logs is a 1M-token prefill at 6.29 min.
+  local live_limit live_sig="" live_since=""
+  live_limit=$(liveness_minutes)
   while true; do
     sleep 60
     # The manifest may have finished normally between iterations. Its PID would
@@ -290,8 +332,37 @@ stall_watchdog() {
     if ! ps -p "$MANIFEST_PID" >/dev/null 2>&1; then
       return 0
     fi
-    [ -f "$OUT/RUN_LOG.txt" ] || continue
     now=$(date -u +%s)
+
+    # --- (i) byte-level liveness on the manifest's own output ---------------
+    # Only while a stage is running: before the first STAGE_START the manifest
+    # is still provisioning (installing the venv writes to its own log), and
+    # that is not a hang in a stage.
+    if [ -f "$MANIFEST_LOG" ]; then
+      local size
+      size=$(stat -c %s "$MANIFEST_LOG" 2>/dev/null || echo "")
+      name=$(current_stage)
+      if [ -z "$live_since" ]; then
+        live_sig="$size"; live_since=$now
+      elif [ "$size" != "$live_sig" ]; then
+        live_sig="$size"; live_since=$now
+      elif [ -n "$name" ] && [ $(( now - live_since )) -gt $(( live_limit * 60 )) ]; then
+        printf '%s LIVENESS name=%s limit=%smin idle=%ss bytes=%s reason=manifest.log-not-growing\n' \
+          "$(date -u +%FT%TZ)" "$name" "$live_limit" \
+          "$(( now - live_since ))" "$size" >> "$WATCHDOG_LOG"
+        interim "STALL_ABORT name=$name limit=${live_limit}min idle=$(( now - live_since ))s reason=manifest.log-not-growing"
+        echo "STALL: manifest.log has not grown for $(( now - live_since ))s (limit ${live_limit}min) in stage '${name}'"
+        echo "STALL: stopping the manifest; the watcher pulls logs and terminates."
+        kill -TERM $MANIFEST_PID 2>/dev/null
+        return 0
+      fi
+    fi
+
+    # --- (ii) the per-stage bound, unchanged -------------------------------
+    # This is the OUTER bound: it covers a manifest.log that keeps growing (so
+    # liveness never fires) while no run completes, which is what the long
+    # per-stage values are sized for.
+    [ -f "$OUT/RUN_LOG.txt" ] || continue
     mtime=$(stat -c %Y "$OUT/RUN_LOG.txt" 2>/dev/null || echo "$now")
     idle=$(( now - mtime ))
     name=$(current_stage)

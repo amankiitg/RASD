@@ -1,5 +1,6 @@
 {
   "default_minutes": 20,
+  "liveness_minutes": 15,
   "_why": [
     "A stage that has produced no new progress line for this long is treated as stalled: the watcher (on the operator's machine) and the manifest (on the pod, independently) both pull the logs, terminate the instance, and stop.",
     "20 minutes is the default because a stage that is working prints a line per run, and the shortest run in the campaign is minutes.",
@@ -35,5 +36,6 @@
     "Do NOT implement mid-campaign (recorded 2026-10-08T18:45Z, on instruction).",
     "The root fix is for both watchdogs to poll ~/manifest.log for per-row progress instead of results/mlsys/RUN_LOG.txt. That log carries the runner's [n/N] and per-row lines, so a stage that is working would show progress continuously and the threshold could go back to a per-run value sized as the file's _why originally intended.",
     "Until then every value in this file is a whole-stage budget and must be reviewed whenever a stage's estimate changes."
-  ]
+  ],
+  "_liveness_why": "The byte-level liveness rule: how long ~/manifest.log may go WITHOUT GROWING (in bytes, not in lines) while a stage is running, before the pod watchdog and the operator's watcher both treat it as a stall, pull, terminate and stop. It is stricter than every per-stage value above on purpose, and it is NOT overridable per stage: a per-stage override would let exactly the stage that hangs opt out of the check that exists to catch it. MEASURED BEFORE CHOSEN (2026-10-09): the longest legitimate silence anywhere in the campaign's manifest logs is a 1M-token target prefill at 6.29 min, measured as ttft across 146 rows (the prefill is silent: the runner's first line for a phase is printed when the phase is DONE). 15 min is 2.4x that, and it is below the 2x bound the operator set, so the bound does not bind. Realistic 8x prefills are far shorter -- 256k, the longest context in the approved stages, is roughly a quarter of that. WHY IT WAS ADDED: the per-stage values only cover a stage that produces no RUN_LOG line, so a hang INSIDE a stage is invisible to them. On 2026-10-09T00:00Z the teacher-forced probe deadlocked: rank 0 entered a ring collective alone, wrote nothing for 62.0 min, and was only stopped by the NCCL watchdog at 3600 s. engine_cap_smoke's own threshold is 240 min, so nothing fired -- 8xA100-80GB billed for 62 min (~$43) on a run that could never finish. The same logs contain that 62.0 min deadlock and a 66.3 min one from the earlier failed run, both visible as gaps with no output at all, which is exactly what this rule catches."
 }

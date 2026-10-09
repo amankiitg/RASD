@@ -1062,3 +1062,83 @@ and its own probe logs the 8-rank noise floor. TOL_bf16 was derived at 8k and
 32k; the gate runs at 128k, where bf16 could not be measured at one rank. This
 run is the first measurement of the bf16 floor at the gate's own context, and a
 failure there would be a real finding rather than a threshold to widen.
+
+
+================================================================================
+00:00Z-01:20Z  2026-10-09  PROBE DEADLOCK DIAGNOSED AND FIXED; LIVENESS WATCHDOG
+================================================================================
+
+STOPPED THE RUN, AND WHY. The 8x launched at 22:27:34Z, passed gate_calibration
+(OK, 688 s, $4.27), and then engine_cap_smoke produced ONE row in 85 minutes. The
+probe sidecar for that row held an error, not numbers:
+
+  DistBackendError: [Rank 0] Watchdog caught collective operation timeout:
+  WorkNCCL(SeqNum=7036, OpType=COALESCED, ...) ran for 3600010 ms
+
+ROOT CAUSE, EXACT. gen_ids and engine_input_ids are RANK-0-ONLY -- the metric
+guards are `if cfg.save_generated_tokens and self._rank == 0`
+(src/models/rasd_inference.py:1745 speculative, :2140 target-only) -- so ranks 1-7
+pop None. The probe's entry condition tested them:
+`if run.get("teacher_forced_check") and gen_ids and engine_input_ids:`
+(run_experiment.py:1307). Rank 0 therefore entered a ring collective ALONE,
+completed 7036 collectives by itself, and waited for peers that had moved on.
+The error in the sidecar is the NCCL watchdog, not the probe. It reproduced
+identically at 1 rank being fine: the 1-rank harness cannot see this class of
+bug at all, which is why it shipped broken.
+
+WHY 62 MINUTES WERE BILLED (~$43) BEFORE ANYONE KNEW. Both watchdogs measured
+progress on RUN_LOG.txt, which only moves at stage boundaries, and
+engine_cap_smoke's own threshold is 240 min. The manifest.log gap with no output
+at all is 62.0 min for this run and 66.3 min for the earlier failed one. Nothing
+fired. The instance was terminated at 00:27Z after 1h58m: $44, plus $0 for the
+capacity wait.
+
+FIXED (steps 1-3), each with tests:
+  1. The ids are BROADCAST from rank 0 (dist.broadcast_object_list) and every
+     rank enters on the run flag ALONE. The regression test drives two ranks
+     where rank 1 has gen_ids=None, exactly as production does, and asserts both
+     engines get called; reverting to the old guard fails 4 of the 13 new tests.
+  2. Every rank agrees on the verdict (all_gather_object), so one rank's failure
+     is every rank's failure and the failing rank's own message is the one
+     recorded. A failed broadcast is REPORTED, never guessed at locally.
+  3. A wall-clock budget (PROBE_BUDGET_S = 900 s) checked at loop boundaries and
+     agreed with a MAX all-reduce, raising ProbeBudgetExceeded rather than
+     hanging; and the process group's own watchdog is bounded by the same budget
+     (PROBE_PG_TIMEOUT_MIN = 15 min), because a rank blocked INSIDE a collective
+     never gets a turn to run an in-process check. The 3600 s figure WAS that
+     watchdog's default: `timeout=timedelta(hours=1)`.
+  4. The probe now runs on the bf16 pair ONLY. NF4 noise flips 20% of argmaxes at
+     128k, so no threshold can separate it from a real defect and its numbers
+     could never gate; the two extra probes cost ~2 h of the stage. The
+     anti-vanishing guard still requires a probed pair on a gated dtype, so
+     dropping them cannot leave the stage passing without testing anything.
+
+STEP 6: BYTE-LEVEL LIVENESS WATCHDOG, MEASURED BEFORE CHOSEN. New rule in both
+watchdogs: if ~/manifest.log does not GROW for liveness_minutes while a stage is
+running, treat it as a stall -- pull, terminate, stop.
+  * Longest LEGITIMATE silence in the campaign's logs: a 1M-token prefill at
+    6.29 min (ttft across 146 rows; a prefill is exactly silence because the
+    runner prints a phase's first line when the phase is DONE). 2x = 12.58 min,
+    which does not exceed 15, so the threshold stays 15 min = 2.4x margin.
+  * Not per-stage overridable, deliberately: a per-stage value would let exactly
+    the stage that hangs opt out. The per-stage values stay as the OUTER bound.
+  * It does not fire before a stage starts (provisioning is quiet in
+    manifest.log; the venv install writes to pod_env.log).
+  * Tested by scripts/mlsys_watchdog_selftest.sh, which EXTRACTS the watchdog
+    from the shipped manifest and runs it against a manifest that stops writing
+    mid-stage (per-stage limit set to 9999 min so only the liveness rule can
+    fire) and against one with no stage at all as the negative control. Locally:
+    8 passed, 0 failed. Case A fired at 61-121 s with
+    `LIVENESS ... reason=manifest.log-not-growing`, stopped the manifest, and the
+    run exited 9, which is what the watcher reads as an abort. Case B stayed
+    quiet and exited 0. The shakedown's P8 now calls this same script.
+
+1039 tests pass before the liveness work, 1059 after; dry run 32/0; rehearsal
+74/0.
+
+VALIDATION PENDING ON 2x A100. Requires gpu_2x_a100, which had NO capacity at
+01:15Z. Polling for up to 2 h; if none appears the step stops and reports rather
+than validating on the 8x. The probe fix and the liveness self-test will both
+run there: the probe must complete on both ranks and produce numbers comparable
+to the 1-rank values (1 rank, 8k, bf16: max shortfall 0.375, non-argmax 2/63,
+noise floor max|delta| 0.688, control 0.000).

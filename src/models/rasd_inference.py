@@ -105,6 +105,17 @@ def _nvtx_pop() -> None:
 logger = logging.getLogger(__name__)
 
 
+class ProbeBudgetExceeded(RuntimeError):
+    """The teacher-forced probe ran past its wall-clock budget.
+
+    Its own exception type rather than a bare RuntimeError so the sidecar says
+    "the probe was too slow" and not something the reader has to decode from a
+    message. Raised on every rank at the same loop boundary (see
+    `_check_probe_budget`), because a rank that raises alone strands its peers in
+    collectives it no longer enters.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -2203,8 +2214,37 @@ class RASDInference:
     # ------------------------------------------------------------------
     # Teacher-forced losslessness probe
     # ------------------------------------------------------------------
+    def _check_probe_budget(self, t0: float, budget_s: float,
+                            done: int = 0) -> None:
+        """Raise `ProbeBudgetExceeded` once the probe passes its budget.
+
+        Called at loop boundaries that every rank reaches at the same iteration,
+        and the decision is then AGREED on with a MAX all-reduce. The agreement
+        matters: if rank 3 decided on its own that it was done while rank 5
+        entered one more collective, the run would deadlock and the failure would
+        arrive an hour later as a watchdog timeout instead of as this error. A
+        budget of 0 or less disables the check, which is what the 1-rank harness
+        wants.
+        """
+        if budget_s <= 0 or (time.monotonic() - t0) <= budget_s:
+            return
+        overspent = 1
+        if self._world_size > 1 and dist.is_initialized():
+            flag = torch.tensor([1], device=self._probe_device(),
+                                dtype=torch.int32)
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+            overspent = int(flag.item())
+        if overspent:
+            raise ProbeBudgetExceeded(
+                f"teacher-forced probe exceeded its {budget_s:.0f}s budget "
+                f"after {time.monotonic() - t0:.0f}s with {done} forwards done")
+
+    def _probe_device(self) -> torch.device:
+        return next(self.target_model.parameters()).device
+
     @torch.no_grad()
-    def teacher_forced_probe(self, prompt_ids, tokens, chunk: int = 4096) -> Dict:
+    def teacher_forced_probe(self, prompt_ids, tokens, chunk: int = 4096,
+                             budget_s: float = 900.0) -> Dict:
         """Judge an emitted stream against the target's own argmax, and measure
         the packed-vs-stepwise noise floor that justifies the tolerance.
 
@@ -2237,13 +2277,22 @@ class RASDInference:
         if n < 2:
             return {"error": "need >= 2 tokens", "tokens": n}
 
+        # The budget is armed HERE, before the first forward, so it covers the
+        # prefill too -- a 128k prefill is the single most expensive step and it
+        # would otherwise be the one step running unbounded.
+        t0 = time.monotonic()
+        forwards = 0
+
         def prefill(cache):
+            nonlocal forwards
             out = None
             for start in range(0, prompt.shape[1], chunk):
                 piece = prompt[:, start:min(start + chunk, prompt.shape[1])]
                 out = self.target_model(piece, past_key_values=cache,
                                         use_cache=True)
                 cache = out.past_key_values
+                forwards += 1
+                self._check_probe_budget(t0, budget_s, forwards)
             return out.logits[:, -1, :].float(), cache
 
         cfg = self.cfg
@@ -2256,6 +2305,8 @@ class RASDInference:
             out = self.target_model(step, past_key_values=cache, use_cache=True)
             cache = out.past_key_values
             step_rows.append(out.logits[:, -1, :].float())
+            forwards += 1
+            self._check_probe_budget(t0, budget_s, forwards)
         measured_kv = detect_kv_precision(cache)
 
         # --- shape B: the packed verify shape, ONE forward for n tokens -----
@@ -2263,6 +2314,8 @@ class RASDInference:
         packed_first, cache = prefill(cache)
         packed_in = torch.tensor([toks], device=device, dtype=torch.long)
         out = self.target_model(packed_in, past_key_values=cache, use_cache=True)
+        forwards += 1
+        self._check_probe_budget(t0, budget_s, forwards)
         # logits[:, i] predicts toks[i+1], so position i uses index i-1.
         packed_rows = [packed_first] + [out.logits[:, i - 1, :].float()
                                         for i in range(1, n)]
@@ -2299,6 +2352,11 @@ class RASDInference:
                 "control_max_abs_delta": control,
                 "positions": n - 1,
             },
+            # Recorded so a probe that is close to its budget is visible BEFORE
+            # it starts failing: the budget is a fault detector, and a run that
+            # crept up on it is the evidence that the budget needs raising.
+            "budget_s": budget_s,
+            "elapsed_s": round(time.monotonic() - t0, 3),
         }
 
     def generate_text(self, prompt: str, **kwargs) -> Tuple[str, Dict]:

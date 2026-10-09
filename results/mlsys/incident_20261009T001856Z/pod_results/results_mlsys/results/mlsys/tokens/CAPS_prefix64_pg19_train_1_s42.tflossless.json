@@ -1,0 +1,5 @@
+{
+  "run_id": "CAPS_prefix64_pg19_train_1_s42",
+  "error": "DistBackendError: [Rank 0] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=7036, OpType=COALESCED, NumelIn=18446744073709551615, NumelOut=18446744073709551615, Timeout(ms)=3600000) ran for 3600010 milliseconds before timing out.",
+  "world_size": 8
+}

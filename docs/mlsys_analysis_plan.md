@@ -472,6 +472,76 @@ the one where it is not, states exactly what the evidence supports. It also mean
 the gate is a real test: at `TOL_bf16 ~ 1.66` the bf16 negatives fail it by
 4x-10x.
 
+**6.1d  The probe deadlocked at 8 ranks, and the diagnosis is exact.**
+
+The first 8-rank arming of this gate (2026-10-09T00:00Z) did not produce a
+verdict: `engine_cap_smoke` ran 1 hour 25 minutes, completed ONE of six rows, and
+its first row's probe sidecar held an error instead of numbers --
+
+```
+DistBackendError: [Rank 0] Watchdog caught collective operation timeout:
+WorkNCCL(SeqNum=7036, OpType=COALESCED, ...) ran for 3600010 milliseconds
+```
+
+* **What happened.** `gen_ids` and `engine_input_ids` are RANK-0-ONLY: the metric
+  guards in `RASDInference.generate` are `if cfg.save_generated_tokens and
+  self._rank == 0` (src/models/rasd_inference.py:1745 in the speculative path,
+  :2140 in the target-only path), so ranks 1-7 pop `None`. The probe's entry
+  condition was `if run.get("teacher_forced_check") and gen_ids and
+  engine_input_ids:` (run_experiment.py:1307) -- a rank-local truthiness test. So
+  rank 0 entered a ring collective ALONE: it completed 7036 collectives by
+  itself, waited for peers that had already moved on, and sat in the NCCL
+  watchdog for 3600 s. The error in the sidecar is that watchdog, not the probe.
+* **Why it was invisible for 62 minutes.** The pod and the operator both measured
+  progress on `RUN_LOG.txt`, which only moves at stage boundaries, and
+  `engine_cap_smoke`'s own threshold is 240 min. The manifest.log gap with no
+  output at all is 62.0 min for this run and 66.3 min for the earlier failed one;
+  both are inside every threshold that existed. Cost: ~$43 of 8xA100-80GB for a
+  run that could never finish.
+* **The fix.** (i) the ids are BROADCAST from rank 0 with
+  `dist.broadcast_object_list`, and every rank enters on the run flag ALONE;
+  (ii) every rank agrees on the verdict with `all_gather_object`, so one rank's
+  failure is every rank's failure and no rank is left entering collectives the
+  others have abandoned; (iii) the probe takes a wall-clock budget
+  (`PROBE_BUDGET_S`, 900 s) checked at loop boundaries and AGREED on with a MAX
+  all-reduce, raising `ProbeBudgetExceeded` instead of hanging; (iv) the process
+  group's watchdog is bounded by the same budget (`PROBE_PG_TIMEOUT_MIN`, 15 min)
+  because a rank blocked INSIDE a collective never gets a turn to run an
+  in-process check -- the 3600 s figure was that watchdog's own default.
+* **The gate is now bf16-only.** The NF4 cap-64 pair no longer carries a probe.
+  NF4 noise flips 20% of argmaxes at 128k, so no threshold separates it from a
+  real defect and its numbers could never gate; two more probes cost ~2 h of the
+  stage for figures nobody could act on. The anti-vanishing guard still requires
+  a probed pair on a GATED_KV dtype, so removing them cannot leave the stage
+  passing without testing anything.
+
+**6.1e  Byte-level liveness watchdog (both pod and operator).**
+
+New rule, in `configs/mlsys_stall_thresholds.json` as `liveness_minutes`: if
+`~/manifest.log` does not GROW for that many minutes while a stage is running,
+treat it as a stall -- pull, terminate, stop. It is checked independently on the
+pod (`stall_watchdog` in scripts/mlsys_manifest.sh) and by the operator
+(scripts/mlsys_watch_and_run.sh), both reading the same key from the same file.
+
+* **Measured before chosen.** The longest legitimate silence anywhere in the
+  campaign's manifest logs is a 1M-token target prefill at **6.29 min** (measured
+  as ttft across 146 rows; the runner prints a phase's first line when the phase
+  is DONE, so a prefill is exactly silence). 2x that = 12.58 min, which does not
+  exceed 15, so the operator's rule leaves the threshold at **15 min** -- 2.4x
+  margin. The longest context in the approved stages is 256k, roughly a quarter
+  of it.
+* **It is not per-stage overridable, on purpose.** A per-stage value would let
+  exactly the stage that hangs opt out of the check that exists to catch it. The
+  per-stage thresholds remain as the OUTER bound.
+* **It does not fire before a stage starts.** Provisioning is legitimately quiet
+  in manifest.log (the venv install writes to pod_env.log), and both sides
+  require a running stage.
+* **Tested** with `scripts/mlsys_watchdog_selftest.sh`, which extracts the
+  watchdog from the shipped manifest and runs it against (A) a manifest that
+  stops writing mid-stage, with the per-stage limit set to 9999 min so only the
+  liveness rule can fire, and (B) one with no stage started, the negative
+  control. Same script in the shakedown's P8, so the two cannot drift.
+
 **The gate runs at 128k; the floor was measured at 8k and 32k. Stated plainly
 because it is a real extrapolation.** `TOL_bf16 = 1.875` comes from
 `max|delta|_bf16 = 0.9375` at 32k. At 8k it is 0.688, so the floor GROWS with

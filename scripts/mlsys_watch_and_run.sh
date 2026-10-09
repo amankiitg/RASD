@@ -818,11 +818,39 @@ PYSTALL
   printf '%s' "$v"
 }
 
+# The byte-level liveness threshold: how long the pod's ~/manifest.log may go
+# without growing while a stage runs. Read from the SAME file the pod watchdog
+# reads, so the two cannot disagree -- and deliberately without the per-stage
+# override, because the whole point is to be tighter than every stage value.
+liveness_minutes() {
+  local v
+  v=$("$PY" - "$STALL_JSON" "${MLSYS_MANIFEST_LIVENESS_MIN:-15}" <<'PYLIVE' 2>/dev/null
+import json, sys
+path, fallback = sys.argv[1], int(sys.argv[2])
+try:
+    d = json.load(open(path))
+except Exception:
+    print(fallback); raise SystemExit
+print(int(d.get("liveness_minutes", fallback)))
+PYLIVE
+)
+  case "$v" in ''|*[!0-9]*) v=15 ;; esac
+  printf '%s' "$v"
+}
+LIVE_MIN=$(liveness_minutes)
+LIVE_SIG=""
+LIVE_SINCE=""
+
 while true; do
   # One round trip for the marker, the progress signature and the current stage.
   probe=$(ssh $SSH_OPTS "$SSH_USER@$IP" '
     f=~/manifest.log; r=~/RASD/results/mlsys/RUN_LOG.txt
     if [ -f ~/manifest.rc ]; then printf "rc=%s\n" "$(cat ~/manifest.rc)"; else echo "rc=RUNNING"; fi
+    if [ -f "$f" ]; then
+      printf "logbytes=%s\n" "$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    else
+      printf "logbytes=\n"
+    fi
     if [ -f "$r" ]; then
       printf "lines=%s\n" "$(wc -l < "$r" | tr -d " ")"
       printf "mtime=%s\n" "$(stat -c %Y "$r" 2>/dev/null || echo 0)"
@@ -885,6 +913,27 @@ while true; do
     if [ "$idle" -gt $(( limit * 60 )) ]; then
       say "STALL: no progress for ${idle}s in stage '${stage}' (limit ${limit}min)"
       collect_incident "stall in ${stage:-unknown} (${idle}s idle, limit ${limit}min)"
+      MANIFEST_ABORTED=1
+      break
+    fi
+    # (c) byte-level liveness on the pod's own manifest.log. The per-stage bound
+    #     above only moves when a STAGE_* line lands, so a hang INSIDE a stage is
+    #     invisible to it: on 2026-10-09T00:00Z the probe deadlocked and 62 min
+    #     of 8xA100-80GB (~$43) were billed against a run that could never
+    #     finish, because engine_cap_smoke's own limit is 240 min. manifest.log
+    #     grows continuously while a run does anything -- tqdm every second, a
+    #     TRACE line per phase -- so no growth means nothing is happening.
+    #     Checked only while a stage is running: before the first STAGE_START the
+    #     pod is still provisioning, which is not a hang in a stage.
+    logbytes=$(printf '%s\n' "$probe" | sed -n 's/^logbytes=//p')
+    if [ -z "$LIVE_SIG" ]; then
+      LIVE_SIG="$logbytes"; LIVE_SINCE=$now
+    elif [ "$logbytes" != "$LIVE_SIG" ]; then
+      LIVE_SIG="$logbytes"; LIVE_SINCE=$now
+    elif [ -n "$stage" ] && [ $(( now - LIVE_SINCE )) -gt $(( LIVE_MIN * 60 )) ]; then
+      say "STALL: the pod's manifest.log has not grown for $(( now - LIVE_SINCE ))s"
+      say "       in stage '${stage}' (liveness limit ${LIVE_MIN}min), holding at ${logbytes} bytes"
+      collect_incident "liveness stall in ${stage} ($(( now - LIVE_SINCE ))s without a byte written, limit ${LIVE_MIN}min)"
       MANIFEST_ABORTED=1
       break
     fi

@@ -46,7 +46,6 @@ CAP_SMOKE:
     documents: [pg19_train_1]
     max_new_tokens: 64
     checkpoint_every: 0
-    teacher_forced_check: true
     notes: 'cap=64: the truncated final round has a different remainder than 1024'
   - id: CAPS_prefix64_targetonly
     context_length: 131072
@@ -54,7 +53,6 @@ CAP_SMOKE:
     max_new_tokens: 64
     spec_steps: 0
     checkpoint_every: 0
-    teacher_forced_check: true
     notes: 'target-only partner at cap=64'
   - id: CAPS_prefix1024
     context_length: 131072
@@ -72,9 +70,11 @@ CAP_SMOKE:
   # The bf16-KV pair carries the LOSSLESSNESS GATE (analysis plan 6.1c). At
   # bf16 the two forward shapes agree to within 0.375 logits on the emitted
   # tokens (measured at 1 rank), against a 6.75-logit best negative, so a gate
-  # with TOL_bf16 = 1.875 is a real test. The NF4 pairs are still measured and
-  # reported, but they do NOT gate: NF4 KV noise alone flips 20% of argmaxes at
-  # this context, which is the same order as the defects a gate must catch.
+  # with TOL_bf16 = 1.875 is a real test. The NF4 pairs are NOT probed: NF4 KV
+  # noise alone flips 20% of argmaxes at this context, which is the same order as
+  # the defects a gate must catch, so their numbers can never gate and are not
+  # worth a probe's wall clock. They were probed on 2026-10-09 and the two extra
+  # probes cost ~2 h of the stage for figures nobody could act on.
   - id: CAPS_prefix64_bf16
     context_length: 131072
     documents: [pg19_train_1]
