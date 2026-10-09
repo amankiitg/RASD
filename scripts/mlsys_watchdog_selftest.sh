@@ -30,6 +30,23 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $*"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $*"; }
 
+# Wait for a pattern to appear in a log, up to $3 seconds.
+#
+# The escalation does NOT run before the manifest exits: the watchdog graces the
+# children for up to 6s and only then KILLs and records STALL_KILL, and the
+# watchdog outlives the manifest (which exits on its own TERM immediately). So a
+# single grep straight after run_case returns is a RACE -- case C failed on the
+# pod with "no STALL_KILL" while the escalation was demonstrably running and then
+# passed with the identical code a minute later.
+wait_for_log() {   # $1 = log file, $2 = pattern, $3 = seconds
+  local n=0
+  while [ "$n" -lt "$3" ]; do
+    grep -q "$2" "$1" 2>/dev/null && return 0
+    sleep 1; n=$((n + 1))
+  done
+  return 1
+}
+
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -101,6 +118,33 @@ python3 -c 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); 
 CHILD=$!
 echo "$CHILD" > "__CHILDPID__"
 echo "a stage is running, blocked in a foreground child"
+wait "$CHILD"
+echo "IF YOU SEE THIS THE LIVENESS WATCHDOG DID NOT FIRE"
+BODY
+  elif [ "$mode" = "realchild" ]; then
+    # The campaign's child is not one process: it is `timeout ... run_experiment.py`,
+    # which forks torchrun, which forks one process per rank. A stop routine that
+    # kills only the pid it was handed leaves the ranks running -- which is the
+    # failure this case exists to catch, and it is invisible to case A.
+    #
+    # The tree is SIGSTOPped rather than merely silent: a stopped process is
+    # still ALIVE, so the TERM phase cannot claim credit for killing it, and the
+    # escalation to KILL is the only thing that can end it. That is exactly the
+    # shape of a hung run.
+    cat >> "$out" <<'BODY'
+interim "STAGE_START name=validate_stop timeout=999s"
+stall_watchdog &
+STALL_WATCHDOG_PID=$!
+printf '%s\n' "$STALL_WATCHDOG_PID" > "$WATCHDOG_SELF_FILE" 2>/dev/null
+eval "$MLSYS_SELFTEST_CHILD_CMD" &
+CHILD=$!
+sleep 25
+TREE=$(_descendants "$CHILD" "")
+printf '%s\n' "$CHILD" > "__REALPID__"
+printf '%s\n' $TREE > "__REALTREE__"
+for p in $TREE; do kill -STOP "$p" 2>/dev/null; done
+kill -STOP "$CHILD" 2>/dev/null
+echo "a real child tree is frozen (silent, alive): $TREE"
 wait "$CHILD"
 echo "IF YOU SEE THIS THE LIVENESS WATCHDOG DID NOT FIRE"
 BODY
@@ -179,7 +223,7 @@ a stall without stopping the run, which is exactly the 2026-10-09 failure"
 else
   bad "the case wrote no child pid, so nothing about stopping was tested"
 fi
-if grep -q STALL_KILL "$WORK/a_watchdog.log" 2>/dev/null; then
+if wait_for_log "$WORK/a_watchdog.log" STALL_KILL 25; then
   ok "a child that ignores TERM was escalated to KILL"
 else
   bad "the term-ignoring child was not escalated (or no STALL_KILL record)"
@@ -202,6 +246,46 @@ case "$B_OUT" in
   *"has not grown"*) bad "the liveness branch fired during provisioning" ;;
   *) ok "no liveness abort during provisioning" ;;
 esac
+
+echo
+echo "== C. a real, frozen child tree is stopped =="
+# Skipped unless a real command is supplied. It is a pod-side case: it needs a
+# GPU and the campaign env to have anything real to freeze.
+if [ -z "${MLSYS_SELFTEST_CHILD_CMD:-}" ]; then
+  echo "  skip  MLSYS_SELFTEST_CHILD_CMD is not set, so there is no real tree to"
+  echo "        stop; on a pod run it as"
+  echo "        MLSYS_SELFTEST_CHILD_CMD='... run_experiment.py ...' bash $0"
+else
+  write_thresholds
+  build_case "$WORK/case_c.sh" realchild "$WORK/c_watchdog.log"
+  sed -i.bak "s|__REALPID__|$WORK/c_real.pid|; s|__REALTREE__|$WORK/c_real_tree.txt|" \
+    "$WORK/case_c.sh" && rm -f "$WORK/case_c.sh.bak"
+  : > "$WORK/c.log"
+  RC_C=$(run_case "$WORK/case_c.sh" "$WORK/c.log")
+  C_OUT=$(cat "$WORK/c.log")
+  printf '%s\n' "$C_OUT" | sed 's/^/      /'
+  [ "$RC_C" = "9" ] && ok "the frozen tree's manifest exited 9" \
+                   || bad "exit was $RC_C, expected 9"
+  wait_for_log "$WORK/c_watchdog.log" STALL_KILL 25 \
+    && ok "the escalation ran: a stopped tree cannot be stopped by TERM" \
+    || bad "no STALL_KILL: TERM alone cannot end a stopped process"
+  if [ -s "$WORK/c_real_tree.txt" ]; then
+    alive=""
+    n=0
+    while [ "$n" -lt 20 ]; do
+      alive=""
+      for p in $(cat "$WORK/c_real_tree.txt"); do
+        kill -0 "$p" 2>/dev/null && alive="$alive $p"
+      done
+      [ -z "$alive" ] && break
+      sleep 1; n=$((n + 1))
+    done
+    [ -z "$alive" ] && ok "every process in the real tree is gone" \
+                    || bad "survivors after the stop:$alive"
+  else
+    bad "the case recorded no tree, so nothing about the tree was tested"
+  fi
+fi
 
 echo
 echo "== WATCHDOG SELFTEST: $PASS passed, $FAIL failed =="

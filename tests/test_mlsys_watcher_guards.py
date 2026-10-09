@@ -19,6 +19,7 @@ possible.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -741,21 +742,36 @@ def test_the_manifest_run_sources_the_pod_env_and_the_token():
         "the stall limit is not passed to the pod watchdog"
 
 
-def test_the_manifest_start_detaches_stdin():
-    """The ssh that starts the manifest must not inherit the terminal's stdin.
+def test_the_manifest_start_releases_the_ssh_channel():
+    """The backgrounded list must be a GROUP whose own stdout is the log.
 
-    On 2026-10-09 the watcher's manifest-start ssh stayed alive for 1h42m (pid
-    80495) because the remote manifest holds the channel open as long as its
-    stdin is open. The watcher is a `while` loop AROUND that ssh, so it never
-    reached its first monitoring iteration and could not act on the stall its own
-    watchdog had already detected -- the campaign then ran 70 more minutes.
-    `</dev/null` is the whole fix, so it is asserted rather than assumed.
+    `&' has LOWER precedence than `&&', so
+
+        cd ~/RASD && . env.sh && nohup manifest > ~/manifest.log 2>&1 & echo started
+
+    backgrounds the ENTIRE `&&' chain. Only the innermost command's output was
+    redirected, so the backgrounded subshell keeps the ssh channel as its stdout,
+    ssh never sees EOF, and it does not return until the manifest EXITS. The
+    watcher is a loop AROUND that ssh, so it never reached a single monitoring
+    iteration: on 2026-10-09 its child ssh stayed open for 1h42m while the stall
+    its own watchdog had already detected went unhandled for another 70 minutes.
+
+    Measured on a 1x A100 against a 40s stub: 40.7s blocked ungrouped, 0.4s
+    grouped-and-redirected. The earlier `</dev/null' hypothesis (stdin) is NOT
+    the cause -- an A/B measured 12.6s and 12.5s with and without it -- so the
+    shape is asserted structurally rather than by its tokens.
     """
     start = SRC[SRC.index('say "starting the manifest"'):]
     start = start[:start.index('>>"$LOG" 2>&1')]
     assert "nohup bash -c" in start, "the manifest start no longer detaches at all"
-    assert "</dev/null" in start, \
-        "the manifest-start ssh inherits stdin, so it can hold the watcher open"
+    # Join the shell line continuations first, so the shape can be matched without
+    # encoding where the author happened to wrap the line.
+    flat = re.sub(r"\\\n\s*", " ", start)
+    assert re.search(r"\(\s*cd ~/RASD.*?\)\s*</dev/null > ~/manifest\.log 2>&1\s*&\s*"
+                     r"echo started", flat, re.S), \
+        "the backgrounded chain is not a redirected group, so ssh holds the channel"
+    assert not re.search(r"\(\s*cd ~/RASD.*?> ~/manifest\.log 2>&1\s*\)", flat, re.S), \
+        "the redirect is inside the group: the group's own stdout still holds the channel"
 
 
 def test_pod_env_applies_the_operator_notes():
@@ -798,9 +814,12 @@ def test_the_token_reaches_every_remote_command_that_needs_it():
     assert "HF_TOKEN='$HF_TOKEN_VALUE'" in prov, \
         "the provisioning command does not carry the token"
 
-    # the manifest command
-    j = SRC.index('"cd ~/RASD && rm -f ~/manifest.rc')
-    man = SRC[j:SRC.index("echo started\"", j)]
+    # the manifest command, located by its own banner rather than by the first
+    # characters of the remote string: that prefix changed once already (the
+    # backgrounded chain is now a parenthesised group) and took this extraction
+    # down with it, so the region is delimited structurally.
+    j = SRC.index('say "starting the manifest"')
+    man = SRC[j:SRC.index('>>"$LOG" 2>&1', j)]
     assert "HF_TOKEN='$HF_TOKEN_VALUE'" in man, \
         "the manifest command does not carry the token"
     assert ". ~/RASD/.pod_env.sh" in man, \

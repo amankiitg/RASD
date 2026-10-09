@@ -1390,3 +1390,61 @@ FIXES NEEDED BEFORE THE NEXT ARMING (not applied):
      must assert the child died, not just that the log line appeared. The current
      P8 passed while this exact failure was live, because it only asserted the
      message and the exit code of a manifest with no foreground child.
+
+================================================================================
+2026-10-09T07:5xZ  MILESTONE: all five fixes applied, validated on a real GPU
+================================================================================
+
+COMMIT a5a3ee7 (pushed): in-row progress heartbeats, a stop path that stops,
+the watcher's ssh channel actually released, the self-test able to fail, and a
+real bug the suite caught on the way (`_step_gap` had been swallowed by an
+earlier edit -- its `def` line was gone and its body was orphaned inside
+`_row_heartbeat`; the engine would have raised NameError on the first row of the
+next campaign). Tests 1088 passed, dry run 32/0, self-test 10/0 locally.
+
+VALIDATION ON A 1x A100 SXM4-40GB (129.213.90.42, us-east-1, $1.99/hr). No
+multi-GPU A100 existed in any region at the time: gpu_2x/4x a100 empty, 8x a100
+40GB empty, 8x a100 80GB empty. The campaign's own 8x80GB was therefore also
+unavailable, and the properties below do not depend on the rank count.
+
+CHECK 1 -- progress DURING a row (real engine, real decode, nproc=1, 8k, bf16):
+  VAL_spec_8k_s42      4096 tok, 819 rounds, 124.4s
+      [PROGRESS ... round=0   tokens=0    elapsed=1s]
+      [PROGRESS ... round=416 tokens=2080 elapsed=63s]
+      [PROGRESS ... round=816 tokens=4080 elapsed=124s]
+  VAL_targetonly_8k_s42 8192 tok, 8191 rounds, 129.6s
+      [PROGRESS ... round=0    tokens=0    elapsed=1s]
+      [PROGRESS ... round=4000 tokens=4000 elapsed=61s]
+      [PROGRESS ... round=7680 tokens=7680 elapsed=121s]
+  Worst measured silence inside a row: 62s, against a 15-minute rule -> 14.5x
+  margin. The target-only arm is the one that was silent for 70 minutes in the
+  stopped campaign and printed nothing at all before this change.
+
+CHECK 2 -- the stop path kills a REAL, FROZEN process tree (case C of the
+  self-test, on the pod, with a live `run_experiment.py` tree SIGSTOPped so it is
+  silent AND alive): 13 passed, 0 failed. The escalation is what ends it -- TERM
+  cannot end a stopped process -- and every process in the tree is gone.
+  Bug found by running it here: case C failed on the pod with "no STALL_KILL"
+  while the escalation was demonstrably running. The assertion grepped the log
+  immediately after the manifest exited, but the escalation happens in the
+  WATCHDOG process, which graces the children for up to 6s and outlives the
+  manifest. The assertion now polls. That is a test that could have passed or
+  failed by timing alone, in either direction.
+
+CHECK 3 -- the watcher's ssh channel. THE EARLIER DIAGNOSIS WAS WRONG, and the
+  `</dev/null` fix was not the fix. Measured A/B on the pod against a 40s stub:
+      pre-fix text, ssh blocked .......... 40.7s (the whole stub)
+      `</dev/null` only ................. 12.6s / 12.5s with and without it
+      grouped + redirected .............. 0.4s, stub still working afterwards
+  Cause: `&` has LOWER precedence than `&&`, so
+      cd ~/RASD && . env.sh && nohup manifest > ~/manifest.log 2>&1 & echo started
+  backgrounds the WHOLE `&&` chain. Only the innermost command's output was
+  redirected, so the backgrounded subshell kept the ssh channel as its stdout and
+  ssh never saw EOF -- it waited for the manifest to exit. That is the 1h42m ssh
+  of 2026-10-09, and the fix is the parenthesis plus the redirect on the GROUP:
+      ( cd ~/RASD && ... && nohup ... ) </dev/null > ~/manifest.log 2>&1 &
+  `</dev/null` is kept (a manifest that cannot read the channel cannot hold it)
+  but it was cosmetic on its own. The test asserts the grouped shape and fails on
+  the pre-fix shape.
+
+NOT YET DONE: re-arming. The 8x80GB has had no capacity in any region.

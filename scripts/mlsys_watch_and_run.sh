@@ -672,8 +672,27 @@ say "starting the manifest"
 # carries the exit code, so "finished" and "finished badly" stop looking alike.
 # The marker is removed first: a stale one from an earlier attempt would report
 # a completion that has not happened.
+#
+# THE WHOLE CHAIN IS GROUPED AND REDIRECTED, and that grouping is the fix, not
+# decoration. `&' has lower precedence than `&&', so this
+#
+#     cd ~/RASD && . env.sh && nohup manifest > ~/manifest.log 2>&1 & echo started
+#
+# backgrounds the ENTIRE `&&' chain, not just the manifest. The backgrounded
+# subshell keeps the channel as its stdout (only the innermost command's output
+# was redirected), so ssh does not see EOF and does not return until the manifest
+# EXITS. Measured 2026-10-09 on a 1x A100 against a 12s stub: 12.5s with the
+# `cd', 0.4s without it. That is what pinned the watcher's ssh open for 1h42m on
+# 2026-10-09 -- it never reached its monitoring loop, so nothing reacted to the
+# stall its own watchdog had already detected, and the run continued 70 minutes.
+#
+# `</dev/null' was the earlier hypothesis (stdin, not stdout) and it does NOT fix
+# this: an A/B on the pod measured 12.6s and 12.5s with it and without it. It is
+# kept because a manifest that cannot read the channel cannot hold it either.
+# The parenthesis + redirects are asserted by the tests, because this is exactly
+# the kind of invisible quoting detail that regresses silently.
 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "cd ~/RASD && rm -f ~/manifest.rc && set -a && . ~/RASD/.pod_env.sh && set +a && \
+  "( cd ~/RASD && rm -f ~/manifest.rc && set -a && . ~/RASD/.pod_env.sh && set +a && \
    HF_TOKEN='$HF_TOKEN_VALUE' \
    MLSYS_PYTHON='$PY_REMOTE' \
    NODE_RATE_PER_HOUR=$RATE \
@@ -683,7 +702,7 @@ ssh $SSH_OPTS "$SSH_USER@$IP" \
    MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-850} \
    MLSYS_ONLY_STAGES='${ONLY_STR}' \
    MLSYS_APPROVED_STAGES='${ONLY_STR}' \
-   nohup bash -c 'bash scripts/mlsys_manifest.sh; echo \$? > ~/manifest.rc' \\
+   nohup bash -c 'bash scripts/mlsys_manifest.sh; echo \$? > ~/manifest.rc' ) \
      </dev/null > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
 
 # A failed ssh says NOTHING about whether the manifest is still running. Treating
