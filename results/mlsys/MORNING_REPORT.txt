@@ -1649,3 +1649,126 @@ LIVE EVIDENCE THAT THE PROGRESS LINES ARE IN THIS RUN: the manifest started
 one of the lines added in d15266c/a8e7e3a, running on the pod. The pod's two
 gate/vLLM scripts were verified byte-identical to the committed ones by sha256
 before the manifest started.
+
+================================================================================
+2026-10-09T11:0xZ  STOP (OPERATOR) -- resumed in ~12h
+================================================================================
+
+WHY: operator stop, not a failure. Nothing was wrong at the moment of the stop.
+
+WHAT COMPLETED THIS RUN
+  * gate_calibration: OK, wall 672s, $4.17. Landed 10:18:20Z, reported by the
+    monitor at 10:18:55Z ("CALIBRATION OK: every control matched its expected
+    verdict"). All 9 candidates ran and the verdicts were identical to the
+    2026-10-08 run:
+        P1_native_32k              ctx=32768  ppl=1.0325   ratio=1.0     PASS
+        P2_declared_shipped_64k    ctx=65536  ppl=1.0302   ratio=1.0     PASS
+        P3_native_128k             ctx=131072 ppl=1.0458   ratio=1.0     PASS
+        B_native_32k               ctx=32768  ppl=1.0325   ratio=1.0     PASS
+        B_native_64k               ctx=65536  ppl=1.0302   ratio=1.0     PASS
+        B_native_128k              ctx=131072 ppl=1.0458   ratio=1.0     PASS
+        B_llama2_yarn8_32k_correct ctx=32768  ppl=7.0155   ratio=1.0     PASS
+        N1_arm4_f2_construction    ctx=131072 ppl=372.907  ratio=356.58  FAIL (expected)
+        N2_llama2_misanchored      ctx=32768  ppl=53107.25 ratio=7569.98 FAIL (expected)
+    every positive passed and both negatives failed, all 9 rows status=ok.
+  * engine_cap_smoke: STOPPED MID-STAGE, 3 of 6 rows done, all three status=ok:
+        CAPS_prefix64_pg19_train_1_s42             ok  tps=0.50  accept=0.2759 127.4s  64 tok   30 rounds
+        CAPS_prefix64_targetonly_pg19_train_1_s42  ok  tps=0.26  accept=0.0000 243.2s  64 tok   63 rounds
+        CAPS_prefix1024_pg19_train_1_s42           ok  tps=1.06  accept=0.8609 965.2s 1024 tok 231 rounds
+    Row 4 of 6 (CAPS_prefix1024_targetonly) was in flight at the stop, and the
+    two bf16 rows never started. This is the FIRST 8-rank run of the collision
+    guard and the wandb fixes: rows 1-3 all ok, no REFUSING error, no traceback,
+    no OOM, no "wandb init failed".
+
+WHAT DID NOT RUN: coherence_gate (the next stage), correction_note_evidence,
+natural_f1_128k, impl_validation, rope_intervention_128k,
+natural_spec_gated_256k, vllm_ladder.
+
+THE LIVENESS WORK WAS DIRECTLY EXERCISED, on the row that caused the last stop:
+CAPS_prefix1024 printed [PROGRESS ... round=48 tokens=148 elapsed=198s] and on
+through round=224, i.e. ~60s apart, and the row that was silent for 973s (and
+then 70 minutes) in the stopped campaign reported continuously and completed.
+gate_calibration printed 65 [GATE] lines, including
+"[GATE] P3_native_128k: generating 200 tokens from a 130048-token prompt".
+The pod never logged a stall: ~/manifest_watchdog.log was 0 bytes at the stop.
+
+SPEND AND LEDGER
+  * Instance billed wall: 09:53:35Z -> 11:08Z = 74.4 min x $22.32/hr = $27.68.
+  * Ledger merged the usual way (scripts/mlsys_merge_cost_ledger.py, append-only):
+    +1 row, gate_calibration 672s x8 = 1.4933 GPU-h = $4.17. The local ledger is
+    now 10 rows summing $82.29.
+  * So ~$23.51 of this instance is NOT in the ledger (boot, provisioning, and the
+    aborted engine_cap_smoke), consistent with the standing rule that an aborted
+    run is not ledgered.
+
+INCIDENT DIRECTORY: results/mlsys/incident_20261009T110710Z_operator_stop/
+  manifest.log (658 lines, 81131 bytes, final), RUN_LOG.txt, pod_env.log,
+  vllm_venv.log, manifest_watchdog.log (0 bytes), watcher.stdout, STOP.txt,
+  ledger_merge.json, and pod_results/ (18 files, 4.3 MB) holding THIS run's
+  gate_calibration.csv, engine_cap_smoke.csv (3 rows), gpu_hours.csv,
+  gate_calibration_generated/ and per-token/token sidecars.
+  NOTE for whoever reads results/mlsys/*.csv directly: engine_cap_smoke.csv and
+  gate_calibration.csv at that level are the OLDER 2026-10-08 files (1 row and
+  the previous run's rows) -- this run's copies were kept in pod_results/ because
+  a local file already existed. Use the incident directory for this run.
+  Pull verified byte-for-byte against the pod for RUN_LOG.txt, pod_env.log,
+  gate_calibration.csv, engine_cap_smoke.csv and gpu_hours.csv; manifest.log was
+  re-pulled after the stop (it grew 93 bytes while the manifest was still alive).
+
+STOP ACTIONS TAKEN
+  1. Pulled everything BEFORE signalling anything (above).
+  2. Pod: TERM the manifest first, then its descendants (the ordering stop_run
+     uses), then KILL the 12 survivors of a 280-process tree. Last lines:
+     "Terminated" / "SIGNALLED name=engine_cap_smoke reason=stall-watchdog-or-operator".
+     ~/manifest.rc does not exist: the wrapper was killed before it could write
+     one, which is correct for a kill, not a stage failure.
+  3. Instance d2e1825003d041ef887996efff29f2da terminated; the API reports
+     0 instances.
+  4. Mac: watcher 42508 (needed KILL; it was blocked in an ssh), caffeinate
+     42509, monitor 42918, and the two wrapper shells 42506/42916 all
+     terminated by pid. The capacity poller had already exited on its own when
+     capacity appeared at 09:53. `ps` now matches NO watcher, monitor,
+     caffeinate or poller process.
+
+--------------------------------------------------------------------------------
+RESUME CHECKLIST (~12h from now)
+--------------------------------------------------------------------------------
+PRE-FLIGHT, all read-only:
+  1. Confirm 0 instances:
+     curl -sS -u "$KEY:" https://cloud.lambdalabs.com/api/v1/instances
+  2. Confirm HEAD == origin and a clean tree on mlsys-experiments
+     (git rev-parse HEAD vs origin/mlsys-experiments; git status --short empty).
+     The commits that matter for this run: a5a3ee7, 6009f96, d15266c, a8e7e3a.
+  3. Confirm configs/mlsys_stall_thresholds.json still has liveness_minutes 15
+     and the per-stage values unchanged (coherence_gate 2.0h, engine_cap_smoke
+     4.0h, vllm_ladder 2.5h, ...).
+  4. Tests + dry run: conda run -n rasd python -m pytest tests -q  (expect 1098
+     passed) and bash scripts/mlsys_dry_run.sh (expect 32/0), plus
+     bash scripts/mlsys_watchdog_selftest.sh (expect 10/0; case C needs
+     MLSYS_SELFTEST_CHILD_CMD on a pod).
+  5. Re-check the two memory flags recorded above: the 512k coherence_gate rows
+     may return status=oom by design (nothing consumes them in this allowlist),
+     and vllm_ladder's 512k rung is a ladder rung, not a gated one.
+  6. ARMED_ENV is unchanged: cap $2000, ask $300, 40h clock, 72h capacity wait,
+     60 +/-20s cadence, instance type gpu_8x_a100_80gb_sxm4 only, nine-stage
+     allowlist identical. Only re-write the arming comment.
+
+RE-ARM COMMAND (same as last time, detached; the marker line must be written
+BEFORE the watcher starts so the monitor scopes to this arming):
+  S=.../files
+  { echo "===== ARMING $(date -u +%FT%TZ) ====="; } >> "$S/watcher.stdout"
+  nohup bash "$S/arm_launcher.sh" >> "$S/watcher.stdout" 2>&1 &
+  # record the watcher/caffeinate pids, then:
+  nohup bash "$S/mlsys_launch_monitor.sh" >> "$S/monitor.out" 2>&1 &
+  # verify: 1 watcher polling, 1 monitor heartbeating, 0 instances
+
+WHAT WILL RE-RUN ON THE NEW POD: everything. The manifest starts at its first
+allowlisted stage and the pod is new, so gate_calibration runs again (~11 min
+measured twice: 672s and 753s), then engine_cap_smoke from its first row -- its
+3 completed rows do NOT resume (the stage never reached STAGE_OK and the
+manifest checks a full 6-row count, so a partial CSV is not reusable), and rows
+1-3 took 127s + 243s + 965s, with row 4 (target-only at cap 1024) and the two
+bf16 rows still to come, so budget ~50-90 min for the stage rather than the
+~20 min the first three suggest. Then coherence_gate (watch the 512k rows'
+status), correction_note_evidence, natural_f1_128k, impl_validation,
+rope_intervention_128k, natural_spec_gated_256k, vllm_ladder.

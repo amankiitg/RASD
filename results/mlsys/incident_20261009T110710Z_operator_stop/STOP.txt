@@ -1,0 +1,7 @@
+instance: d2e1825003d041ef887996efff29f2da (us-east-1, 8xA100-80GB, $22.32/hr)
+launched: 2026-10-09T09:53:35Z
+manifest started: 2026-10-09T10:07:07Z
+stopped (operator): 2026-10-09T11:07:54Z SIGNALLED name=engine_cap_smoke
+terminated: 2026-10-09T11:08Z
+billed wall: 74.4 min = $27.68
+ledgered stages: gate_calibration 672s x8 = 1.4933 GPU-h = $4.17 (engine_cap_smoke did not complete, so it has no row)
