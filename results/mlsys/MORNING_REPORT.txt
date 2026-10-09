@@ -1142,3 +1142,78 @@ than validating on the 8x. The probe fix and the liveness self-test will both
 run there: the probe must complete on both ranks and produce numbers comparable
 to the 1-rank values (1 rank, 8k, bf16: max shortfall 0.375, non-argmax 2/63,
 noise floor max|delta| 0.688, control 0.000).
+
+
+================================================================================
+01:30Z-02:00Z  2026-10-09  VALIDATED ON 8x A100 40GB: DEADLOCK FIX HOLDS, PROBE INVALID AT 8 RANKS
+================================================================================
+
+HARDWARE. gpu_2x_a100, gpu_4x_a100 and gpu_8x_a100 all had no capacity at
+01:25Z; the first to appear was gpu_8x_a100 (8x A100 40GB SXM4) in
+europe-central-1, at 01:30:20Z. That is the 40GB variant, NOT the 80GB SXM4 the
+campaign runs on, so it validates RANK PARTICIPATION at the campaign's rank count
+(8) but not the memory configuration. 29.1 min, $7.72 of the $12 allowance.
+0 instances confirmed at the end.
+
+WHAT PASSED, ON REAL 8-RANK HARDWARE.
+
+1. The deadlock is fixed. Every rank entered the probe, it produced numbers on
+   both rows, and it took 156 s / 155 s -- not 3600 s. Previously rank 0 entered
+   alone and died in the NCCL watchdog. The deterministic control (the same
+   computation twice) is exactly 0.000, so the run is sound.
+
+2. The byte-level liveness watchdog passed on the pod: 8 passed, 0 failed. Case A
+   (a stage running, manifest.log frozen, per-stage limit set to 9999 min so only
+   the liveness rule could fire) fired, wrote
+   `LIVENESS ... reason=manifest.log-not-growing`, stopped the manifest, and the
+   run exited 9 -- which the watcher reads as an abort. Case B (no stage started,
+   the negative control) stayed quiet and exited 0. This is step 6 validated on
+   hardware, not just locally.
+
+WHAT FAILED, AND WHY IT IS NOT A NUMERICS RESULT.
+
+The probe's numbers at 8 ranks are far outside TOL_bf16 1.875:
+
+  quantity                   1 rank    8 ranks spec   8 ranks target-only
+  max shortfall              0.375     6.125          6.5625
+  non-argmax                 2/63      25/63 (39.7%)  30/63 (47.6%)
+  noise floor max|delta|     0.688     7.84           10.25
+  control                    0.000     0.000          0.000
+
+Taken at face value that would say bf16 numerics degrade 11x with rank count and
+the gate cannot pass. It says no such thing, because THE PROBE DOES NOT SHARD THE
+PROMPT. Under sequence sharding generate() feeds the model the rank's SLICE --
+`S_local = S // world_size; start = rank * S_local; local_ids =
+input_ids[:, start:end]` with absolute positions
+(src/models/rasd_inference.py:1458-1463, and the comment above it states the
+contract: "forwards its own slice; the patched LlamaAttention performs ring
+attention across ranks") -- while teacher_forced_probe feeds the FULL prompt on
+every rank. At world_size > 1 each rank therefore runs a forward the engine never
+runs: ring attention over a sharded KV cache whose queries are the whole
+sequence.
+
+The evidence does not depend on reading the code. The two arms fail at the SAME
+positions (2, 3, 8, 9) and the probe's replayed argmax at those positions is the
+same for both (position 2 -> 3021), yet generate() emitted 387 for the spec arm
+and 10707 for the target-only arm there. The probe disagrees with BOTH, so the
+disagreement is between the probe and the engine, not between the engine's two
+modes -- and the control being exactly 0.0 rules out nondeterminism.
+
+A SECOND BUG, FOUND BY THIS RUN. The multi-rank spawn used `["torchrun", ...]`
+from PATH, so on a pod whose PATH did not put the campaign env first, the workers
+ran under a different interpreter and died with `ModuleNotFoundError: No module
+named 'transformers'` while the parent -- which had just imported transformers to
+build the run -- reported only that the row errored. Now
+`[sys.executable, "-m", "torch.distributed.run", ...]`, with a test asserting a
+bare `"torchrun"` cannot come back. This cost one attempt of this validation.
+
+I AM NOT RE-ARMING THE 8x. The gate as pre-registered would abort
+engine_cap_smoke on a guaranteed false failure caused by the probe, and the
+campaign would never start: roughly a gate's cost ($20-45) for nothing. The
+options, both real work rather than a threshold change, are recorded in the plan
+as 6.1f: (a) make the probe shard like generate() and collect each position's
+logits from the rank that owns it -- the honest fix, since the probe must measure
+the engine's own forward; or (b) run the losslessness probe dense at nproc=1
+inside the 8-rank campaign -- cheap and immediately valid, but it tests the
+unsharded path only, so it would not catch a ring-specific defect. TOL_bf16's
+applicability at 8 ranks stays UNMEASURED.

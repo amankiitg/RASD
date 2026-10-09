@@ -353,3 +353,24 @@ class TestTheTwoRankHarnessStaysHonest:
             src = (REPO_ROOT / name).read_text()
             assert "mlsys_probe_2rank" not in src, (
                 f"{name} references the validation config")
+
+
+class TestWorkersRunTheSameInterpreter:
+    def test_torchrun_is_not_looked_up_on_path(self):
+        """A worker must run THIS interpreter.
+
+        `torchrun` from PATH is a different interpreter whenever PATH does not
+        put this environment first, and the children then run against that
+        interpreter's site-packages. On a validation pod on 2026-10-09 the
+        symptom was workers dying with `ModuleNotFoundError: No module named
+        'transformers'` while the parent -- which had just imported transformers
+        to build the run -- reported only that the row errored. The console
+        script and `python -m torch.distributed.run` are equivalent.
+        """
+        src = inspect.getsource(run_experiment.execute_run)
+        spawn = src[src.index("if nproc > 1:"):src.index("else:", src.index("if nproc > 1:"))]
+        assert '"torchrun"' not in spawn, (
+            "the multi-rank spawn still resolves torchrun from PATH")
+        assert '"torch.distributed.run"' in spawn
+        assert "sys.executable" in spawn, (
+            "the spawn must use the interpreter that is running this process")

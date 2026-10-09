@@ -1584,8 +1584,20 @@ def execute_run(run: dict, wandb_project: str, output_csv: str,
 
     if nproc > 1:
         # torchrun spawns nproc processes, each gets RANK/LOCAL_RANK/WORLD_SIZE set
+        # Spawned through THIS interpreter, not through a `torchrun` looked up
+        # on PATH. `torchrun` from PATH is a different interpreter whenever PATH
+        # does not put this environment first, and the children then run against
+        # that interpreter's site-packages: the failure is a worker that dies
+        # with `ModuleNotFoundError: No module named 'transformers'` while the
+        # parent, which imported transformers perfectly well, reports only that
+        # the run errored. That happened on a validation pod on 2026-10-09, where
+        # a bare non-interactive ssh shell had a different PATH from the
+        # watcher's, and it is the kind of failure that costs a whole stage
+        # before anyone sees the real message.
+        # `python -m torch.distributed.run` is the documented equivalent of the
+        # `torchrun` console script.
         cmd = [
-            "torchrun",
+            sys.executable, "-m", "torch.distributed.run",
             f"--nproc_per_node={nproc}",
             "--master_port=29500",
             __file__,

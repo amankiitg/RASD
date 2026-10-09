@@ -472,6 +472,62 @@ the one where it is not, states exactly what the evidence supports. It also mean
 the gate is a real test: at `TOL_bf16 ~ 1.66` the bf16 negatives fail it by
 4x-10x.
 
+**6.1f  The 8-rank probe is INVALID: it does not shard the prompt. Do not
+arm the gate on it.**
+
+Measured on 8x A100 40GB (2026-10-09T01:44Z, `configs/mlsys_probe_2rank.yml`,
+8k, bf16, 64 tokens, nproc=8), with the deadlock fixed:
+
+| quantity | 1 rank | 8 ranks (spec) | 8 ranks (target-only) |
+|---|---|---|---|
+| max shortfall | 0.375 | **6.125** | **6.5625** |
+| non-argmax | 2/63 (3.2%) | 25/63 (39.7%) | 30/63 (47.6%) |
+| noise floor max|delta| | 0.688 | 7.84 | 10.25 |
+| control (same computation twice) | 0.000 | **0.000** | **0.000** |
+| probe wall time | ~40 s | 157 s | 155 s |
+
+Both rows exceed `TOL_bf16 = 1.875` by ~3.3x, so the gate as pre-registered would
+FAIL. **It must not be read as a numerics result, because the probe is
+measuring the wrong thing at world_size > 1.**
+
+* **The defect.** Under sequence sharding `generate()` feeds the model the
+  rank's SLICE, not the prompt: `S_local = S // world_size; start = rank *
+  S_local; local_ids = input_ids[:, start:end]` with absolute `local_pos`
+  (src/models/rasd_inference.py:1458-1463), and the comment above it states the
+  contract -- "forwards its own slice; the patched LlamaAttention performs ring
+  attention across ranks for cross-slice attention". `teacher_forced_probe`
+  builds `prompt = as_tensor(prompt_ids).view(1,-1)` and feeds the FULL prompt on
+  every rank, so at world_size > 1 every rank runs a forward the engine never
+  runs: ring attention over a sharded KV cache whose queries are the whole
+  sequence.
+* **The evidence, which is independent of the code reading.** The two arms fail
+  at the SAME positions (2, 3, 8, 9) and the probe's replayed argmax at those
+  positions is the same for both (e.g. position 2 -> 3021), yet `generate()`
+  emitted 387 for the spec arm and 10707 for the target-only arm at that
+  position. The probe's forward disagrees with BOTH, so the disagreement is
+  between the probe and the engine, not between the engine's two modes. The
+  control being exactly 0.0 rules out nondeterminism as the explanation.
+* **What this does NOT invalidate.** The deadlock fix is confirmed on real
+  8-rank hardware: every rank entered the probe, it completed in 156 s (not
+  3600 s), produced numbers, and the control is exactly 0.0. The probe was
+  already correct at 1 rank, which is where the rule's constants were measured.
+* **Consequence for the campaign.** `TOL_bf16`'s applicability at 8 ranks is
+  UNMEASURED, exactly as 6.1c flagged, and now for a second reason. The 8x must
+  NOT be re-armed with this gate: it would abort on a guaranteed false failure
+  caused by the probe, not by the engine, at a cost of roughly a gate
+  (~$20-45) plus the campaign that never starts.
+* **The fix, two options, both real work rather than a threshold change.**
+  (a) Make the probe shard like `generate()` does -- feed `local_ids` and
+  absolute `local_pos` per rank, and collect each position's logits from the rank
+  that owns it (under sharding the final logits already live on rank
+  `world_size-1`, which is why `generate()` broadcasts `local_last_logit` from
+  there, src/models/rasd_inference.py:1561). That makes the probe measure the
+  engine's own forward, which is the only version whose numbers mean anything.
+  (b) Run the losslessness probe DENSE, at nproc=1, inside the 8-rank campaign:
+  cheap and immediately valid, but it then tests the unsharded path only, so it
+  would not have caught a ring-specific defect -- which is the whole reason the
+  gate exists.
+
 **6.1d  The probe deadlocked at 8 ranks, and the diagnosis is exact.**
 
 The first 8-rank arming of this gate (2026-10-09T00:00Z) did not produce a
