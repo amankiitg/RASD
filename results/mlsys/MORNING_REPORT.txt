@@ -1274,3 +1274,42 @@ forward path. Concretely:
 The pieces that survive from this attempt: the wall-clock budget and the rank
 agreement (both validated on real 8-rank hardware), the sidecar schema, and the
 KV-aware pairing in the checker.
+
+
+================================================================================
+02:13Z  2026-10-09  RE-ARMED 8x 80GB  (commit 7655de0, pushed)
+================================================================================
+
+Pre-flight: 0 instances; HEAD == origin/mlsys-experiments at 7655de0; tree clean;
+no watcher, caffeinate or monitor left from the previous arming.
+
+Armed detached, nohup + disown, caffeinate -dims:
+  watcher    pid 69734  (PPID 1, detached)
+  caffeinate pid 69736  (child of the watcher)
+  monitor    pid 69937  (PPID 1, exactly one monitor)
+Same ARMED_ENV: gpu_8x_a100_80gb_sxm4 only, cap $2000, per-stage ask $300 @
+$22.32/hr, 40 h campaign clock, 72 h capacity wait, 60 +/-20 s cadence, the same
+nine-stage allowlist. Ledger spend() = $78.12 (9 rows); true cumulative ~$150
+with the deliberately unledgered $72.12 of aborted launches.
+
+The monitor was restarted with an empty SEEN list and this arming's cut-off
+(20261009021308), so incidents from the earlier armings -- including the ones
+that misreported both gates on 2026-10-08T17:37Z -- are unreportable.
+
+WHAT THIS ARMING CHANGES versus the first one. engine_cap_smoke no longer runs the
+teacher-forced probe at all (all six rows dropped it), and the check that used to
+gate on it is now REPORT ONLY. So the stage that aborted the previous arming with
+a 62-minute deadlock and then a guaranteed gate failure now runs its six rows and
+its structural assertions with no probe and no probe-based failure. Everything
+else is unchanged: gate_calibration, coherence_gate, then the science stages.
+
+The deadlock fix from 6.1d is still in place and is still needed -- the probe code
+remains in run_experiment.py and rasd_inference.py for the rebuild -- and its
+liveness watchdog is armed in both watchdogs at 15 min, so a future hang of that
+kind is caught in 15 minutes rather than the 62 that cost ~$43.
+
+Rules in force: any gate fails -> pull results and logs, terminate, stop, no 8x
+retry. All gates pass -> continue the full campaign automatically, reporting each
+stage. A non-gate stage failure -> keep its rows, continue, report. Stop only on a
+dead CUDA context, a stall, or the cost cap. Anything unanticipated -> pull,
+terminate, stop.
