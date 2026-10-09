@@ -1772,3 +1772,62 @@ bf16 rows still to come, so budget ~50-90 min for the stage rather than the
 ~20 min the first three suggest. Then coherence_gate (watch the 512k rows'
 status), correction_note_evidence, natural_f1_128k, impl_validation,
 rope_intervention_128k, natural_spec_gated_256k, vllm_ladder.
+
+================================================================================
+2026-10-09T22:29Z  MILESTONE: RESUMED and RE-ARMED (fourth arming)
+================================================================================
+
+Pre-flight, all from the resume checklist and all green:
+  1. 0 instances (the stopped pod terminated cleanly).
+  2. HEAD == origin at 3a0d8dd on mlsys-experiments, tree clean; a5a3ee7,
+     6009f96, d15266c and a8e7e3a all present in HEAD.
+  3. configs/mlsys_stall_thresholds.json unchanged: liveness_minutes 15,
+     default_minutes 20, per-stage values as before (coherence_gate 240,
+     engine_cap_smoke 240, natural_f1_128k 720, rope_intervention_128k 648,
+     natural_spec_gated_256k 1080, vllm_ladder 300, rope_intervention_gate 72,
+     impl_validation 120, correction_note_evidence 240).
+  4. tests 1098 passed; dry run 32/0; watchdog self-test 10/0 (case C skips
+     without a pod, which is expected locally).
+  5. The two memory flags stand unchanged and are carried forward: the 512k
+     coherence_gate rows may return status=oom by design (nothing in this
+     allowlist consumes them), and vllm_ladder's 512k rung is a ladder rung,
+     not a gated one.
+  6. ARMED_ENV unchanged: cap 2000 dollars, ask 300 dollars, 40h clock, 72h
+     capacity wait, 60 +/-20s cadence, gpu_8x_a100_80gb_sxm4 only, nine-stage
+     allowlist identical. Only the arming comment was rewritten.
+
+ARMED:
+  arming marker  ===== ARMING 2026-10-09T22:28:23Z =====
+  launcher       pid 95357
+  watcher        pid 95359 (caffeinate 95360), polling
+  monitor        pid 95462, phase A, polls=1, ignoring incidents older than
+                 20261009222823 so it cannot report the stopped run's gates
+  capacity       gpu_8x_a100_80gb_sxm4 has NO capacity in any region right now
+                 (only gpu_1x_a100_sxm4 is available); the watcher's 72h window
+                 runs until epoch 1791844106
+  ledger         82.29 dollars (10 rows), which is what the cap is measured against
+
+NOTE ON THE PID FILES: the first launch wrote nothing into ARMED_WATCHER_PID /
+CAFFEINATE_PID, because my own one-liner hit the same ampersand-precedence trap
+that caused the campaign's ssh problem -- an assignment followed by a
+backgrounded command list backgrounds the WHOLE list including the assignment,
+so the detached shell had no working-directory variable. The watcher itself
+started correctly; I read its pids from `ps` and wrote them by absolute path.
+Recording it because it is the second time this precedence detail has bitten in
+this session, once in a script and now in an operator command.
+
+STANDING RULES, unchanged: report every gate result the moment it lands (with
+gate_calibration's full row table); gates fail -> pull, terminate, stop, no
+retry; ALL GATES PASS -> continue the full campaign automatically without
+waiting; a non-gate stage failing keeps its rows and the manifest continues, and
+I report it; stop only on a dead CUDA context, a stall, or the cost cap;
+anything unanticipated -> pull, terminate, stop.
+
+EXPECTED ON LAUNCH: everything re-runs from the top on the new pod.
+gate_calibration again (~11-13 min measured twice), then engine_cap_smoke from
+ROW 1 -- its 3 completed rows are not reusable because the stage never reached
+STAGE_OK and the manifest requires the full 6-row count. Budget 50-90 min for
+that stage: rows 1-3 took 127s + 243s + 965s and rows 4-6 (the target-only at
+cap 1024, then the two bf16 rows) had not started. Then coherence_gate (watch
+the 512k rows' status), correction_note_evidence, natural_f1_128k,
+impl_validation, rope_intervention_128k, natural_spec_gated_256k, vllm_ladder.
