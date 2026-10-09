@@ -21,6 +21,12 @@
 set -uo pipefail
 
 IP=${1:-}
+# The GPU count of whatever instance this is pointed at. It becomes --nproc and
+# it is what the probe's own world_size must report, because the whole point of
+# this run is RANK PARTICIPATION: a probe that silently ran on one rank would
+# otherwise look exactly like a success. Defaults to 2, the cheapest thing that
+# can expose the bug.
+NPROC=${3:-${MLSYS_PROBE2_NPROC:-2}}
 SSH_USER=${2:-ubuntu}
 SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -i $SSH_KEY"
@@ -29,7 +35,6 @@ cd "$REPO"
 
 CFG=configs/mlsys_probe_2rank.yml
 GROUP=PROBE_2RANK
-NPROC=2
 MLSYS_LOCAL_PY=${MLSYS_LOCAL_PY:-python3}
 POD_OUT='~/RASD/results/mlsys/probe_2rank'
 LOCAL_OUT=${MLSYS_PROBE2_LOCAL_OUT:-results/mlsys/probe_2rank}
@@ -47,7 +52,7 @@ if [ -z "$HF_TOKEN_VALUE" ]; then
   echo "FATAL: no HF_TOKEN line found in runpod_creds.md (looked up by label)." >&2
   exit 2
 fi
-if [ -z "$IP" ]; then echo "FATAL: usage: mlsys_probe_2rank_check.sh <pod-ip>" >&2; exit 2; fi
+if [ -z "$IP" ]; then echo "FATAL: usage: mlsys_probe_2rank_check.sh <pod-ip> [user] [nproc]" >&2; exit 2; fi
 
 PASS=0; FAIL=0
 ok()  { printf '  PASS  %s\n' "$*"; PASS=$((PASS+1)); }
@@ -83,6 +88,7 @@ case "$PY_REMOTE" in
 esac
 
 printf '\n== 2. the probe on %d ranks (8k, bf16, 64 tokens) ==\n' "$NPROC"
+printf '  (nproc %d = the GPU count of this instance; the probe must report world_size=%d)\n' "$NPROC" "$NPROC"
 RUNNER="cd ~/RASD && set -a && . ~/RASD/.pod_env.sh && set +a && \
 mkdir -p $POD_OUT && rm -f $POD_OUT/probe_2rank.csv && \
 HF_TOKEN='$HF_TOKEN_VALUE' MLSYS_PYTHON='$PY_REMOTE' \
@@ -106,12 +112,13 @@ rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   || { bad "could not pull $POD_OUT"; tail -3 /tmp/probe2_pull.log; }
 
 printf '\n== 4. did EVERY rank produce numbers, and are they comparable? ==\n'
-"$MLSYS_LOCAL_PY" - "$LOCAL_OUT" "$REF_SHORTFALL" "$REF_NON_ARGMAX" "$REF_POSITIONS" "$TOL_BF16" <<'PYP2'
+"$MLSYS_LOCAL_PY" - "$LOCAL_OUT" "$REF_SHORTFALL" "$REF_NON_ARGMAX" "$REF_POSITIONS" "$TOL_BF16" "$NPROC" <<'PYP2'
 import csv, json, sys, pathlib
 
 out = pathlib.Path(sys.argv[1])
 ref_shortfall, ref_nonargmax, ref_positions, tol = (
     float(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), float(sys.argv[5]))
+want_ranks = int(sys.argv[6])
 
 csvp = out / "probe_2rank.csv"
 if not csvp.exists():
@@ -152,8 +159,10 @@ for r in rows:
           % (nf.get("max_abs_delta"), nf.get("control_max_abs_delta")))
     print("      budget_s=%s elapsed_s=%s" % (d.get("budget_s"), d.get("elapsed_s")))
     # The two properties that make the numbers usable at all.
-    if int(d.get("world_size") or 0) != 2:
-        problems.append("%s: world_size=%s, expected 2" % (rid, d.get("world_size")))
+    if int(d.get("world_size") or 0) != want_ranks:
+        problems.append("%s: world_size=%s, expected %d -- a probe that ran on "
+                        "fewer ranks looks identical to a success"
+                        % (rid, d.get("world_size"), want_ranks))
     if str(d.get("measured_kv")) != "bfloat16":
         problems.append("%s: measured_kv=%s, expected bfloat16 -- a kv_quant "
                         "override that did nothing would read as a real result"
@@ -169,6 +178,9 @@ for r in rows:
 
 print()
 print("  COMPARISON TO THE 1-RANK REFERENCE (same doc, 8k, bf16, 64 tokens)")
+print("  %d rank(s) here. The ring reorders the floating-point sums, so a"
+      % want_ranks)
+print("  difference is a result to report, not automatically a failure.")
 print("    %-28s %-12s %s" % ("quantity", "1 rank", "2 ranks"))
 for r in rows:
     p = out / "tokens" / ("%s.tflossless.json" % r.get("run_id"))

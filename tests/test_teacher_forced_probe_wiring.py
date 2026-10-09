@@ -318,11 +318,18 @@ class TestTheTwoRankHarnessStaysHonest:
         assert '"control_max_abs_delta"' in runner
         assert "expected 0.0" in runner
 
-    def test_it_asserts_two_ranks_really_ran(self):
-        """The whole point is the rank count; a probe that silently ran on one
-        rank would look identical to a success."""
+    def test_it_asserts_the_rank_count_it_was_asked_for(self):
+        """The whole point is the rank count, and it is now whatever GPU count
+        the instance has -- so it must be compared against the nproc the run was
+        launched with, not a hardcoded 2. A probe that silently ran on ONE rank
+        looks identical to a success otherwise."""
         runner = (REPO_ROOT / "scripts/mlsys_probe_2rank_check.sh").read_text()
-        assert '!= 2' in runner and "expected 2" in runner
+        assert '!= want_ranks' in runner, (
+            "the rank-count assertion is not tied to the launched nproc")
+        assert 'want_ranks = int(sys.argv[6])' in runner
+        # and the default is still the cheapest configuration that can expose
+        # the bug
+        assert "NPROC=${3:-${MLSYS_PROBE2_NPROC:-2}}" in runner
 
     def test_the_config_probes_only_a_bf16_pair_at_short_context(self):
         import yaml
