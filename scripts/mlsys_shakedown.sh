@@ -103,7 +103,7 @@ phase_start "P3  the import check the stages depend on"
 # The python the watcher's preflight runs, extracted from the file so the module
 # LIST under test is the real one rather than a re-typed approximation.
 PREFLIGHT_PY=$(python3 - <<'PYPRE'
-import pathlib
+import pathlib, re
 s = pathlib.Path("scripts/mlsys_watch_and_run.sh").read_text()
 i = s.index('"$RPY -c \\"import torch, transformers, bitsandbytes, flash_attn, diptest')
 seg = s[i:s.index('2>&1 | tee -a "$LOG"', i)]
@@ -199,9 +199,10 @@ printf '{"default_minutes": 1, "stages": {}}' > "$REPO/configs/mlsys_stall_thres
 echo "stall threshold for this run: 1 minute (test override)"
 HEAD
   python3 -c "
-import pathlib
+import pathlib, re
 s = pathlib.Path('scripts/mlsys_manifest.sh').read_text()
-print(s[s.index('interim() {'):s.index(\"trap 'kill \${STALL_WATCHDOG_PID:-0} 2>/dev/null' EXIT\")].rstrip())
+ends = [m.start() for m in re.finditer(r"^trap ", s, re.M)]
+print(s[s.index('interim() {'):ends[-1]].rstrip())
 "
   cat <<'TAIL'
 interim "STAGE_START name=natural_spec_gated_256k timeout=999s"

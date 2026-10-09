@@ -728,12 +728,34 @@ def test_the_hf_token_value_never_reaches_a_log(tmp_path):
 
 def test_the_manifest_run_sources_the_pod_env_and_the_token():
     start = SRC[SRC.index('say "starting the manifest"'):]
-    start = start[:start.index("manifest.rc' > ~/manifest.log")] 
+    # End at the ssh block's own log redirect, not at a fragment of the command
+    # text inside it. The earlier marker was `manifest.rc' > ~/manifest.log`,
+    # which pinned the ORDER of the command's redirections: adding `</dev/null`
+    # (the fix that unsticks the watcher) moved `> ~/manifest.log` after it and
+    # this extraction then silently had no end marker at all.
+    start = start[:start.index('>>"$LOG" 2>&1')]
     assert ". ~/RASD/.pod_env.sh" in start, \
         "the manifest does not inherit the HF cache / NCCL env"
     assert "HF_TOKEN=" in start, "the token is not in the manifest's environment"
     assert "MLSYS_STALL_MINUTES" in start, \
         "the stall limit is not passed to the pod watchdog"
+
+
+def test_the_manifest_start_detaches_stdin():
+    """The ssh that starts the manifest must not inherit the terminal's stdin.
+
+    On 2026-10-09 the watcher's manifest-start ssh stayed alive for 1h42m (pid
+    80495) because the remote manifest holds the channel open as long as its
+    stdin is open. The watcher is a `while` loop AROUND that ssh, so it never
+    reached its first monitoring iteration and could not act on the stall its own
+    watchdog had already detected -- the campaign then ran 70 more minutes.
+    `</dev/null` is the whole fix, so it is asserted rather than assumed.
+    """
+    start = SRC[SRC.index('say "starting the manifest"'):]
+    start = start[:start.index('>>"$LOG" 2>&1')]
+    assert "nohup bash -c" in start, "the manifest start no longer detaches at all"
+    assert "</dev/null" in start, \
+        "the manifest-start ssh inherits stdin, so it can hold the watcher open"
 
 
 def test_pod_env_applies_the_operator_notes():

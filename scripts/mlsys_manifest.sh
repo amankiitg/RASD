@@ -307,6 +307,89 @@ PYLIVE
   printf '%s' "$v"
 }
 
+# Every descendant of a pid, deepest first. TWO defects are baked into what this
+# replaced, and both are worth stating because they were invisible until a test
+# with a live child ran:
+#   * `ps --ppid` is a GNU extension. macOS rejects it ("illegal option"), so the
+#     first version silently returned nothing and killed nothing.
+#   * A recursive walk that forks a subshell per node has no cycle protection.
+#     PID reuse put a loop in the process table and it forked until the machine
+#     reported "fork: Resource temporarily unavailable" -- a stop helper that
+#     can take the box down is worse than the stall it exists to handle.
+# So: ONE ps snapshot, one awk that walks each pid up to the root with a depth
+# cap, then a numeric sort. No recursion, no fork per node, no cycle.
+#
+# $2 EXCLUDES a pid and its whole subtree, and that is essential rather than
+# tidy: this watchdog is itself a child of the manifest, and the walk's own
+# ps/awk/sort pipeline are its children. Without the exclusion the stop routine
+# signals ITSELF -- which is why the escalation sometimes ran and sometimes did
+# not, and why the selftest saw a child survive a stop it had already logged.
+_descendants() {   # $1 = pid; $2 = pid to exclude (with its subtree)
+  ps -eo pid=,ppid= 2>/dev/null | awk -v root="$1" -v skip="${2:-}" '
+    { ppid[$1] = $2; seen[$1] = 1 }
+    END {
+      for (p in seen) {
+        if (p == skip) continue
+        q = p; d = 0; bad = 0
+        while (q != "" && q != "0" && q != root && d < 64) {
+          if (q == skip) { bad = 1; break }
+          q = ppid[q]; d++
+        }
+        if (!bad && q == root && d > 0) print d, p
+      }
+    }' | sort -rn | awk '{ print $2 }'
+}
+
+# Stop the run, not just the shell around it.
+#
+# Signalling only $MANIFEST_PID does NOT stop anything: bash defers a trap until
+# the current foreground command returns, and that command IS the run
+# (`timeout ... run_experiment.py`). On 2026-10-09T04:02Z the watchdog logged,
+# wrote STALL_ABORT and signalled, and the campaign then ran for another 70
+# minutes -- the operator believed the stall was being handled and it was not.
+# The children are signalled first so the foreground command returns at once and
+# the manifest's own trap can run.
+stop_run() {
+  local why=$1
+  local pids i n survivors
+  # ORDER MATTERS, and the wrong order is a race I hit in the selftest. The
+  # shell is signalled FIRST so its trap is already pending; the children are
+  # signalled next so the foreground command returns and that trap can run. With
+  # the children first the run died, the blocked `wait`/foreground command
+  # returned, and the manifest ran on to its next statement BEFORE its own TERM
+  # arrived -- exiting 0, which the watcher reads as success.
+  #
+  # The list is captured ONCE, BEFORE anybody is signalled, and every later step
+  # uses that same list. Re-walking from $MANIFEST_PID after signalling finds
+  # NOTHING: the manifest exits on its TERM within milliseconds (bash runs a
+  # pending trap as soon as the foreground command returns), so its children are
+  # reparented to init, are no longer descendants of a pid that is gone, and the
+  # escalation then reads an empty survivor set. The selftest caught exactly
+  # that: the term-ignoring child had to be killed by hand-applied logic while
+  # stop_run logged no STALL_KILL.
+  pids="$(_descendants "$MANIFEST_PID" "$(cat "$WATCHDOG_SELF_FILE" 2>/dev/null)")"
+  kill -TERM "$MANIFEST_PID" 2>/dev/null
+  for i in $pids; do kill -TERM "$i" 2>/dev/null; done
+  # Escalate only while something is still alive. A python worker unwinds in
+  # seconds; past that, this branch has failed at its only job.
+  for n in 1 2 3; do
+    sleep 2
+    survivors=""
+    for i in $pids; do
+      kill -0 "$i" 2>/dev/null && survivors="$survivors $i"
+    done
+    [ -z "$survivors" ] && break
+  done
+  if [ -n "$survivors" ]; then
+    printf '%s STALL_KILL reason=%s survivors=%s\n' \
+      "$(date -u +%FT%TZ)" "$why" "$survivors" >> "$WATCHDOG_LOG"
+    for i in $survivors; do
+      kill -KILL "$i" 2>/dev/null
+    done
+    kill -KILL "$MANIFEST_PID" 2>/dev/null
+  fi
+}
+
 stall_watchdog() {
   local name limit idle now mtime
   # Byte-level liveness, tracked independently of RUN_LOG.txt.
@@ -330,6 +413,8 @@ stall_watchdog() {
     # then be reusable, and signalling a reused PID means killing an unrelated
     # process -- so never signal without confirming the parent is still there.
     if ! ps -p "$MANIFEST_PID" >/dev/null 2>&1; then
+      # Also the path out of a stop: stop_run leaves this watchdog alive to
+      # finish its escalation, and the manifest is gone by the time it returns.
       return 0
     fi
     now=$(date -u +%s)
@@ -352,8 +437,8 @@ stall_watchdog() {
           "$(( now - live_since ))" "$size" >> "$WATCHDOG_LOG"
         interim "STALL_ABORT name=$name limit=${live_limit}min idle=$(( now - live_since ))s reason=manifest.log-not-growing"
         echo "STALL: manifest.log has not grown for $(( now - live_since ))s (limit ${live_limit}min) in stage '${name}'"
-        echo "STALL: stopping the manifest; the watcher pulls logs and terminates."
-        kill -TERM $MANIFEST_PID 2>/dev/null
+        echo "STALL: stopping the run; the watcher pulls logs and terminates."
+        stop_run "liveness:${name}"
         return 0
       fi
     fi
@@ -375,19 +460,25 @@ stall_watchdog() {
       "$(date -u +%FT%TZ)" "$name" "$limit" "$idle" >> "$WATCHDOG_LOG"
     interim "STALL_ABORT name=$name limit=${limit}min idle=${idle}s"
     echo "STALL: no progress for ${idle}s (limit ${limit}min for stage '${name}')"
-    echo "STALL: stopping the manifest; the watcher pulls logs and terminates."
-    kill -TERM $MANIFEST_PID 2>/dev/null
+    echo "STALL: stopping the run; the watcher pulls logs and terminates."
+    stop_run "stage:${name}"
     return 0
   done
 }
 
 MANIFEST_PID=$$
+# Where the watchdog can learn its own pid (see _descendants' exclusion).
+WATCHDOG_SELF_FILE="${TMPDIR:-/tmp}/mlsys_watchdog_self.$$"
 # A stall is not a crash: it must exit NON-ZERO and say so, so the watcher's
 # fail-fast path picks it up instead of reading a clean finish.
-trap 'interim "SIGNALLED name=$(current_stage) reason=stall-watchdog-or-operator"; echo "SIGNALLED: stopping"; exit 9' TERM INT
+# STALL_STOPPING tells the EXIT trap below that a stop is in progress, so the
+# watchdog survives long enough to finish it. Without the flag the manifest took
+# its own watchdog down on the way out and a run that ignored TERM was left
+# alive -- the selftest caught exactly that.
+trap 'STALL_STOPPING=1; interim "SIGNALLED name=$(current_stage) reason=stall-watchdog-or-operator"; echo "SIGNALLED: stopping"; exit 9' TERM INT
 # Never leave the watchdog behind: it would outlive the manifest and, on a PID
 # it no longer owns, be a loaded gun pointed at whatever inherited that number.
-trap 'kill ${STALL_WATCHDOG_PID:-0} 2>/dev/null' EXIT
+trap 'if [ -z "${STALL_STOPPING:-}" ]; then kill ${STALL_WATCHDOG_PID:-0} 2>/dev/null; fi' EXIT
 
 # Projected cost per stage, read from the manifest so the number the guard uses
 # is the same number the plan quotes.
@@ -988,6 +1079,9 @@ echo "spend before manifest: \$$(spend)"
 # help.
 stall_watchdog &
 STALL_WATCHDOG_PID=$!
+# Written AFTER the fork because that is when the pid exists; the watchdog reads
+# this file, since a subshell cannot see a variable assigned after it started.
+printf '%s\n' "$STALL_WATCHDOG_PID" > "$WATCHDOG_SELF_FILE" 2>/dev/null
 interim "STALL_WATCHDOG started pid=$STALL_WATCHDOG_PID default=${STALL_DEFAULT_MIN}min thresholds=$STALL_JSON"
 
 # ---- S0: calibrate the gate on real weights. MUST be first. ---------------

@@ -683,7 +683,8 @@ ssh $SSH_OPTS "$SSH_USER@$IP" \
    MLSYS_MAX_COST_USD=${MLSYS_MAX_COST_USD:-850} \
    MLSYS_ONLY_STAGES='${ONLY_STR}' \
    MLSYS_APPROVED_STAGES='${ONLY_STR}' \
-   nohup bash -c 'bash scripts/mlsys_manifest.sh; echo \$? > ~/manifest.rc' > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
+   nohup bash -c 'bash scripts/mlsys_manifest.sh; echo \$? > ~/manifest.rc' \\
+     </dev/null > ~/manifest.log 2>&1 & echo started" >>"$LOG" 2>&1
 
 # A failed ssh says NOTHING about whether the manifest is still running. Treating
 # it as "finished" ends the run and, worse, moves on to terminate an instance

@@ -526,6 +526,73 @@ def _step_gap(logit) -> list:
     return _top1_top2_gap(logit.unsqueeze(1))
 
 
+#: Rounds between liveness-progress CHECKS. Not a print cadence: the check is
+#: gated on the round count so the clock is not even read on most rounds, and a
+#: line is printed only when the wall-clock cadence has also elapsed.
+#:
+#: The two together bound how long the log can be SILENT:
+#:     (HEARTBEAT_EVERY_ROUNDS - 1) x slowest round + HEARTBEAT_EVERY_S
+#: and that is the quantity a byte-level watchdog cares about. At 256k, the
+#: longest context in the armed stage list, a round costs a few seconds, so the
+#: bound is ~2-3 minutes against a 15-minute threshold. Only the 1M-context
+#: matrices push a round to ~32 s, which is why the bound is stated here rather
+#: than left implicit.
+HEARTBEAT_EVERY_ROUNDS = 16
+HEARTBEAT_EVERY_S = 60.0
+
+
+def _row_heartbeat(cfg, rank: int, n_rounds: int, tokens: int, t_start: float,
+                   state: dict, every_s: float = HEARTBEAT_EVERY_S,
+                   every_rounds: int = HEARTBEAT_EVERY_ROUNDS) -> dict:
+    """Print one progress line per cadence during a decode row.
+
+    WHY THIS EXISTS. A row can be silent for its entire duration: this engine
+    prints TRACE lines at PHASE boundaries and tqdm only during downloads and
+    prefill, so a 128k row printed nothing for 16 minutes and a target-only row
+    printed nothing for over an hour. That defeats any byte-level stall watchdog
+    tight enough to catch a real hang -- and on 2026-10-09 it did: a 15-minute
+    rule fired on a healthy stage and stopped a campaign that was computing at
+    55-63% GPU.
+
+    MEASUREMENT-NEUTRAL BY CONSTRUCTION, and it has to be: this runs inside the
+    decode loop of every campaign row. It reads host-side counters only --
+    `time.perf_counter`, integers, and `Tensor.shape` -- so there is no
+    `.item()`, no `.cpu()`, no `torch.cuda.synchronize()`, no collective and no
+    barrier anywhere in this path. A tensor value is never read, because reading
+    one would force a device sync in the middle of the decode and change the
+    latency this campaign exists to measure. Rank 0 only: it is the rank that
+    samples and broadcasts, so if it stops the run has stopped, and eight ranks
+    printing would only add volume.
+
+    Returns the state dict it was given (mutated), so a caller cannot
+    accidentally share one timestamp between two loops.
+    """
+    if rank != 0:
+        return state
+    if every_rounds > 0 and (n_rounds % every_rounds):
+        return state
+    now = time.perf_counter()
+    if now - state.get("at", 0.0) < every_s:
+        return state
+    state["at"] = now
+    print(f"[PROGRESS run={cfg.run_id or '?'} round={n_rounds} "
+          f"tokens={tokens} elapsed={now - t_start:.0f}s", flush=True)
+    state["printed"] = state.get("printed", 0) + 1
+    return state
+
+
+    """The gap at ONE position, from a `(B, vocab)` step logit.
+
+    The target-only loop and the seed token both sample from a single position
+    and both must record its gap, so they call the SAME function: two call sites
+    computing the same quantity under different conventions is how two arms come
+    to disagree about what a gap is, and the tie rule compares them.
+    """
+    if logit is None:
+        return []
+    return _top1_top2_gap(logit.unsqueeze(1))
+
+
 def _round_emitted_gaps(target_logits_v, n_emit: int, n_acc: int,
                         with_bonus: bool) -> list:
     """Gaps for exactly the tokens one verify round EMITS, in emission order.
@@ -1637,6 +1704,9 @@ class RASDInference:
         n_truncated      = 0
         # C13 sidecar (gated by cfg.log_per_token; cheap when disabled)
         per_token_trace: List[Dict] = []
+        # Drives _row_heartbeat's wall-clock cadence. One dict per generate()
+        # call so the two loops cannot share a stale timestamp.
+        heartbeat_state: Dict = {}
         # Top-1 minus top-2 logit gap at every emitted position, in emission
         # order, so it lines up element-for-element with `generated` (the
         # losslessness tie rule needs the gap at the position where two runs
@@ -1656,6 +1726,10 @@ class RASDInference:
         if cfg.spec_steps == 0:
             while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
                 _nvtx_push(f"phase:autoregressive_step_{n_rounds:03d}")
+                if n_rounds % HEARTBEAT_EVERY_ROUNDS == 0:
+                    _row_heartbeat(cfg, int(self._rank), n_rounds,
+                                   sum(t.shape[1] for t in generated) - 1,
+                                   t_start, heartbeat_state)
                 # Single-token forward through target. Position is the
                 # next global position past everything already generated.
                 t_input = cur_token  # (B, 1)
@@ -1776,6 +1850,10 @@ class RASDInference:
         # ---- Main speculative decoding loop ----
         while sum(t.shape[1] for t in generated) < cfg.max_new_tokens:
             _nvtx_push(f"phase:verify_round_{n_rounds:03d}")
+            if n_rounds % HEARTBEAT_EVERY_ROUNDS == 0:
+                _row_heartbeat(cfg, int(self._rank), n_rounds,
+                               sum(t.shape[1] for t in generated) - 1,
+                               t_start, heartbeat_state)
 
             # === ITERATION-BOUNDARY STREAM SYNC (R5) ===
             # End of previous round committed cur_token, past_kv, and (under
