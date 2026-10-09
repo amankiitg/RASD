@@ -1,0 +1,6 @@
+2026-10-09T03:27:23Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+2026-10-09T03:27:23Z STALL_WATCHDOG started pid=9438 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+2026-10-09T03:27:24Z STAGE_START name=gate_calibration timeout=14400s
+2026-10-09T03:38:39Z STAGE_OK name=gate_calibration wall=675s cost=$4.19 cumulative=$82.31
+2026-10-09T03:38:40Z STAGE_START name=engine_cap_smoke timeout=21600s
+2026-10-09T04:02:27Z STALL_ABORT name=engine_cap_smoke limit=15min idle=902s reason=manifest.log-not-growing

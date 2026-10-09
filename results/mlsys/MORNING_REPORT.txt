@@ -1313,3 +1313,80 @@ retry. All gates pass -> continue the full campaign automatically, reporting eac
 stage. A non-gate stage failure -> keep its rows, continue, report. Stop only on a
 dead CUDA context, a stall, or the cost cap. Anything unanticipated -> pull,
 terminate, stop.
+
+
+================================================================================
+03:14Z-05:13Z  2026-10-09  CAMPAIGN STOPPED BY A FALSE-POSITIVE LIVENESS STALL
+================================================================================
+
+OUTCOME. gate_calibration passed (OK, 675 s, $4.19). engine_cap_smoke completed
+3 of 6 rows -- cap64 spec (121 s), cap64 target-only (234 s), cap1024 spec
+(973 s), all ok -- and was stopped partway through the cap1024 target-only row.
+Instance 482d3e01d5ca4d54a643fd251f07d63e, 8x A100 80GB, us-east-1, launched
+03:14:21Z, terminated 05:13Z: 117.9 min, $43.84. 0 instances. The three rows and
+all logs are in results/mlsys/incident_20261009T050919Z/.
+
+WHAT FIRED. The byte-level liveness watchdog, which I added this session:
+  04:02:27Z LIVENESS name=engine_cap_smoke limit=15min idle=902s bytes=58582
+            reason=manifest.log-not-growing
+15 minutes of no growth in ~/manifest.log, during a stage that was working.
+
+IT WAS A FALSE POSITIVE, AND THE PREMISE WAS WRONG. My 15-minute threshold came
+from measuring the longest legitimate silence in the campaign's logs as a
+1M-token prefill at 6.29 min (ttft across 146 rows). That measurement assumed the
+DECODE prints progress. It does not. run_experiment prints TRACE lines at phase
+boundaries and tqdm only during model downloads and prefill, so a whole ROW can
+be silent for its entire duration:
+  * row 3, CAPS_prefix1024 spec, was silent for 973 s -- 16.2 min, longer than
+    the 15-min limit -- and completed successfully.
+  * row 4, CAPS_prefix1024 target-only, was silent from 04:03:19Z until I
+    terminated at 05:13Z: 70 minutes, with the GPUs at 55-63% util the whole
+    time. It was computing, not hung.
+So "no bytes for 15 min" does not distinguish a hang from a long row, and with
+128k target-only rows at ~1024 rounds it cannot be made to: the rule needs
+in-row progress to exist before it can be tight.
+
+AND THE STOP PATH DID NOT RUN, which is the more serious half. The watchdog did
+everything asked of it -- logged, wrote STALL_ABORT into RUN_LOG, and signalled --
+and nothing stopped:
+  * POD: `kill -TERM $MANIFEST_PID` targets the manifest shell, which was blocked
+    in its foreground child (`timeout ... run_experiment.py`). Bash defers a trap
+    until the foreground command returns, so the manifest's TERM handler could not
+    run and the manifest sat there for another 70 minutes. ~/manifest.rc was still
+    absent, i.e. the manifest was alive, when I terminated the instance by hand.
+  * WATCHER: it never even reached its monitoring loop. Its child ssh (pid 80495)
+    -- the one that STARTS the manifest -- was still alive after 1h42m, because
+    that remote command backgrounds the manifest without detaching its stdin
+    (`nohup bash -c '...' > ~/manifest.log 2>&1 & echo started`, no `</dev/null`,
+    and no `ssh -n`). The ssh holds the channel open for the manifest's whole
+    life, and the watcher blocks on it. So the operator-side stall detection, the
+    per-stage thresholds on that side, the liveness rule there, and the deadline
+    check are ALL inert for as long as a manifest runs. That also explains why
+    earlier armings appeared to stop "on their own": they only stopped once the
+    manifest exited and released the ssh.
+
+That last point means the previous armings were supervised by the pod watchdog
+alone, and this one's only live guard was the rule that misfired. Recording it
+plainly: my liveness rule turned a working campaign into a stopped one, and the
+two guards that were supposed to catch a real hang cannot act while a run is in
+progress.
+
+FIXES NEEDED BEFORE THE NEXT ARMING (not applied):
+  1. IN-ROW PROGRESS. run_experiment must print a line at a fixed cadence during
+     a row (e.g. every N rounds: round, tokens emitted, elapsed). Without it no
+     byte-liveness rule can be both tight and safe. This is the fix the operator
+     already called for: watch per-row progress, not stage boundaries.
+  2. A STOP PATH THAT ACTS. The pod watchdog must terminate the manifest's
+     process GROUP (or its foreground child), not just the manifest shell, or a
+     stall is only logged. Cheap and testable: signal the child, then the shell.
+  3. A WATCHER THAT IS NOT BLOCKED. Detach the manifest-start ssh (`ssh -n`,
+     and `</dev/null` on the remote background command) so the operator's loop
+     runs concurrently with the campaign. Until this is fixed, no operator-side
+     rule can protect a running campaign.
+  4. RE-DERIVE THE LIVENESS THRESHOLD once (1) exists, from the longest
+     legitimate SILENT interval measured on real rows -- not from ttft.
+  5. The self-test must cover the case that actually happened: a silent manifest
+     whose foreground child keeps running must still be stopped, and the harness
+     must assert the child died, not just that the log line appeared. The current
+     P8 passed while this exact failure was live, because it only asserted the
+     message and the exit code of a manifest with no foreground child.
