@@ -1217,3 +1217,60 @@ the engine's own forward; or (b) run the losslessness probe dense at nproc=1
 inside the 8-rank campaign -- cheap and immediately valid, but it tests the
 unsharded path only, so it would not catch a ring-specific defect. TOL_bf16's
 applicability at 8 ranks stays UNMEASURED.
+
+
+================================================================================
+02:30Z  2026-10-09  TEACHER-FORCED CHECK DEMOTED TO REPORT ONLY; PROBE DISABLED
+================================================================================
+
+WHAT CHANGED. mlsys_cap_smoke_check.py no longer gates on the teacher-forced
+probe: its numbers are printed with the reference tolerance beside them and
+nothing fails on them. teacher_forced_check was removed from every
+engine_cap_smoke row, so no probe runs and the stage no longer pays its wall
+clock. The bf16 pair stays, because it is still the pair a precision comparison
+belongs on.
+
+WHY DEMOTED RATHER THAN RE-THRESHOLDED. The probe fed the FULL prompt to a model
+that, at world_size > 1, is fed the rank's SLICE
+(src/models/rasd_inference.py:1458), so its 8-rank numbers described a forward the
+engine never runs: 6.125 logits of shortfall where the 1-rank measurement is
+0.375, with both arms failing at the same positions while the probe's replayed
+argmax was identical for both. A gate resting on a wrong input is not repaired by
+a bigger tolerance, and widening TOL_bf16 to cover it would have hidden the defect
+behind a threshold.
+
+WHAT STILL GATES, AND IT IS STILL LOUD. All structural assertions remain, 25
+problems.append sites against 29 before: the four removed are exactly the probe
+gate (missing probe UNVERIFIED, errored probe UNVERIFIED, shortfall > TOL
+MISMATCH, and the anti-vanishing guard that existed only to keep the probe gate
+from disappearing). Still gated: the cap is enforced; the per-round trace accounts
+for every emitted token; prompt + BOS + generated == sequence_tokens; the final
+round is the only one that may be truncated; round kv_len_after bookkeeping;
+sidecar id counts; the measured KV dtype is one of the declared set; the measured
+weight precision is fp4; every row carries a measured precision; the two arms are
+paired by doc/context/cap AND measured KV dtype; blank and repeat shares are
+judged against the candidate's own baseline; references are unit-matched. The
+rehearsal exercises the checker on all six rows: 74 checks, 0 failed.
+
+FOLLOW-UP TASK (not done, recorded here so it is not lost): REBUILD THE
+TEACHER-FORCED PROBE ON THE PRODUCTION DECODE PATHS. It must not build a second
+forward path. Concretely:
+  1. STEPWISE (the gate metric): the target-only decode loop with the stream's
+     tokens FORCED instead of sampled -- each step appends the given token and
+     records the broadcast last-position logits and the shortfall. Run it on the
+     spec arm's emitted stream.
+  2. PACKED (the noise floor): the speculative verify path with the draft FORCED
+     to the stream tokens, recording the verify logits for each position. Same
+     prefill, ring, cache, and broadcast as a real run.
+  3. Tests: at world_size=1 the new stepwise path must reproduce the old probe's
+     numbers (max shortfall 0.375, floor 0.688, control exactly 0.0 at 8k bf16).
+  4. Validation: the target-only arm's OWN stream must come back ~100% argmax in
+     the stepwise replay -- it is literally that model's output through that
+     path, so anything else means the replay still differs from generate(). If it
+     is not ~100%, STOP: the replay is still wrong and no threshold applies.
+  5. Then re-derive TOL_bf16 = 2 x the 8-rank measured floor, and re-check the
+     requirement that the bf16 negative controls' best case stays at or above
+     2 x TOL. Only then may the check gate again.
+The pieces that survive from this attempt: the wall-clock budget and the rank
+agreement (both validated on real 8-rank hardware), the sidecar schema, and the
+KV-aware pairing in the checker.

@@ -472,6 +472,14 @@ the one where it is not, states exactly what the evidence supports. It also mean
 the gate is a real test: at `TOL_bf16 ~ 1.66` the bf16 negatives fail it by
 4x-10x.
 
+**6.1f-status (2026-10-09).** The teacher-forced check is REPORT ONLY and the
+probe is DISABLED: `teacher_forced_check` was removed from every
+`engine_cap_smoke` row, and `mlsys_cap_smoke_check.py` no longer fails on
+shortfall, on a missing probe, or on an errored one. All structural assertions
+still gate (25 problems.append sites against 29; the four removed are exactly the
+probe gate plus the anti-vanishing guard that existed to keep it from
+disappearing). The rebuild task is recorded in results/mlsys/MORNING_REPORT.txt.
+
 **6.1f  The 8-rank probe is INVALID: it does not shard the prompt. Do not
 arm the gate on it.**
 

@@ -43,28 +43,31 @@ sys.path.insert(0, str(REPO))
 
 from src.analysis.losslessness import compare_generations, require_same_request
 
-#: The teacher-forced tolerance for the bf16-KV pair, in logits.
+#: Reference tolerance for REPORTING the teacher-forced shortfall, in logits.
 #:
 #: DERIVED, not chosen: 2 x the measured max |delta logit| between the packed and
 #: stepwise forward shapes on a 63-position-per-cell floor at 8k and 32k, which
 #: is 2 x 0.9375. The 2x is the bound on the shortfall a CORRECT decision can
-#: show (docs/mlsys_analysis_plan.md 6.1a), and there is no cap. It is valid for
-#: as long as the bf16 negatives' best case (the 6.75-logit unverified draft at
-#: 8k) stays at or above 2 x TOL_bf16, i.e. at or above 3.75 -- it does, by
-#: 1.80x. Re-derive it if the engine's precision or the shapes change.
+#: show (docs/mlsys_analysis_plan.md 6.1a), and there is no cap.
+#:
+#: IT IS NOT A GATE. The check it belongs to is REPORT ONLY (2026-10-09): the
+#: probe it once gated fed the FULL prompt to a model that, at world_size > 1,
+#: is fed the rank's SLICE (src/models/rasd_inference.py:1458), so its 8-rank
+#: numbers measured a forward the engine never runs. A gate cannot rest on a
+#: measurement whose input is wrong, and no threshold fixes that. The number is
+#: still printed next to each arm's shortfall because a reader needs to know how
+#: far the arm is from the tolerance; nothing fails on it. See 6.1f and the
+#: follow-up task in results/mlsys/MORNING_REPORT.txt.
 TOL_BF16 = 1.875
 
-#: KV precisions whose pairs must PASS the teacher-forced gate. NF4 is measured
-#: and reported but never gated: at this context its own noise flips 20% of
-#: argmaxes, which is the same order as the defects a gate has to catch, and its
-#: shortfall separation is only 1.31x (6.1b).
-GATED_KV = ("bfloat16",)
+#: The KV precision the reported tolerance was derived for. Reporting only.
+REF_KV = "bfloat16"
 
 #: KV precisions this stage declares. `nf4` is the campaign's default and the
-#: baseline every comparison rests on; the `bfloat16` pair exists because NF4's
-#: own noise cannot support the gate (6.1c). Naming both keeps the original
-#: guard -- a blank or unknown measured dtype is still a failure -- while
-#: admitting the one deliberate exception, which is declared rather than
+#: baseline every comparison rests on; `bfloat16` was added when the
+#: teacher-forced check was a gate, and stays declared. Naming both keeps the
+#: original guard -- a blank or unknown measured dtype is still a failure --
+#: while admitting the one deliberate exception, which is declared rather than
 #: inferred. A dtype outside this tuple is a problem, not a new configuration.
 DECLARED_KV = ("nf4", "bfloat16")
 
@@ -396,52 +399,46 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                      f"not a gate: the two arms run the target in different "
                      f"forward shapes]")
 
-        # --- the GATE: the teacher-forced check on the bf16 pair -----------
+        # --- REPORTED, not gated: the teacher-forced probe ------------------
+        # REPORT ONLY as of 2026-10-09. This block used to gate the bf16 pair on
+        # a teacher-forced shortfall, and it was withdrawn rather than
+        # re-thresholded: the probe fed the FULL prompt to a model that, at
+        # world_size > 1, is fed the rank's SLICE (src/models/rasd_inference.py:
+        # 1458), so its numbers measured a forward the engine never runs. A gate
+        # on a wrong input is not fixed by a bigger tolerance. Nothing here can
+        # fail the stage; the structural assertions above still can.
         pr = probes.get(r["run_id"])
-        if kv in GATED_KV:
-            if pr is None:
-                problems.append(
-                    f"{r['run_id']}: kv={kv} is gated but has NO "
-                    f"teacher-forced probe sidecar (<run_id>.tflossless.json); "
-                    f"losslessness is UNVERIFIED, which is not a pass")
-            elif pr.get("error"):
-                problems.append(f"{r['run_id']}: teacher-forced probe failed: "
-                                f"{pr['error']} -- UNVERIFIED, not a pass")
-            else:
-                ms = float(pr["max_shortfall"])
-                notes.append(
-                    f"{r['run_id']}: teacher-forced max shortfall {ms:.4f} <= "
-                    f"TOL_bf16 {TOL_BF16} ({pr['non_argmax']}/{pr['positions']} "
-                    f"positions not the argmax, worst at "
-                    f"{pr['worst_position']})")
-                if ms > TOL_BF16:
-                    problems.append(
-                        f"{r['run_id']}: teacher-forced MISMATCH -- max "
-                        f"shortfall {ms:.4f} > TOL_bf16 {TOL_BF16}, worst at "
-                        f"position {pr['worst_position']}; "
-                        f"{pr['non_argmax']}/{pr['positions']} positions are not "
-                        f"the target's argmax")
+        if pr is None:
+            notes.append(f"{r['run_id']}: kv={kv or 'unknown'} teacher-forced "
+                         f"probe REPORT ONLY, not recorded for this run (the "
+                         f"probe is disabled while it is rebuilt on the "
+                         f"production decode paths)")
+        elif pr.get("error"):
+            notes.append(f"{r['run_id']}: kv={kv} probe reported an error "
+                         f"({pr['error']}) [REPORT ONLY]")
         else:
-            # REPORT ONLY for everything else.
-            if pr is None:
-                notes.append(f"{r['run_id']}: kv={kv or 'unknown'} not gated, and "
-                             f"no teacher-forced probe was recorded")
-            elif pr.get("error"):
-                notes.append(f"{r['run_id']}: kv={kv} probe failed ({pr['error']}) "
-                             f"[REPORT ONLY]")
-            else:
-                notes.append(
-                    f"{r['run_id']}: kv={kv} [REPORT ONLY, not gated] "
-                    f"max shortfall {float(pr['max_shortfall']):.4f}, "
-                    f"non-argmax {pr['non_argmax']}/{pr['positions']} "
-                    f"({100 * float(pr['non_argmax_fraction']):.1f}%), "
-                    f"noise floor max|delta| "
-                    f"{float(pr['noise_floor']['max_abs_delta']):.4f}, "
-                    f"control {float(pr['noise_floor']['control_max_abs_delta']):.4f}")
+            ms = float(pr["max_shortfall"])
+            vs = ("%.4f <= reference TOL_bf16 %.3f" % (ms, TOL_BF16)
+                  if ms <= TOL_BF16 else
+                  "%.4f > reference TOL_bf16 %.3f" % (ms, TOL_BF16))
+            notes.append(
+                f"{r['run_id']}: teacher-forced max shortfall {vs} "
+                f"({pr['non_argmax']}/{pr['positions']} positions not the "
+                f"argmax, worst at {pr['worst_position']}) [REPORT ONLY, not a "
+                f"gate]")
+            if kv != REF_KV:
+                notes.append(f"{r['run_id']}: kv={kv} is not the precision the "
+                             f"reference tolerance was derived for ({REF_KV}); "
+                             f"the comparison is informational [REPORT ONLY]")
+            nf = pr.get("noise_floor") or {}
+            notes.append(
+                f"{r['run_id']}: noise floor max|delta| "
+                f"{nf.get('max_abs_delta')} over {nf.get('positions')} "
+                f"positions, control {nf.get('control_max_abs_delta')} "
+                f"at world_size={pr.get('world_size')} [REPORT ONLY]")
 
-    # The 8-rank noise floor, reported per arm and compared across arms, so a
-    # rank-dependent blow-up is visible in the gate's own output rather than
-    # only in a sidecar nobody reads.
+    # The per-arm noise floor, so a rank-dependent blow-up would be visible in
+    # the stage's own output rather than only in a sidecar nobody reads.
     for rid, pr in sorted(probes.items()):
         if pr.get("error"):
             continue
@@ -451,21 +448,6 @@ def check(results_csv: Path, tokens_dir: Path | None = None) -> tuple[list[str],
                      f"max|delta|={nf.get('max_abs_delta')} over "
                      f"{nf.get('positions')} positions, "
                      f"control={nf.get('control_max_abs_delta')}")
-    # The gate must not be able to VANISH. If no speculative pair measured a
-    # GATED_KV dtype -- e.g. the bf16 level's kv_quant override was silently
-    # inert so it ran as NF4 and was treated as report-only -- then every pair
-    # was reported and none was gated, and the stage would pass having tested
-    # nothing. Same silent-no-op class the measured-dtype assertion exists for.
-    gated_pairs = [
-        r["run_id"] for r in ok_rows
-        if str(r.get("spec_steps", "")).strip() not in ("", "0")
-        and str((side.get(r["run_id"]) or {}).get("kv_dtype", "")) in GATED_KV
-    ]
-    if not gated_pairs:
-        problems.append(
-            f"no speculative pair measured a GATED_KV dtype {GATED_KV}; every "
-            f"pair is report-only, so this stage would pass without gating "
-            f"anything")
 
     if seen == 0:
         problems.append("no speculative/target-only pair was checked")

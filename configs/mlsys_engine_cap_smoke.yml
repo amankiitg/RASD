@@ -67,21 +67,28 @@ CAP_SMOKE:
     spec_steps: 0
     checkpoint_every: 0
     notes: 'target-only partner at cap=1024; the losslessness reference'
-  # The bf16-KV pair carries the LOSSLESSNESS GATE (analysis plan 6.1c). At
-  # bf16 the two forward shapes agree to within 0.375 logits on the emitted
-  # tokens (measured at 1 rank), against a 6.75-logit best negative, so a gate
-  # with TOL_bf16 = 1.875 is a real test. The NF4 pairs are NOT probed: NF4 KV
-  # noise alone flips 20% of argmaxes at this context, which is the same order as
-  # the defects a gate must catch, so their numbers can never gate and are not
-  # worth a probe's wall clock. They were probed on 2026-10-09 and the two extra
-  # probes cost ~2 h of the stage for figures nobody could act on.
+  # NO ROW PROBES. The teacher-forced check is REPORT ONLY and disabled: the
+  # probe it ran fed the FULL prompt to a model that, at world_size > 1, is fed
+  # the rank's SLICE (src/models/rasd_inference.py:1458), so its 8-rank numbers
+  # measured a forward the engine never runs -- 6.125 logits of shortfall where
+  # the 1-rank measurement is 0.375, which is the wrong input talking, not the
+  # numerics. It is being rebuilt on the production decode paths (see 6.1f and
+  # the follow-up task in results/mlsys/MORNING_REPORT.txt); until then, running
+  # it costs stage wall clock for numbers nothing can act on. The bf16 pair
+  # stays, because it is still the pair a precision-comparison belongs on.
+  #
+  # What gated before, and what gates now: the teacher-forced tolerance is gone
+  # as a gate, and the 16 structural assertions -- row identity, measured
+  # precision, unit-matched references, blank/repeat shares against each
+  # candidate's own baseline -- remain gates. NF4 was always report-only: its own
+  # noise flips 20% of argmaxes at this context, the same order as the defects a
+  # gate must catch.
   - id: CAPS_prefix64_bf16
     context_length: 131072
     documents: [pg19_train_1]
     max_new_tokens: 64
     kv_quant: false
     checkpoint_every: 0
-    teacher_forced_check: true
     notes: 'bf16 KV: the pair the teacher-forced losslessness gate runs on'
   - id: CAPS_prefix64_bf16_targetonly
     context_length: 131072
@@ -90,5 +97,4 @@ CAP_SMOKE:
     spec_steps: 0
     kv_quant: false
     checkpoint_every: 0
-    teacher_forced_check: true
     notes: 'target-only partner of CAPS_prefix64_bf16'

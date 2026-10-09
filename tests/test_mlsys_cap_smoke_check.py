@@ -406,96 +406,96 @@ def test_an_unmeasured_or_undeclared_precision_fails(tmp_path):
     assert any("kv_dtype='float8'" in q for q in problems), problems
 
 
-def test_the_gate_cannot_vanish_if_no_pair_is_gated(tmp_path):
-    """Every pair report-only must FAIL: it would mean nothing was gated.
+def test_the_probe_no_longer_gates_anything(tmp_path):
+    """The teacher-forced check is REPORT ONLY, and this locks that in.
 
-    The silent way this happens is a bf16 level whose kv_quant override was
-    inert, so it ran as NF4 and was classified report-only. The stage would then
-    "pass" having tested nothing -- the same failure class the measured-dtype
-    assertion exists for.
+    It gated until 2026-10-09, when the probe was shown to feed the FULL prompt
+    to a model that at world_size > 1 is fed the rank's SLICE
+    (src/models/rasd_inference.py:1458). Its 8-rank numbers therefore described a
+    forward the engine never runs -- 6.125 logits of shortfall against 0.375 at
+    one rank -- and a gate on a wrong input is not repaired by a bigger
+    tolerance. A future change that quietly restores the failure path would
+    re-arm the campaign on numbers that cannot be trusted, so the refusal is
+    asserted rather than assumed.
     """
     mod = _load_checker()
     _write(tmp_path, gated_kw={"kv": "nf4"})
     problems, _notes = mod.check(tmp_path / "res.csv")
-    assert any("GATED_KV" in q for q in problems), problems
+    assert not any("GATED_KV" in q for q in problems), problems
+    assert problems == [], problems
 
 
 # ---------------------------------------------------------------------------
-# The teacher-forced gate (analysis plan 6.1c)
+# The teacher-forced check: REPORT ONLY (analysis plan 6.1f)
 #
-# The numbers in these fixtures are the MEASURED ones from
-# results/mlsys/teacher_forced/, not invented values, so the tests document the
-# controls they were built from:
+# The numbers in these fixtures are the MEASURED ones, not invented values:
 #
-#   bf16 positive (spec arm)          max shortfall 0.375  (8k) / 0.188 (32k)
-#   NEG off-by-one KV, 8k bf16                              16.125
-#   NEG unverified draft, 8k bf16                            6.750
+#   bf16 positive (spec arm)     max shortfall 0.375 (8k) / 0.188 (32k)
+#   NEG off-by-one KV, 8k bf16                    16.125
+#   NEG unverified draft, 8k bf16                  6.750
+#   the invalid 8-rank probe                     6.125 / 7.84
 #
-# TOL_bf16 = 1.875 = 2 x 0.9375, the measured bf16 noise floor over 126
-# positions. The gate sits between the positives (inside by 5x-10x) and the
-# negatives (outside by 3.6x-8.6x).
+# Reference tolerance 1.875 = 2 x 0.9375, the measured 1-rank bf16 noise floor.
+# It is printed beside each arm so a reader can see the distance; nothing fails
+# on it. The assertions below therefore check what is REPORTED and, just as
+# importantly, that nothing is FAILED.
 # ---------------------------------------------------------------------------
 
-def test_the_gate_accepts_the_measured_bf16_positive(tmp_path):
+def test_a_good_probe_is_reported_against_the_reference(tmp_path):
     mod = _load_checker()
     _write(tmp_path, gated_kw={"spec_shortfall": 0.375})
     problems, notes = mod.check(tmp_path / "res.csv")
     assert problems == [], problems
     joined = " ".join(notes)
-    assert "teacher-forced max shortfall 0.3750 <= TOL_bf16" in joined, notes
+    assert "max shortfall 0.3750 <= reference TOL_bf16 1.875" in joined, notes
+    assert "[REPORT ONLY, not a gate]" in joined, notes
 
 
-def test_the_off_by_one_negative_control_fails_the_gate(tmp_path):
-    """A KV/position misalignment must be caught, not tolerated.
-
-    EVERY token is the target's argmax from one position earlier. The worst
-    shortfall measured for this defect is 16.125 logits at 8k bf16, which is
-    8.6x TOL_bf16.
-    """
+def test_the_off_by_one_negative_control_is_reported_and_does_not_fail(tmp_path):
+    """The defect must still be VISIBLE -- 16.125 is 8.6x the reference -- but
+    visible as a report. Whether the probe can detect defects at all is a
+    question for the rebuilt probe, which must pass its own negative controls
+    before it is allowed to gate again."""
     mod = _load_checker()
     _write(tmp_path, gated_kw={"spec_shortfall": 16.125})
-    problems, _notes = mod.check(tmp_path / "res.csv")
-    assert any("teacher-forced MISMATCH" in p for p in problems), problems
-    assert any("16.1250 > TOL_bf16 1.875" in p for p in problems), problems
+    problems, notes = mod.check(tmp_path / "res.csv")
+    assert problems == [], problems
+    joined = " ".join(notes)
+    assert "16.1250 > reference TOL_bf16 1.875" in joined, notes
+    assert "[REPORT ONLY, not a gate]" in joined, notes
 
 
-def test_the_unverified_draft_negative_control_fails_the_gate(tmp_path):
-    """Accepting the draft without verifying it must be caught.
-
-    This is the tightest control: a GOOD draft is right most of the time, so the
-    defect is rare but large. Its best case is the 6.75-logit unverified draft at
-    8k bf16 -- still 3.6x TOL_bf16, which is the margin the whole rule rests on.
-    """
+def test_the_unverified_draft_control_is_reported_and_does_not_fail(tmp_path):
     mod = _load_checker()
     _write(tmp_path, gated_kw={"spec_shortfall": 6.75})
-    problems, _notes = mod.check(tmp_path / "res.csv")
-    assert any("teacher-forced MISMATCH" in p for p in problems), problems
-    assert any("6.7500 > TOL_bf16 1.875" in p for p in problems), problems
+    problems, notes = mod.check(tmp_path / "res.csv")
+    assert problems == [], problems
+    assert "6.7500 > reference TOL_bf16 1.875" in " ".join(notes), notes
 
 
-def test_a_gated_pair_without_a_probe_is_unverified_not_a_pass(tmp_path):
-    """A missing probe must FAIL. "Not measured" is not "measured clean"."""
+def test_a_pair_without_a_probe_is_simply_reported(tmp_path):
+    """With the probe disabled no row carries one, so "missing probe" is the
+    NORMAL case now: it must be reported as such and must not fail. The old
+    contract made it UNVERIFIED, which was right while it gated and is wrong
+    now -- the stage would fail on every row."""
     mod = _load_checker()
     _write(tmp_path, gated_kw={"with_probe": False})
-    problems, _notes = mod.check(tmp_path / "res.csv")
-    assert any("UNVERIFIED, which is not a pass" in p for p in problems), problems
+    problems, notes = mod.check(tmp_path / "res.csv")
+    assert problems == [], problems
+    assert "REPORT ONLY, not recorded" in " ".join(notes), notes
 
 
-def test_a_gated_pair_whose_probe_errored_is_unverified(tmp_path):
+def test_a_probe_that_errored_is_reported_not_failed(tmp_path):
     mod = _load_checker()
     _write(tmp_path, gated_kw={"probe_error": "CUDA out of memory"})
-    problems, _notes = mod.check(tmp_path / "res.csv")
-    assert any("CUDA out of memory" in p and "UNVERIFIED" in p
-               for p in problems), problems
+    problems, notes = mod.check(tmp_path / "res.csv")
+    assert problems == [], problems
+    assert "CUDA out of memory" in " ".join(notes), notes
 
 
-def test_the_nf4_pair_is_reported_and_never_gated(tmp_path):
-    """NF4 is measured and printed, but a large shortfall there does NOT fail.
-
-    NF4 KV noise alone flips 20% of argmaxes at this context, so gating it would
-    fail legitimate runs; its separation from real defects is only 1.31x. The
-    bf16 pair is still present, so the gate itself is intact.
-    """
+def test_a_non_reference_kv_precision_says_so(tmp_path):
+    """The reference tolerance was derived at bf16. Printing it beside an NF4
+    arm without saying so invites the reader to compare incomparable numbers."""
     mod = _load_checker()
     _write(tmp_path)
     (tmp_path / "tokens" / "CAP_spec.tflossless.json").write_text(json.dumps({
@@ -508,8 +508,35 @@ def test_the_nf4_pair_is_reported_and_never_gated(tmp_path):
     problems, notes = mod.check(tmp_path / "res.csv")
     assert problems == [], problems
     joined = " ".join(notes)
-    assert "kv=nf4 [REPORT ONLY, not gated]" in joined, notes
-    assert "20.4400" in joined and "max|delta|=7.75" in joined, notes
+    assert "20.4400 > reference TOL_bf16 1.875" in joined, notes
+    assert "is not the precision the reference tolerance was derived for" in joined, notes
+    assert "max|delta|=7.75" in joined, notes
+
+
+def test_the_structural_assertions_still_gate(tmp_path):
+    """The half of the stage that still fails runs. Each of these is a real
+    defect that must abort: a status that is not ok, a declared-but-unmeasured
+    precision, an unknown dtype, an identity break. Removing the probe gate must
+    not have removed these."""
+    # (1) a measured dtype outside the declared set: a silent precision
+    #     substitution is still a failure
+    mod = _load_checker()
+    _write(tmp_path, gated_kw={})
+    tpath = tmp_path / "tokens" / "CAP_spec.json"
+    d = json.loads(tpath.read_text())
+    d["kv_dtype"] = "int8"
+    tpath.write_text(json.dumps(d))
+    problems, _ = mod.check(tmp_path / "res.csv")
+    assert any("kv_dtype" in q for q in problems), problems
+
+    # (2) an unpaired speculative arm: the pairing is still enforced
+    mod2 = _load_checker()
+    _write(tmp_path, gated_kw={})
+    cpath = tmp_path / "res.csv"
+    keep = [ln for ln in cpath.read_text().splitlines() if "CAP_tgt" not in ln]
+    cpath.write_text("\n".join(keep) + "\n")
+    problems, _ = mod2.check(cpath)
+    assert problems, "dropping the partner row produced no problem at all"
 
 
 def test_the_pairing_key_separates_kv_precisions(tmp_path):

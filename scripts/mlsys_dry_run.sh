@@ -1753,27 +1753,45 @@ if "numerics_report(" not in stub:
 if '"_real_run_experiment"' in stub and "real.numerics_report" in stub:
     fails.append("the stub calls numerics_report on the wrong module")
 
-# 2. the cap smoke gates on the teacher-forced check and still asserts numerics
-#    (analysis plan 6.1c). Token identity is REPORTED, not gated: the two arms run
-#    the target in different forward shapes and in bf16 those do not agree
-#    bit-for-bit, which is measured rather than assumed.
+# 2. the cap smoke asserts the STRUCTURAL contract and reports the teacher-forced
+#    numbers without gating on them (analysis plan 6.1f). The probe gate was
+#    withdrawn, not re-thresholded: its 8-rank numbers came from a forward the
+#    engine never runs (the probe fed the full prompt to a model that is fed the
+#    rank's slice), and a gate on a wrong input is not repaired by a bigger
+#    tolerance. Token identity stays REPORTED for the same reason it always was:
+#    the two arms run the target in different forward shapes.
 for needle, why in (
         ("TOL_BF16 = 1.875",
-         "the derived bf16 tolerance is missing or has been changed without "
-         "re-deriving it from the noise floor"),
-        ('GATED_KV = ("bfloat16",)',
-         "no KV dtype is gated, so nothing is actually tested"),
+         "the reference tolerance is missing; the reported numbers lose their "
+         "scale"),
         ('DECLARED_KV = ("nf4", "bfloat16")',
          "the declared KV set is missing"),
         ('if kvd not in DECLARED_KV', "the KV dtype is not asserted per row"),
         ('if wp != "fp4"', "the weight precision is not asserted per row"),
-        ("teacher-forced MISMATCH", "the gate cannot fail"),
-        ("UNVERIFIED, which is not a pass",
-         "a missing probe is not treated as unverified"),
-        ("REPORT ONLY, not gated",
-         "the non-gated dtypes are not reported as such"),
-        ("GATED_KV dtype", "the gate can vanish without a problem being raised"),
+        ("REPORT ONLY",
+         "the teacher-forced numbers are not marked as a report"),
+        ("no measured precision", "a row with no measured precision is not a "
+         "failure"),
 ):
+    if needle not in smoke:
+        fails.append(f"the cap smoke: {why} (missing {needle!r})")
+# REPORT ONLY means nothing about the probe can fail the stage. Assert the
+# absence of the machinery that did, because restoring it would re-arm the
+# campaign on numbers measured through the wrong input.
+for needle, why in (
+        ("GATED_KV", "the gate constant is back; the probe would stop stages "
+         "again"),
+        ("teacher-forced MISMATCH", "the probe can fail the stage again"),
+        ("UNVERIFIED, which is not a pass",
+         "a missing probe would fail the stage again, and with the probe "
+         "disabled EVERY row would fail"),
+):
+    if needle in smoke:
+        fails.append(f"the cap smoke: {why} (found {needle!r})")
+# ... and no cap-smoke row may request the probe, or the stage would pay its wall
+# clock for numbers nothing can act on.
+if "teacher_forced_check" in read("configs/mlsys_engine_cap_smoke.yml"):
+    fails.append("an engine_cap_smoke row still requests the disabled probe")
     if needle not in smoke:
         fails.append(f"the cap smoke: {why} (missing {needle!r})")
 if "no measured precision" not in smoke:

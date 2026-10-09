@@ -252,40 +252,54 @@ class TestBudget:
         assert '"elapsed_s"' in src
 
 
-class TestOnlyTheGatedPairIsProbed:
-    def test_the_probe_runs_on_the_bf16_pair_only(self):
-        """Probing the NF4 rows bought two figures that could never gate (NF4
-        noise flips 20% of argmaxes at 128k, so no threshold separates it from a
-        real defect) at the cost of the probe's wall clock on two more rows."""
+class TestNoStageProbesYet:
+    """The probe is disabled in the campaign while it is rebuilt.
+
+    It is REPORT ONLY in mlsys_cap_smoke_check.py and no engine_cap_smoke row
+    requests it, so no probe runs and no stage can be stopped by one. That is
+    deliberate: at the time of disabling, the probe's 8-rank numbers described a
+    forward the engine never runs (it fed the full prompt to a model that is fed
+    the rank's slice), so no threshold derived from them could be trusted.
+    """
+
+    def test_no_cap_smoke_row_requests_the_probe(self):
         import yaml
 
         cfg = yaml.safe_load(
             (REPO_ROOT / "configs/mlsys_engine_cap_smoke.yml").read_text())
-        levels = cfg["CAP_SMOKE"]["levels"]
-        probed = [lv["id"] for lv in levels if lv.get("teacher_forced_check")]
-        assert probed == ["CAPS_prefix64_bf16", "CAPS_prefix64_bf16_targetonly"], (
-            f"only the bf16 pair may be probed, got {probed}")
-        for lv in levels:
-            if lv["id"] in probed:
-                assert lv.get("kv_quant") is False, (
-                    "the probed pair must be the bf16 one, not NF4")
+        probed = [lv["id"] for lv in cfg["CAP_SMOKE"]["levels"]
+                  if lv.get("teacher_forced_check")]
+        assert probed == [], (
+            f"these rows would run the probe: {probed}; it is disabled until it "
+            f"is rebuilt on the production decode paths")
 
-    def test_the_gated_pair_is_still_present_for_the_checker(self):
-        """Removing probes must not remove the pair the CHECKER gates on: with
-        no pair measuring a GATED_KV dtype the anti-vanishing guard in
-        mlsys_cap_smoke_check.py would (correctly) fail the stage."""
+    def test_the_bf16_pair_survives_so_the_precision_comparison_does(self):
+        """Dropping the probe must not drop the bf16 pair: it is still the pair
+        a precision comparison belongs on, and its rows are still structural
+        assertions."""
         import yaml
 
+        cfg = yaml.safe_load(
+            (REPO_ROOT / "configs/mlsys_engine_cap_smoke.yml").read_text())
+        ids = [lv["id"] for lv in cfg["CAP_SMOKE"]["levels"]]
+        assert "CAPS_prefix64_bf16" in ids
+        assert "CAPS_prefix64_bf16_targetonly" in ids
+
+    def test_the_checker_no_longer_has_a_gate_constant(self):
+        """`GATED_KV` was the switch that made the probe fail a stage. Its
+        absence is the machine-checkable form of "report only"."""
         sys.path.insert(0, str(REPO_ROOT / "scripts"))
         import mlsys_cap_smoke_check as check
 
-        cfg = yaml.safe_load(
-            (REPO_ROOT / "configs/mlsys_engine_cap_smoke.yml").read_text())
-        levels = cfg["CAP_SMOKE"]["levels"]
-        gated = [lv["id"] for lv in levels
-                 if lv.get("teacher_forced_check") and lv.get("kv_quant") is False]
-        assert gated, "no probed pair would measure a GATED_KV dtype"
-        assert "bfloat16" in check.GATED_KV
+        assert not hasattr(check, "GATED_KV"), (
+            "the gate constant is back; the probe would aborts stages again")
+        assert hasattr(check, "TOL_BF16"), (
+            "the reference tolerance must survive as a REPORTING value, or the "
+            "sidecar numbers lose their scale")
+
+    def test_the_checker_says_report_only_in_its_output(self):
+        src = (REPO_ROOT / "scripts/mlsys_cap_smoke_check.py").read_text()
+        assert "REPORT ONLY" in src
 
 
 class TestTheTwoRankHarnessStaysHonest:
