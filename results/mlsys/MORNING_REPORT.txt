@@ -1448,3 +1448,38 @@ CHECK 3 -- the watcher's ssh channel. THE EARLIER DIAGNOSIS WAS WRONG, and the
   the pre-fix shape.
 
 NOT YET DONE: re-arming. The 8x80GB has had no capacity in any region.
+
+================================================================================
+2026-10-09T08:00Z  MILESTONE: RE-ARMED (third arming of this session)
+================================================================================
+
+Pre-arm checks: 0 instances (validation pod terminated), HEAD == origin at
+6009f96, tree clean. No guard value changed: cap $2000, ask $300, 40h clock,
+nine-stage allowlist, 72h capacity wait, 60 +/-20s cadence, instance type
+gpu_8x_a100_80gb_sxm4 only.
+
+  watcher    pid 42508 (caffeinate 42509)   nohup + detached, survives this shell
+  monitor    pid 42918, fresh SEEN list, horizon 72h
+             ignoring incidents older than 20261009075959
+  arming marker  ===== ARMING 2026-10-09T07:59:59Z =====
+  capacity   asia-south-1 / us-east-1 / us-west-2 all "none" for 8x80GB
+             (a separate free poller is watching for ANY multi-GPU A100)
+
+STANDING RULES for this arming, unchanged: report every gate result as it lands
+(verdict, and the full row table for gate_calibration); gates fail -> pull,
+terminate, stop, no 8x retry; ALL GATES PASS -> continue the full campaign
+automatically without waiting; a non-gate stage failing keeps its rows and the
+manifest continues, and I report it; stop only on a dead CUDA context, a stall,
+or the cost cap; anything unanticipated -> pull, terminate, stop.
+
+STILL OPEN: the 8-rank check of the in-row heartbeat. No multi-GPU A100 has had
+capacity at any point today, so the heartbeat was verified at 1 rank only. The
+print is rank-0-only by construction and covered by AST tests, and the gate
+stage will exercise it at 8 ranks within minutes of launch -- if it did not fire
+there, the liveness rule would stop the campaign and I would see it, at a cost of
+a few dollars rather than the 70 minutes and $43 the old failure cost.
+
+COST OF THIS VALIDATION RUN: 67 min on 1x A100 SXM4-40GB x $1.99/hr = $2.22.
+Not entered in results/mlsys/gpu_hours.csv, consistent with the standing
+instruction that aborted/validation launches are not ledgered (the ledger still
+sums $78.12).
