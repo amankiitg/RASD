@@ -41,6 +41,7 @@ import csv
 import json
 import math
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -602,6 +603,13 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
            # in-distribution model, which it is not.
            "reference_role": cand.get("reference_role", "")}
 
+    # Phase stamps. The per-candidate line brackets the whole candidate, but one
+    # candidate alone can run for minutes and the phases inside it are not
+    # equal: loading an 8B model, forwarding a 512k prompt and generating from it
+    # are each measured in minutes. Stamped so the longest silence is one PHASE
+    # rather than one candidate.
+    t_cand = time.time()
+    t_phase = time.time()
     intended = {}
     try:
         hf_cfg = RASDInference._build_hf_config(
@@ -628,6 +636,9 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
             device_map=_device_map()).eval()
         row["config_max_position_embeddings"] = hf_cfg.max_position_embeddings
         row["config_rope_scaling"] = json.dumps(getattr(hf_cfg, "rope_scaling", None))
+        print(f"[GATE] {name}: model loaded, elapsed={time.time() - t_phase:.0f}s",
+              flush=True)
+        t_phase = time.time()
     except Exception as e:
         row.update(status="error", error=f"{type(e).__name__}: {e}")
         return row
@@ -692,7 +703,12 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
                 row["ppl_continuation"] = ""
                 return row
 
+        print(f"[GATE] {name}: ppl forward over "
+              f"{len(prompt_ids) + len(cont_ids)} tokens", flush=True)
         ppl, bad_pos = continuation_perplexity(model, prompt_ids, cont_ids)
+        print(f"[GATE] {name}: ppl done in {time.time() - t_phase:.0f}s",
+              flush=True)
+        t_phase = time.time()
         row["ppl_continuation"] = round(ppl, 4)
         # A non-finite logit is a property of the configuration under test, not
         # a gate malfunction: the f2 construction is a KNOWN-BROKEN negative
@@ -702,7 +718,11 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
         row["non_finite_first_position"] = (
             bad_pos if bad_pos is not None else "")
 
+        print(f"[GATE] {name}: generating {GENERATE_TOKENS} tokens from a "
+              f"{len(prompt_ids)}-token prompt", flush=True)
         text, new_ids = generate_after_prompt(model, tok, prompt_ids)
+        print(f"[GATE] {name}: generation done in {time.time() - t_phase:.0f}s "
+              f"(candidate total {time.time() - t_cand:.0f}s)", flush=True)
         (out_dir / f"gen_{name}.txt").write_text(text)
         row.update(generation_metrics(text, new_ids, eos_ids(tok)))
         row["status"] = "ok"
@@ -960,8 +980,34 @@ def main() -> int:
             _tok_cache[model_name] = t
         return _tok_cache[model_name]
 
-    rows = [run_candidate(c, _tok_for(c["target_model_name"]), args.pg19_meta,
-                          gen_dir) for c in candidates]
+    # PROGRESS LINES, and they are load-bearing rather than cosmetic.
+    #
+    # A single candidate loads a model, forwards a 128k-512k prompt and generates
+    # 200 tokens from it, and this loop used to print NOTHING until every
+    # candidate was finished: the seven rope candidates are two 512k, four 256k
+    # and one 128k, so the stage could sit for 25-40 minutes with a completely
+    # silent manifest.log. The pod watchdog and the operator's watcher both stop
+    # a stage after `liveness_minutes` (15) of a log that does not grow, and that
+    # rule cannot tell a working stage from a hung one without output -- so this
+    # stage was a false abort waiting to happen, and with the stop path now
+    # fixed it would have taken the campaign with it.
+    #
+    # HOST-SIDE ONLY: a clock, a counter and strings. No `.item()`, no `.cpu()`,
+    # no `.tolist()`, no `synchronize`, no collective, no barrier, nothing that
+    # touches a device. It also runs BEFORE any measurement is taken, so it
+    # cannot move one.
+    t_stage = time.time()
+    rows = []
+    for i, c in enumerate(candidates, start=1):
+        print(f"[GATE] candidate {i}/{len(candidates)} {c['name']} "
+              f"ctx={c['context_length']} start", flush=True)
+        t_cand = time.time()
+        row = run_candidate(c, _tok_for(c["target_model_name"]), args.pg19_meta,
+                            gen_dir)
+        print(f"[GATE] candidate {i}/{len(candidates)} {c['name']} done "
+              f"status={row.get('status')} elapsed={time.time() - t_cand:.0f}s "
+              f"stage_elapsed={time.time() - t_stage:.0f}s", flush=True)
+        rows.append(row)
 
     # A DEAD GPU IS NOT A MISCALIBRATED GATE.
     #

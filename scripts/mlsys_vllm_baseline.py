@@ -147,6 +147,13 @@ ATTEMPT_LADDER = [
 
 MAX_ATTEMPT_WALL_S = 20 * 60          # 20 min cap per attempt
 
+#: Seconds between in-attempt progress lines. See run_attempt: the worker's own
+#: output is written to the attempt's log FILE, so an attempt is silent as far as
+#: the manifest's log is concerned until it returns -- and it may legitimately
+#: run for MAX_ATTEMPT_WALL_S. 60s keeps the manifest's log growing well inside
+#: the 15-minute byte-liveness rule that stops a stage.
+ATTEMPT_HEARTBEAT_S = 60.0
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -511,12 +518,41 @@ def run_attempt(spec: dict, log_path: Path, timeout_s: int) -> tuple[int, str]:
 
         timer = threading.Timer(timeout_s, _kill)
         timer.start()
+
+        # IN-ATTEMPT PROGRESS, on a thread rather than in the read loop.
+        #
+        # vLLM's own output is teed to log_path, so from the manifest's point of
+        # view an attempt is completely silent from `attempt N (...)` until its
+        # outcome -- and a single attempt may run for MAX_ATTEMPT_WALL_S (20
+        # minutes), which is longer than the 15-minute byte-liveness rule both
+        # watchdogs enforce. A healthy 512k rung would have been stopped as a
+        # stall, and with the stop path now working, stopped for real.
+        #
+        # It is a thread and NOT a check inside the line loop because the loop
+        # blocks on the child's pipe: a worker that hangs without writing a byte
+        # would never reach an in-loop heartbeat, i.e. exactly the case this is
+        # here to cover.
+        #
+        # Host-side only: a clock and counters in the PARENT process. It never
+        # touches the worker's device, memory or state.
+        stop_beat = threading.Event()
+
+        def _beat():
+            t0 = time.time()
+            while not stop_beat.wait(ATTEMPT_HEARTBEAT_S):
+                print(f"[VLLM] still running: {time.time() - t0:.0f}s elapsed, "
+                      f"{len(chunks)} lines written to {log_path.name}, "
+                      f"timeout {timeout_s}s", flush=True)
+
+        beat = threading.Thread(target=_beat, daemon=True)
+        beat.start()
         try:
             for line in proc.stdout:  # type: ignore[union-attr]
                 lf.write(line)
                 lf.flush()
                 chunks.append(line)
         finally:
+            stop_beat.set()
             timer.cancel()
             proc.wait(timeout=60)
         if killed["v"]:

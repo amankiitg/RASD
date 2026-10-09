@@ -1483,3 +1483,68 @@ COST OF THIS VALIDATION RUN: 67 min on 1x A100 SXM4-40GB x $1.99/hr = $2.22.
 Not entered in results/mlsys/gpu_hours.csv, consistent with the standing
 instruction that aborted/validation launches are not ledgered (the ledger still
 sums $78.12).
+
+================================================================================
+2026-10-09T10:0xZ  MILESTONE: two stages could out-silence the liveness rule
+================================================================================
+
+FOUND (read-only, from the code):
+
+1. coherence_gate (scripts/mlsys_coherence_gate.py) printed NOTHING until every
+   candidate was finished -- `main()` built all rows in one list comprehension
+   and the summary table is printed after the CSV. Its seven rope candidates are
+   one 128k, four 256k and two 512k (configs/mlsys_rope_candidates.json), each
+   loading Llama-3.1-8B on ONE GPU (`_device_map()` is {"": 0}), forwarding the
+   prompt and generating 200 tokens. Estimated stage wall 25-40 minutes with an
+   EMPTY manifest.log, i.e. 15 minutes of silence is reached inside the third or
+   fourth candidate. With the stop path now working, that would have stopped the
+   campaign at its third stage.
+   Longest single phase, estimated: 8B model load 0.5-1.5 min; ppl forward over
+   512k tokens ~1-2 min (8.2 PFLOPs at a realistic 60-120 TFLOP/s on one A100);
+   generate from a 512k prompt needs a ~64 GB KV cache plus 16 GB of weights on
+   an 80 GB card, so it likely OOMs -- which is recorded as the row's status and
+   is fast. Both >10-minute cases are gone once the phases are stamped.
+
+2. vllm_ladder (scripts/mlsys_vllm_baseline.py) prints per cell and per attempt,
+   but `run_attempt` runs the worker as a SUBPROCESS whose output is teed to the
+   attempt's own log file, so manifest.log sees nothing from `attempt N` until
+   the attempt returns. One attempt is allowed MAX_ATTEMPT_WALL_S = 20 min
+   before the timer kills it -- longer than the 15-minute liveness rule, and the
+   largest rung is 512k + 1024 tokens on Llama-3.1-8B.
+
+CHANGED (both host-side only: a clock, counters and strings; no `.item()`, no
+`.cpu()`, no `synchronize`, no collective, no barrier, and both run outside the
+measured quantity):
+
+  * mlsys_coherence_gate.py: `[GATE] candidate i/N <name> ctx=... start` and
+    `... done status=... elapsed=...s stage_elapsed=...s` around every candidate
+    (this also covers correction_note_evidence and rope_intervention_gate, which
+    are the same script), plus phase stamps: model loaded, `ppl forward over N
+    tokens`, ppl done, generation done (with the candidate total).
+  * mlsys_vllm_baseline.py: ATTEMPT_HEARTBEAT_S = 60 and a `[VLLM] still
+    running: Ns elapsed, N lines written to <log>, timeout Ns` line, printed by
+    a DAEMON THREAD in the parent rather than inside the read loop -- the loop
+    blocks on the child's pipe, so a worker that hangs without writing a byte
+    would never reach an in-loop heartbeat, which is exactly the case to cover.
+
+NO THRESHOLDS CHANGE, and the reason is a fact about the code rather than a
+preference. `liveness_minutes` is ONE global key read by both watchdogs
+(scripts/mlsys_manifest.sh:294, scripts/mlsys_watch_and_run.sh:845); there is no
+per-stage form, and the file states why: a per-stage override would let exactly
+the stage that hangs opt out of the rule that exists to catch it. Per-stage
+values exist only for the RUN_LOG-based stall rule (`stall_minutes_for`), which
+is a different rule. Raising the global value to cover a 25-40 minute stage would
+have weakened it for every other stage, and it would have papered over the real
+defect (a stage that reports nothing). The progress lines fix the silence and
+leave 15 minutes as the bound on a genuine hang: the longest silence is now one
+PHASE, ~3 minutes, or one 60s heartbeat.
+Also worth recording: both sides read the value ONCE per run (the pod watchdog
+before its loop, the watcher at line 860 immediately before its monitoring
+loop), not per poll -- so an edit today would only have been picked up because
+the campaign has not launched yet. It is not a live knob mid-stage.
+
+EVIDENCE: 6 new tests in tests/test_mlsys_stage_progress.py. Four fail when the
+loop prints / the heartbeat are reverted, and the phase test fails when a single
+`flush=True` is dropped (a buffered line is the same as no line). Full suite 1095
+passed, dry run 32/0. The armed watcher was not touched: no restart, no edit to
+mlsys_watch_and_run.sh while it runs.
