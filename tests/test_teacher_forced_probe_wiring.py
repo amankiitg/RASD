@@ -22,6 +22,7 @@ shipped broken:
 from __future__ import annotations
 
 import inspect
+import re
 import sys
 from pathlib import Path
 
@@ -285,3 +286,63 @@ class TestOnlyTheGatedPairIsProbed:
                  if lv.get("teacher_forced_check") and lv.get("kv_quant") is False]
         assert gated, "no probed pair would measure a GATED_KV dtype"
         assert "bfloat16" in check.GATED_KV
+
+
+class TestTheTwoRankHarnessStaysHonest:
+    """The 2-rank validation is the only place the fix is exercised with a ring
+    before the campaign pays for 8 ranks, so its inputs have to be pinned."""
+
+    def test_its_tolerance_is_the_gate_s_tolerance(self):
+        """Two copies of one number drift, and a laxer copy here would certify a
+        probe the gate then rejects."""
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import mlsys_cap_smoke_check as check
+
+        runner = (REPO_ROOT / "scripts/mlsys_probe_2rank_check.sh").read_text()
+        m = re.search(r"^TOL_BF16=([0-9.]+)", runner, re.M)
+        assert m, "the runner does not state a TOL_BF16"
+        assert float(m.group(1)) == check.TOL_BF16, (
+            f"runner TOL_BF16={m.group(1)} but the checker uses "
+            f"{check.TOL_BF16}")
+
+    def test_it_requires_the_measured_kv_to_be_bf16(self):
+        """A kv_quant override that silently did nothing would otherwise read as
+        a passing run -- the exact trap the 1x noise-floor harness fell into."""
+        runner = (REPO_ROOT / "scripts/mlsys_probe_2rank_check.sh").read_text()
+        assert '!= "bfloat16"' in runner
+
+    def test_it_requires_the_control_to_be_exactly_zero(self):
+        """The control is the same computation twice. Anything but 0.0 means the
+        run is not deterministic and the rest of the numbers mean nothing."""
+        runner = (REPO_ROOT / "scripts/mlsys_probe_2rank_check.sh").read_text()
+        assert '"control_max_abs_delta"' in runner
+        assert "expected 0.0" in runner
+
+    def test_it_asserts_two_ranks_really_ran(self):
+        """The whole point is the rank count; a probe that silently ran on one
+        rank would look identical to a success."""
+        runner = (REPO_ROOT / "scripts/mlsys_probe_2rank_check.sh").read_text()
+        assert '!= 2' in runner and "expected 2" in runner
+
+    def test_the_config_probes_only_a_bf16_pair_at_short_context(self):
+        import yaml
+
+        cfg = yaml.safe_load(
+            (REPO_ROOT / "configs/mlsys_probe_2rank.yml").read_text())
+        levels = cfg["PROBE_2RANK"]["levels"]
+        assert len(levels) == 2, "one pair, spec and target-only"
+        for lv in levels:
+            assert lv.get("teacher_forced_check") is True
+            assert lv.get("kv_quant") is False, "the gated pair is the bf16 one"
+            assert lv["context_length"] == 8192, (
+                "rank participation does not depend on context length; paying "
+                "for 128k here would pay for the campaign's question")
+
+    def test_no_campaign_path_reads_the_validation_config(self):
+        """It must not be reachable from the manifest or the watcher, or a
+        validation config could be run as a campaign stage."""
+        for name in ("scripts/mlsys_manifest.sh", "scripts/mlsys_watch_and_run.sh",
+                     "configs/mlsys_manifest.yml"):
+            src = (REPO_ROOT / name).read_text()
+            assert "mlsys_probe_2rank" not in src, (
+                f"{name} references the validation config")
