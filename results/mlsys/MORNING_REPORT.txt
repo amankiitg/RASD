@@ -1548,3 +1548,51 @@ loop prints / the heartbeat are reverted, and the phase test fails when a single
 `flush=True` is dropped (a buffered line is the same as no line). Full suite 1095
 passed, dry run 32/0. The armed watcher was not touched: no restart, no edit to
 mlsys_watch_and_run.sh while it runs.
+
+================================================================================
+2026-10-09T10:02Z  ADDENDUM: one PHASE was still long enough, and a flag
+================================================================================
+
+Phase stamps alone were NOT a tight enough bound for coherence_gate. The two
+512k candidates forward ~512k tokens in a SINGLE `model.model(...)` call:
+
+    attention FLOPs  = 2 x (S^2/2) x 128 x 32 x 32 x 2 = 72.1 PFLOPs
+    parameter FLOPs  = 2 x 8.03e9 x S               =  8.4 PFLOPs
+
+Scaling the campaign's own measured 1M-token prefill (6.29 min on 8 GPUs;
+attention work scales as S^2, so 512k is a quarter of it) to ONE GPU gives
+~12.6 minutes for that single call, against a 15-minute liveness limit. So the
+first live run could have been stopped, with nothing wrong, inside a phase.
+`_phase_heartbeat` now prints "still running, elapsed=Ns" every 60s around the
+ppl and generate phases, from a daemon thread in the parent. It is host-side
+only and outside every measured quantity. What it TRADES is written in its
+docstring: it says the process is alive and which phase it is in, not that the
+phase is progressing, so a hang INSIDE a phase is left to the stage timeout.
+That is acceptable for this stage and not for the engine stages -- the gate is
+single-device (`_device_map()` is {"": 0}), so there is no collective to
+deadlock in, and its realistic failures (OOM, dead CUDA context, out-of-vocab
+prompt) all raise and are recorded on the row.
+
+Tests: 9 in tests/test_mlsys_stage_progress.py, all with negative controls --
+revert the loop prints, the heartbeat, the heartbeat's stop, or add a
+`torch.cuda.synchronize()` and the matching test fails. Suite 1098 passed, dry
+run 32/0. Commits d15266c and a8e7e3a.
+
+FLAG, not changed -- the gate puts the model on ONE GPU, so the 512k candidates
+will probably fail it for MEMORY rather than for rope quality. `generate` needs
+a ~64 GiB KV cache (2 x 32 layers x 8 kv_heads x 128 dim x 524288 tokens x 2
+bytes) plus 16 GB of weights plus prefill activations, on an 80 GB card; plain
+HF `generate` pages nothing. The ppl forward fits (no KV cache, transient
+activations), so the row should reach the generation step and come back
+status=oom -- which the dry run's verdict table scores as gate_pass=False. The
+512k extension rows are therefore at risk of being FAILED by the gate's memory
+ceiling rather than by their rope configuration. I did not change `_device_map`
+or the generation path: both are the measurement.
+
+CAMPAIGN STATUS at this moment: launched 2026-10-09T09:53:35Z, instance
+d2e1825003d041ef887996efff29f2da, us-east-1, IP 129.213.87.10 (8xA100-80GB).
+Repo staged onto the pod at 10:01:29Z, i.e. AFTER commit a8e7e3a was pushed at
+10:00:15Z, and verified by hash: both scripts on the pod are byte-identical to
+the committed ones and contain the progress lines. Provisioning started
+10:01:29Z. The armed watcher was not touched -- no restart, and
+mlsys_watch_and_run.sh has not been edited since 6009f96.
