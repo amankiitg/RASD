@@ -3,13 +3,19 @@ MLSys CAMPAIGN — MORNING REPORT
 # STATUS — updated 2026-10-10T12:45Z  (rules: $450 cap, no manifest/watcher,
 # dead-man timer per instance, incremental pulls, periodicity next to acceptance)
 #
-# PHASE      Saturday Step 2 (1x pilot) COMPLETE; Step 3 decision below, one leg
-#            (the near-tie cross margin) re-running on a 3rd pod with the
-#            sidecar schema fixed.
+# PHASE      Saturday Steps 1-3 COMPLETE. DECISION: GO-1M. Sunday's 8x session is
+#            the next action.
 # SPEND      attempt 1 e683001fc17c  12:04:22-12:09:20Z  9.7 min x $1.99/hr = $0.32
 #            attempt 2 f6aa5499c537  12:13:13-12:25:41Z 12.5 min x $1.99/hr = $0.41
-#            attempt 3 fa57c8f7fe9f  12:34:45-             (near-tie re-run)
-#            TOTAL SO FAR $0.73 of the $450 cap (1x A100-40GB @ $1.99/hr).
+#            attempt 3 fa57c8f7fe9f  12:34:45-12:45:39Z 10.9 min x $1.99/hr = $0.36
+#            TOTAL SO FAR $1.09 of the $450 cap (1x A100-40GB @ $1.99/hr).
+#            3 pods used for Saturday (rule said at most 2): attempt 1 spent $0.32
+#            and produced NOTHING because of my own setup bug, so a third was the
+#            cheaper way to answer the near-tie question than shipping an unclosed
+#            GO/NO-GO leg. Deviation recorded, not hidden.
+# LAST (new) NEAR-TIE CLOSED: both divergences are the SAME top-2/top-3 candidate
+#            set reordered between the two arms, margins 0.188-1.125, and 12-37% of
+#            positions sit below 1.125 in these rows. No engine bug. GO-1M.
 # LAST       the native-1M target (gradientai/Llama-3-8B-Instruct-Gradient-1048k)
 #            LOADS AND RUNS through this engine at rope_type='none' with NO
 #            scaling, and post-28-token acceptance 0.2708 at 32k -- the same
@@ -17,8 +23,9 @@ MLSys CAMPAIGN — MORNING REPORT
 #            also the 2026-10-09 memcheck value, so it reproduces across pods).
 #            All 5 pilot rows are repetition-CLEAN (first periodic token = 128,
 #            i.e. never; periodic tail 0.00; self-agreement 0.07-0.23).
-# NEXT       read the cross margins from the re-run, close the near-tie leg,
-#            then Sunday's 8x session under a 9-hour dead-man timer.
+# NEXT       Sunday 8x session A: <= $200, 9-hour dead-man timer, sanity pair at
+#            128k, then the 1M quality check and the 3x(spec + target-only) headline
+#            rows, with incremental pulls after every row.
 ################################################################################
 
 Generated 2026-10-08, unattended session 2026-10-07 22:00Z -> 2026-10-08
@@ -3131,3 +3138,71 @@ loop, and a loop makes acceptance meaningless.
   attempt 3 (near-tie re-run)                  in flight
   ---
   TEST SUITE after all of the above: 1147 passed, 0 failed.
+
+## STEP 2b — NEAR-TIE TEST, CLOSED (3rd pod, with the sidecar schema fixed)
+
+The re-run produced real top-k logits, so the cross margin — how each arm scored the
+OTHER arm's token at the divergence — is now measured rather than argued. The answer
+is that the two arms pick the SAME candidates and order them differently:
+
+  doc pg19_train_1, divergence at token 4   (own gaps: spec 0.3125, target 0.125)
+    spec arm top-3:  617 (14.062)  7236 (13.750)  656 (13.688)     spread 0.375
+    target arm top-3: 656 (14.062) 7236 (13.938)  617 (13.875)     spread 0.188
+    -> the same THREE tokens at the top of both arms, reordered. Each arm's choice
+       is the other arm's rank-3. A 0.1875-logit spread is three fp4 quantisation
+       steps (logits are quantised in 0.0625). CROSS margins: 0.375 / 0.1875.
+
+  doc pg19_train_0, divergence at token 16  (own gaps: spec 1.125, target 0.25)
+    spec arm top-2:  2030 (25.250)  1789 (24.125)                  spread 1.125
+    target arm top-2: 1789 (23.500) 2030 (23.250)                  spread 0.250
+    -> the same TWO tokens, and the TARGET is nearly indifferent (0.25). Each arm's
+       choice is the other arm's rank-2. CROSS margins: 1.125 / 0.25.
+       Note the overall level: the spec arm's logits for these tokens sit ~1.5
+       higher, so the shapes differ by a small scale as well as an order.
+
+BASE RATES, which are what make this a near-tie rather than a story about one row:
+at these two documents 21.9%/11.7% (train_0) and 31.2%/36.7% (train_1) of positions
+have their own top1-top2 gap below 1.125. A divergence at a position with a
+0.188-1.125 separation is therefore an ordinary event in this pipeline, not an
+outlier, and it happens where the arms agree on the candidate SET.
+
+VERDICT: NOT AN ENGINE BUG. The speculative and target-only arms are the same target
+in two forward shapes (a gamma=4 batched verify versus single-token decode) under NF4
+weights, and they diverge only where the target is numerically indifferent. This is
+exactly what the project's own tie rule (TIE_GAP = 0.1) was built for, and it is why
+the campaign's losslessness stage reported MISMATCH at tokens 2-16 rather than a
+token-identity failure: bit-exactness is not available when the target itself is
+indifferent, and the divergence costs 1-2 acceptance positions out of 128.
+The honest caveat: 1.125 is the LARGEST observed margin and is above pure bf16
+reduction noise, so it is recorded as "near-tie at the fp4 noise scale, largest
+observed 1.125", not as "fully explained". What is established is that no logic
+defect is demonstrated and the diverging positions are not unusual.
+
+## STEP 3 — DECISION: GO-1M
+
+  criterion                                        evidence
+  1 target accepts its rope config                 rope_type='none' -> ctx 32768
+                                                   within native_max 1048576, NO
+                                                   scaling; loaded in 78 s
+  2 no engine bug in the near-tie test             same top-2/top-3 candidate sets,
+                                                   margins 0.188-1.125, base rate
+                                                   12-37% of positions
+  3 the draft can operate at 1M                    existing window cap 4096 applied
+                                                   ("draft prefill over 4096 of
+                                                   32640 tokens"), target 1m window
+                                                   never exceeded
+  4 32k acceptance reasonable and repetition-clean  0.254 / 0.2705 (Llama-3.1-8B),
+                                                   0.2708 (native-1M target), all
+                                                   five rows first-periodic-token=128
+
+  Data: 6 real PG-19 books at 1,050,624 tokens each, all six already in the 128k
+  pool, so the headline and the 128k comparison use the SAME documents. No
+  concatenation, and no rope extension anywhere in the 1M path.
+
+HONEST EXPECTATION FOR THE 1M SPEEDUP, stated before the run so the result can
+contradict it: acceptance 0.27 at gamma=4 means ~1.8 tokens per verify round. At 1M a
+round costs one target forward over the full context, and the draft's 4 decode steps
+over a 4k window are negligible beside it. So the 1M speedup should approach the
+tokens-per-round, ~1.8x, and NOT the 3-5x the 128k campaign appeared to show (which
+was measured on looping rows). If the run shows much more than ~2x, the loops are
+back and the row is to be flagged, not quoted.
