@@ -1954,3 +1954,27 @@ at gate_calibration,672 = $4.17; the real spend for this instance is $36.69 and
 $32.50 of it is unledgered (boot, provisioning, the 49 minutes of
 engine_cap_smoke). Cumulative real spend across all armings now stands at about
 $118.81 by this arithmetic, against a $2000 cap.
+
+================================================================================
+2026-10-10T01:38Z  MILESTONE: re-armed (sixth) with real detachment
+================================================================================
+
+Re-armed after the incident above, with the two fixes in commit 2c4d1fe, and this
+time the processes are started through scripts/mlsys_detach.py instead of
+`nohup ... & disown`. NO guard value changed: cap $2000, ask $300, 48h clock,
+72h capacity wait, 60 +/-20s cadence, gpu_8x_a100_80gb_sxm4, nine-stage
+allowlist. Pre-arm: 0 instances, 0 armed processes, HEAD == origin at 2c4d1fe.
+
+  marker   ===== ARMING 2026-10-10T01:38:25Z =====
+  watcher  pid 33277, pgid 33276, ppid 1   (caffeinate 33278)
+  monitor  pid 33400, pgid 33399, ppid 1   (phase A)
+  clock    launched 2026-10-10T01:38:38Z, deadline 2026-10-12T01:38:38Z (+48h)
+
+WHY THE DETACH MATTERS, concretely: the watcher (pgid 33276) and the monitor
+(pgid 33399) are now in SEPARATE process groups and both are reparented to pid 1.
+Before, both inherited the session that the copilot runtime had created, so when
+that runtime restarted at 2026-10-10T00:37:15Z it killed BOTH within 35 seconds
+of each other. A group- or session-scoped signal can no longer reach either.
+
+CAPACITY: 8x80GB appeared in us-east-1 on the FIRST poll (the previous run took
+22 polls / 24 minutes). Instance 16cc2a5795594ce195b39e223dd8134b.
