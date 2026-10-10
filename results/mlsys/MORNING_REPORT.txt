@@ -31,6 +31,10 @@ MLSys CAMPAIGN — MORNING REPORT
 #            0.310-0.798 (median 0.706), not the reported 0.620-0.970, and 4 of the
 #            10 first windows are themselves periodic. 9 of 10 rows loop over their
 #            full 1024 tokens; 4 have no non-degenerate window at all.
+# WRITTEN    results/mlsys/RESULTS_OCT.md (the deliverable) now exists in its
+#            no-capacity form: everything measured is in it, every table names its
+#            instance type, and the 1M rows say "did not run" rather than carrying an
+#            estimate. It will be rewritten in place if Session A fires.
 # NEXT       on capacity: arm the dead-man timer FIRST and confirm it by pid, then
 #            Session A (sanity -> quality 128k+1M -> 3 docs x spec+target-only at 1M),
 #            incremental rsync every 4 min, instance type recorded with the results.
