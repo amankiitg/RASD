@@ -2075,3 +2075,179 @@ SPEND. This instance: 01:38:38Z -> 05:43Z = 4.08h x $22.32 = $91.06. Manifest
 cumulative $140.04 = ledger $82.29 + 4.23 + 36.46 + 2.55 + 14.51. Note the
 ledger rows for this run are written on the POD; they are only merged locally by
 collect_incident at a stop, so the local ledger still reads $82.29 until then.
+
+================================================================================
+2026-10-10T05:51Z  POST-CAMPAIGN TODO  (nothing here is applied yet)
+================================================================================
+
+DELIBERATELY NOT DONE NOW, and the reason is mechanical rather than procedural:
+the armed watcher IS a running bash script. Bash reads a script file
+incrementally as it executes, so editing scripts/mlsys_watch_and_run.sh while it
+runs can make the interpreter resume mid-file at a byte offset that no longer
+means what it did -- the classic hazard is a truncated read or a jump into the
+middle of an unrelated line. The same applies to any file the running stages
+read (mlsys_cap_smoke_check.py was already read and will not be re-read, but
+mlsys_manifest.sh is still being executed by the pod). So all four items below
+are recorded and none is applied until the campaign finishes. Two of them touch
+configs the live run reads.
+
+The four items come out of the read-only audit at 2026-10-10T05:43Z (report
+above): the copying/memorization question, the gate's document pool, the CAP
+SMOKE banner text, and the four unrunnable "misanchored" controls.
+
+--------------------------------------------------------------------------------
+TODO 1 -- MEMORIZATION CHECK on 1x A100 (highest value; may touch the paper)
+--------------------------------------------------------------------------------
+WHAT. Measure Llama-3.1-8B continuation perplexity at 32k on THREE data sets,
+same code path (scripts/mlsys_coherence_gate.py --candidates <one native row>):
+  (a) data/processed/pg19_docs        -- the gate's own pool, "split": "train"
+                                         in emozilla/pg19. MEASURED: 1.0325.
+  (b) data/processed/pg19             -- the held-out/validation split, already
+                                         staged (29 files, verified on the pod).
+  (c) post-cutoff text                -- any text published after the model's
+                                         training cut-off, tokenized with the
+                                         Llama-3.1 tokenizer.
+If (b) and (c) come back ~7-15 while (a) stays ~1.03, the pool is memorized and
+the gate's absolute numbers are recall, not language modelling.
+
+WHY IT MATTERS BEYOND THE GATE. If the scored text is recalled, every
+acceptance-rate / round-cost claim that rests on rows drawn from the same pool
+inherits the same problem: a draft that is also a Llama-3.1-family model can
+propose the memorized continuation, and the target will accept it at a rate that
+measures recall rather than the speculation mechanism. The campaign's stages
+(natural_f1_128k, natural_spec_gated_256k, rope_intervention_128k) all draw from
+pg19_docs, so this is not confined to the gate.
+
+WHAT THE MEASUREMENT WILL AND WILL NOT SETTLE. Measured already, read-only:
+  * the continuation is NOT copied from its own prompt -- 0 of 975 continuation
+    50-grams appear in any prompt, for every candidate (32k/64k/128k/256k/512k),
+    and the longest common run is 9-25 tokens of ordinary boilerplate;
+  * the continuation is normal prose -- 1024 tokens, 358 distinct, " the" 7.2%,
+    all 1009 16-grams distinct, no document periodicity at any rung;
+  * the scoring path is aligned correctly -- hidden[q-1] -> ids[q] with n=1024
+    targets (local_bounds:100-111 and head_chunked_nll:118-144);
+  * ppl 1.03 means ~97% per-token confidence. That is the recall regime.
+So the check above is the only remaining explanation to test. If it does NOT
+confirm, the next suspect is the model/device path, and the 1x run should also
+score the SAME sample with the Llama-2 re-tokenized path to see whether the
+7.0155 discrepancy is the tokenizer branch or the model.
+
+ALSO WORTH RECORDING: the Llama-2 row (ppl 7.0155) is NOT a clean control for
+"the model is fine". Its window is re-tokenized by _tokenize_window_for
+(load_pg19_window, the tokenizer-mismatch branch), and because Llama-2's
+tokenizer is less efficient the same 32k span covers a DIFFERENT, shorter piece
+of text. A cross-model comparison must either use one tokenizer for both or
+report the text span. Cost: 1x A100 at $1.99/hr, ~10-20 min.
+
+--------------------------------------------------------------------------------
+TODO 2 -- THE GATE'S POSITIVES ALL USE pg19_train_0 (document diversity)
+--------------------------------------------------------------------------------
+MEASURED: every candidate at every rung (32k, 64k, 128k, 256k, 512k) is scored
+on the SAME book, pg19_train_0. The offset differs per rung (382000 at 32k,
+356639 at 64k, 305917 at 128k, 204473 at 256k, 1585 at 512k) but the document
+never changes.
+WHY: in load_pg19_window, `suitable` is every doc with length >= ctx -- all ten
+staged books are exactly 526,336 tokens, so all ten qualify at every rung -- then
+`suitable` is sorted by doc_id and the choice is
+    c = suitable[int(rng.integers(0, len(suitable)))]
+with seed 42 for every row in every config. The first draw of a fresh generator
+lands on index 0, so the document is always the alphabetically first one.
+CONSEQUENCE: a gate verdict is a statement about ONE book, and a single
+anomalous book (memorized, or unusual typography) moves every ratio in the same
+direction. The eight-rung ladder, the 256k/512k extensions and the calibration
+controls all share it.
+FIX DIRECTION, and it must respect the pairing rule: the ratio machinery
+requires the candidate and its reference to share prompt_sha256,
+continuation_sha256 AND seed (pairing_verdict). So documents cannot simply be
+rotated per row. Two workable shapes:
+  (a) keep one document per (rung, seed) GROUP and rotate the document across
+      groups, so the ladder is measured on several books while each
+      candidate/reference pair stays on one sample; or
+  (b) draw the document from an explicit per-group field (e.g.
+      `sample_seed`) declared in the candidates JSON, so the choice is visible
+      in the config rather than an emergent property of the RNG stream.
+Either way, report the doc_id per row (the CSV already carries it) and make the
+manifest's gate summary group by it. Re-run the calibration + gate afterwards,
+and expect the positives' absolute ppl to move -- possibly a lot, if TODO 1
+confirms memorization.
+
+--------------------------------------------------------------------------------
+TODO 3 -- REWORD THE CAP SMOKE BANNER; IT DOES NOT ASSERT LOSSLESSNESS
+--------------------------------------------------------------------------------
+WHERE. scripts/mlsys_cap_smoke_check.py:474-476, the unconditional success
+banner:
+    print("\nCAP SMOKE PASSED: the cap is enforced in both arms and the pair is "
+          "lossless.")
+It prints whenever `problems` is empty, and no assertion in that file produces
+it. What the checker actually gates about the pair (lines 334-400) is that a
+target-only partner EXISTS on the same (doc, ctx, max_new_tokens, MEASURED
+kv_dtype) key, that require_same_request() passes, and that both sidecars exist.
+The numerical comparison of the two streams is explicitly demoted: its result is
+appended to `notes` with the literal text
+    "[REPORTED, not a gate: the two arms run the target in different forward
+     shapes]"
+So the checker verifies the pair is COMPARABLE, not that it is lossless -- and
+after the teacher-forced check was made report-only there is nothing left that
+would catch a losslessness defect in this stage.
+FIX: reword to describe what is gated, e.g. "CAP SMOKE PASSED: the cap is
+enforced in both arms and the pair is comparable (token identity is reported,
+not gated)." Then decide separately whether losslessness should be a gate again
+-- the production-path probe (see the follow-up task recorded earlier in this
+report) is the thing that would make it one. The wording must not outrun the
+checker: the string "CAP SMOKE PASSED" is what the manifest greps, so keep that
+prefix and change only the claim after it.
+
+--------------------------------------------------------------------------------
+TODO 4 -- correction_note_evidence: FOUR CONTROLS NEVER RAN, AND THE CSV HIDES IT
+--------------------------------------------------------------------------------
+MEASURED (read-only, from the run's CSV): llama2_f32_misanchored_32k,
+llama2_f64_misanchored_32k, llama2_f128_misanchored_128k and
+llama2_f256_misanchored_128k are all status=unpaired_reference with
+prompt_tokens, prompt_sha256 and continuation_sha256 EMPTY. They never produced
+a prompt. The four ANCHORED rows did measure (32k: ppl 81.4 ratio 0.009 and
+187.7 ratio 0.0207; 128k: both OOM with ppl 1105.8 and 1198.5).
+
+4a. REBUILD THE FOUR CONTROLS, N2-STYLE. Root cause, reproduced offline with the
+    config's exact revision:
+        ValueError: rope_anchor_base=32768 exceeds the model's own window
+        (4096); a YaRN anchor beyond the trained window asks for interpolation
+    The four rows declare `rope_anchor_base: 32768` on Llama-2-7B, whose window
+    is 4096, so RASDInference._build_hf_config refuses the construction. The
+    working control achieves its misanchoring differently:
+    N2_llama2_misanchored (in configs/mlsys_gate_controls.json) declares
+    rope_type yarn, rope_factor 8, context_length 32768 and NO rope_anchor_base
+    at all, so the engine anchors at the built context implicitly -- it ran and
+    scored 53107.25 with config_max_position_embeddings=32768 and
+    native_window=4096. Rebuild the four in that style (or pick a constructible
+    wrong anchor <= 4096, e.g. 2048) and re-run correction_note_evidence.
+    A constructible misanchored control is REQUIRED for the note: at 32k/128k the
+    misanchored half of the contrast is currently 0-for-4, so the stage supports
+    "correctly anchored YaRN is 0.9-2.1% of the unscaled model's perplexity" but
+    NOT any measured misanchored-versus-anchored statement.
+
+4b. ADD `traceback` TO FIELDS. run_candidate's handler records
+    row["traceback"] = traceback.format_exc()[-400:] (mlsys_coherence_gate.py
+    ~:713), but `traceback` is not in FIELDS, so it is silently dropped when the
+    CSV is written. That is why the real ValueError above is unrecoverable from
+    the artifact and had to be reconstructed by rebuilding the config by hand.
+
+4c. STOP THE UNPAIRED BRANCH OVERWRITING status/error. In main(), the
+    `pairing == "unpaired"` branch sets
+        r["status"] = "unpaired_reference"
+        r["error"]  = reason
+    which DESTROYS whatever run_candidate recorded. For these four rows the real
+    record was status="error" with the ValueError above. Fix: only take the
+    unpaired status when the row has no status of its own (or is "ok"), keep the
+    original error, and put the pairing reason in gate_reason where it belongs.
+
+4d. FIX THE MESSAGE ITSELF. pairing_verdict (:847-851) fires on
+        if not a or not b or a != b:
+    and reports "{field} differs between the candidate and its reference". When
+    the candidate simply HAS no prompt, "differs" is false: the honest text is
+    "the candidate has no prompt (its build failed)". Distinguish the two cases.
+    The reason string is also truncated to ~70 chars in the manifest's verdict
+    table, which is where a reader first meets it.
+
+4e. RE-RUN the stage after 4a-4d, and re-check the note's claims against the new
+    CSV: with 4a the misanchored rows should measure; with 4b/4c a future build
+    failure will say so instead of looking like a pairing artifact.
