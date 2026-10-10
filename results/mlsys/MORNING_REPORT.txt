@@ -1978,3 +1978,100 @@ of each other. A group- or session-scoped signal can no longer reach either.
 
 CAPACITY: 8x80GB appeared in us-east-1 on the FIRST poll (the previous run took
 22 polls / 24 minutes). Instance 16cc2a5795594ce195b39e223dd8134b.
+
+================================================================================
+2026-10-10T05:43Z  MILESTONE: ALL THREE GATES PASSED, four stages complete
+================================================================================
+
+The run that started 2026-10-10T01:38:38Z (instance 16cc2a57...,
+132.145.132.138) is four hours in and has cleared every gate. The two previous
+armings each died before this point: one false-positive liveness stall, one
+session restart. The detach fix is holding (watcher pid 33277 pgid 33276,
+monitor pid 33400 pgid 33399, both ppid 1, separate groups).
+
+GATE 1 -- gate_calibration: OK. wall 682s, $4.23. "CALIBRATION OK: every control
+  matched its expected verdict." Same 9 rows as the previous three runs: 7
+  positives PASS (P1 1.0325, P2 1.0302, P3 1.0458, B_native 1.0325/1.0302/1.0458,
+  B_llama2_yarn8 7.0155) and both negatives FAIL (N1 372.91x, N2 53107.25x).
+  Reported by the monitor at 02:05:08Z.
+
+GATE 2 -- engine_cap_smoke: OK. wall 5880s (98 min), $36.46. SIX of six rows
+  status=ok, and the checker's own words: "CAP SMOKE PASSED: the cap is enforced
+  in both arms and the pair is lossless."
+    CAPS_prefix64              ok   64 tok    30 rounds  accept 0.2759  124.6s
+    CAPS_prefix64_targetonly   ok   64 tok    63 rounds  accept 0.0000  242.0s
+    CAPS_prefix1024            ok 1024 tok   231 rounds  accept 0.8609  951.8s
+    CAPS_prefix1024_targetonly ok 1024 tok  1023 rounds  accept 0.0000 4015.8s
+    CAPS_prefix64_bf16         ok   64 tok    27 rounds  accept 0.3269  105.1s
+    CAPS_prefix64_bf16_targetonly ok 64 tok  63 rounds  accept 0.0000  217.2s
+  THIS is the row set the last two armings never finished: row 4 alone took 67
+  minutes, and it was the row running when the session restart killed the run.
+  Reported by the monitor at 03:43:17Z.
+
+GATE 3 -- coherence_gate: OK. wall 2340s (39 min), $14.51. 7 candidates,
+  verdicts exactly as the calibration predicted:
+    native_128k                 ctx=131072 ppl=1.0458  ratio=1.0000  PASS
+    llama3_f16_256k             ctx=262144 ppl=1.0360  ratio=0.9906  PASS
+    yarn_base8192_f32_256k      ctx=262144 ppl=2.1144  ratio=2.0218  FAIL (ppl 2.02x > 1.5x)
+    yarn_base131072_f2_256k     ctx=262144 ppl=1899.13 ratio=1815.96 FAIL (repeated n-grams 99%)
+    yarn_rebased_on_context_256k ctx=262144 ppl=1614.76 ratio=1544.05 FAIL (EOS at token 3; rope misanchor)
+    llama3_f32_512k             ctx=524288 STATUS=OOM           FAIL (not measured)
+    yarn_base8192_f64_512k      ctx=524288 STATUS=OOM           FAIL (not measured)
+  Reported by the monitor at 04:28:42Z.
+
+  THE 512k OOM PREDICTION WAS CORRECT AND IT STOPPED NOTHING. On 2026-10-09 I
+  analysed this from the code and declined to give >=512k candidates
+  device_map="auto" because the condition the operator set (a 512k failure
+  ABORTS the campaign AND a later approved stage needs it) was false on both
+  halves. Both rows did come back status=oom -- plain HF generate wants ~64 GiB
+  of KV cache plus 16 GB of weights on an 80 GB card -- the stage still exited
+  0, and natural_f1_128k started normally 5 seconds later.
+  NEW AND IMPORTANT NUANCE, visible only now that the rows ran: the OOM is in
+  the GENERATION half only, and the PPL half WAS measured --
+      llama3_f32_512k      ppl 1.1522   (native_128k is 1.0458 -> ~1.10x)
+      yarn_base8192_f64_512k ppl 4.0144
+  So the 512k llama3 extension looks GOOD on perplexity (well inside the 1.5x
+  bar) and is rejected only because the gate requires the generation metrics
+  that did not fit. If the 512k rung is ever wanted, the gate needs a multi-GPU
+  placement for those two candidates; that is now an evidence-backed
+  recommendation rather than a guess, and it needs no change to any science
+  config.
+
+ALSO COMPLETE -- correction_note_evidence: OK, wall 412s, $2.55. 11 rows. Two
+  observations recorded for later, neither a failure of the stage:
+   * four rows are status=unpaired_reference with "UNPAIRED: prompt_sha256
+     differs between the candidate and baseline" (llama2_f32/f64_misanchored_32k,
+     llama2_f128/f256_misanchored_128k). The pairing identity is ENFORCED rather
+     than assumed, which is the intended behaviour, but it means those four rows
+     carry no ratio.
+   * three rows OOMed at 128k (B_llama2_unscaled_ood_128k,
+     llama2_f128_anchored_128k, llama2_f256_anchored_128k) while still recording
+     a measured ppl (3558.3, 1105.8, 1198.5).
+
+CURRENT STAGE -- natural_f1_128k, started 2026-10-10T04:28:27Z (est 6.5h,
+projected $144, timeout 43200s). At 05:43Z it is printing [PROGRESS] lines every
+~60s (NATURAL_f1_128k_pg19_train_915_s42, round 80, 369 tokens, elapsed 321s).
+0 tracebacks, 0 OOMs in the manifest log, log growing continuously.
+
+WALL vs ESTIMATE, all four complete stages
+    stage                     est      actual    ratio
+    gate_calibration          1.0h     0.19h     0.19x
+    engine_cap_smoke          1.5h     1.63h     1.09x   <- the only one over
+    correction_note_evidence  2.1h     0.11h     0.05x
+    coherence_gate            2.0h     0.65h     0.33x
+    TOTAL                     6.6h     2.59h     0.39x
+  So the stage estimates are conservative overall, with engine_cap_smoke 9% over
+  (driven by the 67-minute target-only row at cap 1024, whose cost is dominated
+  by decoding 1024 tokens one at a time at 0.25 tok/s).
+
+PROJECTION vs the 48h clock. Deadline 2026-10-12T01:38:38Z; 4.08h used, 43.9h
+left. Remaining estimates: natural_f1_128k (5.3h left of 6.5h), impl_validation
+1.0h, rope_intervention_128k 5.4h, natural_spec_gated_256k 13.0h, vllm_ladder
+2.5h = ~27.2h. Projected finish 2026-10-11T09:00Z, about 16.6h inside the
+deadline. The 48h raise is what makes this comfortable: on the old 40h clock the
+projection would still have fit, but with 12h less margin for a retry.
+
+SPEND. This instance: 01:38:38Z -> 05:43Z = 4.08h x $22.32 = $91.06. Manifest
+cumulative $140.04 = ledger $82.29 + 4.23 + 36.46 + 2.55 + 14.51. Note the
+ledger rows for this run are written on the POD; they are only merged locally by
+collect_incident at a stop, so the local ledger still reads $82.29 until then.
