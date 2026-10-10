@@ -2140,6 +2140,119 @@ of text. A cross-model comparison must either use one tokenizer for both or
 report the text span. Cost: 1x A100 at $1.99/hr, ~10-20 min.
 
 --------------------------------------------------------------------------------
+TODO 1 -- ANSWERED 2026-10-10T11:07-11:27Z: NOT MEMORIZED (hypothesis not supported)
+--------------------------------------------------------------------------------
+Ran on a dedicated 1x A100 SXM4-40GB (instance 3c3b7fa7, us-east-1, 150.136.39.155),
+launched 11:06:02Z and terminated 11:27:44Z = 21.7 min x $1.99/hr = $0.72. The
+campaign's pod, watcher and monitor were never touched, and the account held
+exactly one extra instance while it ran (checked before and after: 0 extra now).
+
+STEP 0, the safety question, answered BEFORE launching: neither process can
+touch another instance. Both terminate calls post
+{"instance_ids":["$INSTANCE_ID"]} and INSTANCE_ID is set ONLY from our own launch
+response (data.instance_ids[0], mlsys_watch_and_run.sh:314). The launch monitor
+makes ZERO API calls -- it reads local files only -- so it cannot terminate
+anything. The single guard, count_instances() in try_launch, can only REFUSE to
+launch ("exactly one 8xA100 at a time"), and that path is unreachable now because
+the watcher is past its launch phase.
+
+METHOD. scripts/mlsys_memorization_check.py calls the GATE's OWN functions
+(load_pg19_window and continuation_perplexity, imported from
+scripts/mlsys_coherence_gate.py) with Llama-3.1-8B built the way the gate builds
+it (RASDInference._build_hf_config, native rope, bf16, single device), so the only
+thing that differs between rows is the data. 32k context, 1024-token continuation,
+12 seeds per pool.
+
+TOKENIZER TRAP, found before it could corrupt the result: the instruction's
+"data/processed/pg19 validation split" is NOT Llama-3.1-tokenized. Its ids decode
+to garbage under this tokenizer and peak at 29968, i.e. it is Llama-2-tokenized.
+The Llama-3-compatible held-out split is data/processed/pg19_llama3, which decodes
+to clean PG-19 prose ("Produced by Q Myers / WALKING / by Henry David Thoreau").
+Scoring the wrong directory would have produced a huge ppl and a FALSE
+"memorized" verdict. It would also have failed SILENTLY, because every
+Llama-2-range id is inside Llama-3.1's 128k vocabulary, so the gate's
+assert_prompt_in_vocab cannot catch it. This is the same class of defect as the
+2026-10-08 out-of-vocab abort, in the opposite direction.
+
+SOURCE OF (c), post-cutoff text. US Federal Register final rules published
+2025-12-31 (public domain, 17 USC 105): 7 documents, 144,507 Llama-3.1 tokens:
+  2025-24113 Cotton Board Rules and Regulations: Adjusting Supplemental
+            Assessment Rates and Referendum Procedures      53,013 tok
+  2025-24102 Effluent Limitations Guidelines and Standards    43,691 tok
+  2025-24061 Reproductive Health Services                     28,204 tok
+  2025-24123 Fourth Temporary Extension of COVID-19 Telemedicine    8,647 tok
+  2025-24071 Safety Zone; Port of Long Beach                      2,404 tok
+  2025-24070 Safety Zone; Hampton Roads Bridge-Tunnel Expansion   4,345 tok
+  2025-24127 Delegation of Authority, Div. of Enforcement         4,196 tok
+Staged at data/processed/pg19_postcutoff/ (outside pg19_docs, as instructed);
+metadata + memmap + the source manifest are in the session dir.
+
+RESULT -- PPL, 12 windows per pool, same code path, same continuation length
+
+  pool                            min     median    max      n
+  pg19_docs   (gate pool, train)  1.465    4.089    14.814  12
+  pg19_llama3 (HELD OUT)          5.989    9.555    13.829  12
+  postcutoff  (2025, never seen)  1.069    1.484     5.589  12
+
+THE HYPOTHESIS IS REFUTED by the third row. Text that provably cannot be in the
+training data is MORE predictable than the gate's own pool: minimum 1.069 (below
+the gate's 1.03-1.02 windows) and median 1.484 (below the gate pool's 4.089). Low
+perplexity here is a property of the TEXT -- formulaic regulatory prose -- and not
+a signature of recall. Three windows of the earlier seed-42/123/456 probe are on
+record for the same reason: pg19_train 1.03 / 1.02 / 6.48 was already a 6.3x
+spread WITHIN one pool, and post-cutoff 3.09 / 1.30 / 5.46 matches it.
+
+WHAT SURVIVES, and it is a SAMPLING result rather than a recall result: the gate's
+two baseline windows (1.0325 at seed 42, 1.0211 at seed 123) are BELOW the
+12-seed minimum of their own pool (1.465). They are the two most predictable
+windows of the pool, and every candidate's ratio is divided by one of them. So the
+gate's "1.5x native" rule is effectively an absolute cap near 1.55 measured on an
+unrepresentative sample -- which is TODO 2, and it now has a magnitude.
+
+RESIDUAL, recorded honestly: the same genre (PG-19 literary prose) is 2.3x more
+predictable on the TRAIN split (median 4.089) than on the HELD-OUT split (median
+9.555), and the held-out split never goes below 5.989 while the train pool reaches
+1.465. That gap is consistent with SOME memorization of the train split. It does
+not explain the gate's 1.03, and it is not what drives the acceptance numbers --
+see step 4.
+
+STEP 4 -- DRAFT ACCEPTANCE, paired, same settings on both pools
+(32k, 128 tokens, nproc=1, spec_steps 4, NF4 KV, greedy, seed 42; everything
+identical to configs/mlsys_natural_f1_128k.yml except context and cap)
+
+  arm                                acceptance  tps   rounds  time
+  MEM_train      (pg19_train_0)        0.2705     3.70   61     34.6s
+  MEM_postcutoff (2025 FR, unseen)     0.2712     3.71   60     34.5s
+
+The difference is 0.0007. ACCEPTANCE IS NOT INFLATED BY RECALL at this setting.
+
+SEPARATE OBSERVATION, not a conclusion, and it needs its own follow-up: the SAME
+pool gives acceptance 0.85-0.97 in the campaign's natural_f1_128k rows (128k, 1024
+tokens) and 0.27 here (32k, 128 tokens). That is a 3.2x spread on one pool, so the
+headline acceptance numbers are strongly context- and sample-dependent. Combined
+with the 6.3x ppl spread within one pool, the case for multi-sample acceptance
+rows (more documents, more contexts) is now measured rather than argued.
+
+VERDICT, stated plainly: NOT MEMORIZED in any way that affects the acceptance
+claims. The gate's ~1.03 is explained by the text being predictable -- never-seen
+2025 text reaches 1.07-1.63, and three of its 12 windows are below 1.5 -- and
+draft acceptance is statistically identical (0.2705 vs 0.2712) on text the model
+provably never saw. What is real: (i) the gate's baseline is the most predictable
+2 of 12 windows in its pool, so its ratio rule is sample-dependent; (ii) train is
+2.3x more predictable than held-out within PG-19, a small residual recall signal
+worth one confirmation; (iii) acceptance varies 3.2x with context and sample on a
+single pool.
+
+ARTIFACTS: memcheck_scan.json (36 rows) in the session dir; the driver
+scripts/mlsys_memorization_check.py and configs/mlsys_memcheck_spec.yml are left
+UNTRACKED by instruction ("commit only the report"), so the working tree is dirty
+by exactly those two files -- the next arming's pre-flight must expect that. The
+pod's /tmp/memcheck_spec.csv could not be pulled before termination; those two
+rows are recorded from its log above.
+
+COST: $0.72 (21.7 min on 1x A100 SXM4-40GB). No other instance touched.
+
+--------------------------------------------------------------------------------
 TODO 2 -- THE GATE'S POSITIVES ALL USE pg19_train_0 (document diversity)
 --------------------------------------------------------------------------------
 MEASURED: every candidate at every rung (32k, 64k, 128k, 256k, 512k) is scored
