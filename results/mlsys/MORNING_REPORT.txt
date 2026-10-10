@@ -2364,3 +2364,205 @@ a prompt. The four ANCHORED rows did measure (32k: ppl 81.4 ratio 0.009 and
 4e. RE-RUN the stage after 4a-4d, and re-check the note's claims against the new
     CSV: with 4a the misanchored rows should measure; with 4b/4c a future build
     failure will say so instead of looking like a pairing artifact.
+
+================================================================================
+2026-10-10T07:35Z  READ-ONLY AUDIT: KV dtypes, acceptance vs position, repetition
+================================================================================
+Read-only throughout: no campaign file was written and the running stage was not
+disturbed. The per-token traces and token sidecars were COPIED off the pod
+(rsync, no --delete, nothing written on the pod side).
+
+--------------------------------------------------------------------------------
+Q1 -- KV CACHE DTYPE PER STAGE, and how many bytes per token
+--------------------------------------------------------------------------------
+The two flags are DIFFERENT THINGS and reading one as the other is the trap here:
+`quantize_draft` / `quantize_target` are MODEL WEIGHT quantisation (4-bit NF4 via
+bitsandbytes, rasd_inference.py:212-213), while `kv_quant` is the KV CACHE
+(rasd_inference.py:270-271, "M4 C11 -- NF4 KV-cache"). NB4 weights do NOT imply an
+NF4 cache nor the reverse.
+
+  stage                     kv_quant  KV dtype actually used   line
+  coherence_gate            n/a       bfloat16                  mlsys_coherence_gate.py:634
+  engine_cap_smoke  NF4 rows true     nf4                        mlsys_engine_cap_smoke.yml:25
+  engine_cap_smoke  bf16 rows false   bfloat16                   mlsys_engine_cap_smoke.yml:90,98
+  natural_f1_128k           true      nf4                        mlsys_natural_f1_128k.yml:36
+  natural_spec_gated_256k   true      nf4                        mlsys_natural_gated.yml:41
+  vllm_ladder               n/a       bfloat16                   mlsys_vllm_baseline.py:1076
+
+The gate does not quantise anything: `AutoModelForCausalLM.from_pretrained(...,
+torch_dtype=bfloat16)` with NO BitsAndBytesConfig (mlsys_coherence_gate.py:634-628)
+and generation through `model.generate` (line 515), so HuggingFace builds its own
+bf16 DynamicCache. vLLM is bf16 too: the stage pins `--quantizations bfloat16` and
+vLLM 0.6.3 has no NF4 KV path at all (stated in the manifest's own header for
+impl_validation, mlsys_manifest.sh:1236-1243).
+
+CONFIRMED for the memcheck config: yes, it used NF4 KV. It declares `kv_quant:
+true`, `quantize_draft: true`, `quantize_target: true` and is otherwise identical
+to natural_f1_128k except context (32k) and cap (128). And the pod's token
+sidecars agree, because the dtype is MEASURED, not assumed: 23 of 25 sidecars
+record `kv_dtype: nf4` and exactly 2 record `bfloat16` (the CAPS_prefix64_bf16
+pair).
+
+IS NF4 APPLIED TO BOTH THE TARGET AND THE DRAFT KV? NO -- TARGET ONLY.
+`_make_initial_cache` (rasd_inference.py:2259-2289) is what builds the NF4 cache,
+and every call site belongs to the target: generate() at :1553 and the
+teacher-forced probe's two shapes at :2378 and :2391. The draft's cache is
+HuggingFace's own: :1654 calls `self.draft_model(draft_ids, use_cache=True)` with
+NO `past_key_values`, and later steps pass back whatever HF returned (:1894,
+:2127). So the draft KV stays bf16 in every configuration -- an NF4 target with a
+bf16 draft is the composition every stage runs.
+
+BYTES PER TOKEN (Llama-3.1-8B: 32 layers x 8 KV heads x 128 head-dim = 32,768
+elements per K per token, x2 for K and V = 65,536 elements/token):
+  bf16                     2.0 B/elem  -> 131,072 B = 128 KiB/token
+  NF4, block_size 32       0.5 B/elem codes (uint8, 2 codes/byte)
+                         + 0.125 B/elem for the fp32 absmax scale (4/32)
+                           = 0.625 B/elem -> 40,960 B =  40 KiB/token
+NF4 is therefore 31.25% of bf16 -- 3.2x smaller. At 128k that is 16 GiB vs 5 GiB
+per rank. `kv_block_size_nf4` defaults to 32 and NO campaign config overrides it
+(checked: zero matches in configs/*.yml), so 40 KiB/token is the real figure; at
+the bitsandbytes-standard 64 it would be 36 KiB. One-off extra: rank 0 keeps
+`kv_outlier_prefix_size=128` tokens in bf16 (+16 MiB). The draft adds a bf16 cache
+of its own: Llama-3.2-1B, 16 layers x 8 KV heads x 64 head-dim x2 = 16,384
+elements/token x 2 B = 32 KiB/token. Drawn from the published model configs; not
+re-measured on the pod.
+
+WHAT THE CAP-SMOKE bf16 ROWS COMPARED AGAINST: their own partner, not the NF4
+rows. The pairing key is (doc_id, context_length, max_new_tokens, MEASURED
+kv_dtype) -- mlsys_cap_smoke_check.py:355-359 -- and the key deliberately includes
+the measured precision "without it, two pairs that differ only in kv_quant land on
+the same key" (:337-344). So CAPS_prefix64_bf16 is compared with
+CAPS_prefix64_bf16_targetonly, and the NF4 pairs with themselves. There is no
+NF4-versus-bf16 GATE anywhere; that contrast is report-only.
+
+--------------------------------------------------------------------------------
+Q2 -- ACCEPTANCE BY TOKEN WINDOW (accepted prefix / gamma, per 128 tokens)
+--------------------------------------------------------------------------------
+  row                                      all   0-127  128-255 256-383 384-511 512-639 640-767 768-895
+  CAPS_prefix1024_pg19_train_1             0.861  0.558   0.956   0.955   0.956   0.955   0.936   0.925
+  NATURAL_f1_128k_pg19_train_1404          0.970  0.836   1.000   1.000   1.000   1.000   1.000   1.000
+  NATURAL_f1_128k_pg19_train_915           0.963  0.801   1.000   1.000   1.000   1.000   1.000   1.000
+  NATURAL_f1_128k_pg19_train_1981          0.960  0.787   1.000   1.000   1.000   1.000   1.000   1.000
+  NATURAL_f1_128k_pg19_train_115           0.944  0.726   0.985   1.000   1.000   1.000   1.000   1.000
+  NATURAL_f1_128k_pg19_train_2768          0.931  0.814   0.941   0.955   0.992   0.949   0.934   1.000
+  NATURAL_f1_128k_pg19_train_2204          0.885  0.527   1.000   1.000   1.000   1.000   1.000   1.000
+  NATURAL_f1_128k_pg19_train_1             0.861  0.558   0.956   0.955   0.956   0.955   0.936   0.925
+  NATURAL_f1_128k_pg19_train_537           0.859  0.649   0.939   0.886   0.882   0.934   0.919   0.938
+  NATURAL_f1_128k_pg19_train_1726          0.845  0.635   0.851   0.875   0.885   0.955   0.921   0.969
+  NATURAL_f1_128k_pg19_train_0             0.622  0.336   0.585   0.513   0.858   0.872   0.893   0.900
+The generated 1024 tokens fill windows 0-7; there is no 896-1023 window for a
+1024-token cap. The pattern is uniform: acceptance is LOWEST in the first window
+(0.34-0.84) and then saturates at exactly 1.000.
+
+--------------------------------------------------------------------------------
+Q3 -- REPETITION, same windows (rep-16gram share / longest repeat / tokens inside
+      a repeated 16-gram)
+--------------------------------------------------------------------------------
+  NATURAL_f1_128k_pg19_train_1404  0.77/64/0.83  0.96/64/1.00 x7 windows
+  NATURAL_f1_128k_pg19_train_915   0.60/64/0.80  0.82/64/1.00 x7
+  NATURAL_f1_128k_pg19_train_1981  0.42/62/0.59  0.88/64/1.00 x7
+  NATURAL_f1_128k_pg19_train_115   0.43/39/0.84  0.78-0.84/64/1.00
+  CAPS_prefix1024_pg19_train_1     0.00/0/0.00   0.39-0.54/46-64/0.95-1.00
+  (windows 1-7 share one value because the loop is uniform; window 0 is always the
+   least repetitive, which is the same window that has the lowest acceptance)
+
+Longest repeated span for the highest-acceptance row across the WHOLE generation:
+400 tokens, with 97.9% of all 1024 tokens inside a repeated 16-gram. Dominant
+cycle periods: 1404 p=26 (self-agreement 0.95, cyclic from token 53), 915 p=20
+(0.977, from token 25, 98% of the row), 2204 p=14 (0.92, from 85), 1981 p=26
+(0.95, from 53), CAPS_prefix1024 p=26-ish (0.75-0.89 through the tail).
+
+EXCERPT, last 200 tokens of the highest-acceptance row
+(NATURAL_f1_128k_pg19_train_1404, accept 0.970):
+    ' He was deceived. He was deceived. He was deceived. He was deceived. He was
+     deceived. He was deceived. ... (50 times)'
+and CAPS_prefix1024 (accept 0.861), which cycles between two speakers:
+    '. I would you had it. I would you had it.\n    I would you had it. He is gone.
+     He is gone.\n    He is gone. He is gone. He is gone.\n  FREDERICK. I would you
+     had it. ...'
+
+--------------------------------------------------------------------------------
+Q4 -- PLAINLY: yes, the 0.85-0.97 acceptance is a GREEDY REPETITION ARTEFACT
+--------------------------------------------------------------------------------
+The two facts coincide window by window: acceptance reaches 1.000 in exactly the
+windows where tokens-in-repeat reaches 1.00, and the first window -- the only one
+with real novel text -- is the only one with low acceptance (0.34-0.84). Once the
+target enters a periodic cycle, the draft (same family, same context) predicts the
+cycle trivially and the target accepts everything. The acceptance number is
+measuring the loop, not the speculation mechanism.
+
+WOULD THE 16 STRUCTURAL ASSERTIONS HAVE CAUGHT IT? NO, for two independent reasons.
+  1. They do not test repetition at all. mlsys_cap_smoke_check.py contains ZERO
+     matches for repeat/blank/share/degenerate except the word "blank" inside a
+     dtype comment (:69). The natural rungs are not checked by that file anyway:
+     validate_and_report -> report_spec_stage runs scripts/mlsys_losslessness.py,
+     which also has no repetition test. So no stage in this campaign gates
+     repetition.
+  2. Where the rule DOES exist it is structurally blind to this failure. In
+     mlsys_coherence_gate.verdict the repeat/blank criterion is purely RELATIVE --
+     GEN_SHARE_TOLERANCE = 2.0 (line 70), candidate share vs its PAIRED BASELINE's
+     share (`_share_reason`, :791-817) -- and the only ABSOLUTE ceiling is on blank
+     lines (CATASTROPHIC_BLANK_SHARE = 0.90, :74). There is no absolute ceiling on
+     repetition. Measured on the actual pairs:
+        train_115   spec 0.9699 vs target-only 0.9043 -> 1.07x   PASS
+        train_0     spec 0.6547 vs target-only 0.3627 -> 1.80x   PASS (just under)
+        CAPS_prefix1024 spec 0.9245 vs target-only 0.7012 -> 1.32x PASS
+     A greedy loop repeats in BOTH arms, so the ratio stays near 1 and the rule
+     cannot fire. Blank shares are 0.00, nowhere near 0.90. The docstring explains
+     the relative design as deliberate -- "a quantity whose absolute value ... is
+     not a property of the model" -- and that reasoning is exactly what makes it
+     blind here: the repetition IS a property of the run.
+
+--------------------------------------------------------------------------------
+CORRECTIONS to the TODO 1 entry, and the TODOs it exposes
+--------------------------------------------------------------------------------
+C1. THE POST-CUTOFF CONTROL IS WEAKER THAN I WROTE. The Federal Register's
+    boilerplate, structure and stock phrases recur across years, so "provably
+    cannot be in the training data" is true of the exact 2025 documents and NOT of
+    the register's style. Its 1.07-1.63 ppl therefore cannot cleanly separate
+    "formulaic text" from "seen this kind of text many times". The refutation of
+    the memorization hypothesis still stands on its own terms -- never-seen
+    documents reach ppl below the gate's own pool median -- but the control is not
+    as clean as the entry implies. Corrected.
+
+C2. "STATISTICALLY IDENTICAL" WAS OVERCLAIMED. The acceptance comparison was n=1
+    window per arm (0.2705 vs 0.2712). One paired window cannot show statistical
+    identity; it shows the two arms agreed to 0.0007 on that window. The entry's
+    phrase is retracted to "agree to 0.0007 in a single paired window --
+    indicative, not conclusive".
+
+C3. THE ACCEPTANCE QUESTION IS SUPERSEDED for the high-acceptance rows. Asking
+    whether recall inflates 0.85-0.97 is moot once the 0.97 row is a period-26
+    repetition loop: that acceptance is an artefact of greedy degeneracy, not of
+    recall and not of the speculation mechanism. The memorization question remains
+    open only for rows whose acceptance is NOT saturated (train_0 at 0.622,
+    train_1726 at 0.845, train_537 at 0.859).
+
+TODO 5 -- POST-CUTOFF NARRATIVE-PROSE CONTROL, n >= 5 WINDOWS PER ARM.
+  A control that is actually "never seen": continuous narrative prose published
+  after the cut-off, not government boilerplate. 2025 court opinions
+  (public domain, 17 USC 105) or a post-cutoff novel released under a permissive
+  licence; 5+ distinct windows per arm, and the SAME 5 documents across arms so
+  the contrast is paired. Score ppl AND acceptance, and report per-window rather
+  than pooled: this audit shows a single window can differ from another by 6x
+  within one pool, so n=1 is not a measurement. Cost at 1x A100 rates: the ppl
+  scan above did 36 windows in under two minutes of GPU time plus model load.
+
+TODO 6 -- GATE REPETITION PROPERLY.
+  6a. Add an ABSOLUTE repetition ceiling. The relative rule cannot see a loop that
+      repeats in both arms (measured ratios above: 1.07x / 1.32x / 1.80x). A
+      ceiling on repetition alone would have flagged every 0.85-0.97 row here.
+  6b. Add a periodicity statistic to the row, not just an n-gram share: "the
+      generation is p-periodic from token N to the end" (period 14-26 in five of
+      these rows) is legible in a way that "repeat share 0.97" is not, and it is
+      cheap -- a lag-scan over the emitted ids.
+  6c. Fix the false claim in configs/mlsys_engine_cap_smoke.yml:82, which lists
+      "blank/repeat shares against each candidate's own baseline" among the 16
+      structural assertions. mlsys_cap_smoke_check.py tests no such thing. This is
+      the third claim-vs-code mismatch found in this campaign, after the CAP SMOKE
+      banner (TODO 3) -- the pattern is comment text describing an intended check
+      that was later removed or never written.
+  6d. Decide whether saturated-acceptance rows should be reported at all, or
+      reported with their repetition statistics beside them. A 0.97 acceptance
+      from a period-26 loop should not be averaged into a headline number with a
+      non-degenerate row: on the evidence above they are different regimes.
