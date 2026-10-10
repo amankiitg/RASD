@@ -1,0 +1,100 @@
+# SUNDAY SESSION A — the 1M-context headline, on 8x A100-80GB.
+#
+# TARGET: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+#   max_position_embeddings 1048576, rope_theta 3.58e9, rope_scaling NONE.
+#   `rope_type: "none"` therefore applies NO scaling and HF's rotary reads the 1M
+#   theta out of the config: the model runs at its own trained frequencies, so the
+#   1M row measures CONTEXT LENGTH and not rope extrapolation. Verified on a 1x
+#   A100 on 2026-10-10 (`[RoPE] target: rope_type='none' -- ctx=32768 within
+#   native_max=1048576, no scaling applied`).
+#
+# DRAFT: Llama-3.2-1B, window capped at 4096. The draft never sees more than its
+#   own window (the engine truncates to BOS + the last 4095 tokens), so a 128k-native
+#   draft is safe at 1M and its replicated KV stays at 128 MiB/rank instead of 4 GiB.
+#   Tokenizer compatibility verified id-for-id over all 128,000 base ids.
+#
+# DOCUMENTS: three real PG-19 books from the pg19_1m pool, each 1,050,624 tokens --
+#   enough for the 1,048,576-token window plus its 1,024-token continuation with
+#   2,049 tokens of slack. All three are also in the 128k campaign pool, so the 1M
+#   and 128k numbers use the same documents.
+#
+# THREE GROUPS, and why the ORDER matters:
+#   1 QUALITY_1M    the target's own ppl over the same final 1024 tokens at 1M
+#   2 QUALITY_128K  the same continuation with a 128k prompt (pg19_1m_128kwin),
+#                   which is the context-length comparison; run BEFORE the headline
+#                   rows so a quality collapse is known before 5 hours are spent.
+#   3 HEADLINE_1M   3 documents x (spec + target-only), 128 tokens, greedy.
+#
+# PROTOCOL: max_new_tokens 128, greedy, ignore_eos. Periodicity is reported for
+# every row and a looping row is flagged and excluded from headline means.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_text: true
+  save_generated_tokens: true
+  memory_trace: true
+  prompt_source: pg19_document
+SUNDAY_QUALITY_1M:
+  name: sunday_quality_1m
+  factor: context_length
+  levels:
+  - id: SUNDAY_Q1M
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 8
+    measure_target_ppl: true
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    notes: 'target ppl of the final 1024 tokens with a 1M context'
+SUNDAY_QUALITY_128K:
+  name: sunday_quality_128k
+  factor: context_length
+  levels:
+  - id: SUNDAY_Q128K
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 8
+    measure_target_ppl: true
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    notes: 'SAME continuation ids, 128k prompt: the context-length comparison'
+SUNDAY_HEADLINE_1M_SPEC:
+  name: sunday_headline_1m
+  factor: context_length
+  levels:
+  - id: SUNDAY_1M
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 128
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    notes: 'the headline: speculative at 1M, 128 tokens, greedy'
+SUNDAY_HEADLINE_1M_TARGET:
+  name: sunday_headline_1m_target
+  factor: context_length
+  levels:
+  - id: SUNDAY_1M_targetonly
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 128
+    spec_steps: 0
+    measure_target_ppl: false
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    notes: 'paired target-only: the speedup denominator and the losslessness partner'

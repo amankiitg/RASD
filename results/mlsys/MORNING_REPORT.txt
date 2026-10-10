@@ -3206,3 +3206,50 @@ over a 4k window are negligible beside it. So the 1M speedup should approach the
 tokens-per-round, ~1.8x, and NOT the 3-5x the 128k campaign appeared to show (which
 was measured on looping rows). If the run shows much more than ~2x, the loops are
 back and the row is to be flagged, not quoted.
+
+## SUNDAY SESSION A — SETUP (armed and polling, 12:48Z)
+
+WHAT WILL RUN, in this order, and why this order:
+
+  0 SANITY        one spec + one target-only row at 128k, 64 tokens, ~10 min.
+                  Proves pod, interpreter, NF4 load and the ring before an
+                  expensive row is spent. If it does not produce 2 ok rows the
+                  session STOPS without spending the budget.
+  1 QUALITY       1M and 128k ppl of the SAME final 1024 tokens, 3 documents.
+                  Runs BEFORE the headline rows because it is the one measurement
+                  that can invalidate the session: if the target cannot use a 1M
+                  context, five hours of decode rows would be measuring a broken
+                  model. Completion ppl is sharded already -- `_measure_target_ppl`
+                  calls `continuation_nll(..., rank, world_size)` and the forward
+                  goes through the ring with `use_cache=False` and absolute
+                  position ids -- so a 1M ppl is a per-rank slice, not a 1M forward
+                  on one card.
+  2 HEADLINE      3 documents x (spec + target-only) at 1M, 128 tokens, greedy.
+  3 SCALING       only in Session B, per the plan.
+
+THE 128k ARM OF THE QUALITY CHECK SCORES THE SAME TOKENS, which needed data, not
+code. The engine builds a prompt as the FIRST `context - gen - 1` tokens of a
+document, so a 128k prompt from the same .dat would have scored a completely
+different passage. `data/processed/pg19_1m_128kwin/` therefore holds, per book, the
+slice `ids[917504 : 1048576]` (start = 1,047,551 - 130,047), which puts the 128k
+prompt's end exactly where the 1M continuation begins. The build asserts
+`array_equal` between the 1M arm's continuation ids and the 128k slice's for all six
+documents, and records that in the pool metadata. Without that assertion the two ppl
+numbers would not be measuring the same targets, and the comparison would be
+between two passages rather than two contexts.
+
+COST DISCIPLINE. Dead-man timer length is derived from the RATE rather than fixed,
+because the operator's rule is <= $200 for this session and a fixed 9 hours is
+$200.9 on the 80GB node and $287 on an H100: 510 min at $22.32/hr (=$190) on the
+80GB type, 360 min at $31.92/hr (=$192) on the H100. Per-group timeouts sum to 5.3 h
+of work, so the clock and the group timeouts both sit inside the cap and the timer
+is a backstop rather than the mechanism. The 8x-40GB type is deliberately NOT in the
+preference list: at 1M the per-rank projection is ~27 GB and a 40 GB card leaves too
+little margin for a session whose whole point is the 1M rung.
+
+HARDWARE CHANGE RULE, as instructed: poll `gpu_8x_a100_80gb_sxm4` for up to 6 hours;
+after that an 8x H100 is allowed because its rate still keeps the session inside
+$200 (6 h = $192). Any switch is recorded in this log with the arithmetic.
+
+INCREMENTAL PULLS: a detached rsync loop pulls the results directory every 4 minutes
+for the life of the session, so an interruption costs at most one row.
