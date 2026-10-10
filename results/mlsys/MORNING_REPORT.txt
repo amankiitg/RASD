@@ -3243,9 +3243,16 @@ because the operator's rule is <= $200 for this session and a fixed 9 hours is
 $200.9 on the 80GB node and $287 on an H100: 510 min at $22.32/hr (=$190) on the
 80GB type, 360 min at $31.92/hr (=$192) on the H100. Per-group timeouts sum to 5.3 h
 of work, so the clock and the group timeouts both sit inside the cap and the timer
-is a backstop rather than the mechanism. The 8x-40GB type is deliberately NOT in the
-preference list: at 1M the per-rank projection is ~27 GB and a 40 GB card leaves too
-little margin for a session whose whole point is the 1M rung.
+is a backstop rather than the mechanism. The 8x-40GB type IS in the
+preference list as a fallback, and the memory arithmetic is what decides: at 1M the
+per-rank projection is ~27 GB against 40 GB, and the ring is what makes that true (a
+single rank would need the whole 1M KV, 41.6 GB, plus a working set that scales with
+the FULL sequence). At 512k the same projection is ~14 GB/rank, comfortably inside a
+40 GB card. So the 40GB node is a legitimate rung runner, and it is cheaper ($15.92/hr
+vs $22.32). What NO single-GPU node can do is the 1M rung at all, whatever its size:
+at world_size 1 the KV alone is 41.6 GB of NF4 and the activations scale with the
+full 1,048,576 positions, so long context here is a multi-GPU property and not a
+budget choice.
 
 HARDWARE CHANGE RULE, as instructed: poll `gpu_8x_a100_80gb_sxm4` for up to 6 hours;
 after that an 8x H100 is allowed because its rate still keeps the session inside
