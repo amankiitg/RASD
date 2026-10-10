@@ -56,7 +56,7 @@ def main() -> int:
     ap.add_argument("--title", default="RASD: speculative decoding vs context length")
     args = ap.parse_args()
     paths = [Path(p) for p in args.csv] or sorted(
-        (REPO / "results" / "mlsys").glob("*session*/session_a.csv"))
+        (REPO / "results" / "mlsys").glob("*session*/session_a_*.csv"))
     rows = []
     for p in paths:
         if p.exists():

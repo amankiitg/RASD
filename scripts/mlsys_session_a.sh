@@ -130,7 +130,16 @@ say "dead-man timer: ${TIMER_MIN} min (\$$(awk -v m=$TIMER_MIN -v r=$RATE 'BEGIN
   >>"$LOG" 2>&1 || say "WARN: could not arm the dead-man timer"
 sleep 5
 DPID=$(cat "$SESSION_DIR/deadman_${ID}.pid" 2>/dev/null || echo "")
-say "dead-man timer pid=${DPID:-NONE} (${TIMER_MIN} min)"
+# PROVE it is detached, do not assume it: a timer that is a child of this shell dies
+# with this shell, and that is precisely how the 2026-10-10 runtime restart left an
+# 8xA100 billing with nothing alive that knew its id. PPID 1 is the evidence.
+if [ -n "${DPID:-}" ]; then
+  DPPID=$(ps -o ppid= -p "$DPID" 2>/dev/null | tr -d ' ')
+  say "dead-man timer pid=$DPID ppid=${DPPID:-?} for $ID (${TIMER_MIN} min)"
+  [ "${DPPID:-0}" = "1" ] || say "WARN: the timer is NOT reparented to pid 1; it can die with this shell"
+else
+  say "WARN: no dead-man timer pid file; the pod would have no independent backstop"
+fi
 
 POLLER_PID=""
 terminated=0

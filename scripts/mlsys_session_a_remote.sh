@@ -38,12 +38,19 @@ log "=== interpreter $PY, nproc $NPROC ==="
 run_group() {
   local name=$1 tmo=$2
   log "### group $name (timeout ${tmo}s)"
+  # ONE OUTPUT FILE PER STAGE. `run_experiment.py` refuses to write a stage's rows
+  # into a CSV that already holds a DIFFERENT stage's rows, and that guard is
+  # correct -- it is what stops two stages being silently interleaved. On
+  # 2026-10-10 I gave all four groups the same filename, so every group after the
+  # sanity pair was refused in the same second and the session produced nothing but
+  # the sanity rows (0.88h, $19.73). The filenames are the fix; the guard stays.
+  csv="$OUT/session_a_$name.csv"
   timeout "$tmo" "$PY" run_experiment.py --config "$CFG" --nproc "$NPROC" \
-    --groups "$name" --output "$OUT/session_a.csv" --stage-id "session_a_$name" \
+    --groups "$name" --output "$csv" --stage-id "session_a_$name" \
     --log-per-token --save-generated-tokens 2>&1 | tee -a "$OUT/group_$name.log" | tail -25
-  log "### group $name exit=$? rows=$(tail -n +2 "$OUT/session_a.csv" 2>/dev/null | wc -l | tr -d ' ')"
+  log "### group $name exit=$? rows=$(tail -n +2 "$csv" 2>/dev/null | wc -l | tr -d ' ')"
   log "### csv snapshot ###"
-  cat "$OUT/session_a.csv" 2>/dev/null | tee -a "$OUT/session_a.log"
+  cat "$csv" 2>/dev/null | tee -a "$OUT/session_a.log"
 }
 
 # ---- 0 sanity ---------------------------------------------------------------
@@ -93,10 +100,10 @@ YML
 cp /tmp/sanity.yml configs/sunday_sanity.yml
 log "### group SANITY (spec + target-only, 128k, 64 tokens)"
 timeout 1800 "$PY" run_experiment.py --config configs/sunday_sanity.yml --nproc "$NPROC" \
-  --output "$OUT/session_a.csv" --stage-id session_a_sanity \
+  --output "$OUT/session_a_sanity.csv" --stage-id session_a_sanity \
   --log-per-token --save-generated-tokens 2>&1 | tee -a "$OUT/group_SANITY.log" | tail -20
-log "### SANITY rows so far:"; cat "$OUT/session_a.csv" 2>/dev/null | tee -a "$OUT/session_a.log"
-SANITY_OK=$(grep -c ",ok," "$OUT/session_a.csv" 2>/dev/null || echo 0)
+log "### SANITY rows so far:"; cat "$OUT/session_a_sanity.csv" 2>/dev/null | tee -a "$OUT/session_a.log"
+SANITY_OK=$(grep -c ",ok," "$OUT/session_a_sanity.csv" 2>/dev/null || echo 0)
 if [ "${SANITY_OK:-0}" -lt 2 ]; then
   log "STOP: sanity produced $SANITY_OK ok rows, expected 2. Not spending the session."
   exit 4
@@ -111,7 +118,7 @@ run_group SUNDAY_HEADLINE_1M_SPEC 7200
 run_group SUNDAY_HEADLINE_1M_TARGET 5400
 
 log "=== SESSION A WORK COMPLETE ==="
-log "rows: $(tail -n +2 "$OUT/session_a.csv" 2>/dev/null | wc -l | tr -d ' ')"
+log "rows across all stage CSVs: $(cat "$OUT"/session_a_*.csv 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
 log "=== all sidecars ==="
 ls -la "$OUT/tokens" 2>/dev/null | tail -15 | tee -a "$OUT/session_a.log"
 log "=== SESSION A REMOTE DONE ==="

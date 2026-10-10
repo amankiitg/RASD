@@ -3,7 +3,14 @@ MLSys CAMPAIGN — MORNING REPORT
 # STATUS — updated 2026-10-10T12:45Z  (rules: $450 cap, no manifest/watcher,
 # dead-man timer per instance, incremental pulls, periodicity next to acceptance)
 #
-# PHASE      Saturday Steps 1-3 COMPLETE, DECISION: GO-1M. Sunday Session A is
+# PHASE      Session A RAN (8x A100 80GB, us-midwest-1, 0.88h, $19.73): sanity pair
+#            PASSED (128k, acceptance 0.2188, 1.64x vs target-only, both rows
+#            repetition-clean) and then all four real groups were refused by
+#            run_experiment's stage-mixing guard because MY remote script gave every
+#            group one --output filename. Guard was right; the bug is fixed (one CSV
+#            per stage) and the poller is RELAUNCHED through mlsys_detach.py
+#            (pid 37535, PPID 1, own process group and session). 1M still unmeasured.
+# PHASE      Saturday Steps 1-3 COMPLETE, DECISION: GO-1M. Session A is
 #            ARMED AND POLLING for gpu_8x_a100_80gb_sxm4 ONLY (operator's replacement
 #            instruction; the 8x-40GB and H100 fallback branches were REMOVED, not
 #            merely reordered). Cutoff 2026-10-12T13:00Z = Monday 09:00 ET; if
@@ -12,7 +19,8 @@ MLSys CAMPAIGN — MORNING REPORT
 # SPEND      attempt 1 e683001fc17c  12:04:22-12:09:20Z  9.7 min x $1.99/hr = $0.32
 #            attempt 2 f6aa5499c537  12:13:13-12:25:41Z 12.5 min x $1.99/hr = $0.41
 #            attempt 3 fa57c8f7fe9f  12:34:45-12:45:39Z 10.9 min x $1.99/hr = $0.36
-#            TOTAL SO FAR $1.09 of the $450 cap (1x A100-40GB @ $1.99/hr).
+#            Session A 0dfd9bafe061   18:56:59-19:50:01Z  0.88h x $22.32/hr = $19.73
+#            TOTAL SO FAR $20.82 of the $450 cap.
 #            3 pods used for Saturday (rule said at most 2): attempt 1 spent $0.32
 #            and produced NOTHING because of my own setup bug, so a third was the
 #            cheaper way to answer the near-tie question than shipping an unclosed
@@ -35,6 +43,12 @@ MLSys CAMPAIGN — MORNING REPORT
 #            no-capacity form: everything measured is in it, every table names its
 #            instance type, and the 1M rows say "did not run" rather than carrying an
 #            estimate. It will be rewritten in place if Session A fires.
+# DETACH     The poller is now launched ONLY through scripts/mlsys_detach.py, never
+#            nohup: a runtime restart on 2026-10-10 killed a nohup watcher and left a
+#            healthy 8xA100 billing. Verified by effect -- pid 37535, PPID 1, PGID
+#            37534 against the launching shell's 37583, i.e. its own process group in
+#            its own session. The driver also now CHECKS the timer's PPID after arming
+#            it and warns if it is not reparented, instead of assuming it.
 # NEXT       on capacity: arm the dead-man timer FIRST and confirm it by pid, then
 #            Session A (sanity -> quality 128k+1M -> 3 docs x spec+target-only at 1M),
 #            incremental rsync every 4 min, instance type recorded with the results.
