@@ -1,0 +1,60 @@
+# Memorization follow-up: does draft acceptance differ between the gate's own
+# pool (PG-19 train books) and text that provably cannot be in the training data?
+#
+# WHY. On 2026-10-10 the acceptance audit measured ppl ~1.03 for Llama-3.1-8B on
+# data/processed/pg19_docs at 32k, and the natural_f1_128k stage is reporting
+# acceptance 0.84-0.97 on the SAME pool. If the target is recalling those books,
+# the draft (Llama-3.2-1B, same family) is likely recalling them too, and the
+# acceptance rate would measure shared recall rather than the speculation
+# mechanism. So this runs the SAME spec configuration on two pools:
+#   MEM_train      -- pg19_train_0, the gate's pool (ppl 1.03 at seed 42)
+#   MEM_postcutoff -- 2025 US Federal Register final rules, public domain,
+#                     published after any plausible training cut-off
+#
+# Everything else is IDENTICAL to configs/mlsys_natural_f1_128k.yml (same models,
+# same revisions, same spec_steps, same NF4 KV quantisation, greedy), EXCEPT the
+# context (32k, not 128k) and the cap (128 tokens, not 1024) to fit the cheapest
+# single GPU. This is a paired comparison at one window per pool: the ppl scan
+# showed a wide within-pool spread (1.07-5.59 on post-cutoff, 1.47-14.81 on
+# train), so a single window per pool is indicative, not conclusive.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_text: false
+  save_generated_tokens: true
+  measure_target_ppl: false
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+
+MEMCHECK:
+  name: memcheck_spec
+  factor: context_length
+  levels:
+  - id: MEM_train
+    context_length: 32768
+    documents: [pg19_train_0]
+    max_new_tokens: 128
+    checkpoint_every: 0
+    notes: 'gate pool: ppl 1.0325 at seed 42'
+  - id: MEM_postcutoff
+    context_length: 32768
+    prompt_documents_json: data/processed/pg19_postcutoff/pg19_validation_metadata.json
+    documents: [postcutoff_chunk_0]
+    max_new_tokens: 128
+    checkpoint_every: 0
+    notes: '2025 Federal Register, public domain, never in training'

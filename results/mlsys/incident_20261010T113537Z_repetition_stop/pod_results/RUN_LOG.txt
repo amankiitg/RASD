@@ -1,0 +1,25 @@
+2026-10-10T01:53:01Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=48h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+2026-10-10T01:53:01Z STALL_WATCHDOG started pid=8054 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+2026-10-10T01:53:02Z STAGE_START name=gate_calibration timeout=14400s
+2026-10-10T02:04:24Z STAGE_OK name=gate_calibration wall=682s cost=$4.23 cumulative=$86.52
+2026-10-10T02:04:25Z STAGE_START name=engine_cap_smoke timeout=21600s
+2026-10-10T03:42:25Z STAGE_OK name=engine_cap_smoke wall=5880s cost=$36.46 cumulative=$122.98
+2026-10-10T03:42:30Z engine_cap_smoke PASSED: cap enforced and the pair is lossless
+2026-10-10T03:42:30Z STAGE_START name=correction_note_evidence timeout=14400s
+2026-10-10T03:49:22Z STAGE_OK name=correction_note_evidence wall=412s cost=$2.55 cumulative=$125.53
+2026-10-10T03:49:23Z STAGE_START name=coherence_gate timeout=21600s
+2026-10-10T04:28:23Z STAGE_OK name=coherence_gate wall=2340s cost=$14.51 cumulative=$140.04
+2026-10-10T04:28:27Z STAGE_START name=natural_f1_128k timeout=43200s
+2026-10-10T11:31:49Z STAGE_OK name=natural_f1_128k wall=25402s cost=$157.49 cumulative=$297.53
+2026-10-10T11:31:51Z STAGE_START name=natural_f1_128k_losslessness timeout=3600s
+2026-10-10T11:31:51Z STAGE_FAILED name=natural_f1_128k_losslessness rc=1 wall=0s cost=$0.00
+2026-10-10T11:31:52Z STAGE_START name=natural_f1_128k_doc_intervals timeout=1800s
+2026-10-10T11:31:52Z STAGE_OK name=natural_f1_128k_doc_intervals wall=0s cost=$0.00 cumulative=$297.53
+2026-10-10T11:31:53Z STAGE_START name=natural_f1_128k_round_acceptance timeout=1800s
+2026-10-10T11:31:54Z STAGE_OK name=natural_f1_128k_round_acceptance wall=1s cost=$0.01 cumulative=$297.54
+2026-10-10T11:31:58Z SKIPPED name=natural_f1_128k_diverse reason=needs_approval (not in MLSYS_ONLY_STAGES=gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder)
+2026-10-10T11:31:58Z SKIPPED_VALIDATION name=natural_f1_128k_diverse reason=stage_not_ok rc=2
+2026-10-10T11:31:59Z STAGE_START name=impl_validation timeout=21600s
+2026-10-10T11:32:02Z STAGE_FAILED name=impl_validation rc=1 wall=3s cost=$0.02
+2026-10-10T11:32:06Z STAGE_START name=natural_spec_gated_256k timeout=64800s
+2026-10-10T11:36:24Z SIGNALLED name=natural_spec_gated_256k reason=stall-watchdog-or-operator
