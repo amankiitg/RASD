@@ -34,7 +34,20 @@ SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -o ServerAliveInterval=30 -i $SSH_KEY"
 PY=python3
 RATE_80GB=22.32
+# ONE instance type. The default is the only type the main session may use; the
+# REHEARSAL overrides it to a 1x A100, which the operator explicitly sanctioned, and
+# nothing else may override it.
+SESSION_TYPE=${SESSION_TYPE:-gpu_8x_a100_80gb_sxm4}
+RATE=${SESSION_RATE:-22.32}
+TIMER_MIN=${TIMER_MIN:-1200}          # 20 h (rehearsal: 60)
+SESSION_CAP=${SESSION_CAP:-500}       # safety net, never used to shorten a step
+SESSION_CFG=${SESSION_CFG:-configs/mlsys_sunday_1m.yml}
+SESSION_SANITY_CFG=${SESSION_SANITY_CFG:-configs/mlsys_sunday_sanity.yml}
+NPROC=${NPROC:-8}
+SESSION_OUT=${SESSION_OUT:-results/mlsys/session_a}
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
+say "SESSION_TYPE=$SESSION_TYPE rate=\$$RATE timer=${TIMER_MIN}min cap=\$$SESSION_CAP nproc=$NPROC"
+say "cfg=$SESSION_CFG sanity=$SESSION_SANITY_CFG out=$SESSION_OUT"
 
 KEY=$(grep -E '^[[:space:]]*LAMBDA_API_KEY[[:space:]]*=' runpod_creds.md 2>/dev/null \
       | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]')
@@ -81,8 +94,7 @@ fi
 CUTOFF_EPOCH=$(python3 -c "
 import datetime
 print(int(datetime.datetime(2026,10,12,13,0,0,tzinfo=datetime.timezone.utc).timestamp()))")
-ONLY_TYPE=gpu_8x_a100_80gb_sxm4
-RATE=$RATE_80GB
+ONLY_TYPE=$SESSION_TYPE
 say "polling ONLY $ONLY_TYPE, any region, until $(date -u -r $CUTOFF_EPOCH +%FT%TZ) (Monday 09:00 ET)"
 while :; do
   AVAIL=$(api_get instance-types 2>/dev/null)
@@ -118,12 +130,9 @@ LAUNCHED_AT=$(date -u +%s)
 say "launched $CHOSEN id=$ID region=$REGION"
 
 # ---- dead-man timer, before any work ---------------------------------------
-# The timer's length is derived from the RATE so the cap cannot be exceeded by
-# the clock: the operator's rule is <= $200 for this session, and a fixed 9 hours
-# is $200.9 on the 80GB node and $287 on the H100. Budgeted: 5.3h of work, plus
-# pull and terminate, so 8.5h on the 80GB ($190) and 6.0h on the H100 ($192).
-TIMER_MIN=510
-say "dead-man timer: ${TIMER_MIN} min (\$$(awk -v m=$TIMER_MIN -v r=$RATE 'BEGIN{printf "%.0f", m/60*r}') at \$$RATE/hr, inside the \$200 cap)"
+# 20 h at $22.32/hr is $446, inside the $500 ceiling. The ceiling is a safety net:
+# no stage is ever skipped or shortened to stay inside it.
+say "dead-man timer: ${TIMER_MIN} min (\$$(awk -v m=$TIMER_MIN -v r=$RATE 'BEGIN{printf "%.0f", m/60*r}') at \$$RATE/hr, inside the \$$SESSION_CAP cap)"
 "$PY" scripts/mlsys_detach.py --pidfile "$SESSION_DIR/deadman_${ID}.pid" \
   --log "$SESSION_DIR/deadman_${ID}.log" \
   -- bash scripts/mlsys_deadman.sh "$ID" "$TIMER_MIN" "$SESSION_DIR/deadman_${ID}.log" \
@@ -163,8 +172,14 @@ finish() {
   local n; n=$(count_instances)
   say "instances after terminate: $n (0 required)"
   local wall=$(( $(date -u +%s) - LAUNCHED_AT ))
-  say "session wall: ${wall}s = $(awk -v w=$wall 'BEGIN{printf "%.2f", w/3600}')h at \$$RATE/hr = \$$(awk -v w=$wall -v r=$RATE 'BEGIN{printf "%.2f", w/3600*r}')"
-  say "SESSION A DONE (0 instances required)"
+  say "session wall: ${wall}s = $(awk -v w=$wall 'BEGIN{printf "%.2f", w/3600}')h at \$$RATE/hr = \$$(awk -v w=$wall -v r=$RATE 'BEGIN{printf "%.2f", w/3600*r}') of \$$SESSION_CAP"
+  # CANCEL THE TIMER: it is bound to this id and would otherwise fire at its deadline
+  # against an instance that no longer exists. Cancelled by killing its own pid.
+  TPID=$(cat "$SESSION_DIR/deadman_${ID}.pid" 2>/dev/null || echo "")
+  if [ -n "${TPID:-}" ]; then
+    kill "$TPID" 2>/dev/null && say "dead-man timer $TPID cancelled" || say "timer $TPID already gone"
+  fi
+  say "SESSION DONE (0 instances required, no timer left for this id)"
   # the timer is bound to this id and exits by itself once the id is gone
   return $rc
 }
@@ -186,15 +201,52 @@ done
 [ -z "${IP:-}" ] && { say "FATAL: never became active"; exit 7; }
 say "active at $IP"
 
+# SSH READINESS. "active" from the API is not the same as "sshd accepting". On the
+# 2026-10-10 rehearsal the API reported active, the repo rsync succeeded, and the very
+# next ssh command died with "connect to host ... port 22: Operation timed out" --
+# which failed SEVEN probe checks in a row and cost the launch. Wait for the port.
+say "--- waiting for ssh ---"
+SSH_READY=0
+for _ in $(seq 1 40); do
+  if ssh $SSH_OPTS -o BatchMode=yes "$SSH_USER@$IP" true >/dev/null 2>&1; then
+    SSH_READY=1; break
+  fi
+  sleep 15
+done
+say "ssh ready: $SSH_READY"
+if [ "$SSH_READY" != "1" ]; then
+  say "FATAL: ssh never became usable on $IP; pulling nothing and terminating"
+  exit 8
+fi
+
 say "--- provisioning ---"
-MLSYS_HF_TOKEN="$HF_TOKEN_VALUE" timeout 1800 bash scripts/mlsys_setup_probe.sh "$IP" >>"$LOG" 2>&1
-say "provisioning rc=$?"
+prov=1
+for attempt in 1 2; do
+  MLSYS_HF_TOKEN="$HF_TOKEN_VALUE" timeout 1800 bash scripts/mlsys_setup_probe.sh "$IP" >>"$LOG" 2>&1
+  prov=$?
+  say "provisioning attempt $attempt rc=$prov"
+  [ "$prov" = "0" ] && break
+  # ONE retry, per the standing rule. A provisioning failure is usually transient
+  # (an ssh race or a hiccup in the pod's package download), and the alternative is to
+  # terminate a node that has already been paid for and booted.
+  if [ "$attempt" = "1" ]; then
+    say "retrying provisioning once after 60s"
+    sleep 60
+  fi
+done
+if [ "$prov" != "0" ]; then
+  say "FATAL: provisioning failed twice; the pod is not usable. Terminating rather than"
+  say "  running stages against an interpreter that could not be verified."
+  exit 8
+fi
 
 say "--- staging ---"
 timeout 600 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   scripts/mlsys_session_a_remote.sh "$SSH_USER@$IP:~/RASD/scripts/mlsys_session_a_remote.sh" >>"$LOG" 2>&1
 timeout 600 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-  configs/mlsys_sunday_1m.yml "$SSH_USER@$IP:~/RASD/configs/" >>"$LOG" 2>&1
+  configs/mlsys_sunday_1m.yml configs/mlsys_sunday_sanity.yml \
+  configs/mlsys_rehearsal_tiny.yml configs/mlsys_rehearsal_sanity.yml \
+  "$SSH_USER@$IP:~/RASD/configs/" >>"$LOG" 2>&1
 timeout 900 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   data/processed/pg19_1m data/processed/pg19_1m_128kwin "$SSH_USER@$IP:~/RASD/data/processed/" >>"$LOG" 2>&1
 say "staged script + config + both 1M pools"
@@ -234,6 +286,19 @@ say "session_meta.json written (instance type travels with the results)"
     sleep 240
     rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
       "$SSH_USER@$IP:~/RASD/results/mlsys/session_a/" "$OUT_STAGE/" >/dev/null 2>&1
+    # After every pull, fold the newest progress block into the status block, so the
+    # measured per-row time and the remaining work are recorded as they happen rather
+    # than reconstructed at the end.
+    if [ -f "$OUT_STAGE/progress.md" ]; then
+      NEWSUM=$(md5 -q "$OUT_STAGE/progress.md" 2>/dev/null || md5sum "$OUT_STAGE/progress.md" | cut -d" " -f1)
+      if [ "$NEWSUM" != "${LAST_PROGRESS_SUM:-}" ]; then
+        LAST_PROGRESS_SUM=$NEWSUM
+        {
+          printf '\n# SESSION PROGRESS (folded from the pod after a pull) %s\n' "$(date -u +%FT%TZ)"
+          grep '^### progress' -A 40 "$OUT_STAGE/progress.md" | tail -14 | sed 's/^/#   /'
+        } >> "$REPO/results/mlsys/MORNING_REPORT.txt"
+      fi
+    fi
   done
 ) &
 POLLER_PID=$!
@@ -241,5 +306,5 @@ say "incremental puller pid=$POLLER_PID (every 240s)"
 
 say "--- running session A (remote driver) ---"
 timeout 30000 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "HF_TOKEN='$HF_TOKEN_VALUE' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
+  "HF_TOKEN='$HF_TOKEN_VALUE' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
 say "remote rc=$?"

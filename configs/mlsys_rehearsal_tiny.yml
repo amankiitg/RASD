@@ -1,3 +1,8 @@
+# REHEARSAL CONFIG for the combined session. Structure identical to
+# configs/mlsys_sunday_1m.yml on purpose: the same group names, the same stage ids,
+# the same flags, the same pools, the same models. Only the sizes change (8192 or 4096
+# context, 8 tokens, one document), because the point is to execute every code path
+# once, not to measure anything.
 # SUNDAY SESSION A — the 1M-context headline, on 8x A100-80GB.
 #
 # TARGET: gradientai/Llama-3-8B-Instruct-Gradient-1048k
@@ -45,6 +50,10 @@ defaults:
   temperature: 0.0
   top_p: 1.0
   seeds: [42]
+  # REHEARSAL: tiny settings, SAME models, pools, group names, stage ids, flags and
+  # output paths. One document per group instead of three: the document count is
+  # config content and does not change a code path, and this rehearsal has a 60-minute
+  # timer to finish inside.
   log_per_token: true
   save_generated_text: true
   save_generated_tokens: true
@@ -55,8 +64,8 @@ SUNDAY_QUALITY_1M:
   factor: context_length
   levels:
   - id: SUNDAY_Q1M
-    context_length: 1048576
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    context_length: 8192
+    documents: [pg19_train_0]
     max_new_tokens: 8
     measure_target_ppl: true
     prompt_documents_json: data/processed/pg19_1m/documents.json
@@ -67,8 +76,8 @@ SUNDAY_QUALITY_128K:
   factor: context_length
   levels:
   - id: SUNDAY_Q128K
-    context_length: 131072
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    context_length: 4096
+    documents: [pg19_train_0]
     max_new_tokens: 8
     measure_target_ppl: true
     prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
@@ -79,9 +88,9 @@ SUNDAY_HEADLINE_1M_SPEC:
   factor: context_length
   levels:
   - id: SUNDAY_1M
-    context_length: 1048576
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
-    max_new_tokens: 128
+    context_length: 8192
+    documents: [pg19_train_0]
+    max_new_tokens: 8
     prompt_documents_json: data/processed/pg19_1m/documents.json
     checkpoint_every: 0
     notes: 'the headline: speculative at 1M, 128 tokens, greedy'
@@ -90,9 +99,9 @@ SUNDAY_HEADLINE_1M_TARGET:
   factor: context_length
   levels:
   - id: SUNDAY_1M_targetonly
-    context_length: 1048576
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
-    max_new_tokens: 128
+    context_length: 8192
+    documents: [pg19_train_0]
+    max_new_tokens: 8
     spec_steps: 0
     measure_target_ppl: false
     prompt_documents_json: data/processed/pg19_1m/documents.json
@@ -104,9 +113,9 @@ SUNDAY_SCALING_512K_SPEC:
   factor: context_length
   levels:
   - id: SUNDAY_512K_SPEC
-    context_length: 524288
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
-    max_new_tokens: 128
+    context_length: 8192
+    documents: [pg19_train_0]
+    max_new_tokens: 8
     prompt_documents_json: data/processed/pg19_1m/documents.json
     checkpoint_every: 0
     notes: 'scaling rung, spec, 512k, same 3 documents'
@@ -115,9 +124,9 @@ SUNDAY_SCALING_512K_TARGET:
   factor: context_length
   levels:
   - id: SUNDAY_512K_TARGET
-    context_length: 524288
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
-    max_new_tokens: 128
+    context_length: 8192
+    documents: [pg19_train_0]
+    max_new_tokens: 8
     spec_steps: 0
     measure_target_ppl: false
     prompt_documents_json: data/processed/pg19_1m/documents.json
@@ -128,9 +137,9 @@ SUNDAY_SCALING_128K_SPEC:
   factor: context_length
   levels:
   - id: SUNDAY_128K_SPEC
-    context_length: 131072
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
-    max_new_tokens: 128
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
     prompt_documents_json: data/processed/pg19_1m/documents.json
     checkpoint_every: 0
     notes: 'scaling rung, spec, 128k'
@@ -139,9 +148,9 @@ SUNDAY_SCALING_128K_TARGET:
   factor: context_length
   levels:
   - id: SUNDAY_128K_TARGET
-    context_length: 131072
-    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
-    max_new_tokens: 128
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
     spec_steps: 0
     measure_target_ppl: false
     prompt_documents_json: data/processed/pg19_1m/documents.json

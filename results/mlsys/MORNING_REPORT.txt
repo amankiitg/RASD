@@ -1,4 +1,35 @@
 MLSys CAMPAIGN — MORNING REPORT
+
+################################################################################
+# STATUS — 2026-10-10T23:36Z. REHEARSAL PASSED; THE MAIN SESSION IS RUNNING.
+#
+# TEN-LINE SUMMARY
+#  1. The combined session is RUNNING on gpu_8x_a100_80gb_sxm4 (us-east-1,
+#     instance 12e9c5d794254c498d741261bde0877b), launched 23:34:04Z.
+#  2. It runs a->e on ONE instance, GPU never released: sanity(128k,64tok) ->
+#     quality(1M and 128k, 1024 tokens, 3 docs) -> HEADLINE(3 docs x spec+target
+#     at 1M, 128 tokens) -> scaling(512k then 128k) -> reruns of failed rows.
+#  3. The dead-man timer is 1200 min = 20h = $446, inside the $500 ceiling; armed
+#     through mlsys_detach.py, verified by effect: pid 45088, PPID 1, own group.
+#  4. The poller that launched it is pid 44987, PPID 1, own process group.
+#  5. THE WHOLE SCRIPT WAS REHEARSED FIRST on one 1x A100: every stage rc=0 with
+#     ok rows, one CSV per stage pulled to the Mac, 0 instances after terminate,
+#     timer cancelled, $0.57 of the $10 rehearsal cap.
+#  6. Three bugs were found and fixed BY the rehearsal, each of which would have
+#     wasted a paid 8x launch: the driver never passed its session parameters to
+#     the pod (so the pod ran nproc 8 on one GPU), it did not wait for sshd
+#     before provisioning (7 probe checks failed on an ssh timeout), and it did
+#     not stop when provisioning failed.
+#  7. Spend to date: $20.82 + ~$0.5 rehearsal + the live session at $22.32/hr.
+#  8. Protocol: 128 tokens (64 for sanity), greedy, periodicity reported per row;
+#     looping rows are flagged and excluded from headline means.
+#  9. Progress is folded into this file after every 4-minute pull, from numbers
+#     the pod writes (measured row time per stage).
+# 10. If the node had not launched by Monday 09:00 ET the poller would stop and
+#     RESULTS_OCT.md would stand on what exists; it launched, so the 1M work runs.
+################################################################################
+
+
 ################################################################################
 # STATUS — updated 2026-10-10T12:45Z  (rules: $450 cap, no manifest/watcher,
 # dead-man timer per instance, incremental pulls, periodicity next to acceptance)
@@ -3326,3 +3357,60 @@ different passages (the 32k prompt is the opening of the same books, not the ope
 130k tokens), so they are not the same measurement and are not presented as one. The
 one thing the two agree on is the shape: acceptance on real prose lands in the
 0.25-0.8 band, and anything near 0.97 comes with a period.
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-10T23:27:16Z
+#   - SUNDAY_HEADLINE_1M_TARGET: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.210 accept=0.0000
+#   - SUNDAY_QUALITY_128K: rows=1 ok=1 median_row_s=2.1 max_row_s=2.1 tps=3.790 accept=0.1667
+#   - SUNDAY_QUALITY_1M: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.930 accept=0.1667
+#   - SUNDAY_SCALING_512K_SPEC: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.950 accept=0.1667
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.370 accept=0.0625
+#   - measured row time total 16.4s = 0.00h over 7 rows
+#   ### progress 2026-10-10T23:27:02Z
+#   - SUNDAY_HEADLINE_1M_SPEC: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.920 accept=0.1667
+#   - SUNDAY_HEADLINE_1M_TARGET: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.210 accept=0.0000
+#   - SUNDAY_QUALITY_128K: rows=1 ok=1 median_row_s=2.1 max_row_s=2.1 tps=3.790 accept=0.1667
+#   - SUNDAY_QUALITY_1M: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.930 accept=0.1667
+#   - SUNDAY_SCALING_512K_SPEC: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.950 accept=0.1667
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.370 accept=0.0625
+#   - measured row time total 16.4s = 0.00h over 7 rows
+
+## REHEARSAL (2026-10-10, 1x A100 40GB, $0.57 of the $10 cap)
+
+Purpose: execute every code path once with the EXACT command lines, flags, output
+paths, stage ids, pulls and guards of the real run, at tiny sizes (8192/4096 context,
+8 tokens, one document, --nproc 1), so that no paid 8x launch is spent discovering a
+script bug. It did exactly that, and found three:
+
+  1. THE DRIVER NEVER PASSED ITS SESSION PARAMETERS TO THE POD. My patch targeted a
+     line containing `PILOT_JOBS` that this script does not have, so it silently did
+     nothing: the pod ran the REAL config with the default nproc 8 on a one-GPU pod,
+     and all 8 ranks died ("subprocess produced no output"). The fix is the ssh line
+     carrying SESSION_OUT / SESSION_CFG / SESSION_SANITY_CFG / NPROC.
+  2. NO WAIT FOR SSHD BEFORE PROVISIONING. The API reported `active`, the repo rsync
+     succeeded, and the next ssh command died with "connect to host ... port 22:
+     Operation timed out", which failed SEVEN probe checks in a row (no pod_env.log,
+     no interpreter, no .pod_env.sh) and cost a launch. The driver now waits for the
+     port, and retries provisioning ONCE, per the standing rule, before giving up.
+  3. THE DRIVER IGNORED A PROVISIONING FAILURE and ran the stages anyway; the pod-side
+     interpreter check then correctly refused to guess an interpreter. Now the driver
+     stops and terminates rather than proceeding on an unverified environment.
+
+Final rehearsal, every stage, exactly as the real run will call it:
+
+  STEP a  sanity pair (both arms, one invocation)      rc=0  ok_rows=2 (needed 2)
+  STEP b  SUNDAY_QUALITY_128K                          rc=0  ok_rows=1
+          SUNDAY_QUALITY_1M                            rc=0  ok_rows=1
+  STEP c  SUNDAY_HEADLINE_1M_SPEC                      rc=0  ok_rows=1
+          SUNDAY_HEADLINE_1M_TARGET                    rc=0  ok_rows=1
+  STEP d  SUNDAY_SCALING_512K_SPEC / _TARGET           rc=0  ok_rows=1 each
+          SUNDAY_SCALING_128K_SPEC / _TARGET           rc=0  ok_rows=1 each
+  STEP e  rerun scan over all 9 stage CSVs             no non-ok rows, so no retry ran
+  ----    COMBINED SESSION WORK COMPLETE, 46 files pulled, 0 instances, timer cancelled
+
+One CSV per stage, pulled to the Mac: results/mlsys/rehearsal/ (9 files, plus the
+progress block). The retry-scan path executed in full; the retry-invocation path
+(`--resume`) did not, because nothing failed, and that is stated rather than implied.
+
+Rehearsal wall 1024s = 0.28h = $0.57 of the $10 cap. Instance e2b6b1dd/7d3cf432 and
+d9ebfb56 were terminated and confirmed at 0 instances; the first of the three was the
+ssh-timeout launch.

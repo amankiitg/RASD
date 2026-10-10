@@ -1,0 +1,47 @@
+# REHEARSAL sanity: same command line, same stage ids, tiny sizes.
+# The sanity step, as a config file so the REHEARSAL can run the same command line
+# with a different config instead of a different script. 128k, 64 tokens, one
+# document, both arms in one invocation.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m/documents.json
+SANITY_SPEC:
+  name: sanity_spec
+  factor: context_length
+  levels:
+  - id: SANITY
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    checkpoint_every: 0
+    notes: 'sanity: spec at 128k'
+SANITY_TARGET:
+  name: sanity_target
+  factor: context_length
+  levels:
+  - id: SANITY_targetonly
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'sanity: target-only at 128k'
