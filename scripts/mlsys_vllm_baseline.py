@@ -490,13 +490,20 @@ def run_attempt(spec: dict, log_path: Path, timeout_s: int) -> tuple[int, str]:
     the child's stderr is captured rather than lost.
     """
     spec_path = log_path.with_suffix(".spec.json")
+    # THE DIRECTORY FIRST. This was written the other way round, and it is why
+    # neither vLLM stage ever produced a row: on a fresh pod results/mlsys/logs/
+    # does not exist, so `spec_path.write_text` raised
+    #     FileNotFoundError: 'results/mlsys/logs/vllm_<model>_<quant>_attempt1.spec.json'
+    # three seconds into impl_validation on 2026-10-10. vllm_ladder calls this same
+    # function and would have failed identically. A path's parent is a prerequisite
+    # of writing to it, so the mkdir is hoisted above both writes.
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(spec))
     env = dict(os.environ)
     env.update(spec.get("env", {}))
     cmd = [sys.executable, str(Path(__file__).resolve()), "--_worker", str(spec_path)]
 
     chunks: list[str] = []
-    log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w") as lf:
         lf.write(f"# cmd: {' '.join(cmd)}\n")
         lf.write(f"# env overrides: {spec.get('env', {})}\n\n")

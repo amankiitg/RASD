@@ -125,7 +125,12 @@ def check(csv_path: Path, tokens_dir: Path, full_length: int = 1024,
             # emitted position by the engine. A sidecar written before that
             # existed has no `token_gaps`, which is reported as "no gap" (and
             # therefore a MISMATCH) rather than assumed indifferent.
-            spec_gaps=a.get("token_gaps"), target_gaps=b.get("token_gaps"))
+            spec_gaps=a.get("token_gaps"), target_gaps=b.get("token_gaps"),
+            # M3 — the cross margin needs the top-k, which only exists when the
+            # run was made with --dump-logits-topk. Absent, the divergence is
+            # classed "undetermined" rather than guessed at.
+            spec_topk=a.get("token_topk"), target_topk=b.get("token_topk"),
+        )
         if res["verdict"] == "NUMERIC_TIE":
             base["tie_positions"] = res["tie_positions"]
         out.append({**base, **res})
@@ -158,6 +163,7 @@ def main() -> int:
               "compared_tokens", "numeric_tie", "tie_gap_threshold",
               "tie_positions", "gap_at_divergence_spec",
               "gap_at_divergence_target",
+              "cross_margin_spec", "cross_margin_target", "divergence_class",
               "spec_acceptance", "spec_throughput_tps",
               "target_throughput_tps", "detail"]
     out_path = Path(args.out) if args.out else csv_path.with_name(

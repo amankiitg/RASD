@@ -1,0 +1,10 @@
+run_id,criterion,old,new,changed,note
+native_128k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.029)",pass,False,
+llama3_f16_256k,absolute_repetition,"pass (no absolute rule; ratio 1.7621, share 0.0511)",pass,False,
+yarn_base8192_f32_256k,absolute_repetition,"pass (no absolute rule; ratio 1.9552, share 0.0567)",pass,False,
+yarn_base131072_f2_256k,absolute_repetition,"pass (no absolute rule; ratio 34.131, share 0.9898)",FAIL: repeated n-grams 99% > 60% absolute,False,
+yarn_rebased_on_context_256k,absolute_repetition,"pass (no absolute rule; ratio 0.0, share 0.0)",pass,False,
+llama3_f32_512k,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",unmeasurable: no token sidecar and no continuation text: the new rule cannot be applied,False,
+llama3_f32_512k,unmeasurable,,no token sidecar and no continuation text: the new rule cannot be applied,False,
+yarn_base8192_f64_512k,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",unmeasurable: no token sidecar and no continuation text: the new rule cannot be applied,False,
+yarn_base8192_f64_512k,unmeasurable,,no token sidecar and no continuation text: the new rule cannot be applied,False,

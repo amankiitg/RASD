@@ -62,6 +62,68 @@ def _gap_at(gaps, pos: int) -> Optional[float]:
         return None
 
 
+def _logit_for(topk, pos, token_id):
+    """The logit an arm gave `token_id` at `pos`, or None if it is outside that
+    arm's recorded top-k (which is itself a finding: the competitor was not even
+    in contention for the arm that did not choose it)."""
+    if not topk or pos is None or pos < 0 or pos >= len(topk):
+        return None
+    for entry in (topk[pos] or []):
+        try:
+            tid, logit = entry
+        except (TypeError, ValueError):
+            continue
+        if int(tid) == int(token_id):
+            return float(logit)
+    return None
+
+
+def cross_margins(spec_topk, target_topk, spec_ids, target_ids, pos,
+                  tie_gap=TIE_GAP):
+    """How each arm scored the OTHER arm's token at the divergence.
+
+    `token_gaps` is each arm's own top1-top2 gap, and it is blind to the case that
+    actually matters: the arms choosing DIFFERENT tokens with each arm confident
+    about its own pair. Then neither arm's gap is small, the tie rule calls it a
+    MISMATCH, and nothing in the trace distinguishes "one rounding step apart on
+    the same pair" from "the two arms disagree substantively".
+
+    Returns `cross_margin_spec` = L_spec(chosen by spec) - L_spec(chosen by
+    target), `cross_margin_target` = the same in the target's distribution, and a
+    `divergence_class`:
+
+      tie          both arms within `tie_gap` on the same pair
+      near_tie     each arm's own margin is small but above the tie band
+      decided      at least one arm separates the two tokens by >= 1.0, so the
+                   arms disagree about a pair they both rank confidently
+      undetermined the sidecars carry no top-k, so the question is open
+
+    `decided` is the class worth chasing: it is not explainable by fp4 logit
+    quantisation in 0.0625 steps.
+    """
+    if not spec_topk or not target_topk:
+        return {"cross_margin_spec": "", "cross_margin_target": "",
+                "divergence_class": "undetermined"}
+    s_chose, t_chose = spec_ids[pos], target_ids[pos]
+    cs = _logit_for(spec_topk, pos, s_chose)
+    cs_other = _logit_for(spec_topk, pos, t_chose)
+    ct = _logit_for(target_topk, pos, t_chose)
+    ct_other = _logit_for(target_topk, pos, s_chose)
+    m_spec = None if (cs is None or cs_other is None) else cs - cs_other
+    m_tgt = None if (ct is None or ct_other is None) else ct - ct_other
+    if m_spec is None or m_tgt is None:
+        cls = "undetermined"
+    elif abs(m_spec) < tie_gap and abs(m_tgt) < tie_gap:
+        cls = "tie"
+    elif max(abs(m_spec), abs(m_tgt)) >= 1.0:
+        cls = "decided"
+    else:
+        cls = "near_tie"
+    return {"cross_margin_spec": "" if m_spec is None else round(m_spec, 4),
+            "cross_margin_target": "" if m_tgt is None else round(m_tgt, 4),
+            "divergence_class": cls}
+
+
 def compare_generations(
     spec_ids: Sequence[int],
     target_ids: Sequence[int],
@@ -70,6 +132,8 @@ def compare_generations(
     spec_gaps: Sequence[float] | None = None,
     target_gaps: Sequence[float] | None = None,
     tie_gap: float = TIE_GAP,
+    spec_topk=None,
+    target_topk=None,
 ) -> dict:
     """Losslessness verdict for one (speculative, target-only) pair.
 
@@ -142,6 +206,12 @@ def compare_generations(
         "compared_tokens": int(n_common),
         "min_prefix": int(min_prefix),
     }
+    if pos is not None:
+        out.update(cross_margins(spec_topk, target_topk, spec_ids, target_ids,
+                                 pos, tie_gap))
+    else:
+        out.update({"cross_margin_spec": "", "cross_margin_target": "",
+                    "divergence_class": ""})
     if pos is not None and verdict == "NUMERIC_TIE":
         out["detail"] = (
             f"token {pos}: spec={spec_ids[pos]} target={target_ids[pos]} at a "
@@ -150,6 +220,15 @@ def compare_generations(
             f"below the {tie_gap} tie threshold"
         )
     elif pos is not None:
+        if out.get("divergence_class") == "decided":
+            out["detail"] = (
+                f"token {pos}: spec={spec_ids[pos]} target={target_ids[pos]} "
+                f"(gaps {out['gap_at_divergence_spec'] or 'n/a'} / "
+                f"{out['gap_at_divergence_target'] or 'n/a'}), each arm favours "
+                f"its own token by {out['cross_margin_spec']} / "
+                f"{out['cross_margin_target']} -- DECIDED in both arms"
+            )
+            return out
         out["detail"] = (
             f"token {pos}: spec={spec_ids[pos]} target={target_ids[pos]}"
             f" (gaps {out['gap_at_divergence_spec'] or 'n/a'} / "

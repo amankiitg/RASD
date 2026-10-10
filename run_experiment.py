@@ -1202,6 +1202,9 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # MLSys analysis plan (a) — return raw generated token IDs so the
             # losslessness check can compare token streams, not decoded text.
             save_generated_tokens = bool(run.get("save_generated_tokens", False)),
+            # M3 — top-k logits per emitted position, so a divergence is scored
+            # on the cross margin rather than each arm's own top1-top2 gap.
+            dump_logits_topk  = int(run.get("dump_logits_topk", 0) or 0),
             # C6 generation checkpoint/resume (Phase C blocker #2 from
             # 2026-05-10 third-pass review). Default 0 -> disabled.
             # 1M cells set checkpoint_every>=1 to recover from crashes
@@ -1424,6 +1427,17 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                         "top_p": run.get("top_p", 1.0),
                         "ignore_eos": bool(run.get("ignore_eos", False)),
                         "token_gaps": token_gaps,
+                        # M3 — the top-k logits per emitted position, present only
+                        # when the run set dump_logits_topk. It has to be listed
+                        # HERE: this dict is the sidecar's whole schema, so a
+                        # metric the engine computes and this list omits is
+                        # silently dropped. That is exactly what happened on the
+                        # first 2026-10-10 pilot, where the run was configured
+                        # with dump_logits_topk=6 and the sidecar came back with
+                        # no token_topk at all, leaving the cross margin
+                        # "undetermined" for a divergence the run was built to
+                        # explain.
+                        "token_topk": metrics.get("token_topk"),
                         # The numerics this run was measured under, so a comparison
                         # against another engine can say what differs rather than
                         # implying the two ran the same arithmetic. MEASURED on the
@@ -1711,6 +1725,9 @@ def apply_cli_to_runs(args, runs: list[dict]) -> None:
     if args.save_generated_tokens:
         for r in runs:
             r["save_generated_tokens"] = True
+    if args.dump_logits_topk:
+        for r in runs:
+            r["dump_logits_topk"] = int(args.dump_logits_topk)
     if args.prompt_source != "synthetic":
         if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
             raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
@@ -1833,6 +1850,14 @@ def main():
                              "text is not injective, so the IDs must survive "
                              "the run for the check to be possible at all. "
                              "Default off so M3 replay stays byte-identical.")
+    parser.add_argument("--dump-logits-topk", type=int, default=0,
+                        help="Write the top-k (token, logit) pairs at every "
+                             "emitted position into the token sidecar. Needed to "
+                             "score a spec/target divergence on the CROSS margin: "
+                             "the per-arm top1-top2 gaps already recorded cannot "
+                             "decide a case where the arms rank different tokens "
+                             "at the top, which is 2 of the 10 real divergences. "
+                             "0 (default) keeps the sidecar unchanged.")
     parser.add_argument("--save-generated-text", action="store_true",
                         help="Write the decoded generated text from each run "
                              "to <output_csv_dir>/generated/<run_id>.txt. "
@@ -1924,6 +1949,8 @@ def main():
                 canary_run["save_generated_text"] = True
             if args.save_generated_tokens:
                 canary_run["save_generated_tokens"] = True
+            if args.dump_logits_topk:
+                canary_run["dump_logits_topk"] = int(args.dump_logits_topk)
             if args.memory_trace:
                 canary_run["memory_trace"] = True
                 canary_run.setdefault(

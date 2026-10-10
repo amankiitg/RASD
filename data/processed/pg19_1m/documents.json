@@ -1,0 +1,108 @@
+{
+  "tokenizer": "meta-llama/Llama-3.1-8B",
+  "dataset": "emozilla/pg19",
+  "split": "train",
+  "gen_tokens": 1024,
+  "rungs": [
+    1048576
+  ],
+  "selection": "longest: 6 books from 6 eligible (>= 1,048,576 tokens required, prompt + continuation = context)",
+  "selection_mode": "longest",
+  "selection_seed": null,
+  "documents": [
+    {
+      "doc_id": "pg19_train_0",
+      "slot": 0,
+      "book_index": 0,
+      "title": "The Bible Both Testaments King James Version",
+      "url": "http://www.gutenberg.org/ebooks/10",
+      "file": "data/processed/pg19_1m/doc_000.dat",
+      "length": 1050624,
+      "book_tokens": 1152439
+    },
+    {
+      "doc_id": "pg19_train_1",
+      "slot": 1,
+      "book_index": 1,
+      "title": "The Complete Works of William Shakespeare",
+      "url": "http://www.gutenberg.org/ebooks/100",
+      "file": "data/processed/pg19_1m/doc_001.dat",
+      "length": 1050624,
+      "book_tokens": 1469935
+    },
+    {
+      "doc_id": "pg19_train_915",
+      "slot": 2,
+      "book_index": 915,
+      "title": "The Anti-Slavery Examiner Omnibus by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11275",
+      "file": "data/processed/pg19_1m/doc_002.dat",
+      "length": 1050624,
+      "book_tokens": 1392970
+    },
+    {
+      "doc_id": "pg19_train_1726",
+      "slot": 3,
+      "book_index": 1726,
+      "title": "The Holy Bible Douay-Rheims Version Both Testaments by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1581",
+      "file": "data/processed/pg19_1m/doc_003.dat",
+      "length": 1050624,
+      "book_tokens": 1555412
+    },
+    {
+      "doc_id": "pg19_train_2204",
+      "slot": 4,
+      "book_index": 2204,
+      "title": "The History of England in Three Volumes Vol.II by Tobias Smollett",
+      "url": "http://www.gutenberg.org/ebooks/19217",
+      "file": "data/processed/pg19_1m/doc_004.dat",
+      "length": 1050624,
+      "book_tokens": 1098080
+    },
+    {
+      "doc_id": "pg19_train_2768",
+      "slot": 5,
+      "book_index": 2768,
+      "title": "The Complete Shakespeare's First Folio [35 Plays]",
+      "url": "http://www.gutenberg.org/ebooks/2270",
+      "file": "data/processed/pg19_1m/doc_005.dat",
+      "length": 1050624,
+      "book_tokens": 1327934
+    }
+  ],
+  "per_rung": {
+    "1048576": {
+      "pg19_train_0": {
+        "prompt_tokens": 1047552,
+        "prompt_sha256": "9fe6d04318caf92bc0d9b15bb01646de5f4e0a5d7b2b6711a03075ff9f6718c8",
+        "continuation_sha256": "2708ae2eb61bf7b43e3611d2d1ccc49441e922703c3ae7ca0879637871ed52a8"
+      },
+      "pg19_train_1": {
+        "prompt_tokens": 1047552,
+        "prompt_sha256": "1124da264622a4f843f8242b86b1c1427228f5a59264c69de58a0b2c73abbf99",
+        "continuation_sha256": "077e89626db868cac2ebd461870a1c7fc91dfe9fc3ccb8a77450cb95d21224e3"
+      },
+      "pg19_train_915": {
+        "prompt_tokens": 1047552,
+        "prompt_sha256": "8ebb41103872ba0d090b50892dc734dc9fe06f7f94e02d3e91357ad1db57a251",
+        "continuation_sha256": "66af608f9e04209d0e426733f174442bc69351ac2ce00c2337640d2e72cb46a6"
+      },
+      "pg19_train_1726": {
+        "prompt_tokens": 1047552,
+        "prompt_sha256": "767ab081ded80cbc1952dfdae094f52befdd0ca6de423a93d8bada98570f8868",
+        "continuation_sha256": "6a88fcba174fae7ff4ac7cf35c7b92cc18a63fd77cb6ae04dc32b4d00e8325b7"
+      },
+      "pg19_train_2204": {
+        "prompt_tokens": 1047552,
+        "prompt_sha256": "612de428f1eef7c94228f3859f2e89fc00463726014e4f0aef2bd6c0c8de0463",
+        "continuation_sha256": "208a348d783ab93f088d35433f7c4190e4bc4c811cd45390445145bdd197050c"
+      },
+      "pg19_train_2768": {
+        "prompt_tokens": 1047552,
+        "prompt_sha256": "9c81c4ffd84c6bc35b8345982ae0f2f9d99bea01f12a0ef604f8a2c52c7876cd",
+        "continuation_sha256": "39879012886e8a969af9b645f926fb1d8400f1f7dc9fc0647643203a5d320157"
+      }
+    }
+  }
+}

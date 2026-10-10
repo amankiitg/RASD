@@ -1,4 +1,26 @@
 MLSys CAMPAIGN — MORNING REPORT
+################################################################################
+# STATUS — updated 2026-10-10T12:45Z  (rules: $450 cap, no manifest/watcher,
+# dead-man timer per instance, incremental pulls, periodicity next to acceptance)
+#
+# PHASE      Saturday Step 2 (1x pilot) COMPLETE; Step 3 decision below, one leg
+#            (the near-tie cross margin) re-running on a 3rd pod with the
+#            sidecar schema fixed.
+# SPEND      attempt 1 e683001fc17c  12:04:22-12:09:20Z  9.7 min x $1.99/hr = $0.32
+#            attempt 2 f6aa5499c537  12:13:13-12:25:41Z 12.5 min x $1.99/hr = $0.41
+#            attempt 3 fa57c8f7fe9f  12:34:45-             (near-tie re-run)
+#            TOTAL SO FAR $0.73 of the $450 cap (1x A100-40GB @ $1.99/hr).
+# LAST       the native-1M target (gradientai/Llama-3-8B-Instruct-Gradient-1048k)
+#            LOADS AND RUNS through this engine at rope_type='none' with NO
+#            scaling, and post-28-token acceptance 0.2708 at 32k -- the same
+#            number as Llama-3.1-8B's 0.2705 on the same document (0.2705 was
+#            also the 2026-10-09 memcheck value, so it reproduces across pods).
+#            All 5 pilot rows are repetition-CLEAN (first periodic token = 128,
+#            i.e. never; periodic tail 0.00; self-agreement 0.07-0.23).
+# NEXT       read the cross margins from the re-run, close the near-tie leg,
+#            then Sunday's 8x session under a 9-hour dead-man timer.
+################################################################################
+
 Generated 2026-10-08, unattended session 2026-10-07 22:00Z -> 2026-10-08
 ================================================================================
 This file previously held the 2026-10-06 ARM4 session report. That report is
@@ -2727,3 +2749,385 @@ L7. Memorization, residual (TODO 1): within PG-19 the train split is 2.3x more
 L8. The two untracked files (scripts/mlsys_memorization_check.py,
     configs/mlsys_memcheck_spec.yml) are deliberate; make the next pre-flight
     expect a dirty tree.
+
+################################################################################
+# 2026-10-14 SPRINT — the 1M headline. Budget $300 total, deadline Oct 14.
+# Shape: STEP 1 read-only answers, STEP 2 one 1x A100 pilot (<= $10, 60 min),
+# STEP 3 a one-page plan for the 8x session. No manifest, no watcher, no new
+# gates or infrastructure beyond this list.
+################################################################################
+
+## STEP 1a — HOW THE DRAFT SEES THE CONTEXT (full context, or a window?)
+
+A WINDOW, and it is applied in exactly one place. From src/models/rasd_inference.py:
+
+    def _draft_window(input_ids, window: int):
+        """The sequence the DRAFT is conditioned on: leading BOS + most recent tokens.
+        ...
+        """
+        if window <= 0 or input_ids.shape[1] <= window:
+            return input_ids
+        keep = window - 1
+        if keep <= 0:
+            return input_ids[:, :1]
+        return torch.cat([input_ids[:, :1], input_ids[:, -keep:]], dim=1)
+
+applied in generate() as:
+
+    draft_ids = _draft_window(raw_draft_ids, self.draft_max_len)
+
+and `self.draft_max_len` is set once, in the model setup:
+
+    self.draft_max_len = getattr(self.draft_model.config, "max_position_embeddings",
+                         getattr(self.draft_model.config, "n_positions", 4096))
+    if cfg.draft_window_cap is not None:
+        cap = int(cfg.draft_window_cap)
+        native = self.draft_max_len
+        self.draft_max_len = min(native, cap)
+
+So the draft sees the leading BOS plus the most recent `draft_max_len - 1`
+tokens, never the full context.
+
+CAN Llama-3.2-1B WORK AT 1M? Its native window is 131,072, so a full-context
+draft cannot. It does not have to: the window is truncated to `min(native, cap)`
+BEFORE the draft ever sees it, so at 1M the draft is conditioned on the last
+131,072 tokens (or fewer) and never runs past its own rotary range. Two
+consequences worth stating:
+
+  * CORRECTNESS: fine at 1M with any cap <= 131,072. There is no extrapolation.
+  * COST: an uncapped window means a 131k-token draft prefill and a bf16 draft KV
+    of 131,072 x 32 KiB = 4.0 GiB PER RANK, replicated on all 8 (see 1c).
+    `draft_window_cap: 4096` cuts that to 128 MiB/rank and makes the draft
+    prefill ~1/32 the work. The 1M cells must set it.
+
+WHAT A WINDOWED DRAFT REQUIRES: (i) the window applied in one place — already
+true, and `generate_text`'s second, differently-directed truncation was removed
+for this reason; (ii) the draft KV built over the window only — true, the draft
+prefill runs over `draft_ids`; (iii) remembering that the draft KV then GROWS by
+the generated tokens during decode (4096 + 128 = 4224 at a 128-token
+generation), i.e. the draft is windowed at prefill and not re-windowed during
+the generation. That is harmless at 128 tokens and would need attention only for
+generations of the same order as the window.
+
+## STEP 1b — 1M MODEL OPTIONS
+
+Llama-3.1-8B rope-extended 8x: native max_position_embeddings 131,072 with the
+shipped config carrying rope_scaling {rope_type: llama3, factor 8.0,
+original_max_position_embeddings: 8192}. Reaching 1,048,576 means extending the
+TRAINED window 8x — which is exactly the YaRN/OOD condition the paper exists to
+separate from context length. Using it for the 1M headline would make the
+headline a statement about rope extrapolation.
+
+NATIVELY-1M, VERIFIED TO EXIST AND TO FIT THIS ENGINE:
+
+    gradientai/Llama-3-8B-Instruct-Gradient-1048k
+      sha                      cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+      architectures            LlamaForCausalLM      (what the ring binds to)
+      max_position_embeddings  1048576               (1M, stated natively)
+      rope_theta               3580165449.0
+      rope_scaling             None                  (no YaRN/linear dict at all)
+      vocab_size               128256, 32 layers, 8 kv heads, hidden 4096
+      downloads 23,832 / likes 683, last modified 2024-10-29
+
+ENGINE ACCEPTANCE: `rope_type: "none"` returns the model's own config after
+asserting context_length <= max_position_embeddings, so NO scaling dict is
+written and HF's rotary module reads theta = 3.58e9 out of the config itself.
+ring_llama_attention.py hard-codes no theta and no scaling: it takes
+`num_key_value_heads` off the module and calls `self.rotary_emb(v, position_ids)`,
+i.e. HF's own rotary block. `rope_type: "none"` is therefore the cleanest
+possible path for this checkpoint — the model runs at its own trained
+frequencies and nothing is extrapolated.
+
+TOKENIZER vs Llama-3.2-1B (the premise of cross-family speculation), MEASURED:
+  * vocab_size 128000 both; len() 128256 both; bos 128000, eos 128001 both;
+  * EVERY id in 0..127999 decodes to the SAME token string in both
+    (0 mismatches over 128,000 ids), and the base-vocab string sets are equal;
+  * the only differences are the NAMES of reserved special slots above 128000:
+    Llama-3.2-1B calls them <|finetune_right_pad_id|> (128004), <|eom_id|>
+    (128008), <|python_tag|> (128010); Gradient names 128253/254/255
+    <|reserved_special_token_248/249/250|>.
+  PG-19 text contains none of those, and the cells run ignore_eos: true, so the
+  id space shared by the target and the draft is identical. The pairing is valid.
+
+NOT AN OPTION: togethercomputer/Llama-3.1-8B-Instruct-1M is returned by HF search
+but the repo body does not exist ("Repository not found" with our token).
+
+CAVEAT THAT MUST TRAVEL WITH THE 1M NUMBER: the only native-1M Llama-architecture
+weights that exist are INSTRUCT checkpoints (Gradient's is continued-pretrained
+from llama3-8b-stage262k-chat). Its PG-19 continuation perplexity is not
+comparable to Llama-3.1-8B's 1.03-1.10. The 1M-vs-128k quality comparison must
+therefore be run with THIS model at BOTH contexts, never across models.
+
+## STEP 1c — MEMORY PER RANK AT 1M (8 ranks, ring)
+
+Measured, from the campaign's own per-rank traces (results/mlsys/incident_.../
+pod_results/memory_trace/, rank 0):
+  * 256k run (S=261,120, S_local=32,640): post_load 6,775.8 MB; prefill peak
+    11,787.9 MB; KV growth 40.2 MB per layer over 32 layers.
+  * 1232 B per position per layer => 40.2 MB / 32,640 positions, i.e. the NF4
+    block-32 layout (2048 elem/token/layer x 0.625 B).
+  * the 128k run matches: 20.1 MB per layer at S_local=16,256.
+
+Extrapolated to 1M (S=1,048,576, S_local=131,072), per rank:
+  * TARGET NF4 KV     32 layers x 131,072 x 1232 B           = 5.2 GB
+  * WEIGHTS           measured post_load                      = 6.8 GB
+                      (target 8B NF4 + draft 1B + CUDA context)
+  * PREFILL WORKING   (11.79 - 6.78 - 1.29) = 3.7 GB at 32,640 local
+    positions, ~linear in S_local, x4 at 131,072              = ~15 GB
+  * DRAFT KV          bf16, replicated on EVERY rank, NOT ring-sharded, NOT
+                      quantized: 32 KiB/token => 4.0 GiB/rank at the native
+                      131k window, or 128 MiB/rank with draft_window_cap: 4096
+  ------------------------------------------------------------------
+  TOTAL ~27 GB per rank against 80 GB available => ~3x headroom.
+
+WHERE THE DRAFT KV LIVES: `draft_past_kv` inside generate(), the HF
+DynamicCache returned by the draft forward on `stream_draft`. It is per-rank
+local and never enters the ring, because the draft's attention is plain HF
+attention over the window, not ring attention. That is why its window must be
+capped: it is the one cache that is replicated 8x rather than sharded.
+
+NOTE: ~27 GB/rank does NOT fit comfortably on the 40 GB card. The 1M cells need
+the 8x A100 80GB node, and the pilot below runs the 40 GB card only because that
+is what has capacity and it runs at 32k.
+
+## STEP 1d — CAN THE ENGINE SCORE CONTINUATION PPL AT 1M ON 8 GPUs?
+
+Yes, and the path is already the sharded one. mlsys_coherence_gate.py:
+
+    def continuation_perplexity(model, prompt_ids, cont_ids):
+        ids = torch.tensor([prompt_ids + cont_ids], ...)
+        def _forward(local_ids, abs_pos):
+            return model.model(input_ids=local_ids, use_cache=False,
+                               past_key_values=None).last_hidden_state
+        total, n, pred = continuation_nll(model, ids, score_from=len(prompt_ids),
+                                          forward=_forward)
+
+and src/analysis/target_quality.continuation_nll takes (rank, world_size):
+it forwards EACH RANK'S OWN SLICE with absolute position ids and an empty cache,
+so the ring supplies the cross-rank attention, and the caller all-reduces the
+NLL sums. `use_cache=False` means the KV is a working set inside the forward
+rather than a retained cache, which is the smaller of the two peaks.
+
+The measured 1M forward on 8 GPUs (6.29 min) is the evidence this runs at 1M at
+all. Fit at the rung: prompt 1,047,551 + continuation 1,024 = 1,048,575 <=
+1,048,576 exactly, and the new pool's documents are 1,050,624 tokens, so the 1M
+ppl cells have 2,049 tokens of slack.
+
+## STEP 1e — 1M DATA: IT EXISTS, AND NO CONCATENATION IS NEEDED
+
+Any staged pool's longest document was under 1M, so the 1M rung had no data. It
+does now, built with the project's own builder and the real PG-19 books:
+
+    data/processed/pg19_1m/                 (built 2026-10-10T11:5xZ)
+      doc_000.dat .. doc_005.dat            int32, 1,050,624 tokens each
+      documents.json                        rungs: [1048576], 6 unique prompt hashes
+
+    6 books, all >= 1,048,576 + 1024 tokens, ALL SIX ALREADY IN THE CAMPAIGN'S
+    128k POOL, so 1M and 128k can be compared on the same documents:
+      pg19_train_0     Bible (KJV)                     1,152,439 book tokens
+      pg19_train_1     Shakespeare, Complete Works      1,469,935
+      pg19_train_915   Anti-Slavery Examiner Omnibus    1,392,970
+      pg19_train_1726  Bible (Douay-Rheims)             1,555,412
+      pg19_train_2204  History of England Vol. II       1,098,080
+      pg19_train_2768  Shakespeare First Folio          1,327,934
+
+Command (reusable, no new tooling):
+    python scripts/mlsys_build_documents.py \
+        --lengths data/processed/pg19_books/book_lengths_train.json \
+        --out data/processed/pg19_1m --rungs 1048576 --documents 6
+
+## STEP 3 — PLAN FOR THE 8x SESSION (one page)
+
+MODEL AND DRAFT
+  target  gradientai/Llama-3-8B-Instruct-Gradient-1048k @ cd3069b6, rope_type none
+  draft   meta-llama/Llama-3.2-1B @ 4e20de36, draft_window_cap 4096
+  kv      kv_quant true (NF4, target only), weights NF4 both, bf16 activations
+  rope    NO scaling anywhere: at 1M the target is inside its own trained window
+  Why not Llama-3.1-8B rope-extended 8x: that would make the 1M headline a
+  statement about rope extrapolation, which is the confound the whole native-arm
+  programme was built to remove. The Gradient checkpoint removes it for free
+  because its 1M capability lives in rope_theta = 3.58e9 with no scaling dict.
+
+THE 1M QUALITY CHECK (the point of the run)
+  Score the SAME 1024 continuation tokens under a 1M context and under a 128k
+  context, i.e. identical targets, only the attention span differs:
+    1M   prompt = tokens[0 : 1,047,551]        continuation = [1,047,551 : 1,048,575]
+    128k prompt = tokens[917,503 : 1,047,551]  continuation = the SAME ids
+  The engine builds prompts as the FIRST prompt_len tokens of a document, so the
+  128k arm needs a sliced pool: a second .dat per document containing tokens
+  [917,503 : 1,049,600]. That is a few lines of numpy over the existing files,
+  built locally before the session; ~30 min of 8-GPU time, one forward per
+  document per context (6.3 min each, 6 forwards).
+  REPORT: 1M-context ppl vs 128k-context ppl per document, same targets. A ppl
+  that RISES at 1M is the honest risk, and would itself be the finding.
+
+THE 1M STAGES
+  3 documents x 2 arms (spec + target-only) at context_length 1,048,576,
+  max_new_tokens 128, seeds [42]. Same documents at both arms so the pairing
+  and the losslessness check are like-for-like:
+    spec         gamma=4, draft capped 4k, --log-per-token --save-generated-tokens
+    target-only  spec_steps=0, same prompt (the existing pairing contract)
+  Plus the repetition report on both arms, because a 128-token greedy decode at
+  1M is at least as loop-prone as it was at 128k: acceptance must be reported
+  over non-degenerate windows with its n, and a row with none reports NO
+  acceptance rather than a number built from a loop.
+
+EXPECTED TIME AND COST ($22.32/hr for the 8x node)
+  measured anchors: target-only 0.25-0.28 tok/s at 128k (= 3.6-4.0 s/token);
+  1M forward (prefill) 6.29 min on 8 GPUs.
+  * target-only at 1M: prefill 6.3 min + 128 tokens x ~30 s (attention is ~linear
+    in S, so 8x the 128k per-token cost)                             ~ 70 min
+  * spec at 1M: a round costs ONE verify forward over 1M (~30 s) and emits 1 to 5
+    tokens; at a repetition-safe acceptance of ~0.5-0.6 that is ~2.2 tokens per
+    round => 58 rounds                                           ~ 30 min
+  * per document: 100 min; 3 documents                            ~ 5.0 h
+  * 1M quality check: 6 forwards x 6.3 min                        ~ 0.7 h
+  TOTAL                                                            ~ 5.7 h = $127
+  Contingency: if the first 8 tokens of the first target-only run project worse
+  than 2x this (ring comms or the online-softmax merge dominating), the fallback
+  is the same plan at 3 documents x 64 tokens, which is ~$75.
+
+GO / NO-GO FOR 1M — GO requires ALL FOUR, checked on the pod in the first 20 min:
+  1. the Gradient target loads through the NF4 path and the ring binds (the pilot
+     proves the load; the ring needs world_size 8, so this is first real check);
+  2. a 1M prefill measures <= 10 min (6.29 min was measured before; if it has
+     regressed, the whole arithmetic changes);
+  3. the first 8 generated tokens at 1M project <= $180 for the full plan;
+  4. peak memory/rank <= 70 GB (projected 27 GB; a measurement, not a projection,
+     before the third document starts).
+  Any failure -> pull, terminate, stop. No retry under this note.
+
+NO-GO FALLBACK — 512k, same design, same documents:
+  per-token cost ~4x the 128k figure (~15 s), prefill ~3 min:
+    target-only 3 docs x 128 tokens  ~ 1.75 h
+    spec        3 docs x 128 tokens  ~ 0.75 h
+    quality check at 512k vs 128k    ~ 0.3 h
+  TOTAL ~ 2.8 h = $63. 512k needs >= 526,336-token documents and the pg19_1m
+  pool has 1,050,624 in each, so the fallback needs no new data, and 512k is
+  already a rung in the campaign's own ladder, which makes it comparable to the
+  rows the 128k work already has.
+
+## STEP 2 — PILOT ATTEMPT 1 (instance e683001fc17c, us-east-1, 12:04-12:08Z): FAILED, two setup bugs
+
+Both jobs died in seconds with `ModuleNotFoundError: No module named 'transformers'`,
+and the runs had started EIGHT ranks on a one-GPU card (the log shows local_rank 4
+and 6 failing). Neither is a result about the model or the data; both are my setup
+code, and both are now fixed in scripts/mlsys_pilot_remote.sh:
+
+  1. THE ENV FILE IS ~/RASD/.pod_env.sh, NOT ~/.pod_env.sh. I sourced $HOME/.pod_env.sh,
+     the `source` failed silently, PATH stayed the system python
+     (/usr/bin/python: torch without transformers), and every row died before a
+     model loaded. What made the wrong path look right is that the setup probe's
+     own PASS line reads "~/.pod_env.sh written" while the file it actually checks
+     is $REPO/.pod_env.sh. The cost of the lesson: ~10 minutes of a 40GB A100, $0.32.
+  2. --nproc 1 IS MANDATORY ON A 1x POD. run_experiment.py's default is 8 (it is
+     the 8x node's default, and the ring ablations need it), so a single-GPU pilot
+     silently starts 8 ranks. The existing 1x runner
+     (scripts/mlsys_runexp_probe_1x.sh) passes --nproc 1 and says in its own
+     comment that it is "the single unavoidable difference" from the manifest form.
+
+Also fixed, because the first attempt exposed it: the remote script now RESOLVES
+the interpreter from ~/pod_env.log's INTERPRETER= line and refuses to run if it is
+absent, rather than falling back to a bare python; and HF_TOKEN is passed into the
+remote environment, which both configs need because every model is a gated repo.
+
+## STEP 2 — PILOT RESULTS (1x A100-SXM4-40GB, $1.99/hr)
+
+All rows: context 32768, max_new_tokens 128, greedy, temperature 0, top_p 1,
+ignore_eos, NF4 weights + NF4 KV (target), draft window cap 4096, seed 42.
+Periodicity is reported next to acceptance because a 128-token greedy decode can
+loop, and a loop makes acceptance meaningless.
+
+  row                                        arm         accept   tok/s  period self-agr firstP tail  flag
+  PILOT_NEARTIE_pg19_train_0_s42             spec        0.2705    3.58     49    0.089    128  0.00  clean
+  PILOT_NEARTIE_pg19_train_1_s42             spec        0.2540    3.49     45    0.229    128  0.00  clean
+  PILOT_NEARTIE_targetonly_pg19_train_0_s42  target-only    --     2.89     50    0.077    128  0.00  clean
+  PILOT_NEARTIE_targetonly_pg19_train_1_s42  target-only    --     2.90     16    0.089    128  0.00  clean
+  PILOT_1M_MODEL_pg19_train_0_s42            spec        0.2708    3.61     31    0.072    128  0.00  clean
+                                             (native-1M Gradient target, LLama-3.2-1B draft)
+
+  target  Llama-3.1-8B for the first four rows; gradientai/Llama-3-8B-Instruct-
+          Gradient-1048k for the last. Draft meta-llama/Llama-3.2-1B throughout.
+  `firstP` is the first periodic token; 128 = the row is never periodic. Every
+  row is clean, so every acceptance above is measured on non-degenerate text --
+  which is the property the 128k campaign could NOT claim (13 of its 20 rows were
+  loops, and 4 of its 10 spec rows had no non-degenerate window at all).
+
+  SPEEDUP at 32k, vs the paired target-only row for the same document:
+    pg19_train_0  3.58 / 2.89 = 1.24x
+    pg19_train_1  3.49 / 2.90 = 1.20x
+  Small, and honestly so: acceptance 0.27 with gamma=4 means ~1.8 tokens per
+  verify round, so most of the round cost is the draft's own decode plus the
+  target verify, and the target-only arm on ONE card is not the 8x target-only
+  path (which is what the campaign's published speedups compare against).
+
+### FINDING 1 — the native-1M target loads and runs, with no rope scaling
+
+  [RoPE] target: rope_type='none' -- ctx=32768 within native_max=1048576, no scaling applied.
+  Loading target model: gradientai/Llama-3-8B-Instruct-Gradient-1048k   (~78 s)
+  Loading draft model:  meta-llama/Llama-3.2-1B
+  [draft-window] cap=4096 tokens, native=131072 -> effective=4096
+  [draft-window] draft prefill over 4096 of 32640 prompt tokens (window=4096)
+  accept=0.271  tps=3.6  mem=11780 MB
+
+  So the 1M headline does NOT need rope extension, and the draft needs no new
+  mechanism: the existing 4096-token window is applied and the draft never sees
+  more than its native range. Both of Step 3's model legs are therefore closed by
+  measurement rather than by argument.
+
+### FINDING 2 — the near-tie test reproduces at 32k, and the margins are small
+
+  doc pg19_train_1  first divergence at token  4: spec=617  target=656   gaps 0.3125 / 0.125
+  doc pg19_train_0  first divergence at token 16: spec=2030 target=1789  gaps 1.125  / 0.25
+
+  The same documents diverged at 128k/1024 tokens in the campaign (at tokens 2
+  and 16), so the phenomenon is reproducible, cheap to trigger at 32k, and sits
+  at margins of 0.125-1.125. fp4 quantises logits in 0.0625 steps, so these are
+  a handful of rounding steps apart -- consistent with a numerics artefact rather
+  than an engine bug. The CROSS margin (how each arm scored the other arm's
+  token at the divergence) is the measurement that settles it, and it needs the
+  top-k dump; the first attempt ran with dump_logits_topk=6 and the field never
+  reached the sidecar (FINDING 4), so the re-run on the third pod is what closes
+  this leg.
+
+### FINDING 3 — MY ROUND-TRIP CHECK HAD A FALSE-POSITIVE BUG, AND IT WAS GATED
+
+  `decode()` defaults to `clean_up_tokenization_spaces=True`, which rewrites
+  punctuation spacing; re-encoding the CLEANED text re-segments it, so the check
+  reported "the pool was built with a different tokenizer" for pools that were
+  tokenized perfectly. Measured on data/processed/pg19_1m:
+
+    doc              cleanup=True   cleanup=False
+    pg19_train_0         1.0000        1.0000
+    pg19_train_1         0.0127        1.0000     <- false positive
+    pg19_train_915       1.0000        1.0000
+    pg19_train_1726      0.0786        1.0000     <- false positive
+    pg19_train_2204      0.7316        1.0000     <- false positive
+    pg19_train_2768      0.0361        1.0000     <- false positive
+
+  All six round-trip at 100.0% once cleanup is off. The Bible matched either way,
+  which is why a positive control built from ONE document missed it: the bug is
+  only visible on punctuation-heavy text. Fixed in src/analysis/pool_tokenizer.py,
+  and the test that would have caught it now runs over all six documents
+  (tests/test_mlsys_pool_tokenizer_and_margins.py).
+
+  This mattered more than a noisy statistic: the same check is wired into the
+  coherence gate's verdict, so as written it would have FAILED legitimate rows
+  and stopped a run. A detector that fails its own positive control is worse than
+  no detector.
+
+### FINDING 4 — THE SIDECAR HAS AN EXPLICIT SCHEMA, SO ENGINE METRICS CAN BE DROPPED SILENTLY
+
+  The engine computed `token_topk` for every emitted position and the sidecar came
+  back without it, because `write_generated_tokens_sidecar` is called with a dict
+  LITERAL -- the schema -- and that literal did not list the new field. Nothing
+  looked broken: no error, no missing file, just a column that was never there and
+  a divergence classed "undetermined". Fixed in run_experiment.py, with a
+  source-level test asserting the schema lists the fields the engine computes.
+
+### STEP 2 COST
+  attempt 1 (failed setup)                      9.7 min   $0.32
+  attempt 2 (both jobs, 4+1 rows)              12.5 min   $0.41
+  attempt 3 (near-tie re-run)                  in flight
+  ---
+  TEST SUITE after all of the above: 1147 passed, 0 failed.

@@ -79,10 +79,16 @@ CAP_SMOKE:
   #
   # What gated before, and what gates now: the teacher-forced tolerance is gone
   # as a gate, and the 16 structural assertions -- row identity, measured
-  # precision, unit-matched references, blank/repeat shares against each
-  # candidate's own baseline -- remain gates. NF4 was always report-only: its own
-  # noise flips 20% of argmaxes at this context, the same order as the defects a
-  # gate must catch.
+  # precision, cap enforcement, gap alignment, and unit-matched references --
+  # remain gates. Blank/repeat shares were NOT among them, and that claim was
+  # false until 2026-10-10: `scripts/mlsys_cap_smoke_check.py` tests no
+  # repetition at all. Repetition lives in the coherence gate, where it used to
+  # be judged only RELATIVE to a paired baseline (2.0x tolerance), which cannot
+  # fire on a loop both arms are in -- measured ratios were 1.07x, 1.32x and
+  # 1.80x on rows whose generations were 65-97% repeated. Both sites now carry
+  # the ABSOLUTE ceilings in src/analysis/repetition.py. NF4 was always
+  # report-only: its own noise flips 20% of argmaxes at this context, the same
+  # order as the defects a gate must catch.
   - id: CAPS_prefix64_bf16
     context_length: 131072
     documents: [pg19_train_1]

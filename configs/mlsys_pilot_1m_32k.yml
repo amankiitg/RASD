@@ -1,0 +1,69 @@
+# MLSys pilot — the native-1M target with the Llama-3.2-1B draft, at 32k.
+#
+# WHY THIS MODEL. The 1M headline needs a target that was TRAINED at 1M, or the
+# 1M result is a measurement of rope extrapolation rather than of context length --
+# the confound the native-vs-YaRN arms exist to remove at 128k.
+#
+#   gradientai/Llama-3-8B-Instruct-Gradient-1048k
+#     architectures:            LlamaForCausalLM   (the ring binds to this)
+#     max_position_embeddings:  1048576           (1M, stated natively)
+#     rope_theta:               3580165449.0      (raised base frequency)
+#     rope_scaling:             none              (no YaRN/linear dict at all)
+#     vocab_size:               128256
+#
+# That config is the cleanest possible case for this engine: `rope_type: "none"`
+# applies NO scaling and HF's rotary module reads the 1M theta out of the config
+# itself, so the model runs at its own trained frequencies. Nothing is
+# extrapolated. (gradientai's own checkpoints are the only native-1M
+# Llama-architecture weights that exist: togethercomputer/Llama-3.1-8B-Instruct-1M
+# is listed by search but returns "Repository not found" for the raw config, i.e.
+# it is not a fetchable repo.)
+#
+# TOKENIZER: verified id-for-id against meta-llama/Llama-3.2-1B -- all 128,000
+# base ids decode to the same string, and the only differences are the NAMES of
+# reserved special-token slots above 128000. Text token ids are shared, which is
+# what speculative acceptance requires.
+#
+# CAVEAT, recorded because it matters for the 1M quality number: this is an
+# INSTRUCT checkpoint (continued-pretrained from llama3-8b-stage262k-chat), not a
+# base model. Its PG-19 continuation perplexity is therefore not comparable to
+# Llama-3.1-8B's 1.03-1.10, and the 1M-vs-128k comparison must be run with THIS
+# model at BOTH contexts, never across models.
+#
+# This pilot runs at 32k for time, not for science: it proves the model loads
+# through the engine's NF4 path, the ring binds, the 1M pool tokenizes, and the
+# draft speculates against it. The 1M context itself is for the 8x session.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_text: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m/documents.json
+PILOT_1M_MODEL_SPEC:
+  name: pilot_1m_model_32k
+  factor: context_length
+  levels:
+  - id: PILOT_1M_MODEL
+    context_length: 32768
+    documents: [pg19_train_0]
+    max_new_tokens: 128
+    checkpoint_every: 0
+    notes: 'native-1M target + Llama-3.2-1B draft; pipeline proof at 32k'

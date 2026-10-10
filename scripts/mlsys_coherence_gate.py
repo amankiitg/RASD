@@ -53,6 +53,11 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from src.analysis.pool_tokenizer import pool_check, pool_problem  # noqa: E402
+from src.analysis.repetition import (  # noqa: E402
+    row_reasons as rep_reasons, row_stats as rep_stats,
+)
+
 # The pass tolerance, FIXED by the 2026-10-06 plan revision ("the gate tolerance
 # is FIXED at 1.5x, not derived"). The earlier rule that derived it from the
 # positive controls' measured spread was withdrawn before any run: three
@@ -537,15 +542,29 @@ def generation_metrics(text: str, new_ids: list[int], eos_id) -> dict:
     repeat = 1.0 - (len(set(grams)) / len(grams)) if grams else 0.0
     eos_set = eos_id if isinstance(eos_id, (set, frozenset)) else {eos_id}
     early = next((i for i, t in enumerate(new_ids) if t in eos_set), None)
+    # Repetition, measured on the CONTINUATION (`text` here is the continuation
+    # alone, never the prompt) and on the emitted TOKENS. The word-n-gram share
+    # below has always been recorded; the periodicity and token statistics are
+    # new, and they are what make a greedy loop legible: "period 12, periodic from
+    # token 22 to the end at 98% agreement" names the defect, whereas
+    # "repeat share 0.97" invites the reader to call it a stylistic quirk.
+    rep = rep_stats(new_ids, text)
+    # `rep_stats` recomputes gen_repeat_share from the same text with the same
+    # definition, so the local `repeat` above and this block agree by
+    # construction; the module's copy is the one that reaches the CSV.
     return {
         "gen_chars": len(text),
         "gen_blank_share": round(blank, 4),
         "gen_alpha_share": round(alpha, 4),
-        "gen_repeat_share": round(repeat, 4),
+        "gen_repeat_share": rep["rep_repeat_share"],
         # `early_eos` is the DEGENERATE case, not merely an early one: an EOS at
         # token 12 of 200 is a short answer, an EOS at token 5 is a dead model.
         "early_eos": early is not None and early < CATASTROPHIC_EOS_TOKENS,
         "eos_at": early if early is not None else "",
+        **out_rep,
+        # The reasons, as text, so the CSV says WHY a row is degenerate and not
+        # merely that it is.
+        "gen_degenerate_reasons": "; ".join(rep_reasons(rep)),
     }
 
 
@@ -686,6 +705,17 @@ def run_candidate(cand: dict, tok, meta_path: str, out_dir: Path):
         row["pool_tokenizer"] = pool_tok_name
         row["candidate_tokenizer"] = getattr(tok, "name_or_path", "")
         vocab = int(getattr(model.config, "vocab_size", 0) or 0)
+        # Is this pool really tokenized with THIS tokenizer? An id-range check
+        # cannot tell: every id of a Llama-2 pool is inside a Llama-3.1 vocab, so
+        # a mismatched pool loads, runs, and returns a plausible perplexity for
+        # text that was never what the model was asked about. The round trip can
+        # tell (see src/analysis/pool_tokenizer.py).
+        try:
+            row.update(pool_check(tok, prompt_ids, pool_tok_name,
+                                  getattr(tok, "name_or_path", "")))
+        except Exception as e:                              # noqa: BLE001
+            row["pool_roundtrip_share"] = ""
+            row["pool_problem"] = f"round-trip check failed to run: {e}"
         if vocab:
             row.update(assert_prompt_in_vocab(prompt_ids, vocab))
             n_bad = row["prompt_ids_out_of_vocab"]
@@ -912,6 +942,18 @@ def verdict(row: dict, baseline: dict) -> dict:
     if row.get("early_eos"):
         reasons.append(f"EOS at token {row.get('eos_at')} = degenerate "
                        f"(< {CATASTROPHIC_EOS_TOKENS})")
+    # ABSOLUTE repetition, independent of any baseline. The relative rule below
+    # cannot fire on a loop that both arms are stuck in -- measured on the real
+    # pairs the ratio was 1.07x, 1.32x, 1.80x against a 2.0x tolerance, so a
+    # 97%-repetitive generation passed the gate as "no worse than its baseline".
+    # This is the criterion that closes that hole, and it needs no partner.
+    for why in rep_reasons(row):
+        reasons.append(why)
+    # The pool must be the text the candidate's tokenizer produced, or every
+    # number in this row measures something else.
+    _pool_why = row.get("pool_problem") or pool_problem(row)
+    if _pool_why:
+        reasons.append(_pool_why)
     for label, field, bkey, rkey in (
             ("blank lines", "gen_blank_share", "baseline_blank_share",
              "blank_share_ratio"),
@@ -954,6 +996,13 @@ FIELDS = ["candidate", "target_model_name", "target_revision",
           "pairing", "baseline_prompt_sha256", "baseline_continuation_sha256",
           "ppl_ratio", "early_eos", "eos_at", "gen_chars", "gen_blank_share",
           "gen_alpha_share", "gen_repeat_share",
+          # Absolute repetition and periodicity (2026-10-10 revision). Every
+          # ceiling is named in the header comment of src/analysis/repetition.py
+          # with the measured separation it was chosen from.
+          "rep_period", "rep_period_agreement", "rep_first_periodic_token",
+          "rep_periodic_tail_share", "rep_tok_repeat_share",
+          "rep_tokens_in_repeat", "rep_longest_repeat_span",
+          "rep_degenerate", "gen_degenerate_reasons",
           # The baseline's own shares and the ratios that were actually applied,
           # so the share criterion can be recomputed from the CSV instead of
           # being taken on trust (2026-10-08 revision).
@@ -963,6 +1012,8 @@ FIELDS = ["candidate", "target_model_name", "target_revision",
           # candidate uses. A mismatch is the whole cause of the 2026-10-08
           # abort, and it has to be legible from the CSV alone.
           "pool_tokenizer", "candidate_tokenizer",
+          "pool_family", "candidate_family", "pool_tokenizer_match",
+          "pool_roundtrip_share", "pool_probe_tokens", "pool_problem",
           # Ids the candidate's embedding cannot look up. Recorded, never
           # raised: see assert_prompt_in_vocab.
           "prompt_ids_out_of_vocab", "prompt_first_out_of_vocab_index",

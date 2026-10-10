@@ -1,0 +1,31 @@
+run_id,criterion,old,new,changed,note
+NATURAL_f1_128k_pg19_train_0_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_0_s42,acceptance,0.6203,0.7107,True,7/8 non-degenerate windows
+NATURAL_f1_128k_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 379-token span repeats verbatim >= 128 absolute; 92% of tokens inside a repeated 16-gram > 60% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_1_s42,acceptance,0.8609,0.8599,False,5/8 non-degenerate windows
+NATURAL_f1_128k_pg19_train_115_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 98% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 84% of the row (period 18) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_115_s42,acceptance,0.9439,none (every window is degenerate),True,0/8 windows survive; the reported number is a loop
+NATURAL_f1_128k_pg19_train_537_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: 94% of tokens inside a repeated 16-gram > 60% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_537_s42,acceptance,0.8587,0.8672,False,5/8 non-degenerate windows
+NATURAL_f1_128k_pg19_train_915_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 98% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 98% of the row (period 20) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_915_s42,acceptance,0.9631,none (every window is degenerate),True,0/8 windows survive; the reported number is a loop
+NATURAL_f1_128k_pg19_train_1404_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 98% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 98% of the row (period 12) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_1404_s42,acceptance,0.9701,none (every window is degenerate),True,0/8 windows survive; the reported number is a loop
+NATURAL_f1_128k_pg19_train_1726_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: 88% of tokens inside a repeated 16-gram > 60% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_1726_s42,acceptance,0.8444,0.8577,False,8/8 non-degenerate windows
+NATURAL_f1_128k_pg19_train_1981_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 95% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 95% of the row (period 26) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_1981_s42,acceptance,0.9597,none (every window is degenerate),True,0/8 windows survive; the reported number is a loop
+NATURAL_f1_128k_pg19_train_2204_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 92% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 92% of the row (period 7) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_2204_s42,acceptance,0.8844,0.4468,True,1/8 non-degenerate windows
+NATURAL_f1_128k_pg19_train_2768_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 226-token span repeats verbatim >= 128 absolute; 100% of tokens inside a repeated 16-gram > 60% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_pg19_train_2768_s42,acceptance,0.9306,0.9277,False,6/8 non-degenerate windows
+NATURAL_f1_128k_targetfull_pg19_train_0_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetfull_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 80% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 62% of the row (period 46) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetfull_pg19_train_115_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 301-token span repeats verbatim >= 128 absolute; 92% of tokens inside a repeated 16-gram > 60% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_537_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: 95% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 95% of the row (period 43) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_915_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_1404_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: 83% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 83% of the row (period 17) > 50% absolute,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_1726_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_1981_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_2204_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+NATURAL_f1_128k_targetshort_pg19_train_2768_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field

@@ -249,6 +249,12 @@ class RASDConfig:
     # logged to wandb, which cannot take a non-scalar.
     save_generated_tokens: bool = False
 
+    # M3 — also dump the top-k logits at every emitted position, so a divergence
+    # can be scored on the CROSS margin (what each arm thought of the other arm's
+    # token) instead of each arm's own top1-top2 gap. 0 disables. See
+    # `_topk_at_positions`.
+    dump_logits_topk: int = 0
+
     # M4 C6 — generation checkpoint/resume.
     # checkpoint_every == 0 disables (M3 byte-identical default).
     # When > 0, save verify-loop state every N rounds to
@@ -524,6 +530,57 @@ def _step_gap(logit) -> list:
     if logit is None:
         return []
     return _top1_top2_gap(logit.unsqueeze(1))
+
+
+def _topk_at_positions(logits: torch.Tensor, k: int) -> list:
+    """Top-k `(token_id, logit)` at each position, as plain numbers.
+
+    WHY A SECOND DUMP EXISTS. `token_gaps` records each arm's OWN top-1 minus
+    top-2 gap, and that scalar cannot decide what a divergence means when the two
+    arms disagree about WHICH two tokens are at the top: with `spec=972 target=1114`
+    at gaps 6.875 and 7.5, each arm is confident about a different pair, and the
+    quantity that decides tie-versus-defect is the CROSS margin -- what each arm
+    thought of the OTHER arm's token. Measured over the 2026-10-10 campaign's own
+    traces, 8 of the 10 real divergences had a margin under 0.5 (fp4 quantises
+    logits in 0.0625 steps, so those are within a few rounding steps of a tie) and
+    2 had margins of 1.75 and 6.875 with no explanation on record. Those two cannot
+    be settled from the existing traces at all.
+
+    Off by default: it multiplies the sidecar size, and the default keeps M3/M4
+    replay byte-identical.
+    """
+    if logits is None or k <= 0 or logits.numel() == 0:
+        return []
+    kk = min(int(k), int(logits.shape[-1]))
+    vals, idx = torch.topk(logits.float(), k=kk, dim=-1)
+    return [[(int(i), round(float(v), 6)) for i, v in zip(idd, vv)]
+            for idd, vv in zip(idx[0].tolist(), vals[0].tolist())]
+
+
+def _step_topk(logit, k: int) -> list:
+    """Top-k at ONE position, from a `(B, vocab)` step logit. Sibling of
+    `_step_gap`, called from the same two places, for the same reason: the
+    speculative and target-only arms must not record one quantity under two
+    conventions."""
+    if logit is None or k <= 0:
+        return []
+    return _topk_at_positions(logit.unsqueeze(1), k)
+
+
+def _round_emitted_topk(target_logits_v, n_emit: int, n_acc: int,
+                        with_bonus: bool, k: int) -> list:
+    """Top-k for exactly the tokens one verify round EMITS, in emission order.
+
+    Identical slicing to `_round_emitted_gaps`, because the two lists are read
+    positionally against the same ids: a round truncated by the budget emits no
+    bonus and is not padded.
+    """
+    if target_logits_v is None or k <= 0:
+        return []
+    out = _topk_at_positions(target_logits_v[:, :n_emit, :], k)
+    if with_bonus:
+        out += _topk_at_positions(target_logits_v[:, n_acc:n_acc + 1, :], k)
+    return out
 
 
 #: Rounds between liveness-progress CHECKS. Not a print cadence: the check is
@@ -1674,6 +1731,12 @@ class RASDInference:
         # the speculative/target-only split, so the two arms cannot drift.
         seed_gap: List[float] = (
             _step_gap(next_token_logit) if int(self._rank) == 0 else [])
+        # Aligned with `emitted_gaps` and with the ids, from the first position.
+        # Empty unless the flag is on, so the sidecar is unchanged by default.
+        topk_k = int(getattr(cfg, "dump_logits_topk", 0) or 0)
+        seed_topk: list = (
+            _step_topk(next_token_logit, topk_k)
+            if topk_k > 0 and int(self._rank) == 0 else [])
 
         # TTFT (C12, mentor M4 metric): time from generate() entry to the
         # first output token being sampled. Captures prefill cost (target +
@@ -1715,6 +1778,7 @@ class RASDInference:
         # the rounds below append theirs, so the list and the ids stay in
         # step from the first position.
         emitted_gaps: List[float] = list(seed_gap)
+        emitted_topk: list = list(seed_topk)
         # ---- Target-only autoregressive baseline (M4 Phase C 2026-05-10) ----
         # When cfg.spec_steps == 0, skip the whole speculative decoding
         # loop and run plain single-token autoregressive decode through
@@ -1765,6 +1829,8 @@ class RASDInference:
                 # and nothing else in this loop retains it.
                 if int(self._rank) == 0:
                     emitted_gaps.extend(_step_gap(target_logit))
+                    if topk_k > 0:
+                        emitted_topk.extend(_step_topk(target_logit, topk_k))
                 global_seqlen += 1
                 n_rounds += 1
 
@@ -1839,6 +1905,8 @@ class RASDInference:
                 # losslessness tie rule reads the gap at the position where two
                 # arms first disagree, so the two lists must stay in step.
                 metrics["token_gaps"] = [float(g) for g in emitted_gaps]
+                if topk_k > 0:
+                    metrics["token_topk"] = emitted_topk
             if mem_tracer is not None:
                 mem_tracer.snapshot("end", n_rounds=n_rounds)
                 sidecar_path = mem_tracer.write()
@@ -2032,6 +2100,12 @@ class RASDInference:
                 round_gaps = _round_emitted_gaps(
                     target_logits_v, n_emit, n_acc, with_bonus)
                 emitted_gaps.extend(round_gaps)
+                if topk_k > 0:
+                    round_topk = _round_emitted_topk(
+                        target_logits_v, n_emit, n_acc, with_bonus, topk_k)
+                    emitted_topk.extend(round_topk)
+                else:
+                    round_topk = []
 
             if cfg.log_per_token:
                 rec = _build_per_token_record(
@@ -2056,6 +2130,8 @@ class RASDInference:
                 rec["kv_len_before"] = int(prior_target_len)
                 rec["kv_len_after"] = int(kv_len_after)
                 rec["emitted_gaps"] = list(round_gaps)
+                if topk_k > 0:
+                    rec["emitted_topk"] = list(round_topk)
                 per_token_trace.append(rec)
 
             total_accepted   += n_emit
@@ -2240,6 +2316,8 @@ class RASDInference:
             # Same measurement as the target-only arm's, in the same order:
             # one gap per emitted token, aligned with the ids above.
             metrics["token_gaps"] = [float(g) for g in emitted_gaps]
+            if topk_k > 0:
+                metrics["token_topk"] = emitted_topk
 
         if mem_tracer is not None:
             mem_tracer.snapshot("end", n_rounds=n_rounds)
