@@ -34,7 +34,6 @@ SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -o ServerAliveInterval=30 -i $SSH_KEY"
 PY=python3
 RATE_80GB=22.32
-RATE_H100=31.92
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 
 KEY=$(grep -E '^[[:space:]]*LAMBDA_API_KEY[[:space:]]*=' runpod_creds.md 2>/dev/null \
@@ -71,25 +70,33 @@ if [ "$BEFORE" != "0" ]; then
 fi
 
 # ---- capacity ---------------------------------------------------------------
-POLL_DEADLINE=$(( $(date -u +%s) + 6*3600 ))
-CHOSEN=""; REGION=""; RATE=""
+# ONE TYPE ONLY, per the operator's 2026-10-10 replacement instruction:
+# gpu_8x_a100_80gb_sxm4, any region, no other instance type, GPU count or provider
+# "under any circumstances". The fallback branches that used to live here (8x A100
+# 40GB, then 8x H100 after six hours) are gone, not merely ordered last.
+#
+# The poll runs until the operator's Monday 09:00 ET cutoff (13:00Z on 2026-10-12).
+# At the cutoff with nothing launched it stops cleanly and records the fact, because
+# a poll that outlives its deadline is a bill waiting to happen.
+CUTOFF_EPOCH=$(python3 -c "
+import datetime
+print(int(datetime.datetime(2026,10,12,13,0,0,tzinfo=datetime.timezone.utc).timestamp()))")
+ONLY_TYPE=gpu_8x_a100_80gb_sxm4
+RATE=$RATE_80GB
+say "polling ONLY $ONLY_TYPE, any region, until $(date -u -r $CUTOFF_EPOCH +%FT%TZ) (Monday 09:00 ET)"
 while :; do
   AVAIL=$(api_get instance-types 2>/dev/null)
-  for t in gpu_8x_a100_80gb_sxm4 gpu_8x_a100; do
-    R=$(regions_for "$AVAIL" "$t")
-    if [ -n "$R" ] && [ "$R" != "NONE" ]; then
-      CHOSEN=$t; REGION=$R; RATE=$RATE_80GB; break
-    fi
-  done
-  if [ -z "$CHOSEN" ] && [ "$(date -u +%s)" -gt "$POLL_DEADLINE" ]; then
-    R=$(regions_for "$AVAIL" gpu_8x_h100_sxm5)
-    if [ -n "$R" ] && [ "$R" != "NONE" ]; then
-      CHOSEN=gpu_8x_h100_sxm5; REGION=$R; RATE=$RATE_H100
-      say "HARDWARE CHANGE: 6h passed with no 8x A100 capacity; using 8x H100 at \$$RATE/hr (profile 4h = \$$(awk -v r=$RATE 'BEGIN{printf "%.0f", r*4}'), inside the \$200 cap)"
-    fi
+  REGION=$(regions_for "$AVAIL" "$ONLY_TYPE")
+  if [ -n "$REGION" ] && [ "$REGION" != "NONE" ]; then
+    CHOSEN=$ONLY_TYPE
+    break
   fi
-  [ -n "$CHOSEN" ] && break
-  say "no 8x capacity yet (polling ${CHOSEN:-gpu_8x_a100_80gb_sxm4})"
+  if [ "$(date -u +%s)" -ge "$CUTOFF_EPOCH" ]; then
+    say "CUTOFF REACHED with no $ONLY_TYPE capacity: stopping the poll, nothing launched, nothing billing"
+    echo "NO_CAPACITY" > "$SESSION_DIR/SESSION_A_NO_CAPACITY"
+    exit 0
+  fi
+  say "no $ONLY_TYPE capacity yet (any region); minutes to cutoff: $(( (CUTOFF_EPOCH - $(date -u +%s)) / 60 ))"
   sleep 150
 done
 say "capacity: $CHOSEN in $REGION at \$$RATE/hr"
@@ -115,7 +122,7 @@ say "launched $CHOSEN id=$ID region=$REGION"
 # the clock: the operator's rule is <= $200 for this session, and a fixed 9 hours
 # is $200.9 on the 80GB node and $287 on the H100. Budgeted: 5.3h of work, plus
 # pull and terminate, so 8.5h on the 80GB ($190) and 6.0h on the H100 ($192).
-if [ "$RATE" = "$RATE_H100" ]; then TIMER_MIN=360; else TIMER_MIN=510; fi
+TIMER_MIN=510
 say "dead-man timer: ${TIMER_MIN} min (\$$(awk -v m=$TIMER_MIN -v r=$RATE 'BEGIN{printf "%.0f", m/60*r}') at \$$RATE/hr, inside the \$200 cap)"
 "$PY" scripts/mlsys_detach.py --pidfile "$SESSION_DIR/deadman_${ID}.pid" \
   --log "$SESSION_DIR/deadman_${ID}.log" \
@@ -182,6 +189,35 @@ timeout 600 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
 timeout 900 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   data/processed/pg19_1m data/processed/pg19_1m_128kwin "$SSH_USER@$IP:~/RASD/data/processed/" >>"$LOG" 2>&1
 say "staged script + config + both 1M pools"
+
+# The instance type belongs WITH the results, not only in a chat log: every table
+# this session produces must be able to say what hardware it ran on, and the two
+# rungs a session compares must have run on the same node. Written locally into the
+# pull directory AND pushed to the pod's results directory so it arrives with the
+# rows it describes.
+"$PY" - "$ID" "$CHOSEN" "$REGION" "$RATE" "$LAUNCHED_AT" <<'META' > "$OUT_STAGE/session_meta.json"
+import datetime, json, sys
+iid, itype, region, rate, launched = sys.argv[1:6]
+print(json.dumps({
+    "session": "A",
+    "instance_id": iid,
+    "instance_type": itype,
+    "instance_description": "8x A100 (80 GB SXM4)",
+    "region": region,
+    "rate_usd_per_hour": float(rate),
+    "launched_utc": datetime.datetime.fromtimestamp(
+        int(launched), datetime.timezone.utc).isoformat(),
+    "target_model": "gradientai/Llama-3-8B-Instruct-Gradient-1048k",
+    "target_property": "max_position_embeddings 1048576, rope_theta 3.58e9, rope_scaling none",
+    "draft_model": "meta-llama/Llama-3.2-1B (window cap 4096)",
+    "pools": ["data/processed/pg19_1m", "data/processed/pg19_1m_128kwin"],
+    "speedup_rule": "spec vs target-only within THIS session only",
+    "protocol": "max_new_tokens 128, greedy, temperature 0, top_p 1, ignore_eos; periodicity reported per row",
+}, indent=2))
+META
+timeout 300 rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
+  "$OUT_STAGE/session_meta.json" "$SSH_USER@$IP:~/RASD/results/mlsys/session_a/" >>"$LOG" 2>&1
+say "session_meta.json written (instance type travels with the results)"
 
 # ---- incremental pulls, so a crash loses at most one row -------------------
 (
