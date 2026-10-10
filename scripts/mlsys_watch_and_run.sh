@@ -221,11 +221,50 @@ terminate_and_confirm() {
   return 1
 }
 
+# Pull BEFORE terminating on every signal path.
+#
+# WHY THIS EXISTS. `terminate_and_confirm` terminates the instance, and the pod's
+# results go with it. Every other stop path in this script calls collect_incident
+# first -- the stall paths, the dead-CUDA path, the deadline path. The signal path
+# did not, which is exactly backwards: a signal is the case where nobody is
+# watching, so the results are the only thing left.
+#
+# On 2026-10-10T00:37:04Z this path did the damage. The copilot runtime restarted
+# (it came up at 00:37:15Z; the watcher and the monitor both died within 35s of
+# each other) and SIGTERMed this script, which was 49 minutes into a healthy
+# engine_cap_smoke. It logged "TERMINATING", terminated a working 8xA100, wrote
+# NOTHING back, and exited 143 -- so that run's gate_calibration.csv (676s, $4.19)
+# and its three completed engine_cap_smoke rows were destroyed with the pod. The
+# only reason the campaign knows what they said is that the numbers were read out
+# by hand while the pod was alive.
+#
+# The pull is bounded and best-effort: a stop must still stop. `timeout` caps it
+# so an unreachable pod cannot hold the operator's Ctrl-C open, and a failure here
+# is reported and stepped over rather than trapping the script.
+pull_then_terminate() {
+  [ "$TERMINATED" = "1" ] && return 0
+  [ -z "$INSTANCE_ID" ] && return 0
+  # The normal completion path below pulls through its own sha256-verified stage
+  # and merges it. Pulling a second time there would re-merge the cost ledger.
+  if [ -z "${RESULTS_HANDLED:-}" ] && [ -n "${IP:-}" ] \
+     && [ "$(type -t collect_incident)" = "function" ]; then
+    RESULTS_HANDLED=1
+    say "STOP: pulling logs and results BEFORE terminating (signal or exit path)"
+    if timeout 900 collect_incident "stop-signal-or-exit"; then
+      say "STOP: the pull completed; terminating"
+    else
+      say "!!! STOP: the pull FAILED or timed out; terminating anyway (the"
+      say "!!! instance is billing and a stop must stop)"
+    fi
+  fi
+  terminate_and_confirm
+}
+
 # EXIT covers normal completion and explicit `exit`; INT/TERM cover Ctrl-C and a
 # dropped session. TERMINATED makes the double-fire a no-op.
-trap terminate_and_confirm EXIT
-trap 'terminate_and_confirm; exit 130' INT
-trap 'terminate_and_confirm; exit 143' TERM
+trap pull_then_terminate EXIT
+trap 'pull_then_terminate; exit 130' INT
+trap 'pull_then_terminate; exit 143' TERM
 
 # --------------------------------------------------------------------------
 # capacity wait: detect -> LAUNCH, in the same iteration
@@ -1055,6 +1094,9 @@ interruptible_sleep $(( ${MLSYS_GRACE_MINUTES:-60} * 60 ))
 
 uptime_s=$(( $(date -u +%s) - DEADLINE ))
 say "manifest finished (reason=manifest-finished)"
+# The staged pull above already brought the results home and merged them, so the
+# EXIT trap must not pull a second time (it would re-merge the cost ledger).
+RESULTS_HANDLED=1
 terminate_and_confirm
 
 say "results in $STAGE; session dir $SESSION_DIR"

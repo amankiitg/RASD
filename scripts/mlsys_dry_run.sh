@@ -724,8 +724,32 @@ if "no_declared_timeout" not in man:
 print(f"  | headers checked against the cost model: {checked} stages")
 
 # --- every exit path must terminate the instance ------------------------------
-if "trap terminate_and_confirm EXIT" not in watch:
-    fails.append("no EXIT trap: an early exit would orphan the instance")
+# AND MUST PULL FIRST. Terminating alone throws the pod's results away with the
+# instance, which is what happened on 2026-10-10T00:37Z: a session restart
+# SIGTERMed the watcher 49 minutes into a healthy engine_cap_smoke, and its
+# gate_calibration.csv and three completed rows were destroyed with the pod
+# because the trap path was the ONE stop path that did not call
+# collect_incident. So the check is no longer "an EXIT trap exists" but "every
+# trap goes through the pull".
+if "trap pull_then_terminate EXIT" not in watch:
+    fails.append("no EXIT trap through pull_then_terminate: an early exit would "
+                 "orphan the instance AND lose the results")
+if "pull_then_terminate() {" not in watch:
+    fails.append("pull_then_terminate is missing")
+else:
+    _body = watch[watch.index("pull_then_terminate() {"):]
+    _body = _body[:_body.index("\n}\n")]
+    if "collect_incident" not in _body:
+        fails.append("the stop path terminates WITHOUT pulling: the pod's "
+                     "results are destroyed with the instance")
+    elif _body.index("collect_incident") > _body.index("terminate_and_confirm"):
+        fails.append("the stop path pulls AFTER terminating, which is too late")
+    elif "timeout 900" not in _body:
+        fails.append("the stop-path pull is unbounded: an unreachable pod could "
+                     "hold a Ctrl-C open")
+for _line in watch.splitlines():
+    if _line.startswith("trap ") and "terminate_and_confirm" in _line:
+        fails.append("a trap still terminates without pulling: " + _line.strip())
 if "exit 130" not in watch or "exit 143" not in watch:
     fails.append("SIGINT/SIGTERM would not terminate the instance")
 if "terminate_and_confirm; exit 4" not in watch:

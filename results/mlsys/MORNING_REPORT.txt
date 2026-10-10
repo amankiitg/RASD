@@ -1890,3 +1890,67 @@ SELF-INFLICTED, RECORDED IN FULL, BOTH FULLY REPAIRED:
    pushed.
    Lesson: never write files through `conda run` with a heredoc. Use a script
    file, or plain `python3`.
+
+================================================================================
+2026-10-10T01:4xZ  INCIDENT: a session restart killed the run and the RESULTS
+================================================================================
+
+WHAT HAPPENED. The campaign launched 2026-10-09T23:00:19Z on accce9d3... and was
+49 minutes into a healthy engine_cap_smoke when the armed watcher received a
+SIGTERM at 2026-10-10T00:37:04Z. It terminated the instance (0 instances
+confirmed by 00:38:57Z) and exited 143.
+
+TRIGGER, from evidence rather than inference: the copilot runtime process that
+the watcher had been launched under restarted at 00:37:15Z (11 seconds AFTER the
+signal), and the separately-launched launch monitor stopped heartbeating at
+00:36:31Z -- so the watcher and the monitor, two independent processes, died
+within 35 seconds of each other. Machine sleep is ruled out (pmset log shows no
+sleep/wake) and so is an in-script abort: EVERY in-loop stop path logs a reason,
+and neither watcher.log nor watcher.stdout contains one, which is the signature
+of the traps at mlsys_watch_and_run.sh:226-228.
+
+WHAT COMPLETED BEFORE THE STOP
+  gate_calibration: OK, wall 676s, $4.19, "CALIBRATION OK: every control matched
+    its expected verdict" -- the third consecutive OK, consistent with 672s and
+    753s.
+  engine_cap_smoke: 3 of 6 rows, ALL status=ok
+    CAPS_prefix64_pg19_train_1_s42             ok  tps=0.51 accept=0.2759 126.4s
+    CAPS_prefix64_targetonly_pg19_train_1_s42  ok  tps=0.27 accept=0.0000 234.8s
+    CAPS_prefix1024_pg19_train_1_s42           ok  tps=1.08 accept=0.8609 949.9s
+    Row 4 (CAPS_prefix1024_targetonly) was running and printing [PROGRESS] every
+    ~60s through round 464 at the moment of the stop; the two bf16 rows had not
+    started. No traceback, no OOM, no stall.
+
+DEFECT 1 -- THE SIGNAL PATH DID NOT PULL, and this is what actually cost us.
+Every in-loop stop path calls collect_incident first (stall, dead CUDA,
+deadline). The TERM/INT/EXIT traps called terminate_and_confirm ALONE, so the
+trap terminated a working 8xA100 and brought NOTHING home. Destroyed with the
+pod: this run's gate_calibration.csv (676s, $4.19), its three completed
+engine_cap_smoke rows, and the ledger row for the $4.19. No incident directory
+was created -- the newest one is still the earlier operator stop. A signal is
+exactly the case where the results are the only thing left, so the order was
+backwards.
+FIX: pull_then_terminate() on all three traps: collect_incident (bounded with
+`timeout 900`, so an unreachable pod cannot hold a Ctrl-C open) BEFORE
+terminate_and_confirm. It skips when there is no instance and when
+RESULTS_HANDLED is set, and the normal completion path now sets that flag so the
+EXIT trap cannot re-merge the cost ledger.
+
+DEFECT 2 -- `nohup ... & disown` IS NOT DETACHED. nohup ignores SIGHUP and
+disown clears the job table, but neither takes the process out of the parent's
+SESSION, so a session-scoped signal still reaches it. `setsid(1)` is not on
+macOS.
+FIX: scripts/mlsys_detach.py -- double-fork + os.setsid(), so the survivor is in
+its own session, with stdin on /dev/null and stdout/stderr appended to a log.
+PROVEN, not assumed: a child launched through it is in a different process group
+and STILL ALIVE after its launcher's entire group is sent SIGTERM, while a
+control child in the launcher's own group DIES under the same signal.
+Tests: tests/test_mlsys_stop_paths.py, 8 tests, with negative controls (reverting
+the traps fails test_every_trap_pulls_before_terminating).
+
+SPEND: launched 23:00:19Z, terminated 00:38:57Z = 98.6 min x $22.32/hr = $36.69.
+The ledger does NOT contain this run's $4.19 row, so the local ledger still ends
+at gate_calibration,672 = $4.17; the real spend for this instance is $36.69 and
+$32.50 of it is unledgered (boot, provisioning, the 49 minutes of
+engine_cap_smoke). Cumulative real spend across all armings now stands at about
+$118.81 by this arithmetic, against a $2000 cap.
