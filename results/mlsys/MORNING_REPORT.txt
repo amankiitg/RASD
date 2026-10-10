@@ -2566,3 +2566,164 @@ TODO 6 -- GATE REPETITION PROPERLY.
       reported with their repetition statistics beside them. A 0.97 acceptance
       from a period-26 loop should not be averaged into a headline number with a
       non-degenerate row: on the evidence above they are different regimes.
+
+================================================================================
+2026-10-10T11:3xZ  STOP (REPETITION) -- stopped at the stage boundary the audit forced
+================================================================================
+Operator stop, on the rule "if rope_intervention_128k's measurements are affected
+by the loops, stop right after impl_validation reaches STAGE_OK".
+
+PART A, ANSWERED FIRST. rope_intervention_128k IS affected, so the stop belongs
+before it. It is a SPECULATIVE-DECODING ACCEPTANCE measurement, not a rope
+property: configs/mlsys_rope_intervention_128k.yml sets spec_steps: 4,
+temperature: 0.0 (greedy, "per plan section 2"), max_new_tokens: 1024,
+ignore_eos: true, and draws its ten documents from the SAME pg19_docs pool
+(pg19_train_0, _1, _115, _537, _915, _1404, _1726, _1981, _2204, _2768) that
+produced the loops. The stage reports acceptance_rate and round cost per arm --
+exactly the quantities the period-14..26 loops inflate. Its `rope_intervention_gate`
+is the coherence gate on three rope arms; it generates only GENERATE_TOKENS=200,
+so the gate itself is shorter, but it is a precondition for the arm, not the
+measurement. Three arms (native control, factor16, factor32) x 10 documents x 1024
+greedy tokens: every one of those numbers would have been a loop statistic.
+
+WHAT ACTUALLY HAPPENED, and it changed the stopping point. natural_f1_128k
+completed at 11:31:49Z (20/20 succeeded), but impl_validation did NOT reach
+STAGE_OK -- it FAILED in 3 seconds (rc=1, $0.02) -- so the manifest continued, as
+designed, into natural_spec_gated_256k, which started 11:32:06Z. I stopped the
+manifest tree during that stage instead of at the impl_validation boundary, since
+the boundary the rule names never occurred and the stage that must not run was
+already running. The tree was stopped at 11:35:37Z with 276 processes and none
+remained; the 256k stage had produced no completed row (it was at [1/20], round 16
+of 1024 tokens).
+
+WHY impl_validation failed -- a FIRST-EXECUTION BUG, not a vLLM limitation:
+    FileNotFoundError: 'results/mlsys/logs/vllm_meta-llama_Llama-3.1-8B_bfloat16_attempt1.spec.json'
+mlsys_vllm_baseline.run_attempt writes the spec JSON to LOGDIR *before* it creates
+that directory: `spec_path.write_text(json.dumps(spec))` precedes
+`log_path.parent.mkdir(parents=True, exist_ok=True)` (mlsys_vllm_baseline.py:486
+vs :494). On a fresh pod results/mlsys/logs/ does not exist, so the stage dies in
+3 seconds. vllm_ladder calls the same function and would have failed identically --
+both vLLM stages are unrunnable as written, which is why neither has ever produced
+a row in any arming.
+
+STAGES COMPLETED WITH RESULTS THIS RUN (all STAGE_OK)
+  gate_calibration            682 s   $4.23   CALIBRATION OK, 7 positives pass / 2 negatives fail
+  engine_cap_smoke           5880 s  $36.46   CAP SMOKE PASSED, 6/6 rows ok, pair "lossless" (see TODO 3)
+  correction_note_evidence    412 s   $2.55   11 rows (4 of them never measured -- TODO 4)
+  coherence_gate             2340 s  $14.51   7 candidates: native_128k PASS, llama3_f16_256k PASS, 3 YaRN 256k FAIL, 2 512k oom
+  natural_f1_128k           25402 s $157.49   20/20 rows ok -- THE HEADLINE ACCEPTANCE NUMBERS
+    acceptance over the 10 spec rows: min 0.620, median 0.931, max 0.970; 5 of 10 rows >= 0.90
+    doc_intervals reported mean acceptance 0.88361, bootstrap CI [0.815738, 0.93429], n=10
+  natural_f1_128k_doc_intervals  OK, natural_f1_128k_round_acceptance OK
+
+AND ONE FAILURE THAT MATTERS AS MUCH AS THE REPETITION FINDING:
+  natural_f1_128k_losslessness FAILED (rc=1): MISMATCH at token 12
+  (train_1726), token 15 (train_1981) and token 7 (train_2768) between the
+  speculative arm and its target-only partner, plus "no pair had a 1024-token
+  partner, so the full-length check did not happen". So on 3 of 10 documents the
+  speculative decode is NOT token-identical to the target-only baseline within the
+  first ~15 tokens. Report-only stage, but it means the acceptance numbers rest on
+  arms that provably diverge on natural text.
+
+STAGES THAT DID NOT RUN: rope_intervention_128k (and its gate),
+natural_spec_gated_256k (killed after ~3.5 min), vllm_ladder.
+
+WHY WE STOPPED: greedy repetition invalidates the 256k acceptance headline. The
+read-only audit (previous section) showed the 0.85-0.97 acceptance is a periodic
+degeneracy, not a speculation result -- acceptance hits exactly 1.000 in exactly
+the windows where 100% of tokens sit inside a repeated 16-gram, cycle periods
+14-26, and the top row's last 200 tokens are " He was deceived." fifty times.
+natural_spec_gated_256k is the campaign's most expensive stage (13 h, projected
+$291) and its entire purpose is an acceptance/round-cost claim at 256k. Running it
+would have bought 13 hours of loop statistics at ~$290.
+
+POD STOP: pulled BEFORE signalling anything, verified byte-for-byte against the pod
+for RUN_LOG.txt, pod_env.log, gpu_hours.csv, natural_f1_128k.csv, coherence_gate.csv
+and engine_cap_smoke.csv; manifest.log and RUN_LOG.txt re-pulled after the stop.
+Incident dir results/mlsys/incident_20261010T113537Z_repetition_stop/ holds 262
+files / 49 MB including pod_results/ with every CSV, per-token trace, token
+sidecar, generated text and memory trace. Ledger merged append-only: +9 rows,
+19 total, $297.56. Manifest tree stopped with the manifest signalled first and
+then its descendants (276 processes), no manifest.rc (killed, not failed).
+Instance 16cc2a5795594ce195b39e223dd8134b terminated; API confirms 0 instances.
+Mac side: watcher 33277, caffeinate 33278 and monitor 33400 stopped by pid; `ps`
+matches no watcher, monitor, caffeinate or capacity poller.
+
+MY OWN MISTAKE, recorded: my first stop attempt produced no output and stopped
+nothing -- the run continued for several minutes at 60-87% GPU (~$2). The cause was
+a stop script piped through ssh with a nested heredoc that silently did nothing. I
+redid it by scp'ing the script and verifying it landed, then running it and reading
+its output, which reported "manifest pids: [8038], processes in tree: 276,
+REMAINING: none". Lesson, third occurrence of this shape in this session: verify
+the effect, never the invocation.
+
+SPEND
+  This instance: launched 2026-10-10T01:38:38Z, terminated ~11:37Z = 9.97 h x
+  $22.32/hr = $222.55.
+  Ledgered for this instance: gate_calibration 4.23 + engine_cap_smoke 36.46 +
+  correction_note_evidence 2.55 + coherence_gate 14.51 + natural_f1_128k 157.49 =
+  $215.24. So ~$7.31 (boot, provisioning, the killed 256k stage, impl_validation's
+  3 s) is unledgered, consistent with the standing rule.
+  Ledger total now 19 rows, $297.56. Cumulative real spend across all armings is
+  roughly $341 (this instance $222.55 + earlier armings) against the $2000 cap.
+
+--------------------------------------------------------------------------------
+PRIORITIZED TODO -- MUST BEFORE ANY RERUN
+--------------------------------------------------------------------------------
+M1. REPETITION-SAFE ACCEPTANCE PROTOCOL. Define and implement what a valid
+    acceptance row is, so a loop cannot enter a headline number. Minimum: per row,
+    record a periodicity statistic (dominant period, self-agreement, first
+    periodic token) beside acceptance; classify rows as degenerate when the tail
+    is periodic; and report acceptance for non-degenerate rows only, with the
+    degenerate fraction reported as a result in its own right. Re-derive the
+    headline from non-degenerate windows. Justified by the measurement: 5 of 10
+    spec rows at >= 0.90 and every one of them saturated because of a loop.
+M2. ABSOLUTE REPETITION GATE. Add a ceiling on repetition alone -- the existing
+    rule is relative to the paired baseline (GEN_SHARE_TOLERANCE = 2.0) and cannot
+    fire when both arms loop (measured 1.07x, 1.32x, 1.80x). Add the periodicity
+    statistic to the gate's row schema. Fix the false claim in
+    configs/mlsys_engine_cap_smoke.yml:82, which lists blank/repeat shares among
+    the 16 structural assertions although mlsys_cap_smoke_check.py tests neither.
+M3. EXPLAIN OR FIX natural_f1_128k_losslessness. 3 of 10 pairs MISMATCH at tokens
+    7-15, and no pair had a 1024-token partner so the full-length check never ran.
+    Until this is understood, every acceptance number rests on arms that diverge.
+    The mismatch is early, so it is not the loop -- it is a real engine question,
+    and it is a prerequisite for believing any rerun.
+M4. FIX THE vLLM LOGS-DIR BUG. mlsys_vllm_baseline.py:486 writes the spec JSON
+    before :494 creates its directory, so impl_validation and vllm_ladder both die
+    in 3 seconds on a fresh pod. One-line reorder plus a test that runs
+    run_attempt with a non-existent LOGDIR.
+M5. RERUN natural_spec_gated_256k AND vllm_ladder, after M1-M4, with M1's protocol
+    active so a 256k acceptance headline cannot be a loop statistic and M4 so the
+    vLLM reference actually produces rows.
+
+--------------------------------------------------------------------------------
+PRIORITIZED TODO -- LATER (everything else)
+--------------------------------------------------------------------------------
+L1. Gate document diversity (TODO 2): every candidate at every rung is scored on
+    pg19_train_0; fix the sampling so the gate's ratio rule is not an absolute cap
+    on one book.
+L2. Reword the CAP SMOKE banner (TODO 3): it claims losslessness that no assertion
+    tests.
+L3. correction_note_evidence (TODO 4): rebuild the 4 unrunnable misanchored
+    controls N2-style, add `traceback` to FIELDS, stop the unpaired branch
+    overwriting status/error, distinguish absence from mismatch.
+L4. Post-cutoff NARRATIVE-prose control with n >= 5 windows per arm (TODO 5). The
+    Federal Register control is weak: its boilerplate recurs across years, so
+    "never seen" holds for the documents and not for the register's style.
+L5. Tokenizer trap, documented but unfixed: data/processed/pg19 is Llama-2
+    tokenized, and pointing the gate at it would silently score garbage (every
+    Llama-2-range id is inside Llama-3.1's vocabulary, so
+    assert_prompt_in_vocab cannot catch it). Add a tokenizer-vs-pool assertion.
+L6. The 512k gate rows (llama3_f32_512k, yarn_base8192_f64_512k) are status=oom by
+    design: their ppl WAS measured (1.1522, 4.0144) and the llama3 one looks
+    quality-wise plausible at ~1.10x native, but generation did not fit one GPU.
+    Decide whether to give >=512k candidates device_map="auto" to close that
+    question.
+L7. Memorization, residual (TODO 1): within PG-19 the train split is 2.3x more
+    predictable than the held-out split (median 4.089 vs 9.555), consistent with
+    some recall of the train books. One confirmation run, and it belongs after M1
+    because the acceptance question it was meant to answer is superseded.
+L8. The two untracked files (scripts/mlsys_memorization_check.py,
+    configs/mlsys_memcheck_spec.yml) are deliberate; make the next pre-flight
+    expect a dirty tree.
