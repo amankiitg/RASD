@@ -11,6 +11,9 @@ MLSys CAMPAIGN — MORNING REPORT
 #     at 1M, 128 tokens) -> scaling(512k then 128k) -> reruns of failed rows.
 #  3. The dead-man timer is 1200 min = 20h = $446, inside the $500 ceiling; armed
 #     through mlsys_detach.py, verified by effect: pid 45088, PPID 1, own group.
+#  3b. SEE 7h. THAT TIMER DIED AT 00:22:35Z AND LEFT THE INSTANCE UNPROTECTED FOR AN
+#     HOUR, WHILE THE INSTANCE WAS ALIVE AND BILLING. Diagnosed and replaced with the
+#     fixed checker: pid 61623, PPID 1, own process group, same 20h deadline.
 #  4. The poller that launched it is pid 44987, PPID 1, own process group.
 #  5. THE WHOLE SCRIPT WAS REHEARSED FIRST on one 1x A100: every stage rc=0 with
 #     ok rows, one CSV per stage pulled to the Mac, 0 instances after terminate,
@@ -74,6 +77,60 @@ MLSys CAMPAIGN — MORNING REPORT
 #     runs (default: the ALIGNED pool), so the rehearsal exercises the identical argument
 #     path. THE REHEARSAL MUST SHOW ONE ROW PER ARM WITH status=ok (not oom, not error);
 #     if it does not, it is fixed and re-run before the 8x follow-up launches.
+#  7h. INCIDENT, 2026-10-11T00:22:35Z -- THE DEAD-MAN TIMER DISARMED ITSELF AND THE
+#     INSTANCE RAN UNPROTECTED. It logged "instance 12e9c5d79425... no longer exists;
+#     timer exits without action" and exited. The instance was and IS ACTIVE: 8x A100
+#     80GB, $22.32/hr, us-east-1, read back from the API at 01:21:30Z, count = 1. The
+#     safety net the standing rules require was gone for about an hour while the main
+#     session kept running, and nothing else alive knew that instance's id.
+#     CAUSE, and it is the same shape as the other three silent bugs in this project:
+#     the liveness check was `curl ... | grep -q '"id"'` and it exited the moment that
+#     failed. Any one transient failure -- a 30s timeout, a 5xx, an empty body, a TLS
+#     blip -- is indistinguishable from a real "not found" under that test, so a single
+#     bad poll permanently disarmed the timer. It failed OPEN toward "do nothing",
+#     which is the wrong direction for a dead-man: a false "gone" costs an unbounded
+#     bill, while staying armed costs nothing at all, because the timer only acts at
+#     DEADLINE and terminating an already-gone instance is harmless. The cost
+#     asymmetry decides the design, and the original code ignored it.
+#     FIX (scripts/mlsys_deadman.sh): poll_state() classifies each poll as
+#     alive / gone / unknown from the HTTP code, only AUTHORITATIVE answers (200, 404)
+#     count as evidence, and THREE consecutive of them are required before the timer
+#     disarms. Anything else logs "transient read failure, not evidence" and stays
+#     armed. Verified read-only against the live API before re-arming: the real
+#     instance -> alive; a fake id -> 404; an unreachable host -> 000, which is exactly
+#     the case the old code called "gone" and exited on.
+#     RE-ARMED 01:22:35Z to the ORIGINAL deadline via scripts/mlsys_detach.py: pid
+#     61623, PPID 1, PGID 61622 while my shell's PGID is 61617 -- detached, own process
+#     group. Same pidfile, so the driver's end-of-session cancel still finds it, and the
+#     same 20h window: deadline 2026-10-11T19:33:35Z (18.2h remaining).
+#     This did NOT touch the running session: no pod interaction, no file the job reads.
+#  8. NOTHING STARTS AUTOMATICALLY AFTER THE MAIN SESSION ENDS. Asked and checked, not
+#     assumed. The driver (pid 44987) launches ONE instance, runs the remote script,
+#     pulls, terminates, cancels its timer, and exits; it contains no reference to the
+#     follow-up or to any other driver. `crontab -l` -> no crontab. ~/Library/
+#     LaunchAgents holds only Adobe, Zoom and brew-postgresql jobs. `atq` is empty.
+#     So the follow-up REHEARSAL and the follow-up 8x SESSION both need a new
+#     instruction. Nothing is chained, and nothing was chained tonight.
+#  8b. LOADER GUARD, as asked: load_candidates now raises SystemExit on ZERO candidates
+#     instead of returning an empty list -- an empty gate writes no rows and exits 0, so
+#     an absent result reads as a satisfied one. 14 tests in
+#     tests/test_mlsys_gate_candidates.py, all passing, including one that loads every
+#     real candidate config on disk so the guard cannot start rejecting the files it
+#     exists to protect.
+#  8c. AND IT WOULD NOT HAVE CAUGHT MY BUG -- correcting my own commit message of
+#     2953f2f, which claimed it would. That file was
+#     {"candidates": [{"candidate": "ROFIX_F16"}, ...]}: the TOP-LEVEL key was correct
+#     and the PER-ENTRY key was wrong, so load_candidates returns three ENTRIES, not
+#     zero, and the empty check passes it happily. The gate would then have read
+#     name=None on every arm. The guard covers a wrong top-level key or a genuinely
+#     empty list, and nothing else. A per-entry required-field check WOULD catch it, and
+#     I deliberately did not add one: this project's own candidate files are mutually
+#     inconsistent -- they use `expect` AND `expected`, and roles drawn from
+#     candidate / baseline / positive / negative / absent -- so a strict check would
+#     reject valid existing configs. That is a decision for you, not a unilateral fix.
+#     The gap is pinned by a test named
+#     test_the_empty_check_does_not_catch_a_wrong_PER_ENTRY_key so it stays visible
+#     instead of being assumed covered.
 #  7c. Quality redo is built and locally validated (configs/mlsys_quality_fix.yml, new
 #     stage ids QUALITY_FIX_128K/_1M, prompt_gen_tokens 1024, fixed pools) and will run
 #     as a 3-hour quality-only 8x session AFTER the main session ends, rehearsed first

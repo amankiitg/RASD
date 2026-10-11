@@ -1036,15 +1036,35 @@ def load_candidates(spec):
     loader that silently accepts one shape and not the other is a trap.
     """
     if isinstance(spec, list):
-        return spec
-    for key in ("coherence_gate", "candidates", "controls"):
-        if key in spec:
-            return spec[key]
-    raise SystemExit(
-        f"candidate file has no candidate list; expected one of "
-        f"'coherence_gate', 'candidates', 'controls' or a bare JSON list, "
-        f"found keys {sorted(spec)}"
-    )
+        where = "a bare JSON list"
+        candidates = spec
+    else:
+        where = None
+        for key in ("coherence_gate", "candidates", "controls"):
+            if key in spec:
+                where = f"the {key!r} key"
+                candidates = spec[key]
+                break
+        if where is None:
+            raise SystemExit(
+                f"candidate file has no candidate list; expected one of "
+                f"'coherence_gate', 'candidates', 'controls' or a bare JSON list, "
+                f"found keys {sorted(spec)}"
+            )
+    if not candidates:
+        # Refuse an empty arm list instead of returning it. A gate with no arms
+        # writes no rows and exits 0, so a caller that checks only the exit
+        # status -- or a human reading a CSV header with nothing under it --
+        # records it as a pass. An absent result must not look like a satisfied
+        # one. The two ways to get here are an empty list and a misspelled
+        # top-level key, and the second is the reason this cannot be silent:
+        # the file is present, it parses, and it simply has nothing in it.
+        raise SystemExit(
+            f"candidate file resolved to ZERO candidates under {where}. "
+            f"Refusing to run a gate that would produce no rows and exit 0; "
+            f"check the top-level key and that the list is not empty."
+        )
+    return candidates
 
 
 def main() -> int:

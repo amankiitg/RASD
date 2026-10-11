@@ -28,12 +28,52 @@ KEY=$(grep -E '^[[:space:]]*LAMBDA_API_KEY[[:space:]]*=' runpod_creds.md 2>/dev/
 
 DEADLINE=$(python3 -c "import time;print(int(time.time()+$MINUTES*60))")
 say "armed for instance $ID at $(date -u -r "$DEADLINE" +%FT%TZ) (in ${MINUTES}m)"
+
+# Classify ONE poll as alive / gone / unknown.
+#
+# The first version of this loop did `curl ... | grep -q '"id"'` and exited the
+# moment that failed. On 2026-10-11T00:22:35Z it declared instance
+# 12e9c5d794254c498d741261bde0877b "no longer exists" and exited -- while the
+# instance was, and still is, active and billing at $22.32/hr. A single failed
+# 30-second poll (timeout, 5xx, TLS blip, empty body) is indistinguishable from
+# a real "not found" under that test, and the consequence was an unprotected
+# 8xA100 with nothing left alive that knew its id -- exactly the failure this
+# script exists to prevent.
+#
+# The asymmetry decides the design: wrongly concluding "gone" costs an
+# unbounded bill, while wrongly staying armed costs nothing at all (the timer
+# only ever fires at DEADLINE, and the terminate call is idempotent and
+# harmless if the instance really is gone). So only an AUTHORITATIVE answer --
+# HTTP 200 or 404 -- is treated as evidence, and even that must repeat three
+# times before it disarms the timer. Everything else keeps the timer armed.
+poll_state() {
+  local body code
+  body=$(curl -sS --max-time 30 -w '\n%{http_code}' -u "$KEY:" \
+         "https://cloud.lambda.ai/api/v1/instances/$ID" 2>/dev/null) || { echo unknown; return; }
+  code=$(printf '%s' "$body" | tail -1)
+  case "$code" in
+    200) if printf '%s' "$body" | grep -q "\"$ID\""; then echo alive; else echo gone; fi ;;
+    404) echo gone ;;
+    *)   echo unknown ;;
+  esac
+}
+
+GONE_STRIKES=0
 while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
-  if ! curl -sS --max-time 30 -u "$KEY:" "https://cloud.lambda.ai/api/v1/instances/$ID" \
-       2>/dev/null | grep -q '"id"'; then
-    say "instance $ID no longer exists; timer exits without action"
-    exit 0
-  fi
+  ST=$(poll_state)
+  case "$ST" in
+    alive) [ "$GONE_STRIKES" -ne 0 ] && \
+             say "instance $ID is present again after $GONE_STRIKES strike(s); timer armed"
+           GONE_STRIKES=0 ;;
+    gone)  GONE_STRIKES=$((GONE_STRIKES+1))
+           say "strike $GONE_STRIKES/3: API authoritatively reports instance $ID gone"
+           if [ "$GONE_STRIKES" -ge 3 ]; then
+             say "instance $ID gone for 3 consecutive authoritative polls; timer exits without action"
+             exit 0
+           fi ;;
+    *)     say "poll returned unknown (transient read failure, not evidence); timer stays armed"
+           GONE_STRIKES=0 ;;
+  esac
   sleep 30
 done
 say "DEADLINE REACHED: terminating $ID"
