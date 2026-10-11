@@ -1,0 +1,13 @@
+{
+  "candidates": [
+    {"candidate": "ROFIX_NATIVE", "target_model_name": "meta-llama/Llama-3.1-8B",
+     "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b", "rope_type": "none",
+     "context_length": 131072, "role": "control"},
+    {"candidate": "ROFIX_F16", "target_model_name": "meta-llama/Llama-3.1-8B",
+     "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b", "rope_type": "llama3",
+     "rope_factor": 16, "rope_anchor_base": 8192, "context_length": 131072, "role": "arm"},
+    {"candidate": "ROFIX_F32", "target_model_name": "meta-llama/Llama-3.1-8B",
+     "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b", "rope_type": "llama3",
+     "rope_factor": 32, "rope_anchor_base": 8192, "context_length": 131072, "role": "arm"}
+  ]
+}
