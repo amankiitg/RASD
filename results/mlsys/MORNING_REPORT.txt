@@ -1,6 +1,125 @@
 MLSys CAMPAIGN — MORNING REPORT
 
 ################################################################################
+# *** PAUSED ON OPERATOR INSTRUCTION — 2026-10-11T12:35Z ***
+# 0 INSTANCES. NO DRIVERS, NO POLLERS, NO TIMERS (verified by ps and by the API).
+#
+# WHAT WAS DONE THIS MORNING (2026-10-11)
+#  A. THE THREE REQUIRED FIXES, each rehearsed and proven rather than assumed:
+#     1. SSH-DROP EARLY-TERMINATE (the bug that killed the Oct 11 session). The remote
+#        script now runs DETACHED (setsid, own log) on the pod and writes $OUT/DONE
+#        holding its exit code, via an EXIT trap that fires on every exit path including
+#        the early refusals. The driver launches it detached and then polls for that
+#        marker with SHORT, FRESH ssh calls, reconnecting on failure; it stops only on
+#        the marker, on the poll deadline (timer less 15 min), or on a fatal error.
+#        PROVEN BY A DELIBERATE KILL of the poll ssh mid-run:
+#          "POLL SSH FAILED (rc=137). The pod keeps working and we keep waiting"
+#        followed by: driver alive, INSTANCE STILL ACTIVE (confirmed via the API), and
+#        polling resumed. That is exactly the failure that used to terminate the pod.
+#     2. TOKEN OFF THE COMMAND LINE. Written to ~/.hf_token over stdin with umask 077,
+#        mode 600; the remote script and the setup probe read it from there, and the
+#        probe ASSERTS the token is absent from the command it sends to the pod. Verified
+#        on both the rehearsal and the 8x: 37 bytes, mode 600, read back successfully.
+#     3. STALE PULL DIRECTORY. Cleared at the start of every session, in addition to
+#        SESSION_TAG separation, after a rehearsal row with context_length 4096 sat in
+#        the real run's directory and read as a 0.18x "128k speedup".
+#  B. PROTOCOL A CONFIGS. mlsys_followup_sampling.yml (33 rows, 13 groups, order IS run
+#     order a..g), mlsys_sanity_sampling.yml (128k, 64 tokens, T=0.7), and a rehearsal
+#     twin with identical group names, order and ids. temperature 0.7, top_p 1.0,
+#     seed 42, 128 tokens, periodicity per row. The quality redo stays GREEDY.
+#     Target-only rows are subsampled (2 books at 1M, 1 at each aligned rung) and every
+#     speedup will divide by the session's MEAN target-only tok/s at that context,
+#     computed as tokens_generated/time_sec -- never the rounded throughput_tps field.
+#  C. REHEARSAL PASSED, and it earned its cost by finding five real defects before the 8x
+#     launch. Three attempts on gpu_1x_a100_sxm4, $1.87 of the $3 cap:
+#       - ~/RASD/.hf_token cannot be written before staging; the driver refused and
+#         terminated cleanly ($0.25). Moved to ~/.hf_token.
+#       - the detached launch redirected its log into a directory that did not exist yet;
+#         mkdir -p first, or the remote script cannot even start.
+#       - a launch that dies instantly would have been polled for the whole window; the
+#         poll now distinguishes RUNNING / DIED / NOPROC and gives up after 3 NOPROC.
+#       - mlsys_coherence_gate.py raised "NameError: name 'out_rep' is not defined" for
+#         EVERY arm -- a name left behind by a rename -- so the gate recorded
+#         status=error on all three arms. generation_metrics had NO test coverage at all;
+#         it now has three tests, and the gate is green.
+#       - the rope arms targeted gradientai/...-Gradient-1048k, which ships
+#         rope_scaling: None, and the engine refuses llama3 rope on it outright:
+#         ROPE_SAMP_F16_SPEC came back with 2 error rows. All four rope groups now target
+#         meta-llama/Llama-3.1-8B, which is what the gate's candidates file already named.
+#       FINAL REHEARSAL STATE: all 15 stage CSVs ok, ZERO bad rows; the gate produced 3 ok
+#       rows, one per arm, gate_pass=True on all three; DONE marker rc=0; the driver
+#       terminated only AFTER the marker; 0 instances; timer cancelled.
+#  D. THE 8x FOLLOW-UP RAN, then was stopped on instruction. Launched 11:41:11Z on
+#     gpu_8x_a100_80gb_sxm4, us-midwest-1, $22.32/hr, with a 480-min dead-man timer
+#     verified by effect (pid 59016, PPID 1). It completed: the T=0.7 sanity pair (2/2 ok),
+#     QUALITY_FIX_128K (3/3 ok, median 24.8 s/row -- the 128k quality redo works now that
+#     the pool has slack), and 1 of 3 QUALITY_FIX_1M rows. Steps c-g did not start.
+#
+# PAUSE CAPTURE, verified BEFORE terminating anything:
+#   /Users/amankesarwani/.copilot/session-state/0f919471-cdca-48c0-a994-56a95eb1d6be/files/pause_20261011T121926Z_followup_samp
+#     results/         1263 files: the full pod results tree (per_token/, tokens/, group
+#                      logs, remote_stdout.log, progress.md, and every stage CSV)
+#     incremental_pull/  21 files: the driver's own 240s snapshots, an independent copy
+#   Stage CSVs in the capture: sanity 2/2 ok, QUALITY_FIX_128K 3/3 ok, QUALITY_FIX_1M 1 ok
+#   (that stage was in flight). NO DONE marker, which is correct for a mid-flight pause.
+#   The pull was retried after an ssh timeout and succeeded; the instance was still active
+#   at that moment, so nothing was lost to the network.
+#
+# SPEND (of the $450 cumulative cap):
+#   earlier (Oct 10 through the main 1M session) ...... ~$157.0
+#   rehearsal attempts today ......................... $1.87  ($0.25 + $0.84 + $0.78)
+#   the 8x follow-up, partial ........................ ~$16.0 (0.72 h at $22.32/hr,
+#                                                      11:41:11Z -> ~12:23Z terminated)
+#   TOTAL ............................................ ~$175 of $450
+#
+# WHAT WAS NOT DONE
+#   - Protocol A steps c, d, e, f and g did NOT run. There is NO 1M sampled row, NO
+#     aligned 512k/128k sampling row and NO rope row from a sampling session. The 1M
+#     sampling path is therefore still UNPROVEN at 1M; the sanity pair only proves T=0.7
+#     works at 128k.
+#   - The multi-seed PG-19 dose-response, the Hartigan dip test, the bf16-draft isolation
+#     and the vLLM baseline remain outstanding.
+#   - RESULTS_OCT.md has NOT been rewritten with sampling results. It still carries the
+#     GREEDY Oct 10-11 numbers, correctly labelled as greedy, with the corrected headline
+#     (1M clean n=1: acceptance 0.2132, 0.08411 vs 0.05236 tok/s = 1.61x) and the
+#     withdrawn flat-acceptance claim.
+#
+# RESUME CHECKLIST (exact)
+#   1. Confirm 0 instances via the API and no driver/poller/timer via ps. Kill any timer
+#      whose instance is gone.
+#   2. Launch ONE session on gpu_8x_a100_80gb_sxm4 ONLY, through scripts/mlsys_detach.py,
+#      with: SESSION_TAG=followup_samp2 SESSION_TYPE=gpu_8x_a100_80gb_sxm4
+#      SESSION_RATE=22.32 TIMER_MIN=480 SESSION_CAP=200 NPROC=8
+#      SESSION_CFG=configs/mlsys_followup_sampling.yml
+#      SESSION_SANITY_CFG=configs/mlsys_sanity_sampling.yml
+#      SESSION_GATE_CANDIDATES=configs/mlsys_followup_rope_candidates.json
+#      SESSION_CHECK_STAGE=SAMP_CHECK_1M_SPEC
+#      Confirm the dead-man timer by effect (PPID 1) before any work starts.
+#   3. Stage order, unchanged: a sanity pair -> b QUALITY_FIX_128K then QUALITY_FIX_1M
+#      (greedy, 3 books, prompt_gen_tokens 1024) -> c SAMP_CHECK_1M_SPEC, 1 row, which
+#      STOPS every T>0 stage if it is not sane -> d SAMP_1M_SPEC 6 books + SAMP_1M_TARGET
+#      2 books -> e aligned 512k spec 3 + target 1 -> f aligned 128k spec 3 + target 1 ->
+#      g the rope gate, then 3 arms x 3 books plus the native target. If time or budget
+#      runs short, DROP FROM THE END (g first, then f); NEVER drop d.
+#   4. Limits: 8-hour dead-man timer, $200 ceiling, cumulative under $450. Pull after
+#      every row. Never edit a file a running job reads -- and note that the driver's
+#      incremental puller WRITES results/mlsys/MORNING_REPORT.txt, so that file must not
+#      be edited while a driver is running.
+#   5. Finish: terminate, confirm 0 instances and no timers, then rewrite RESULTS_OCT.md
+#      with the sampling headline (per-row table, clean-only means with n, speedups against
+#      the session's mean target-only tok/s), the greedy Oct 10-11 results as a SEPARATE
+#      condition, the quality redo (1M vs 128k ppl per book, alignment judged from the
+#      recorded offsets and hashes rather than from how the pool was sliced), the aligned
+#      scaling, the rope section, spend and limitations; update this status block; commit
+#      and push.
+#
+# REHEARSAL REQUIREMENT ON RESUME: the three fixes are already rehearsed and the last
+# rehearsal passed every stage, so a full re-rehearsal is NOT needed to resume. If any of
+# the three fixes is edited, re-run the rehearsal first, INCLUDING the deliberate poll-ssh
+# kill, because that is the only thing that proves the driver waits for DONE.
+################################################################################
+
+################################################################################
 # STATUS — 2026-10-11T06:25Z. THE 1M SESSION IS DONE. 0 INSTANCES, TIMER CANCELLED.
 #
 # TEN-LINE SUMMARY
@@ -3850,3 +3969,59 @@ states what the redo must show: 1M vs 128k perplexity per document over the SAME
 #   - SUNDAY_SCALING_512K_SPEC: rows=3 ok=3 median_row_s=456.9 max_row_s=693.6 tps=0.253 accept=0.5299
 #   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
 #   - measured row time total 13985.0s = 3.88h over 15 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-11T11:08:15Z
+#   - sanity: rows=2 ok=2 median_row_s=105.6 max_row_s=105.6 tps=0.725 accept=0.1666
+#   - measured row time total 201.3s = 0.06h over 10 rows
+#   ### progress 2026-10-11T11:07:59Z
+#   - QUALITY_FIX_128K: rows=1 ok=1 median_row_s=1.8 max_row_s=1.8 tps=4.510 accept=0.3333
+#   - QUALITY_FIX_1M: rows=1 ok=1 median_row_s=2.6 max_row_s=2.6 tps=3.050 accept=0.1875
+#   - SAMP_1M_SPEC: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.330 accept=0.3333
+#   - SAMP_1M_TARGET: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.350 accept=0.0000
+#   - SAMP_ALIGNED_128K_SPEC: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.170 accept=0.0500
+#   - SAMP_ALIGNED_128K_TARGET: rows=1 ok=1 median_row_s=1.7 max_row_s=1.7 tps=4.620 accept=0.0000
+#   - SAMP_ALIGNED_512K_SPEC: rows=1 ok=1 median_row_s=2.9 max_row_s=2.9 tps=2.730 accept=0.1000
+#   - SAMP_ALIGNED_512K_TARGET: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.330 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.330 accept=0.3333
+#   - sanity: rows=2 ok=2 median_row_s=105.6 max_row_s=105.6 tps=0.725 accept=0.1666
+#   - measured row time total 203.1s = 0.06h over 11 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-11T11:33:38Z
+#   - sanity: rows=2 ok=2 median_row_s=105.6 max_row_s=105.6 tps=0.725 accept=0.1666
+#   - measured row time total 201.5s = 0.06h over 10 rows
+#   ### progress 2026-10-11T11:33:29Z
+#   - QUALITY_FIX_128K: rows=1 ok=1 median_row_s=1.8 max_row_s=1.8 tps=4.500 accept=0.3333
+#   - QUALITY_FIX_1M: rows=1 ok=1 median_row_s=2.6 max_row_s=2.6 tps=3.090 accept=0.1875
+#   - SAMP_1M_SPEC: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.310 accept=0.3333
+#   - SAMP_1M_TARGET: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.290 accept=0.0000
+#   - SAMP_ALIGNED_128K_SPEC: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.170 accept=0.0500
+#   - SAMP_ALIGNED_128K_TARGET: rows=1 ok=1 median_row_s=1.7 max_row_s=1.7 tps=4.590 accept=0.0000
+#   - SAMP_ALIGNED_512K_SPEC: rows=1 ok=1 median_row_s=2.9 max_row_s=2.9 tps=2.750 accept=0.1000
+#   - SAMP_ALIGNED_512K_TARGET: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.320 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=2.4 max_row_s=2.4 tps=3.300 accept=0.3333
+#   - sanity: rows=2 ok=2 median_row_s=105.6 max_row_s=105.6 tps=0.725 accept=0.1666
+#   - measured row time total 203.2s = 0.06h over 11 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-11T12:01:06Z
+#   ### progress 2026-10-11T12:00:41Z
+#   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
+#   - measured row time total 344.5s = 0.10h over 2 rows
+#   ### progress 2026-10-11T12:00:41Z
+#   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
+#   - measured row time total 344.5s = 0.10h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-11T12:05:08Z
+#   ### progress 2026-10-11T12:00:41Z
+#   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
+#   - measured row time total 344.5s = 0.10h over 2 rows
+#   ### progress 2026-10-11T12:00:41Z
+#   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
+#   - measured row time total 344.5s = 0.10h over 2 rows
+#   ### progress 2026-10-11T12:04:08Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.8 max_row_s=28.9 tps=0.363 accept=0.3056
+#   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
+#   - measured row time total 414.7s = 0.12h over 5 rows
+#   ### progress 2026-10-11T12:04:08Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.8 max_row_s=28.9 tps=0.363 accept=0.3056
+#   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
+#   - measured row time total 414.7s = 0.12h over 5 rows
