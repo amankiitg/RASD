@@ -58,6 +58,9 @@ SUNDAY_QUALITY_1M:
     context_length: 1048576
     documents: [pg19_train_0, pg19_train_1, pg19_train_915]
     max_new_tokens: 8
+    # The ppl window is `prompt_gen_tokens`, NOT max_new_tokens: without this the
+    # quality rows scored only 8 tokens (measured 2026-10-10: ppl_tokens=8).
+    prompt_gen_tokens: 1024
     measure_target_ppl: true
     prompt_documents_json: data/processed/pg19_1m/documents.json
     checkpoint_every: 0
@@ -70,6 +73,7 @@ SUNDAY_QUALITY_128K:
     context_length: 131072
     documents: [pg19_train_0, pg19_train_1, pg19_train_915]
     max_new_tokens: 8
+    prompt_gen_tokens: 1024
     measure_target_ppl: true
     prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
     checkpoint_every: 0

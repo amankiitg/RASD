@@ -3414,3 +3414,79 @@ progress block). The retry-scan path executed in full; the retry-invocation path
 Rehearsal wall 1024s = 0.28h = $0.57 of the $10 cap. Instance e2b6b1dd/7d3cf432 and
 d9ebfb56 were terminated and confirmed at 0 instances; the first of the three was the
 ssh-timeout launch.
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-10T23:49:44Z
+#   - SUNDAY_SCALING_512K_TARGET: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.230 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.370 accept=0.0625
+#   - measured row time total 22.6s = 0.01h over 10 rows
+#   ### progress 2026-10-10T23:28:05Z
+#   - SUNDAY_HEADLINE_1M_SPEC: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.920 accept=0.1667
+#   - SUNDAY_HEADLINE_1M_TARGET: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.210 accept=0.0000
+#   - SUNDAY_QUALITY_128K: rows=1 ok=1 median_row_s=2.1 max_row_s=2.1 tps=3.790 accept=0.1667
+#   - SUNDAY_QUALITY_1M: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.930 accept=0.1667
+#   - SUNDAY_SCALING_128K_SPEC: rows=1 ok=1 median_row_s=1.9 max_row_s=1.9 tps=4.190 accept=0.1250
+#   - SUNDAY_SCALING_128K_TARGET: rows=1 ok=1 median_row_s=1.8 max_row_s=1.8 tps=4.430 accept=0.0000
+#   - SUNDAY_SCALING_512K_SPEC: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=2.950 accept=0.1667
+#   - SUNDAY_SCALING_512K_TARGET: rows=1 ok=1 median_row_s=2.5 max_row_s=2.5 tps=3.230 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.370 accept=0.0625
+#   - measured row time total 22.6s = 0.01h over 10 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-10T23:53:45Z
+#   ### progress 2026-10-10T23:52:56Z
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 323.0s = 0.09h over 2 rows
+#   ### progress 2026-10-10T23:52:56Z
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 323.0s = 0.09h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-10T23:57:46Z
+#   ### progress 2026-10-10T23:52:56Z
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 323.0s = 0.09h over 2 rows
+#   ### progress 2026-10-10T23:52:56Z
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 323.0s = 0.09h over 2 rows
+#   ### progress 2026-10-10T23:55:25Z
+#   - SUNDAY_QUALITY_128K: rows=3 ok=1 median_row_s=29.9 max_row_s=29.9 tps=0.270 accept=0.1250
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 352.9s = 0.10h over 3 rows
+#   ### progress 2026-10-10T23:55:25Z
+#   - SUNDAY_QUALITY_128K: rows=3 ok=1 median_row_s=29.9 max_row_s=29.9 tps=0.270 accept=0.1250
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 352.9s = 0.10h over 3 rows
+
+## LIVE SESSION - FIRST REAL NUMBERS, AND TWO BUGS THEY EXPOSED (2026-10-11T00:30Z)
+
+Instance 12e9c5d794254c498d741261bde0877b (gpu_8x_a100_80gb_sxm4, us-east-1), 20h timer.
+
+  STEP a sanity, rc=0, 2/2 ok
+    SANITY_pg19_train_0            128k  spec        0.73 tok/s  acceptance 0.5250
+    SANITY_targetonly_pg19_train_0 128k target-only 0.27 tok/s
+    -> same session, same node, same document: 2.70x
+
+  STEP b quality 128K: 1 ok / 3, two failed on a data bug (below)
+    pg19_train_0   128k  ppl 1.0685   (ppl_tokens=8 - see BUG 2)
+    pg19_train_1   128k  ERROR: continuation is 0 tokens, need 8; the document is too short
+    pg19_train_915 128k  ERROR: could not find a source length whose engine prompt is
+                                 exactly 131063 tokens ... refusing to run
+  STEP b quality 1M: 2/3 ok so far
+    pg19_train_0   1M    ppl 1.1846
+    pg19_train_1   1M    ppl 12.7477   <- to be investigated, not hidden
+
+BUG 1 (mine, data): the aligned 128k pool was EXACTLY 131,072 tokens long. The engine's
+_exact_token_window needs slack to find a prompt length whose decode-to-encode round-trips
+exactly; with none it either refused (could not find a source length) or ate the whole
+slice (continuation is 0 tokens). Fixed by extending the slice FORWARD by 8,192 tokens,
+which keeps the alignment - the prompt is still the same first 130,047 tokens and the
+continuation is still the same ids - and gives the search room. Two of the three 128k
+quality rows had already failed on this before the fix.
+
+BUG 2 (mine, config): the quality rows scored perplexity over 8 tokens, not the final
+1,024. The ppl window is set by prompt_gen_tokens, not by max_new_tokens - the
+natural_f1_128k config states that explicitly for its own short arm, and I did not carry
+it over. The 1M and 128k arms do compare the SAME tokens, but on 8 tokens per document.
+Fixed for the next run; the live session's numbers keep the limitation and are reported
+with it.
+
+Neither fix was applied to the running session: the rule is that a file a running job
+reads is not edited, and the running job's priority is the HEADLINE rows.
