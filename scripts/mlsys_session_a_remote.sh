@@ -124,6 +124,24 @@ log "steps from $CFG: $(echo $STEPS | tr '\n' ' ')"
 prev=0
 for name in $STEPS; do
   tmo=21600
+  # THE ROPE GATE, placed immediately before the first rope group so it can never delay
+  # the quality or scaling stages. Its verdict is REPORTED, never enforced: an arm that
+  # fails still gets its rows, and its acceptance is then marked as coming from an
+  # incoherent model. Driven by SESSION_GATE_CANDIDATES so the stage list stays config-
+  # driven and no other session pays for it.
+  if [ "${GATE_DONE:-0}" != "1" ] && [ -n "${SESSION_GATE_CANDIDATES:-}" ]; then
+    case "$name" in ROPE_*)
+      GATE_DONE=1
+      log "### STEP gate: coherence gate on the rope arms"
+      timeout 14400 "$PY" scripts/mlsys_coherence_gate.py \
+        --candidates "$SESSION_GATE_CANDIDATES" \
+        --pg19-meta "${SESSION_GATE_PG19_META:-data/processed/pg19_docs/documents.json}" \
+        --out "$OUT/session_a_rope_fix_gate.csv" \
+        --gen-dir "$OUT/rope_fix_gate_generated" 2>&1 | tee -a "$OUT/group_ROPE_GATE.log" | tail -20
+      log "### STEP gate rc=$? (reported, never enforced)"
+      progress ;;
+    esac
+  fi
   if [ "$prev" != "0" ]; then
     log "SKIP $name: the previous stage failed, so the chain stops here"
     continue

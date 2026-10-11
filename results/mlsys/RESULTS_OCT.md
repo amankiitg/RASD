@@ -244,3 +244,24 @@ PG-19 books of 1,050,624 tokens each staged — built).
   verified, and the session was killed by my own shared-output-filename bug before any
   1M row started. That is a defect in my orchestration, not a property of the method,
   and it is recorded that way.
+
+## 8. Rope intervention, redesigned (follow-up session, LAST stage)
+
+The old `rope_intervention_128k` never ran, and it carried a defect worth naming: it read
+`pg19_docs` from the start of each book, so an arm-to-arm difference could have been a
+difference of passage rather than of rope. The redesign reads the ALIGNED 128k windows
+(`pg19_1m_128kwin`), whose windows end where the 1M prompt ends, and runs three arms that
+are identical in everything except the target's rotary block: native (the shipped `llama3`
+block untouched), `llama3` factor 16, and `llama3` factor 32, all with
+`rope_anchor_base 8192`. A difference is therefore attributable to the FACTOR rather than
+to swapping rope implementations.
+
+Per arm this section will report acceptance (per-round alpha, not the i.i.d. per-token
+parameter), tokens/s, the periodicity statistic with looping rows flagged and excluded
+from means, the coherence gate verdict, and the speedup against the native arm's
+target-only rows from the SAME session. An arm that fails the gate is still reported, and
+its acceptance is marked as coming from an incoherent model. No vLLM stage is part of this
+session.
+
+Status: **not yet run.** It is the last stage of the follow-up session by design, so it
+cannot delay or risk the quality redo or the aligned scaling rows that precede it.

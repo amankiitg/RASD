@@ -306,5 +306,5 @@ say "incremental puller pid=$POLLER_PID (every 240s)"
 
 say "--- running session A (remote driver) ---"
 timeout 30000 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "HF_TOKEN='$HF_TOKEN_VALUE' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
+  "HF_TOKEN='$HF_TOKEN_VALUE' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
 say "remote rc=$?"

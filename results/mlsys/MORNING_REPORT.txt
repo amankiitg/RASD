@@ -41,6 +41,26 @@ MLSys CAMPAIGN — MORNING REPORT
 #     (slice[prompt_len:+1024] == the 1M arm's continuation ids, all six books); it is the
 #     ENGINE's landing point that drifts. Recorded rather than smoothed over: a ppl
 #     comparison on those two documents is over ~98% the same tokens, not identical ones.
+#  7f. FOLLOW-UP SESSION (one instance, never shared with the main session): configs/
+#     mlsys_followup.yml run by the same tested driver, stages in this order and each
+#     only if the previous succeeded --
+#       QUALITY_FIX_128K, QUALITY_FIX_1M       final 1024 tokens at 128k and at 1M
+#       SCALING_ALIGNED_512K_SPEC/_TARGET      windows ending where the 1M prompt ends
+#       SCALING_ALIGNED_128K_SPEC/_TARGET
+#       ROPE_FIX_NATIVE/F16/F32_SPEC + ROPE_FIX_NATIVE_TARGET   REDESIGNED rope, LAST
+#     Rope arms are Llama-3.1-8B + Llama-3.2-1B, identical except the target rotary block
+#     (native = shipped llama3 block untouched; llama3 factor 16; llama3 factor 32; all
+#     rope_anchor_base 8192, so a difference is attributable to the FACTOR and not to a
+#     swapped implementation). 128 tokens, greedy, periodicity per row, looping rows
+#     flagged and excluded from means, THREE aligned documents, spec rows for all three
+#     arms and target-only rows for the native arm only so the speedup comes from the same
+#     session. The coherence gate runs on the three arms as the FIRST step of the rope
+#     stage -- placed inside the step loop so it cannot delay the quality or scaling
+#     stages -- and its verdict is REPORTED, never enforced: an arm that fails still gets
+#     its rows and its acceptance is marked as coming from an incoherent model.
+#     NO vLLM STAGE ANYWHERE in this session.
+#     Limits: dead-man timer 8 hours, ceiling $200. Rehearsed on one 1x A100 at tiny
+#     settings (<= $3), INCLUDING the gate step, before the 8x follow-up launches.
 #  7c. Quality redo is built and locally validated (configs/mlsys_quality_fix.yml, new
 #     stage ids QUALITY_FIX_128K/_1M, prompt_gen_tokens 1024, fixed pools) and will run
 #     as a 3-hour quality-only 8x session AFTER the main session ends, rehearsed first
