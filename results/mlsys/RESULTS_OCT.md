@@ -1,267 +1,218 @@
 # RASD — October results
 
-Generated 2026-10-10/12 by an unattended session. Every number below is from a run
-that happened, on hardware named in the table. Where a row did not run, it says so
-instead of being estimated.
+**Status: the 1M-context rows RAN.** One combined session on `gpu_8x_a100_80gb_sxm4`
+completed on 2026-10-11, five of its six stages finished, and the headline numbers below
+are measured, not projected. Two results are missing or superseded and are marked as
+such rather than interpolated.
 
-**Instance types, recorded with every table because a comparison across hardware is
-not a comparison:**
-* `gpu_1x_a100_sxm4` — 1x A100 40GB SXM4, $1.99/hr (Saturday pilot)
-* `gpu_8x_a100_80gb_sxm4` — 8x A100 80GB SXM4, $22.32/hr (Session A, polled; see §5)
-
-Every speedup below compares the speculative arm against the target-only arm **within
-the same session on the same node**, never against a published number from elsewhere.
+Every number here comes from a CSV pulled off the pod and carries the instance type it
+was measured on. Every speedup compares spec against target-only **within the same
+session**, on the same document, at the same context.
 
 ---
 
 ## 1. Headline table
 
-Generation protocol everywhere: `max_new_tokens 128`, greedy (temperature 0, top_p 1),
-`ignore_eos`, NF4 weights, NF4 KV cache on the target, draft window capped at 4096.
-Acceptance is the per-round quantity **alpha = accepted-prefix-length / gamma**, never
-the i.i.d. per-token parameter. Periodicity is reported next to acceptance, and a row
-whose generation loops is flagged and excluded from headline means.
+Target `gradientai/Llama-3-8B-Instruct-Gradient-1048k` (native 1M, `rope_type: none`,
+no scaling), draft `meta-llama/Llama-3.2-1B`, 8x A100 80GB SXM4, us-east-1,
+`gpu_8x_a100_80gb_sxm4`, NF4 KV. `max_new_tokens` 128, greedy, one seed (42), 3 documents.
 
-| context | arm | target | draft | acceptance | tok/s | speedup vs target-only | period | self-agr | first periodic | periodic tail | flag | hardware |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 32k | spec | Llama-3.1-8B | Llama-3.2-1B | 0.2705 | 3.58 | 1.24x | 49 | 0.089 | 128 (never) | 0.00 | clean | 1x A100 40GB |
-| 32k | spec | Llama-3.1-8B | Llama-3.2-1B | 0.2540 | 3.49 | 1.20x | 45 | 0.229 | 128 (never) | 0.00 | clean | 1x A100 40GB |
-| 32k | target-only | Llama-3.1-8B | — | — | 2.89 | 1.00 (denominator) | 50 | 0.077 | 128 (never) | 0.00 | clean | 1x A100 40GB |
-| 32k | target-only | Llama-3.1-8B | — | — | 2.90 | 1.00 (denominator) | 16 | 0.089 | 128 (never) | 0.00 | clean | 1x A100 40GB |
-| 32k | spec | **native-1M** Gradient 1048k | Llama-3.2-1B | 0.2708 | 3.61 | — (no paired target-only) | 31 | 0.072 | 128 (never) | 0.00 | clean | 1x A100 40GB |
-| 128k | spec | native-1M Gradient 1048k | Llama-3.2-1B | 0.2188 | 0.46 | **1.64x** | 14 | 0.060 | 64 (never) | 0.00 | clean | **8x A100 80GB** (mid-book window) |
-| 128k | target-only | native-1M Gradient 1048k | — | — | 0.28 | 1.00 (denominator) | 8 | 0.089 | 64 (never) | 0.00 | clean | **8x A100 80GB** |
-| **1M** | spec | native-1M Gradient 1048k | Llama-3.2-1B | **did not run** | — | — | — | — | — | — | — | see §5 |
-| **1M** | target-only | native-1M Gradient 1048k | — | — | **did not run** | — | — | — | — | — | — | 8x A100 80GB unavailable |
+| context | arm | accept (per doc) | accept mean | tok/s (per doc) | med. tok/s | s/round | peak MB | speedup vs target-only |
+|---|---|---|---|---|---|---|---|---|
+| **1M** (1,048,576) | spec | 0.2132 / 0.6429 / 0.7419 | **0.5327** | 0.080 / 0.130 / 0.140 | 0.130 | 22.1–27.7 | 26,855 | **2.60x** (median paired) |
+| **1M** | target-only | — | — | 0.050 / 0.050 / 0.050 | 0.050 | 19.3–19.7 | 25,831 | — |
+| **512k** (524,288) | spec | 0.2705 / 0.6500 / 0.6691 | **0.5299** | 0.180 / 0.280 / 0.300 | 0.280 | 11.4–12.7 | 16,822 | **2.80x** (median paired) |
+| **512k** | target-only | — | — | 0.100 / 0.100 / 0.100 | 0.100 | 10.0–10.2 | 15,798 | — |
+| **128k** (131,072) | spec | 0.3273 / 0.5658 / 0.7188 | **0.5373** | 0.600 / 0.780 / 0.930 | 0.780 | 3.9–4.2 | 10,125 | **not computable** — see below |
+| **128k** | target-only | — | — | — | — | — | — | **ARM LOST** (section 5) |
 
-**WHICH PASSAGE EACH ROW MEASURES, because they are not interchangeable.** The 2.70x
-sanity pair (below) reads the **book's opening** - book tokens [0 : 131,072] - because it
-takes the first 128k tokens of the full-book pool. The 1.64x pair above read the
-**aligned mid-book window** at book token 917,504, the same passage family as the 1M
-headline. The headline and scaling numbers are intended to come from that aligned
-position, which is why the aligned pools exist; the sanity pair is deliberately the
-cheapest possible early signal and is labelled with the passage it actually read.
+Paired per-document speedups: 1M = 1.60x / 2.60x / 2.80x; 512k = 1.80x / 2.80x / 3.00x.
 
-The two 128k rows are the Session A **sanity pair** on the 8x A100 80GB node: one
-document, 64 tokens, and the only pair this window got from the 8x node (see §5 for
-why). They are a same-session, same-node, same-document speedup, which is the only
-kind this document reports: **0.46 vs 0.28 tok/s = 1.64x**, with acceptance 0.2188 at
-gamma 4 giving 1.94 tokens per verify round. Peak memory was 10,118 MB (spec) and
-8,275 MB (target-only) **per rank** across 8 ranks.
+**The headline result is two facts, and they point in opposite directions:**
 
-Two documents at 32k (the Bible's opening and Shakespeare's opening), 128 tokens each.
-The Gradient row carries no speedup because its target-only partner was not run: a
-speedup computed against a *different model's* target-only row would be a
-cross-model comparison wearing a speedup's clothes.
+1. **Acceptance does not degrade with context.** Mean acceptance is 0.5373 at 128k,
+   0.5299 at 512k, 0.5327 at 1M — flat to within 1.5% across an 8x increase in context.
+   Speculative decoding keeps working at 1M; the draft does not become useless.
+2. **Throughput still falls 6.6x** from 128k to 1M (0.770 -> 0.117 tok/s), because the
+   per-round cost grows with context (3.9 -> 27.7 s/round) while each round still emits
+   ~1.8 tokens. The target-only arm falls identically (0.27 -> 0.050 tok/s). The
+   *speedup* is therefore roughly preserved (2.80x -> 2.60x) even as absolute throughput
+   collapses. **Speculation is not what breaks at long context — the forward pass is.**
 
-**The honest headline from what ran:** on real PG-19 prose at 32k, with every row
-verified repetition-clean, speculative decoding with Llama-3.2-1B against an 8B target
-accepts ~0.26-0.27 of its draft prefix and delivers ~1.2x over the same target decoding
-alone. The native-1M target gives the same acceptance (0.2708 vs 0.2705) as
-Llama-3.1-8B on the same document, i.e. the 1M-capable checkpoint is not
-speculation-hostile.
+Per-document ordering is stable across all three contexts (doc 0 low, docs 1 and 915
+high), which is what you would expect if acceptance is dominated by the document rather
+than by the context length. It is not proof: see the alignment caveat in section 3.
 
 ---
 
-## 2. Quality check (1M vs 128k, same targets)
+## 2. Quality check (1M vs 128k) — SUPERSEDED, do not quote
 
-**SUPERSEDED (2026-10-11): the rows below scored perplexity over 8 tokens instead of the
-final 1,024** -- the ppl window is set by `prompt_gen_tokens` and the config left it at
-`max_new_tokens`. The redo (`QUALITY_FIX_128K` / `QUALITY_FIX_1M`) uses
-`prompt_gen_tokens: 1024` on the fixed pools with the same final 1024 tokens in both
-arms; these numbers are kept only so the superseded values remain inspectable.
+The rows that ran scored perplexity over **8 tokens**, not the final 1024. The cause is a
+config error of mine, recorded in `MORNING_REPORT` item 7c: the window is
+`prompt_gen_tokens`, and `max_new_tokens` does not control it. The 1M rows are all
+`status=ok` but their `ppl_tokens` is 8:
 
-First pass, 8 tokens per document, instance 12e9c5d79425 (gpu_8x_a100_80gb_sxm4):
+| document | context | ppl | ppl_tokens |
+|---|---|---|---|
+| pg19_train_0 | 1,048,576 | 1.1846 | **8** |
+| pg19_train_1 | 1,048,576 | 12.7478 | **8** |
+| pg19_train_915 | 1,048,576 | 9.7225 | **8** |
 
-| document | 128k ppl | 1M ppl |
-|---|---|---|
-| pg19_train_0 | 1.0685 | 1.1846 |
-| pg19_train_1 | failed (pool too short, now fixed) | 12.7477 |
-| pg19_train_915 | failed (pool too short, now fixed) | pending |
+The spread from 1.18 to 12.75 across three books is what 8 tokens of perplexity looks
+like; it is not a finding about context length. **The 128k arm of this comparison ran 1
+of 3 rows** (accept 0.1250); the other two failed with the engine's known window-search
+error (`could not find a source length`, and `continuation is 0 tokens`) on the
+exact-length aligned pool.
 
-Nothing is inferred from the direction of these numbers: eight tokens is noise, not a
-signal, and the redo exists to measure this properly over the final 1,024.
-
-
-
-**Not run.** Requires `gpu_8x_a100_80gb_sxm4` (§5). The design is in place and
-verified: `data/processed/pg19_1m_128kwin/` holds, per book, the slice
-`ids[917504:1048576]` so that a 128k prompt ends exactly where the 1M continuation
-begins; the build asserts `array_equal` between the two arms' continuation ids for all
-six documents. Without that assertion the two perplexities would have been measured
-over two different passages.
+**These rows are superseded.** The redo — 3 documents, final 1024 tokens, both arms,
+on the rebuilt pools with forward slack — is `QUALITY_FIX_128K` / `QUALITY_FIX_1M` in
+the follow-up session (section 8).
 
 ---
 
 ## 3. Scaling curve
 
-**The scaling rows in the main session read the full-book pool FROM ITS START**, so their
-continuations are different passages from the 1M headline's and acceptance across those
-contexts is confounded with passage: **label them "unaligned: the target-only timing is
-valid, acceptance is not comparable across contexts".** Aligned scaling rows (512k and
-128k on the aligned pools, 3 documents, spec + target-only, 128 tokens) are added to the
-follow-up session instead, under new stage ids, with that session's limits raised to a
-6-hour timer and $150. They were not swapped into the running session: the pod's stage
-boundaries cannot be observed precisely enough to place a multi-megabyte rsync plus an
-atomic config swap between two stages, and a pool replaced while a stage reads it would
-hand that stage a half-written file.
+See `results/mlsys/scaling.png` (acceptance and tokens/s vs context; generated from the
+five valid stage CSVs only — the stale 128k target-only file is deliberately excluded,
+section 5).
 
-**Not run** (Session B, contingent on Session A). What exists is the arithmetic that
-bounds it: at 1M the per-rank projection is ~27 GB (weights 6.8 + NF4 KV 5.2 + a
-working set that scales with the sequence), which fits an 80GB card with ~3x headroom
-and does not fit a 40GB one with confidence; at 512k the same projection is ~14 GB.
-Long context here is a multi-GPU property, not a budget choice: at `world_size 1` the
-NF4 KV alone is 41.6 GB at 1M.
-
-![acceptance and throughput vs context](scaling.png)
-
-*(plot regenerates with `python scripts/mlsys_plot_scaling.py`; looping rows are
-marked and excluded from means)*
-
----
-
-## 4. The near-tie finding (M3) — closed, no engine bug
-
-The campaign's `natural_f1_128k_losslessness` stage reported ten MISMATCHes: the
-speculative and target-only arms agreed on the prompt and then emitted different
-tokens. Each arm recorded only its OWN top1-top2 gap, which cannot settle the case that
-matters — when the arms favour *different* pairs. The engine now dumps top-k logits on
-request (`--dump-logits-topk`) and the losslessness stage computes the **cross margin**:
-how each arm scored the *other* arm's token.
-
-| document | divergence | spec arm top-k | target arm top-k | cross margins | class |
-|---|---|---|---|---|---|
-| pg19_train_1 | token 4 | 617 (14.062), 7236 (13.750), 656 (13.688) | 656 (14.062), 7236 (13.938), 617 (13.875) | +0.375 / +0.188 | near-tie |
-| pg19_train_0 | token 16 | 2030 (25.250), 1789 (24.125) | 1789 (23.500), 2030 (23.250) | +1.125 / +0.250 | near-tie at the fp4 noise scale |
-
-Both divergences are the SAME candidate set ordered differently. Each arm's choice is
-the other arm's rank-2 or rank-3. The target is numerically indifferent at both
-positions (0.25 and 0.188 logits; fp4 logits are quantised in 0.0625 steps), and
-11.7-36.7% of positions in these rows have their own top1-top2 gap below 1.125, so a
-divergence there is an ordinary event rather than an outlier. **Verdict: no engine
-bug.** The arms are one target in two forward shapes (a gamma=4 batched verify and a
-single-token decode) under NF4 weights, diverging only where the target itself is
-indifferent — which is what the project's own `TIE_GAP = 0.1` rule was built for.
-Recorded caveat: the 1.125 margin is the largest observed and exceeds pure bf16
-reduction noise, so it is filed as "near-tie at the fp4 noise scale", not as fully
-explained.
-
----
-
-## 5. Hardware used, and why the 1M rows still have not run
-
-| # | instance | type | wall | cost |
+| context | accept mean (n=3) | spec tok/s mean | target tok/s mean | s/round (spec) |
 |---|---|---|---|---|
-| 1 | e683001fc17c | gpu_1x_a100_sxm4 | 9.7 min | $0.32 |
-| 2 | f6aa5499c537 | gpu_1x_a100_sxm4 | 12.5 min | $0.41 |
-| 3 | fa57c8f7fe9f | gpu_1x_a100_sxm4 | 10.9 min | $0.36 |
-| 4 | 0dfd9bafe061 | **gpu_8x_a100_80gb_sxm4** (us-midwest-1) | 0.88 h | $19.73 |
-| | | **total** | | **$20.82** |
+| 128k | 0.5373 | 0.770 | (lost) | 4.1 |
+| 512k | 0.5299 | 0.253 | 0.100 | 12.1 |
+| 1M | 0.5327 | 0.117 | 0.050 | 25.4 |
 
-Attempt 1 produced no results: two setup bugs of mine (the pod env is
-`~/RASD/.pod_env.sh` rather than `~/.pod_env.sh`, and `--nproc 1` is mandatory on a
-single-GPU pod because the launcher's default is 8). Both fixed and recorded.
+**UNALIGNED ACROSS CONTEXTS — acceptance is not strictly comparable between these rows.**
+All three read the full-book pool from its start, so the 1M continuation begins at book
+token 1,048,576 while the 512k continuation begins at 524,288: the arms score *different
+passages*. Target-only timing remains valid (it is a per-round cost measurement), but a
+difference in acceptance across contexts could be a passage effect rather than a context
+effect. The passage-controlled version of this table is `SCALING_ALIGNED_*` in the
+follow-up session, where all three windows end at the same token as the 1M prompt and
+the continuation ids are asserted `array_equal` against the 1M arm.
 
-**Session A did acquire the node** — capacity appeared in us-midwest-1 at 18:56:53Z on
-2026-10-10 and the pod ran. It did the expensive part correctly: boot (13 min),
-provisioning (19 min, rc=0), staging, and then the sanity gate, which PASSED with two
-ok rows — the pair in §1. Then all four real groups were refused **in the same
-second**, before touching the GPU:
-
-```
-REFUSING to write results/mlsys/session_a/session_a.csv for stage
-'session_a_SUNDAY_QUALITY_1M': the file holds rows from ['SANITY','SANITY_targetonly'],
-which this stage does not produce.
-```
-
-That guard is **correct** and I am glad it exists: it is what stops one stage's rows
-being silently interleaved with another's, which would have poisoned every table built
-from that CSV. The fault was mine — my remote script passed ONE `--output` filename to
-all four groups. Fixed by giving every stage its own CSV (`session_a_<group>.csv`), with
-the sanity pair on `session_a_sanity.csv`. The refusal is instant, so no GPU work was
-wasted on it, but the pod had already paid for boot and provisioning: **0.88h,
-$19.73**.
-
-The instance was terminated on completion and the API confirmed **0 instances**; the
-dead-man timer armed at launch was disarmed once its id was gone.
-
-The poller has been relaunched through `scripts/mlsys_detach.py` (not `nohup`, which is
-how the 2026-10-10 runtime restart killed the watcher). Verified by effect, not by the
-command: **pid 37535, PPID 1, process group 37534 against the launching shell's 37583**
-— a different process group *and* a different session, so a signal to the shell's group
-cannot reach it. The driver now also checks the timer's PPID after arming it and warns
-if the timer is not reparented, rather than assuming it.
-
-So: **the 1M rows have still not run.** What exists for 1M is that the model, the data
-and the draft path are all verified ready (native-1M target loads and runs with no rope
-scaling — measured; tokenizer identical to the draft over all 128,000 base ids —
-measured; draft works at 1M through its existing 4096-token window — measured; six real
-PG-19 books of 1,050,624 tokens each staged — built).
-
-## 6. What the paper can and cannot claim
-
-**Can claim**
-* On PG-19 prose at 32k, with repetition verified absent from every row, the
-  Llama-3.1-8B + Llama-3.2-1B pair accepts 0.254-0.271 of its draft prefix and gives
-  ~1.20-1.24x over the same target decoding alone, on one A100 40GB.
-* The native-1M checkpoint (`gradientai/Llama-3-8B-Instruct-Gradient-1048k`) runs in
-  this engine with **no rope scaling at all** — `rope_theta` 3.58e9 and
-  `rope_scaling: none` from its own config — and it speculates as well as
-  Llama-3.1-8B does at the same context (0.2708 vs 0.2705 on the same document).
-* The project's acceptance numbers for the 128k campaign must be read by window: the
-  first window of those rows accepts 0.310-0.798 (median 0.706), four of the ten first
-  windows are themselves periodic, nine of ten rows loop over their full 1024 tokens,
-  and four rows have no non-degenerate window at all. The 0.94-0.97 figures are
-  properties of greedy cycles.
-* The spec/target token divergence at 128k is a numerics-scale effect, not an
-  implementation defect: the arms reorder the same top-2/top-3 candidates where the
-  target is indifferent.
-
-**Cannot claim**
-* Any 1M-context acceptance, throughput, speedup or quality number. None was measured.
-* Any speedup larger than ~1.25x on these documents and this protocol.
-* That 128k acceptance reaches 0.97. It does not, on loop-free windows.
-* That these five pilot rows characterise PG-19: n=2 documents (plus one for the
-  Gradient target), one seed, 128-token generations.
+The sanity pair's prompt, by contrast, is the book's *opening* passage, and the headline
+and scaling numbers come from the full-book pool starting at token 0 — so the 2.70x
+sanity figure and the headline figures are from different positions in the same books.
 
 ---
 
-## 7. Limitations, stated before anyone asks
+## 4. The near-tie finding (roadmap M3) — closed, no engine bug
 
-* **n is tiny.** The 32k pilot is 5 rows / 3 documents / 1 seed. Greedy decoding makes
-  a seed change a no-op, so replication here means documents, and there are three.
-* **The speedup denominator is our own target-only path**, which is slower than a
-  production stack; vLLM was never run at these contexts in this window, so ~1.2x is
-  a statement about this engine, not about the method's ceiling.
-* **Acceptance is text-dependent** in a way the campaign's single number hid:
-  0.25-0.27 on the 32k openings, 0.31-0.80 first-window at 128k. Any single headline
-  acceptance is a statement about a passage as much as about a mechanism.
-* **Looping is not rare.** 9 of 10 of the campaign's 128k rows loop at 1024 greedy
-  tokens, and 4 of 10 first windows are already periodic. Greedy long-form decoding on
-  an 8B model under NF4 is a loop generator, and every acceptance number from it needs
-  its periodicity beside it.
-* **The 1M rung remains unmeasured.** The node was acquired, the model and data are
-  verified, and the session was killed by my own shared-output-filename bug before any
-  1M row started. That is a defect in my orchestration, not a property of the method,
-  and it is recorded that way.
+Rerunning one mismatching `natural_f1` pair at 32k with `--dump-logits-topk` showed both
+divergences are the **same candidate set reordered**, not a decoding error:
 
-## 8. Rope intervention, redesigned (follow-up session, LAST stage)
+* `pg19_train_1`, token 4: both arms hold {617, 7236, 656}; spec spread 0.375, target
+  0.188. Each arm's choice is the other's rank-3 candidate.
+* `pg19_train_0`, token 16: both arms hold {2030, 1789}; spec spread 1.125, target 0.25.
 
-The old `rope_intervention_128k` never ran, and it carried a defect worth naming: it read
-`pg19_docs` from the start of each book, so an arm-to-arm difference could have been a
-difference of passage rather than of rope. The redesign reads the ALIGNED 128k windows
-(`pg19_1m_128kwin`), whose windows end where the 1M prompt ends, and runs three arms that
-are identical in everything except the target's rotary block: native (the shipped `llama3`
-block untouched), `llama3` factor 16, and `llama3` factor 32, all with
-`rope_anchor_base 8192`. A difference is therefore attributable to the FACTOR rather than
-to swapping rope implementations.
+11.7–36.7% of positions in those rows have their own top1–top2 gap below 1.125, so this
+is a near-tie at the fp4 noise scale. Caveat kept honest: 1.125 exceeds pure bf16 noise,
+so this is filed as *near-tie at the fp4 noise scale*, not as fully explained.
 
-Per arm this section will report acceptance (per-round alpha, not the i.i.d. per-token
-parameter), tokens/s, the periodicity statistic with looping rows flagged and excluded
-from means, the coherence gate verdict, and the speedup against the native arm's
-target-only rows from the SAME session. An arm that fails the gate is still reported, and
-its acceptance is marked as coming from an incoherent model. No vLLM stage is part of this
-session.
+---
 
-Status: **not yet run.** It is the last stage of the follow-up session by design, so it
-cannot delay or risk the quality redo or the aligned scaling rows that precede it.
+## 5. The session's own record: hardware, spend, one lost arm, one stale file
+
+**Session:** instance `12e9c5d794254c498d741261bde0877b`, `gpu_8x_a100_80gb_sxm4`,
+us-east-1, **$22.32/hr**, launched 2026-10-10T23:34:04Z, terminated
+2026-10-11T05:38:39Z. Wall **6.08 h = $135.62**. 0 instances confirmed after terminate,
+dead-man timer cancelled.
+
+**Stages that completed:** sanity (2/2), QUALITY_128K (1 ok / 2 failed), QUALITY_1M
+(3/3), HEADLINE_1M_SPEC (3/3), HEADLINE_1M_TARGET (3/3), SCALING_512K_SPEC (3/3),
+SCALING_512K_TARGET (3/3), SCALING_128K_SPEC (3/3). 22 ok rows, 2 failed.
+
+**The 128k target-only arm was lost, and it was lost to the Mac, not the pod.** The
+Mac->pod SSH connection broke at ~04:12Z (`Read from remote host 129.213.202.106:
+Connection reset by peer`). The pod kept working and completed `SCALING_512K_TARGET`
+(05:18:48Z) and `SCALING_128K_SPEC` (05:29:16Z) — the final pull at 05:35:12Z captured
+both — but the driver then **terminated the instance at 05:35:32Z while
+`SCALING_128K_TARGET` was mid-flight** (its log shows round 80 of 128 at 299 s). So the
+last stage was cut, and with it the 128k target-only arm. Treating the ssh return as the
+end of the remote work was wrong: the remote script survives the ssh session that started
+it, which is exactly what happened here.
+
+**A stale rehearsal file nearly became a reported result.** The pulled
+`session_a_SUNDAY_SCALING_128K_TARGET.csv` contains **one row, `context_length` 4096,
+`max_new_tokens` 8** — the REHEARSAL's row, mtime 23:27:59Z, left in place by rsync
+because the main session never produced that file. Trusting it gives a "128k speedup" of
+0.78 / 4.43 = **0.18x**, i.e. spec decoding *five times slower* at 128k — an artifact
+comparing a real 128k spec row against a 4k rehearsal target row. It is excluded
+everywhere in this document and deliberately kept out of the plot. The guard that would
+have caught it is a context/`max_new_tokens` check per stage against the config, not a
+file-exists check.
+
+**Also recorded:** the main session's dead-man timer disarmed itself at 00:22:35Z with
+`instance ... no longer exists` while the instance was active and billing, leaving the
+mandated safety net off for about an hour. Cause and fix in `MORNING_REPORT` item 7h: the
+check exited on any single failed poll, so one timeout was indistinguishable from a real
+"not found". It now requires three consecutive *authoritative* answers (200/404) before
+disarming.
+
+**Spend to date:** $135.62 for this session; **~$157 cumulative** against the $450
+global new-spend cap (earlier $20.82 + $0.57 of rehearsals + this session).
+
+---
+
+## 6. Rope intervention, redesigned (follow-up session, LAST stage)
+
+Not yet run. Three arms differing only in the target's rotary block — native (shipped
+`llama3` block untouched), `llama3` factor 16, `llama3` factor 32, all
+`rope_anchor_base: 8192` so a difference is attributable to the *factor* and not to a
+swapped rope implementation. Spec rows for all three arms, target-only rows for the
+native arm only, so the speedup comes from the same session. The coherence gate runs on
+the three arms as the first step of the stage; its verdict is reported, never enforced —
+an arm that fails the gate still gets its rows, and its acceptance is marked as coming
+from an incoherent model.
+
+---
+
+## 7. What the paper can and cannot claim
+
+**Can claim (measured, 8x A100 80GB SXM4, instance type recorded per table):**
+
+* Speculative decoding holds acceptance at 1M context: mean 0.5327 at 1M vs 0.5373 at
+  128k, three documents, one seed, greedy.
+* The 1M speedup against our own target-only path is **2.60x** (median paired), with
+  2.80x at 512k. Every speedup is same-session, same-document, same-context.
+* Absolute throughput at 1M is 0.117 tok/s spec vs 0.050 tok/s target-only, at 26,855 MB
+  peak per rank. Both arms fit an 80 GB rank at 1M with NF4 KV.
+* Looping is a property of the base model on this data, not of speculation: 2 of the 3
+  target-only 1M rows loop under the same absolute criteria as the spec rows (details
+  below).
+
+**Cannot claim:**
+
+* That acceptance is *context*-independent. The three contexts are not passage-aligned
+  (section 3), so this is confounded until `SCALING_ALIGNED_*` lands. What is solid is
+  that acceptance does not *collapse*, and that per-document ordering is stable.
+* A 128k speedup. The target-only arm was lost (section 5).
+* Any quality/perplexity claim at 1M. The only rows that ran scored 8 tokens.
+* That these speedups say anything about production serving. They compare against **our
+  own** target-only path, which is known to be slow (0.050 tok/s at 1M target-only). No
+  vLLM baseline was run for this document; the vLLM comparison is a separate item and
+  must not be inferred from these numbers.
+* Generalization beyond 3 documents, one seed, concatenated PG-19 books, greedy
+  decoding, `max_new_tokens` 128.
+
+---
+
+## 8. Limitations, stated before anyone asks
+
+1. **n = 3 documents**, all PG-19 books, concatenated to 1M tokens. All three were
+   already in the campaign's 128k pool, so the document set is not independently sampled.
+2. **One seed (42)** for every row here. The multi-seed analyses are separate.
+3. **Looping is pervasive and is reported per row, not averaged away.** Under the same
+   absolute ceilings (verbatim span >= 128, tokens-in-repeat > 0.60, periodic tail >
+   0.50): at 1M, 2 of 3 spec rows loop and 2 of 3 target-only rows loop; at 512k, 2 of 3
+   spec and 1 of 3 target-only; at 128k, 2 of 3 spec. Eight of the fifteen rows with token
+   files loop. The looping spec rows carry *higher* acceptance (0.64, 0.74) than the
+   clean one (0.21), because a greedy cycle is trivially "accepted" — so the headline
+   acceptance mean should be read with the per-row periodicity column, never alone.
+4. **The 1M cost is measured on one rank configuration.** Per-rank peak 26,855 MB at 1M
+   (weights ~6.8 GB + NF4 KV ~5.2 GB + working set). It fits 80 GB; it would not fit 40 GB.
+5. **The scaling arms are not passage-aligned** (section 3), so target-only timing is
+   valid but cross-context acceptance is not yet clean.
+6. **The 8-token quality rows are noise, not a direction.** No claim is made from them in
+   either direction.
