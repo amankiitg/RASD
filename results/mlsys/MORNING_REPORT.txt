@@ -20,7 +20,17 @@ MLSys CAMPAIGN — MORNING REPORT
 #     the pod (so the pod ran nproc 8 on one GPU), it did not wait for sshd
 #     before provisioning (7 probe checks failed on an ssh timeout), and it did
 #     not stop when provisioning failed.
-#  7. Spend to date: $20.82 + ~$0.5 rehearsal + the live session at $22.32/hr.
+#  7. Spend to date: $20.82 + ~$0.6 rehearsal + the live session at $22.32/hr.
+#  7b. Sanity pair TONIGHT: acceptance 0.5250, spec 0.73 vs target-only 0.27 tok/s =
+#     2.70x, and BOTH rows are repetition-CLEAN (first periodic token 64 = never,
+#     periodic tail 0.00). It differs from the 18:56Z pair (0.2188, 1.64x) because that
+#     sanity read the ALIGNED MID-BOOK window and this one reads the BOOK'S OPENING:
+#     same run_id, same models, same context, DIFFERENT prompt_sha256. Neither loops.
+#  7c. Quality redo is built and locally validated (configs/mlsys_quality_fix.yml, new
+#     stage ids QUALITY_FIX_128K/_1M, prompt_gen_tokens 1024, fixed pools) and will run
+#     as a 3-hour quality-only 8x session AFTER the main session ends, rehearsed first
+#     on one 1x A100. It cannot run now: the driver terminates when its remote script
+#     returns, so running after step (e) would race that terminate.
 #  8. Protocol: 128 tokens (64 for sanity), greedy, periodicity reported per row;
 #     looping rows are flagged and excluded from headline means.
 #  9. Progress is folded into this file after every 4-minute pull, from numbers
@@ -3490,3 +3500,85 @@ with it.
 
 Neither fix was applied to the running session: the rule is that a file a running job
 reads is not edited, and the running job's priority is the HEADLINE rows.
+
+## ITEM 1 - WHY 0.2188/1.64x AT 18:56Z AND 0.5250/2.70x TONIGHT, SAME-LOOKING ROW
+
+They are NOT the same row. Same run_id, same target, same draft, same document, same
+context, same 64 tokens - and a DIFFERENT PROMPT PASSAGE.
+
+  field                 18:56Z session                     tonight
+  pool                  pg19_1m_128kwin (exact slice)      pg19_1m (full book)
+  window read           book tokens [917,504 : 1,048,576]  book tokens [0 : 131,072]
+                        i.e. MID-BOOK                      i.e. THE BOOK'S OPENING
+  prompt_tokens         131,007                            131,007
+  prompt_sha256         ec596f0e65b28b3b...                d6372c1ecb17fff8...
+  draft_window_cap      4096                               4096
+  max_new_tokens        64                                 64
+  acceptance            0.2188                             0.5250
+  tok/s spec            0.46                               0.73
+  tok/s target-only     0.28                               0.27
+  ratio                 1.64x                              2.70x
+
+PERIODICITY, both spec rows, measured now from the pulled sidecars:
+  18:56Z  period 14  self-agreement 0.060  first periodic token 64 (never)  tail 0.00
+          tokens-in-repeat 0.00  longest repeated span 3   -> CLEAN
+  tonight period 12  self-agreement 0.250  first periodic token 64 (never)  tail 0.00
+          tokens-in-repeat 0.00  longest repeated span 9   -> CLEAN
+
+So neither row loops, and 2.70x is quotable - with its real caveats: 64 tokens, one
+document, and one PASSAGE. The engine is not the difference (no src/ or
+run_experiment.py change was staged between the two launches; between 18:56Z and 23:41Z
+I changed only scripts, configs, docs and data). draft_window_cap and max_new_tokens are
+identical. What differs is the text: the Bible's opening is front matter and formulaic
+prose, its mid-book window is narrative. That is the same text-dependence the 128k
+analysis found (acceptance 0.31-0.80 across documents), now visible within ONE document.
+
+## ITEM 2 - WHICH POOL DO THE SCALING 128K ROWS READ? (no pod change needed)
+
+  SUNDAY_SCALING_128K_SPEC    ctx 131072  pool data/processed/pg19_1m/documents.json
+  SUNDAY_SCALING_128K_TARGET  ctx 131072  pool data/processed/pg19_1m/documents.json
+  SUNDAY_QUALITY_128K         ctx 131072  pool data/processed/pg19_1m_128kwin/...
+  SUNDAY_HEADLINE_1M_SPEC     ctx 1048576 pool data/processed/pg19_1m/documents.json
+
+The scaling rows read the FULL-BOOK pool, whose documents are 1,050,624 tokens, so they
+have 900k+ tokens of slack and CANNOT hit "continuation is 0 tokens". Only
+SUNDAY_QUALITY_128K reads the aligned pool. NO replacement was made on the pod: there is
+nothing to replace for the scaling rows, and touching the pod mid-run was not needed.
+The aligned pool is fixed on the Mac (133,120 tokens, 8,192 slack, array_equal verified)
+for the redo.
+
+## ITEM 3 - QUALITY REDO: SET UP, AND WHAT IS STILL TO RUN
+
+Built and validated locally:
+  configs/mlsys_quality_fix.yml            QUALITY_FIX_128K (3 docs, aligned pool) and
+                                           QUALITY_FIX_1M (3 docs, full-book pool), both
+                                           with prompt_gen_tokens 1024 -> CSVs
+                                           session_a_QUALITY_FIX_128K.csv and
+                                           session_a_QUALITY_FIX_1M.csv, new stage ids.
+  configs/mlsys_quality_fix_rehearsal.yml  the same group names, stage ids and paths at
+                                           4096/8192 context, prompt_gen_tokens 64, 1 doc.
+  the remote script now DERIVES ITS STEP LIST FROM THE CONFIG, in file order. A
+  hardcoded list meant a different config could not be run by the same script without
+  editing it - and that script is what a running session's pod reads. Verified locally:
+  mlsys_sunday_1m.yml -> the eight SUNDAY_* groups; mlsys_quality_fix.yml ->
+  QUALITY_FIX_128K QUALITY_FIX_1M -> CSVs session_a_QUALITY_FIX_128K.csv and
+  session_a_QUALITY_FIX_1M.csv. `run_experiment.py --dry-run` plans 6 runs for the fix
+  config and 2 for its rehearsal twin.
+
+Why the preferred route (on THIS instance after step e) was NOT taken: the running
+driver terminates unconditionally the moment its remote script returns, so running
+anything after step (e) means racing that terminate inside a window of about a minute,
+and the alternative - editing the driver now - is forbidden while it runs. The operator
+allowed the fallback in exactly this case.
+
+Fallback, to run once the main session ends (the driver refuses to launch while an
+instance exists, which is why it cannot start now):
+  1. rehearse the quality-only path on one 1x A100, 60-minute detached timer, at most $2
+  2. then: SESSION_CFG=configs/mlsys_quality_fix.yml SESSION_TYPE=gpu_8x_a100_80gb_sxm4
+     TIMER_MIN=180 SESSION_CAP=75, sanity config as usual, same driver.
+
+## ITEM 4 - SUPERSEDING LABELS
+
+RESULTS_OCT.md now marks the 8-token quality rows as SUPERSEDED pending the redo, and
+states what the redo must show: 1M vs 128k perplexity per document over the SAME final
+1024 tokens.

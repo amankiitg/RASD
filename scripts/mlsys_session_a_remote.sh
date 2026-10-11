@@ -103,16 +103,27 @@ if [ "${SAN:-0}" -lt 2 ]; then
 fi
 
 # ------------------------------------- (b) quality, (c) headline, (d) scaling ---
+# THE STEP LIST COMES FROM THE CONFIG, in file order. A hardcoded list meant a
+# different config (the quality-only redo) could not be run by this same script without
+# editing it -- and this script is the one thing a running session's pod is reading.
+# Deriving the list keeps ONE tested script for every session shape.
+STEPS=$("$PY" - "$CFG" <<'PYEOF'
+import sys
+try:
+    import yaml
+    cfg = yaml.safe_load(open(sys.argv[1]))
+except Exception as e:                                      # noqa: BLE001
+    print(f"# could not read {sys.argv[1]}: {e}", file=sys.stderr)
+    sys.exit(0)
+for k in cfg:
+    if k not in ('defaults', 'canary'):
+        print(k)
+PYEOF
+)
+log "steps from $CFG: $(echo $STEPS | tr '\n' ' ')"
 prev=0
-for step in "SUNDAY_QUALITY_128K:3600" \
-            "SUNDAY_QUALITY_1M:7200" \
-            "SUNDAY_HEADLINE_1M_SPEC:28800" \
-            "SUNDAY_HEADLINE_1M_TARGET:21600" \
-            "SUNDAY_SCALING_512K_SPEC:14400" \
-            "SUNDAY_SCALING_512K_TARGET:14400" \
-            "SUNDAY_SCALING_128K_SPEC:7200" \
-            "SUNDAY_SCALING_128K_TARGET:7200"; do
-  name=${step%%:*}; tmo=${step##*:}
+for name in $STEPS; do
+  tmo=21600
   if [ "$prev" != "0" ]; then
     log "SKIP $name: the previous stage failed, so the chain stops here"
     continue

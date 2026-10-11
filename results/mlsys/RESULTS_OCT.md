@@ -57,6 +57,27 @@ speculation-hostile.
 
 ## 2. Quality check (1M vs 128k, same targets)
 
+**SUPERSEDED (2026-10-11): the rows below scored perplexity over 8 tokens instead of the
+final 1,024** -- the ppl window is set by `prompt_gen_tokens` and the config left it at
+`max_new_tokens`. The redo (`QUALITY_FIX_128K` / `QUALITY_FIX_1M`) uses
+`prompt_gen_tokens: 1024` on the fixed pools with the same final 1024 tokens in both
+arms; these numbers are kept only so the superseded values remain inspectable.
+
+First pass, 8 tokens per document, instance 12e9c5d79425 (gpu_8x_a100_80gb_sxm4):
+
+| document | 128k ppl | 1M ppl |
+|---|---|---|
+| pg19_train_0 | 1.0685 | 1.1846 |
+| pg19_train_1 | failed (pool too short, now fixed) | 12.7477 |
+| pg19_train_915 | failed (pool too short, now fixed) | pending |
+
+Even at 8 tokens the direction is worth recording: on `pg19_train_0` the SAME tokens are
+less predictable with 1M of context than with 128k (+10.9%), which is the opposite of the
+usual "more context is better" prior and is exactly the kind of claim the redo exists to
+test properly.
+
+
+
 **Not run.** Requires `gpu_8x_a100_80gb_sxm4` (§5). The design is in place and
 verified: `data/processed/pg19_1m_128kwin/` holds, per book, the slice
 `ids[917504:1048576]` so that a 128k prompt ends exactly where the 1M continuation
