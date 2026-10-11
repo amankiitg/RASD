@@ -561,7 +561,13 @@ def generation_metrics(text: str, new_ids: list[int], eos_id) -> dict:
         # token 12 of 200 is a short answer, an EOS at token 5 is a dead model.
         "early_eos": early is not None and early < CATASTROPHIC_EOS_TOKENS,
         "eos_at": early if early is not None else "",
-        **out_rep,
+        # The repetition and periodicity fields. This was `**out_rep` -- a name left
+        # behind by a rename that never existed, so EVERY candidate came back
+        # `status=error, NameError: name 'out_rep' is not defined` after its generation and
+        # ppl had already been measured. The 2026-10-11 rehearsal caught it: the gate had
+        # reported a verdict in earlier runs, so a silently-erroring gate looked like a
+        # gate with nothing to say.
+        **rep,
         # The reasons, as text, so the CSV says WHY a row is degenerate and not
         # merely that it is.
         "gen_degenerate_reasons": "; ".join(rep_reasons(rep)),

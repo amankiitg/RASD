@@ -234,3 +234,39 @@ def test_every_declared_positive_control_named_in_the_manifest_exists():
               line.split("[", 1)[1].rstrip("]").split(",")]
     missing = [n for n in listed if n not in names]
     assert not missing, f"{missing} are listed as positive controls but absent"
+
+
+# --------------------------------------------------------------------------
+# generation_metrics: the function that turns a continuation into the gate's
+# per-candidate fields. It had NO test coverage at all, which is how a
+# `NameError: name 'out_rep' is not defined` shipped: a leftover name from a
+# rename raised for EVERY candidate, after its generation and perplexity had
+# already been measured, and the gate recorded status=error on all three arms.
+# A gate that errors on every arm looks exactly like a gate with nothing to
+# report, so the rehearsal found it only because it checks for ok rows per arm.
+# --------------------------------------------------------------------------
+
+def test_generation_metrics_returns_the_repetition_fields():
+    """The call itself is the assertion: this raised NameError before the fix."""
+    gate = _load_gate()
+    m = gate.generation_metrics("the quick brown fox jumps", [1, 2, 3, 4, 5, 6], 2)
+    for k in ("gen_chars", "gen_blank_share", "gen_repeat_share", "early_eos",
+              "rep_period", "rep_period_agreement", "rep_first_periodic_token",
+              "rep_periodic_tail_share", "rep_degenerate", "gen_degenerate_reasons"):
+        assert k in m, f"{k} missing from generation_metrics: {sorted(m)}"
+
+
+def test_generation_metrics_names_a_greedy_loop():
+    gate = _load_gate()
+    ids = list(range(20)) + [7, 8, 9, 10] * 20          # 80 tokens of a period-4 cycle
+    m = gate.generation_metrics("x " * 80, ids, 2)
+    assert m["rep_period"] == 4, m["rep_period"]
+    assert m["rep_degenerate"] is True, m
+    assert m["gen_degenerate_reasons"], "a degenerate row must say WHY"
+
+
+def test_generation_metrics_passes_a_non_repeating_continuation():
+    gate = _load_gate()
+    ids = [(i * 7919) % 32000 for i in range(64)]       # no short cycle
+    m = gate.generation_metrics("a distinct sentence with varied words", ids, 2)
+    assert m["rep_degenerate"] is False, (m["rep_period"], m["gen_degenerate_reasons"])

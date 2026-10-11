@@ -158,6 +158,14 @@ ROPE_SAMP_NATIVE_SPEC:
   factor: context_length
   levels:
   - id: ROPE_SAMP_NATIVE_SPEC
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
     context_length: 4096
     documents:
     - pg19_train_0
@@ -172,6 +180,14 @@ ROPE_SAMP_F16_SPEC:
   factor: context_length
   levels:
   - id: ROPE_SAMP_F16_SPEC
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
     context_length: 4096
     documents:
     - pg19_train_0
@@ -188,6 +204,14 @@ ROPE_SAMP_F32_SPEC:
   factor: context_length
   levels:
   - id: ROPE_SAMP_F32_SPEC
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
     context_length: 4096
     documents:
     - pg19_train_0
@@ -204,6 +228,14 @@ ROPE_SAMP_NATIVE_TARGET:
   factor: context_length
   levels:
   - id: ROPE_SAMP_NATIVE_TARGET
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
     context_length: 4096
     documents:
     - pg19_train_0

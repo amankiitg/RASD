@@ -244,14 +244,19 @@ fi
 # appeared in the argv of every process involved and in `ps`. Piping it into `cat` on the
 # pod keeps it out of argv on both machines; the file is 600 and the remote script reads it
 # from there. Only the byte count is ever logged.
+# THE POD'S HOME, not ~/RASD/. The first version wrote ~/RASD/.hf_token before staging,
+# which fails: ~/RASD is created by the provisioning rsync that runs a step later. The
+# rehearsal caught it on the first try and the driver refused and terminated cleanly ($0.25
+# spent). $HOME exists as soon as sshd does, and it is OUTSIDE the repo, so the file can
+# never be swept into a pull or a commit.
 say "--- hf token to pod (via stdin, mode 600) ---"
 if grep -E '^[[:space:]]*HF_TOKEN[[:space:]]*=' runpod_creds.md 2>/dev/null \
      | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]' \
      | timeout 120 ssh $SSH_OPTS "$SSH_USER@$IP" \
-       'umask 077; cat > ~/RASD/.hf_token && chmod 600 ~/RASD/.hf_token && wc -c < ~/RASD/.hf_token' >>"$LOG" 2>&1; then
-  say "token file written: $(tail -1 "$LOG") bytes"
+       'umask 077; cat > ~/.hf_token && chmod 600 ~/.hf_token && wc -c < ~/.hf_token' >>"$LOG" 2>&1; then
+  say "token file written to ~/.hf_token: $(tail -1 "$LOG") bytes"
 else
-  say "FATAL: could not write ~/RASD/.hf_token; refusing to start a session that will fail on gated repos"
+  say "FATAL: could not write ~/.hf_token; refusing to start a session that will fail on gated repos"
   exit 9
 fi
 
@@ -363,7 +368,7 @@ say "incremental puller pid=$POLLER_PID (every 240s)"
 # dead-man timer's window less a margin, so the timer never races us), or on a fatal error.
 PODOUT="RASD/$SESSION_OUT"
 say "--- launching the remote session DETACHED on the pod ---"
-START_CMD="cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' bash scripts/mlsys_session_a_remote.sh >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' bash scripts/mlsys_session_a_remote.sh >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; now polling for the DONE marker, not for this shell"
 
@@ -376,12 +381,22 @@ while :; do
     break
   fi
   POLL_OUT=$(timeout 90 ssh $SSH_OPTS -o ConnectTimeout=20 "$SSH_USER@$IP" \
-    "if [ -s $PODOUT/DONE ]; then echo MARKER \$(cat $PODOUT/DONE | tr '\n' ' '); else echo PENDING; fi" 2>/dev/null)
+    "if [ -s $PODOUT/DONE ]; then echo MARKER \$(cat $PODOUT/DONE | tr '\n' ' '); \
+     elif pgrep -f mlsys_session_a_remote.sh >/dev/null; then echo RUNNING; \
+     elif [ -s $PODOUT/remote_stdout.log ]; then echo DIED; else echo NOPROC; fi" 2>/dev/null)
   PRC=$?
   case "$POLL_OUT" in
-    MARKER*) DONE_SEEN="${POLL_OUT#MARKER }"; say "DONE marker: $DONE_SEEN"; break ;;
-    PENDING) say "remote still working ($(date -u +%FT%TZ))" ;;
-    *)       say "POLL SSH FAILED (rc=$PRC). The pod keeps working and we keep waiting -- this is precisely the case that killed the 2026-10-11 session. Retrying in 60s." ;;
+    MARKER*)  DONE_SEEN="${POLL_OUT#MARKER }"; say "DONE marker: $DONE_SEEN"; break ;;
+    RUNNING)  NOPROC=0; say "remote running ($(date -u +%FT%TZ))" ;;
+    DIED)     NOPROC=0; say "WARN: remote process gone but no DONE marker; waiting one more cycle" ;;
+    NOPROC)   NOPROC=$(( ${NOPROC:-0} + 1 ))
+              say "no remote process yet ($NOPROC/3); the launch may have failed"
+              if [ "$NOPROC" -ge 3 ]; then
+                say "LAUNCH FAILED: no remote process and no log after 3 polls. The pod is not doing work; stopping rather than polling an idle instance."
+                break
+              fi ;;
+    *)        NOPROC=0
+              say "POLL SSH FAILED (rc=$PRC). The pod keeps working and we keep waiting -- this is precisely the case that killed the 2026-10-11 session. Retrying in 60s." ;;
   esac
   sleep 60
 done
