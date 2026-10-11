@@ -1,0 +1,85 @@
+{
+  "tokenizer": "meta-llama/Llama-3.1-8B",
+  "dataset": "emozilla/pg19",
+  "split": "train",
+  "gen_tokens": 1024,
+  "rungs": [
+    524288
+  ],
+  "documents": [
+    {
+      "doc_id": "pg19_train_0",
+      "slot": 0,
+      "book_index": 0,
+      "title": "The Bible Both Testaments King James Version",
+      "url": "http://www.gutenberg.org/ebooks/10",
+      "file": "data/processed/pg19_1m_512kwin/pg19_train_0_512kwin.dat",
+      "length": 526335,
+      "window_start_in_book": 524288,
+      "slack_tokens": 2048,
+      "aligned_to_1m_continuation": true
+    },
+    {
+      "doc_id": "pg19_train_1",
+      "slot": 1,
+      "book_index": 1,
+      "title": "The Complete Works of William Shakespeare",
+      "url": "http://www.gutenberg.org/ebooks/100",
+      "file": "data/processed/pg19_1m_512kwin/pg19_train_1_512kwin.dat",
+      "length": 526335,
+      "window_start_in_book": 524288,
+      "slack_tokens": 2048,
+      "aligned_to_1m_continuation": true
+    },
+    {
+      "doc_id": "pg19_train_915",
+      "slot": 2,
+      "book_index": 915,
+      "title": "The Anti-Slavery Examiner Omnibus by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11275",
+      "file": "data/processed/pg19_1m_512kwin/pg19_train_915_512kwin.dat",
+      "length": 526335,
+      "window_start_in_book": 524288,
+      "slack_tokens": 2048,
+      "aligned_to_1m_continuation": true
+    },
+    {
+      "doc_id": "pg19_train_1726",
+      "slot": 3,
+      "book_index": 1726,
+      "title": "The Holy Bible Douay-Rheims Version Both Testaments by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1581",
+      "file": "data/processed/pg19_1m_512kwin/pg19_train_1726_512kwin.dat",
+      "length": 526335,
+      "window_start_in_book": 524288,
+      "slack_tokens": 2048,
+      "aligned_to_1m_continuation": true
+    },
+    {
+      "doc_id": "pg19_train_2204",
+      "slot": 4,
+      "book_index": 2204,
+      "title": "The History of England in Three Volumes Vol.II by Tobias Smollett",
+      "url": "http://www.gutenberg.org/ebooks/19217",
+      "file": "data/processed/pg19_1m_512kwin/pg19_train_2204_512kwin.dat",
+      "length": 526335,
+      "window_start_in_book": 524288,
+      "slack_tokens": 2048,
+      "aligned_to_1m_continuation": true
+    },
+    {
+      "doc_id": "pg19_train_2768",
+      "slot": 5,
+      "book_index": 2768,
+      "title": "The Complete Shakespeare's First Folio [35 Plays]",
+      "url": "http://www.gutenberg.org/ebooks/2270",
+      "file": "data/processed/pg19_1m_512kwin/pg19_train_2768_512kwin.dat",
+      "length": 526335,
+      "window_start_in_book": 524288,
+      "slack_tokens": 2048,
+      "aligned_to_1m_continuation": true
+    }
+  ],
+  "selection": "aligned slice [start=524288] so the prompt ends where the 1M continuation begins; continuation ids asserted array_equal against the 1M arm for every document",
+  "continuation_identity_verified_against_1m": true
+}

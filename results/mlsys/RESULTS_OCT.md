@@ -29,10 +29,18 @@ whose generation loops is flagged and excluded from headline means.
 | 32k | target-only | Llama-3.1-8B | — | — | 2.89 | 1.00 (denominator) | 50 | 0.077 | 128 (never) | 0.00 | clean | 1x A100 40GB |
 | 32k | target-only | Llama-3.1-8B | — | — | 2.90 | 1.00 (denominator) | 16 | 0.089 | 128 (never) | 0.00 | clean | 1x A100 40GB |
 | 32k | spec | **native-1M** Gradient 1048k | Llama-3.2-1B | 0.2708 | 3.61 | — (no paired target-only) | 31 | 0.072 | 128 (never) | 0.00 | clean | 1x A100 40GB |
-| 128k | spec | native-1M Gradient 1048k | Llama-3.2-1B | 0.2188 | 0.46 | **1.64x** | 14 | 0.060 | 64 (never) | 0.00 | clean | **8x A100 80GB** |
+| 128k | spec | native-1M Gradient 1048k | Llama-3.2-1B | 0.2188 | 0.46 | **1.64x** | 14 | 0.060 | 64 (never) | 0.00 | clean | **8x A100 80GB** (mid-book window) |
 | 128k | target-only | native-1M Gradient 1048k | — | — | 0.28 | 1.00 (denominator) | 8 | 0.089 | 64 (never) | 0.00 | clean | **8x A100 80GB** |
 | **1M** | spec | native-1M Gradient 1048k | Llama-3.2-1B | **did not run** | — | — | — | — | — | — | — | see §5 |
 | **1M** | target-only | native-1M Gradient 1048k | — | — | **did not run** | — | — | — | — | — | — | 8x A100 80GB unavailable |
+
+**WHICH PASSAGE EACH ROW MEASURES, because they are not interchangeable.** The 2.70x
+sanity pair (below) reads the **book's opening** - book tokens [0 : 131,072] - because it
+takes the first 128k tokens of the full-book pool. The 1.64x pair above read the
+**aligned mid-book window** at book token 917,504, the same passage family as the 1M
+headline. The headline and scaling numbers are intended to come from that aligned
+position, which is why the aligned pools exist; the sanity pair is deliberately the
+cheapest possible early signal and is labelled with the passage it actually read.
 
 The two 128k rows are the Session A **sanity pair** on the 8x A100 80GB node: one
 document, 64 tokens, and the only pair this window got from the 8x node (see §5 for
@@ -71,10 +79,8 @@ First pass, 8 tokens per document, instance 12e9c5d79425 (gpu_8x_a100_80gb_sxm4)
 | pg19_train_1 | failed (pool too short, now fixed) | 12.7477 |
 | pg19_train_915 | failed (pool too short, now fixed) | pending |
 
-Even at 8 tokens the direction is worth recording: on `pg19_train_0` the SAME tokens are
-less predictable with 1M of context than with 128k (+10.9%), which is the opposite of the
-usual "more context is better" prior and is exactly the kind of claim the redo exists to
-test properly.
+Nothing is inferred from the direction of these numbers: eight tokens is noise, not a
+signal, and the redo exists to measure this properly over the final 1,024.
 
 
 
@@ -88,6 +94,17 @@ over two different passages.
 ---
 
 ## 3. Scaling curve
+
+**The scaling rows in the main session read the full-book pool FROM ITS START**, so their
+continuations are different passages from the 1M headline's and acceptance across those
+contexts is confounded with passage: **label them "unaligned: the target-only timing is
+valid, acceptance is not comparable across contexts".** Aligned scaling rows (512k and
+128k on the aligned pools, 3 documents, spec + target-only, 128 tokens) are added to the
+follow-up session instead, under new stage ids, with that session's limits raised to a
+6-hour timer and $150. They were not swapped into the running session: the pod's stage
+boundaries cannot be observed precisely enough to place a multi-megabyte rsync plus an
+atomic config swap between two stages, and a pool replaced while a stage reads it would
+hand that stage a half-written file.
 
 **Not run** (Session B, contingent on Session A). What exists is the arithmetic that
 bounds it: at 1M the per-rank projection is ~27 GB (weights 6.8 + NF4 KV 5.2 + a

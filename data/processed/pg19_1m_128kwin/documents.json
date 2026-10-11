@@ -16,7 +16,7 @@
       "file": "data/processed/pg19_1m_128kwin/pg19_train_0_128kwin.dat",
       "length": 133120,
       "window_start_in_book": 917504,
-      "slack_tokens": 2048,
+      "slack_tokens": 2049,
       "aligned_to_1m_continuation": true
     },
     {
@@ -28,7 +28,7 @@
       "file": "data/processed/pg19_1m_128kwin/pg19_train_1_128kwin.dat",
       "length": 133120,
       "window_start_in_book": 917504,
-      "slack_tokens": 2048,
+      "slack_tokens": 2049,
       "aligned_to_1m_continuation": true
     },
     {
@@ -40,7 +40,7 @@
       "file": "data/processed/pg19_1m_128kwin/pg19_train_915_128kwin.dat",
       "length": 133120,
       "window_start_in_book": 917504,
-      "slack_tokens": 2048,
+      "slack_tokens": 2049,
       "aligned_to_1m_continuation": true
     },
     {
@@ -52,7 +52,7 @@
       "file": "data/processed/pg19_1m_128kwin/pg19_train_1726_128kwin.dat",
       "length": 133120,
       "window_start_in_book": 917504,
-      "slack_tokens": 2048,
+      "slack_tokens": 2049,
       "aligned_to_1m_continuation": true
     },
     {
@@ -64,7 +64,7 @@
       "file": "data/processed/pg19_1m_128kwin/pg19_train_2204_128kwin.dat",
       "length": 133120,
       "window_start_in_book": 917504,
-      "slack_tokens": 2048,
+      "slack_tokens": 2049,
       "aligned_to_1m_continuation": true
     },
     {
@@ -76,10 +76,10 @@
       "file": "data/processed/pg19_1m_128kwin/pg19_train_2768_128kwin.dat",
       "length": 133120,
       "window_start_in_book": 917504,
-      "slack_tokens": 2048,
+      "slack_tokens": 2049,
       "aligned_to_1m_continuation": true
     }
   ],
-  "selection": "slices [start=917504 : +131072+8192 slack] so the 128k prompt ends exactly where the 1M continuation begins",
+  "selection": "aligned slice [start=917504] so the prompt ends where the 1M continuation begins; continuation ids asserted array_equal against the 1M arm for every document",
   "continuation_identity_verified_against_1m": true
 }

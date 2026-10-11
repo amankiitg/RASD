@@ -26,6 +26,21 @@ MLSys CAMPAIGN — MORNING REPORT
 #     periodic tail 0.00). It differs from the 18:56Z pair (0.2188, 1.64x) because that
 #     sanity read the ALIGNED MID-BOOK window and this one reads the BOOK'S OPENING:
 #     same run_id, same models, same context, DIFFERENT prompt_sha256. Neither loops.
+#  7d. ALIGNED POOLS vs THE RUNNING SESSION: the scaling rows in the running session read
+#     the FULL-BOOK pool from its start, so their acceptance is confounded with passage;
+#     they will be labelled "unaligned: target-only timing valid, acceptance not
+#     comparable across contexts". The pod was NOT touched: its stage boundaries cannot be
+#     observed precisely enough to fit a multi-megabyte rsync plus an atomic config swap
+#     between stages, which is the operator's own escape clause. Aligned scaling rows go
+#     into the follow-up session instead (new stage ids, 6h timer, $150).
+#  7e. MEASURED, and it limits the alignment claim: the engine's window search does not
+#     always stop exactly. Calling it directly on the aligned pools gives used ==
+#     prompt_len for pg19_train_0, but prompt_len+9 for pg19_train_1 and prompt_len+17 for
+#     pg19_train_915. So for those two books the "same continuation" is offset by 9-17
+#     tokens of the same book. The DATA-level alignment is exact and asserted
+#     (slice[prompt_len:+1024] == the 1M arm's continuation ids, all six books); it is the
+#     ENGINE's landing point that drifts. Recorded rather than smoothed over: a ppl
+#     comparison on those two documents is over ~98% the same tokens, not identical ones.
 #  7c. Quality redo is built and locally validated (configs/mlsys_quality_fix.yml, new
 #     stage ids QUALITY_FIX_128K/_1M, prompt_gen_tokens 1024, fixed pools) and will run
 #     as a 3-hour quality-only 8x session AFTER the main session ends, rehearsed first
@@ -3582,3 +3597,19 @@ instance exists, which is why it cannot start now):
 RESULTS_OCT.md now marks the 8-token quality rows as SUPERSEDED pending the redo, and
 states what the redo must show: 1M vs 128k perplexity per document over the SAME final
 1024 tokens.
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-11T00:37:57Z
+#   ### progress 2026-10-10T23:55:25Z
+#   - SUNDAY_QUALITY_128K: rows=3 ok=1 median_row_s=29.9 max_row_s=29.9 tps=0.270 accept=0.1250
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 352.9s = 0.10h over 3 rows
+#   ### progress 2026-10-11T00:36:34Z
+#   - SUNDAY_QUALITY_128K: rows=3 ok=1 median_row_s=29.9 max_row_s=29.9 tps=0.270 accept=0.1250
+#   - SUNDAY_QUALITY_1M: rows=3 ok=3 median_row_s=410.6 max_row_s=431.4 tps=0.020 accept=0.4375
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 1591.6s = 0.44h over 6 rows
+#   ### progress 2026-10-11T00:36:34Z
+#   - SUNDAY_QUALITY_128K: rows=3 ok=1 median_row_s=29.9 max_row_s=29.9 tps=0.270 accept=0.1250
+#   - SUNDAY_QUALITY_1M: rows=3 ok=3 median_row_s=410.6 max_row_s=431.4 tps=0.020 accept=0.4375
+#   - sanity: rows=2 ok=2 median_row_s=235.1 max_row_s=235.1 tps=0.500 accept=0.2625
+#   - measured row time total 1591.6s = 0.44h over 6 rows
