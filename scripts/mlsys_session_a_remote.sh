@@ -45,12 +45,12 @@ log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$OUT/session_a.log"
 # HF TOKEN FROM A FILE, never from a command line. The token used to travel as
 # HF_TOKEN=... inside the ssh command, which put it in argv and therefore in `ps` on both
 # machines. The driver writes ~/RASD/.hf_token with mode 600 and this reads it.
-if [ -s "$HOME/RASD/.hf_token" ]; then
-  HF_TOKEN=$(cat "$HOME/RASD/.hf_token")
+if [ -s "$HOME/.hf_token" ]; then
+  HF_TOKEN=$(cat "$HOME/.hf_token")
   export HF_TOKEN
-  log "HF token: read from ~/RASD/.hf_token ($(wc -c < "$HOME/RASD/.hf_token" | tr -d ' ') bytes, mode $(stat -c '%a' "$HOME/RASD/.hf_token" 2>/dev/null))"
+  log "HF token: read from ~/.hf_token ($(wc -c < "$HOME/.hf_token" | tr -d ' ') bytes, mode $(stat -c '%a' "$HOME/.hf_token" 2>/dev/null))"
 else
-  log "WARN: no ~/RASD/.hf_token; model downloads may fail if the repos are gated"
+  log "WARN: no ~/.hf_token; model downloads may fail if the repos are gated"
 fi
 
 PY=$(grep -a "^INTERPRETER=" "$HOME/pod_env.log" 2>/dev/null | tail -1 | cut -d= -f2-)

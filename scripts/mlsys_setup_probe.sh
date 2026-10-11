@@ -84,12 +84,12 @@ esac
 # the secret in it.
 INNER=${PROV_INNER//HFT_PLACEHOLDER/$HFT}
 if printf '%s' "$HFT" | timeout 120 ssh $SSH_OPTS "$SSH_USER@$IP" \
-     'umask 077; cat > ~/RASD/.hf_token && chmod 600 ~/RASD/.hf_token' >>/tmp/probe_rsync.log 2>&1; then
+     'umask 077; cat > ~/.hf_token && chmod 600 ~/.hf_token' >>/tmp/probe_rsync.log 2>&1; then
   echo "  token file staged on the pod (mode 600), $(printf '%s' "$HFT" | wc -c | tr -d ' ') bytes"
 else
-  bad "could not stage ~/RASD/.hf_token on the pod"
+  bad "could not stage ~/.hf_token on the pod"
 fi
-INNER_SENT=$(printf '%s' "$PROV_INNER" | sed -E 's/HF_TOKEN=[^ ]*/HF_TOKEN="$(cat ~\/RASD\/.hf_token)"/')
+INNER_SENT=$(printf '%s' "$PROV_INNER" | sed -E 's/HF_TOKEN=[^ ]*/HF_TOKEN="$(cat ~\/.hf_token)"/')
 case "$INNER_SENT" in
   *"$HFT"*) bad "the token is still present in the command sent to the pod" ;;
   *'.hf_token'*) echo "  remote command reads the token from the file: yes" ;;
