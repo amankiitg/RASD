@@ -1,7 +1,64 @@
 MLSys CAMPAIGN — MORNING REPORT
 
 ################################################################################
-# STATUS — 2026-10-10T23:36Z. REHEARSAL PASSED; THE MAIN SESSION IS RUNNING.
+# STATUS — 2026-10-11T06:25Z. THE 1M SESSION IS DONE. 0 INSTANCES, TIMER CANCELLED.
+#
+# TEN-LINE SUMMARY
+#  1. The session COMPLETED and the 1M headline rows RAN. Instance
+#     12e9c5d794254c498d741261bde0877b (gpu_8x_a100_80gb_sxm4, us-east-1, $22.32/hr),
+#     23:34:04Z -> 05:38:39Z = 6.08h = $135.62. 0 instances after terminate, timer
+#     cancelled. Cumulative ~$157 of the $450 global cap.
+#  2. HEADLINE 1M: mean acceptance 0.5327 (0.2132 / 0.6429 / 0.7419); spec 0.130 vs
+#     target-only 0.050 tok/s = 2.60x median paired. 512k: accept 0.5299, 2.80x.
+#     128k: accept 0.5373, speedup NOT COMPUTABLE (the arm was lost -- see 6).
+#  3. THE RESULT IS TWO FACTS POINTING OPPOSITE WAYS: acceptance does NOT degrade with
+#     context (0.5373 / 0.5299 / 0.5327 from 128k to 1M, flat to 1.5%), while throughput
+#     falls 6.6x (0.770 -> 0.117 tok/s) because per-round cost grows (3.9 -> 27.7
+#     s/round). The target-only arm falls identically, so the SPEEDUP survives
+#     (2.80x -> 2.60x). Speculation is not what breaks at long context; the forward pass
+#     is. Peak 26,855 MB/rank at 1M (fits 80GB, not 40GB).
+#  4. Looping is the BASE MODEL's, not speculation's: 2 of 3 target-only 1M rows loop
+#     under the same absolute criteria as the spec rows. 8 of 15 rows with token files
+#     loop. The looping spec rows carry HIGHER acceptance (0.64, 0.74) than the clean one
+#     (0.21), so acceptance must always be read with the periodicity column.
+#  5. RESULTS_OCT.md rewritten with the real numbers (5138695);
+#     results/mlsys/scaling.png plotted from the five VALID stage CSVs only.
+#  6. THE 128k TARGET-ONLY ARM IS LOST, and it was lost to the Mac, not the pod. The
+#     Mac->pod ssh broke at ~04:12Z ("Connection reset by peer"); the pod kept working and
+#     completed SCALING_512K_TARGET (05:18:48Z) and SCALING_128K_SPEC (05:29:16Z), which
+#     the 05:35:12Z final pull captured; the driver then terminated the instance at
+#     05:35:32Z while SCALING_128K_TARGET was mid-flight (round 80 of 128 at 299s).
+#     LESSON: a remote script OUTLIVES the ssh session that started it, so an ssh return
+#     is not evidence that remote work ended. The driver had to check the pod, not the
+#     pipe.
+#  7. A STALE REHEARSAL FILE NEARLY BECAME A REPORTED RESULT. The pulled
+#     session_a_SUNDAY_SCALING_128K_TARGET.csv holds ONE row: context_length 4096,
+#     max_new_tokens 8, mtime 23:27:59Z -- the REHEARSAL's row, left in place by rsync
+#     because the main session never produced that file. Trusting it gives 0.78/4.43 =
+#     0.18x, i.e. "spec decoding is 5x SLOWER at 128k". It is an artifact of comparing a
+#     real 128k spec row against a 4k/8-token rehearsal row. Excluded from the document
+#     and from the plot. The guard that catches this is a per-stage check that every row's
+#     context_length/max_new_tokens agree with the CONFIG -- not a file-exists check.
+#  8. SUPERSEDED, do not quote: the quality rows scored ppl over 8 tokens (1.1846 /
+#     12.7478 / 9.7225). The 128k arm of that comparison ran 1 of 3 rows; the other two
+#     hit the engine's window-search error. The redo is QUALITY_FIX_* in the follow-up.
+#  9. NOTHING IS AUTO-CHAINED. The driver launched one instance, pulled, terminated and
+#     exited. No crontab, no relevant LaunchAgents, empty atq. The follow-up rehearsal and
+#     the follow-up 8x session both need a new instruction (item 8).
+# 10. FOR THE FOLLOW-UP, add the missing 128k TARGET-ONLY rows (3 docs, 128 tokens,
+#     ~20 min at 128k) so the 128k speedup exists and the curve is complete. The alignment
+#     caveat still stands: the three contexts are not passage-aligned, so cross-context
+#     acceptance is confounded until SCALING_ALIGNED_* runs.
+#
+# NOTE ON THIS BLOCK ITSELF: the previous commit (3287ba7) carries a message describing
+# this update, but its diff does not contain it -- my edit anchored on a header text that
+# had never been written, because the command that would have written it was blocked by
+# the shell guard, and the commit ran anyway after the assertion failed. Third instance of
+# this failure mode in this project. The write is now verified by grep BEFORE the commit.
+# SEPARATE HAZARD, for the follow-up: the driver's incremental puller WRITES THIS FILE
+# (it folds the pod's progress.md into it), so this file must not be edited while the
+# driver is running.
+#
 #
 # TEN-LINE SUMMARY
 #  1. The combined session is RUNNING on gpu_8x_a100_80gb_sxm4 (us-east-1,
