@@ -50,6 +50,48 @@ MLSys CAMPAIGN — MORNING REPORT
 #     caveat still stands: the three contexts are not passage-aligned, so cross-context
 #     acceptance is confounded until SCALING_ALIGNED_* runs.
 #
+# 11. HEADLINE CORRECTED, and a claim WITHDRAWN. Applying our own rule (looping rows are
+#     excluded from headline means) leaves the 1M result as ONE row: acceptance 0.2132,
+#     0.08411 vs 0.05236 tok/s = 1.61x (n=1). 512k clean is also one row: 1.84x (n=1).
+#     The 2.60x / 0.5327 figures averaged looping rows in, and a greedy cycle is trivially
+#     accepted (0.6429 and 0.7419 vs 0.2132 on the clean row), so that inflates acceptance.
+#     Also WITHDRAWN: "acceptance does not degrade with context". On the only document
+#     clean at all three contexts it FALLS: 0.3273 (128k) -> 0.2705 (512k) -> 0.2132 (1M),
+#     a 35% relative decline, n=1. What survives: absolute throughput falls with context
+#     (0.604 -> 0.185 -> 0.084 tok/s) while the speedup against our own target-only path
+#     declines only gently (1.84x -> 1.61x). Note throughput_tps in the CSVs is rounded to
+#     two significant figures; ratios here use tokens_generated/time_sec.
+# 12. SALVAGE (acceptance only, NOT throughput): per-round traces carry NO time field at
+#     all, so pre-loop throughput cannot be recovered. Pre-loop acceptance is 0.5417/0.4545
+#     (1M), 0.4762/0.2679 (512k), 0.3700/0.6042 (128k) vs whole-row 0.6429/0.7419,
+#     0.6500/0.6691, 0.5658/0.7188 -- the loop inflates acceptance by 0.10-0.29 absolute.
+#     Mixed means with the salvage are 0.4338 / 0.3382 / 0.4031, which is NOT monotone, so
+#     no trend may be claimed in either direction.
+# 13. SAMPLING: the engine DOES implement temperature > 0 with standard rejection sampling
+#     (min(1, p_t/p_d) with torch.rand_like, plus the correct residual bonus resample), and
+#     it IS tested -- the residual test runs at temperature 1.0 -- and HAS been run
+#     end-to-end: mlsys_arm4_f1_128k.yml (natural_f1) and the m4 matrix are temperature 1.0.
+#     Never run at 1M, and never with 8-rank ring attention.
+# 14. PROPOSED FOLLOW-UP DECODE PROTOCOL, with measured per-row costs (1M spec 16.1 min,
+#     1M target-only 41.6 min, 512k spec 7.6 / target 21.4, 128k spec 2.7, 128k target ~5.7
+#     ESTIMATED, quality 1M ~6.8/row). Quality redo stays first either way; it is unaffected.
+#     A) SAMPLING (T~0.7, N seeds, all 6 books in the existing 1M pool): attacks the cause of
+#        the loops instead of filtering them. 6 books x 1 seed at 1M = 5.8h = $129; adding
+#        rope (3 arms x 6 books) + aligned 512k/128k (6 books) + quality = ~11.3h = $251,
+#        which does NOT fit $200/8h. At 3 books for the scaling and rope stages: ~8.7h =
+#        $194, which fits only with a ~10h timer.
+#     B) GREEDY + strict exclusion, all 6 books: identical cost, but the clean n is capped
+#        by the data. Measured clean rate on spec rows is 1 of 3, so 6 books yields roughly
+#        2 clean rows -- and only 6 books exist in the 1M pool, so n cannot be raised
+#        further without new data. Under B the aligned scaling and rope stages are unchanged
+#        in shape; only the exclusion rule tightens.
+#     Under A, the aligned scaling and rope spec rows must sample too, each rung needing its
+#     own target-only partner at the same temperature and seeds, and token-identity checks
+#     (spec vs target-only) no longer hold and must be replaced by acceptance + periodicity.
+#     Under A the 1M sampling path would be used for the first time, so the rehearsal must
+#     include a temperature > 0 row and the first 8x stage should be a short T>0 check.
+#     Awaiting the operator's decision; the rehearsal and the 8x follow-up are NOT launched.
+#
 # NOTE ON THIS BLOCK ITSELF: the previous commit (3287ba7) carries a message describing
 # this update, but its diff does not contain it -- my edit anchored on a header text that
 # had never been written, because the command that would have written it was blocked by
