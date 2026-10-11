@@ -1,0 +1,160 @@
+# REHEARSAL TWIN of configs/mlsys_followup.yml. Same group names, same level ids, same
+# ORDER, same pools, same models, same flags -- only the sizes change (4096/8192 context,
+# 8 tokens, one document). The point is to execute every code path in the real script once
+# on a 1x A100 before the 8x run pays for it, not to measure anything.
+#
+# WHY THE IDS ARE IDENTICAL: the remote script derives each stage's stage-id and CSV name
+# from the GROUP key, and the rerun pass finds work by scanning for those CSVs. Identical
+# ids are what makes the rehearsal exercise the real loop rather than a similar-looking one.
+#
+# WHY THE OUTPUT IS SEPARATED ANYWAY: the driver takes SESSION_TAG, and this rehearsal runs
+# with SESSION_TAG=rehearsal_followup, so its pulled CSVs land in a different LOCAL
+# directory from the real run's. That is a direct fix for the 2026-10-11 near-miss, where a
+# rehearsal row sat in the real run's pull directory under a name the killed stage never
+# wrote. Identical ids + separate directories is the combination that rehearses the loop
+# without being able to poison the result.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  max_new_tokens: 8
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+QUALITY_FIX_128K:
+  name: quality_fix_128k
+  factor: context_length
+  levels:
+  - id: QFIX_128K
+    context_length: 4096
+    documents: [pg19_train_0]
+    measure_target_ppl: true
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    notes: 'ppl of the final 1024 tokens, aligned pool present'
+QUALITY_FIX_1M:
+  name: quality_fix_1m
+  factor: context_length
+  levels:
+  - id: QFIX_1M
+    context_length: 8192
+    documents: [pg19_train_0]
+    measure_target_ppl: true
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    notes: 'same final 1024 tokens, long pool'
+SCALING_ALIGNED_512K_SPEC:
+  name: scaling_aligned_512k
+  factor: context_length
+  levels:
+  - id: SCALAL_512K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    measure_target_ppl: false
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    notes: 'aligned 512k pool'
+SCALING_ALIGNED_512K_TARGET:
+  name: scaling_aligned_512k_target
+  factor: context_length
+  levels:
+  - id: SCALAL_512K_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    spec_steps: 0
+    measure_target_ppl: false
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    notes: 'target-only partner'
+SCALING_ALIGNED_128K_SPEC:
+  name: scaling_aligned_128k
+  factor: context_length
+  levels:
+  - id: SCALAL_128K_SPEC
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    measure_target_ppl: false
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    notes: 'aligned 128k pool'
+SCALING_ALIGNED_128K_TARGET:
+  name: scaling_aligned_128k_target
+  factor: context_length
+  levels:
+  - id: SCALAL_128K_TARGET
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    spec_steps: 0
+    measure_target_ppl: false
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    notes: 'target-only partner -- the arm that was lost on 2026-10-11'
+ROPE_FIX_NATIVE_SPEC:
+  name: rope_fix_native
+  factor: context_length
+  levels:
+  - id: ROFIX_NATIVE
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    rope_type: "none"
+    checkpoint_every: 0
+    notes: 'native control'
+ROPE_FIX_F16_SPEC:
+  name: rope_fix_f16
+  factor: context_length
+  levels:
+  - id: ROFIX_F16
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    checkpoint_every: 0
+    notes: 'factor 16'
+ROPE_FIX_F32_SPEC:
+  name: rope_fix_f32
+  factor: context_length
+  levels:
+  - id: ROFIX_F32
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    checkpoint_every: 0
+    notes: 'factor 32'
+ROPE_FIX_NATIVE_TARGET:
+  name: rope_fix_native_target
+  factor: context_length
+  levels:
+  - id: ROFIX_NATIVE_targetonly
+    context_length: 4096
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    spec_steps: 0
+    rope_type: "none"
+    checkpoint_every: 0
+    notes: 'target-only partner for the native arm'

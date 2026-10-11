@@ -26,8 +26,16 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 SESSION_DIR="${MLSYS_SESSION_DIR:-$HOME/.copilot/session-state/0f919471-cdca-48c0-a994-56a95eb1d6be/files}"
 mkdir -p "$SESSION_DIR"
-LOG="$SESSION_DIR/session_a.log"
-OUT_STAGE="$SESSION_DIR/session_a_pull"
+# SESSION_TAG separates a rehearsal's LOCAL artifacts from the real run's. The pod-side
+# path can stay fixed because every instance starts with an empty results dir, but the
+# Mac-side pull dir is reused across runs and rsync here does NOT use --delete -- so a
+# file the real run never produces (because a stage was killed) keeps the REHEARSAL's
+# version sitting there looking like a result. That is exactly what happened on
+# 2026-10-11: session_a_SUNDAY_SCALING_128K_TARGET.csv held one rehearsal row with
+# context_length 4096, which reads as a 0.18x "128k speedup" if you trust the filename.
+SESSION_TAG=${SESSION_TAG:-session_a}
+LOG="$SESSION_DIR/$SESSION_TAG.log"
+OUT_STAGE="$SESSION_DIR/${SESSION_TAG}_pull"
 mkdir -p "$OUT_STAGE"
 SSH_USER=ubuntu
 SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
@@ -248,13 +256,23 @@ fi
 say "--- staging ---"
 timeout 600 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   scripts/mlsys_session_a_remote.sh "$SSH_USER@$IP:~/RASD/scripts/mlsys_session_a_remote.sh" >>"$LOG" 2>&1
+# The session's OWN configs are staged by variable, not by name. The list used to be the
+# four Sunday files hardcoded, so a follow-up session would have started against configs
+# that were never on the pod -- found before the 8x launch rather than during it. The
+# candidates JSONs go along because the rope gate reads them from the pod's working dir.
 timeout 600 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
   configs/mlsys_sunday_1m.yml configs/mlsys_sunday_sanity.yml \
   configs/mlsys_rehearsal_tiny.yml configs/mlsys_rehearsal_sanity.yml \
+  "$SESSION_CFG" "$SESSION_SANITY_CFG" \
+  configs/mlsys_followup_rope_candidates.json \
+  configs/mlsys_followup_rope_candidates_rehearsal.json \
   "$SSH_USER@$IP:~/RASD/configs/" >>"$LOG" 2>&1
+# ALL THREE aligned pools. pg19_1m_512kwin was missing, and the follow-up's 512k groups
+# read it -- an rsync that succeeds while leaving a pool absent is a silent failure.
 timeout 900 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-  data/processed/pg19_1m data/processed/pg19_1m_128kwin "$SSH_USER@$IP:~/RASD/data/processed/" >>"$LOG" 2>&1
-say "staged script + config + both 1M pools"
+  data/processed/pg19_1m data/processed/pg19_1m_128kwin data/processed/pg19_1m_512kwin \
+  "$SSH_USER@$IP:~/RASD/data/processed/" >>"$LOG" 2>&1
+say "staged script + configs (incl. $SESSION_CFG) + all three aligned pools"
 
 # The instance type belongs WITH the results, not only in a chat log: every table
 # this session produces must be able to say what hardware it ran on, and the two
