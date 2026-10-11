@@ -1,0 +1,216 @@
+# REHEARSAL TWIN of configs/mlsys_followup_sampling.yml. Same 13 group names, same
+# ORDER, same ids, same pools, same models, same flags; only sizes differ (4096/8192
+# context, 8 tokens, one document). Runs with SESSION_TAG=rehearsal_samp so its pulled
+# CSVs cannot land in the real run directory.
+#
+# NOTE: this comment is a YAML comment and NOT a top-level "_comment" key. The remote
+# script derives its step list from this file's keys (skipping only "defaults" and
+# "canary"), so a metadata KEY here would be executed as a stage named "_comment".
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: none
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds:
+  - 42
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 8
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+QUALITY_FIX_128K:
+  name: quality_fix_128k
+  factor: context_length
+  levels:
+  - id: QUALITY_FIX_128K
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: ppl of the final 1024 tokens at 128k, GREEDY, aligned to the 1M continuation
+QUALITY_FIX_1M:
+  name: quality_fix_1m
+  factor: context_length
+  levels:
+  - id: QUALITY_FIX_1M
+    context_length: 8192
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: ppl of the SAME final 1024 tokens at 1M, GREEDY
+SAMP_CHECK_1M_SPEC:
+  name: samp_check_1m
+  factor: context_length
+  levels:
+  - id: SAMP_CHECK_1M_SPEC
+    context_length: 8192
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    notes: 'STEP c: one 1M spec row; the remote script inspects it and stops all T>0 stages if it fails'
+SAMP_1M_SPEC:
+  name: samp_1m
+  factor: context_length
+  levels:
+  - id: SAMP_1M_SPEC
+    context_length: 8192
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    notes: 'STEP d: the sampling headline, 6 books at 1M'
+SAMP_1M_TARGET:
+  name: samp_1m_target
+  factor: context_length
+  levels:
+  - id: SAMP_1M_TARGET
+    context_length: 8192
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    spec_steps: 0
+    notes: 'STEP d partner: target-only at 1M, 2 books, same T'
+SAMP_ALIGNED_512K_SPEC:
+  name: samp_aligned_512k
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_512K_SPEC
+    context_length: 8192
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    notes: 'STEP e: aligned 512k, windows ending at the 1M prompt end'
+SAMP_ALIGNED_512K_TARGET:
+  name: samp_aligned_512k_target
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_512K_TARGET
+    context_length: 8192
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    spec_steps: 0
+    notes: 'STEP e partner: 1 book'
+SAMP_ALIGNED_128K_SPEC:
+  name: samp_aligned_128k
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_128K_SPEC
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    notes: 'STEP f: aligned 128k'
+SAMP_ALIGNED_128K_TARGET:
+  name: samp_aligned_128k_target
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_128K_TARGET
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    spec_steps: 0
+    notes: 'STEP f partner: 1 book'
+ROPE_SAMP_NATIVE_SPEC:
+  name: rope_samp_native
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_NATIVE_SPEC
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    rope_type: none
+    notes: 'STEP g: native control, shipped llama3 block untouched'
+ROPE_SAMP_F16_SPEC:
+  name: rope_samp_f16
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_F16_SPEC
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    notes: 'STEP g: shipped llama3 dict, only factor changed to 16'
+ROPE_SAMP_F32_SPEC:
+  name: rope_samp_f32
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_F32_SPEC
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    notes: 'STEP g: shipped llama3 dict, only factor changed to 32'
+ROPE_SAMP_NATIVE_TARGET:
+  name: rope_samp_native_target
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_NATIVE_TARGET
+    context_length: 4096
+    documents:
+    - pg19_train_0
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    spec_steps: 0
+    rope_type: none
+    notes: 'STEP g partner: native arm target-only, 1 book'

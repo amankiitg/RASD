@@ -23,7 +23,35 @@ CFG=${SESSION_CFG:-configs/mlsys_sunday_1m.yml}
 SANITY_CFG=${SESSION_SANITY_CFG:-configs/mlsys_sunday_sanity.yml}
 NPROC=${NPROC:-8}
 mkdir -p "$OUT"
+
+# DONE MARKER: this script is started DETACHED on the pod (setsid), and the Mac side
+# waits for THIS FILE rather than for the ssh command to return. That is the fix for
+# 2026-10-11: the Mac->pod ssh dropped at 04:12Z, the driver treated the ssh return as
+# the end of the work and terminated the instance at 05:35:32Z, and a healthy pod was
+# killed mid-stage. A remote script OUTLIVES the ssh session that started it, so its own
+# exit status is the only honest signal that it is finished. The trap fires on every exit
+# path in this file, including the early `exit 2/3/4` refusals.
+PODDONE="$OUT/DONE"
+remote_finish() {
+  local rc=$?
+  printf '%s %s\n' "$(date -u +%FT%TZ)" "$rc" > "$PODDONE" 2>/dev/null
+  printf '%s %s\n' "$(date -u +%FT%TZ)" "=== REMOTE EXIT rc=$rc; DONE marker written ===" \
+    >> "$OUT/session_a.log" 2>/dev/null
+}
+trap remote_finish EXIT
+
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$OUT/session_a.log"; }
+
+# HF TOKEN FROM A FILE, never from a command line. The token used to travel as
+# HF_TOKEN=... inside the ssh command, which put it in argv and therefore in `ps` on both
+# machines. The driver writes ~/RASD/.hf_token with mode 600 and this reads it.
+if [ -s "$HOME/RASD/.hf_token" ]; then
+  HF_TOKEN=$(cat "$HOME/RASD/.hf_token")
+  export HF_TOKEN
+  log "HF token: read from ~/RASD/.hf_token ($(wc -c < "$HOME/RASD/.hf_token" | tr -d ' ') bytes, mode $(stat -c '%a' "$HOME/RASD/.hf_token" 2>/dev/null))"
+else
+  log "WARN: no ~/RASD/.hf_token; model downloads may fail if the repos are gated"
+fi
 
 PY=$(grep -a "^INTERPRETER=" "$HOME/pod_env.log" 2>/dev/null | tail -1 | cut -d= -f2-)
 if [ -z "${PY:-}" ] || [ ! -x "${PY:-}" ]; then
@@ -148,6 +176,38 @@ for name in $STEPS; do
   fi
   run_stage "$name" "$tmo"
   prev=$?
+
+  # STEP c GATE: the 1M sampling check. If the first sampled 1M row is not sane -- no ok
+  # row, acceptance outside (0,1], zero spec steps, no tokens -- the session STOPS HERE,
+  # before the other T>0 stages run, so a broken sampling path costs one row instead of
+  # five hours. Driven by SESSION_CHECK_STAGE so the same code path is rehearsed.
+  if [ -n "${SESSION_CHECK_STAGE:-}" ] && [ "$SESSION_CHECK_STAGE" = "$name" ] && [ "$prev" = "0" ]; then
+    log "### STEP c check: inspecting $name"
+    if "$PY" - "$OUT/session_a_$name.csv" <<'PYCHK'
+import csv, sys
+rows = [r for r in csv.DictReader(open(sys.argv[1])) if r.get('status') == 'ok']
+if not rows:
+    print("no ok rows"); sys.exit(1)
+bad = []
+for r in rows:
+    a = float(r.get('acceptance_rate') or 0)
+    if not (0.0 < a <= 1.0):
+        bad.append(f"{r['run_id']}: acceptance {a} outside (0,1]")
+    if int(r.get('spec_steps') or 0) < 1:
+        bad.append(f"{r['run_id']}: spec_steps 0, this is not a spec row")
+    if int(r.get('tokens_generated') or 0) < 1:
+        bad.append(f"{r['run_id']}: no tokens generated")
+print(f"{len(rows)} ok row(s); " + ("acceptance sane, spec steps set, tokens present"
+                                    if not bad else "; ".join(bad)))
+sys.exit(1 if bad else 0)
+PYCHK
+    then
+      log "### STEP c check PASSED: the sampled 1M path is sane; continuing to step d"
+    else
+      log "### STEP c check FAILED: STOPPING. Nothing else runs at T>0; the quality rows that already landed are kept."
+      exit 5
+    fi
+  fi
 done
 
 # ------------------------------------------------------------------ (e) reruns --

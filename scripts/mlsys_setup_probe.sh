@@ -75,9 +75,28 @@ case "$PROV_INNER" in
   *HF_TOKEN=*) ;;
   *) bad "the extracted provisioning command has no token" ;;
 esac
+# THE TOKEN GOES TO THE POD BY STDIN, AND THE COMMAND THAT RUNS READS IT FROM A FILE.
+# The probe used to substitute the token into the remote command text, which put a live
+# credential into the argv of the remote process -- visible in `ps` on the pod for the
+# whole duration of provisioning. The extracted command is therefore kept VERBATIM except
+# for this one field, which becomes a read of the 600-mode file, so the probe still tests
+# the watcher's command shape (the assertion above still sees HF_TOKEN=) without shipping
+# the secret in it.
 INNER=${PROV_INNER//HFT_PLACEHOLDER/$HFT}
+if printf '%s' "$HFT" | timeout 120 ssh $SSH_OPTS "$SSH_USER@$IP" \
+     'umask 077; cat > ~/RASD/.hf_token && chmod 600 ~/RASD/.hf_token' >>/tmp/probe_rsync.log 2>&1; then
+  echo "  token file staged on the pod (mode 600), $(printf '%s' "$HFT" | wc -c | tr -d ' ') bytes"
+else
+  bad "could not stage ~/RASD/.hf_token on the pod"
+fi
+INNER_SENT=$(printf '%s' "$PROV_INNER" | sed -E 's/HF_TOKEN=[^ ]*/HF_TOKEN="$(cat ~\/RASD\/.hf_token)"/')
+case "$INNER_SENT" in
+  *"$HFT"*) bad "the token is still present in the command sent to the pod" ;;
+  *'.hf_token'*) echo "  remote command reads the token from the file: yes" ;;
+  *) bad "the token was neither embedded nor replaced by a file read" ;;
+esac
   T=$(date -u +%s)
-  if pod "cd ~/RASD && $INNER"; then
+  if pod "cd ~/RASD && $INNER_SENT"; then
     ok "provisioning exited 0 ($(($(date -u +%s)-T))s wall)"
   else
     bad "provisioning FAILED"

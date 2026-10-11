@@ -36,6 +36,12 @@ mkdir -p "$SESSION_DIR"
 SESSION_TAG=${SESSION_TAG:-session_a}
 LOG="$SESSION_DIR/$SESSION_TAG.log"
 OUT_STAGE="$SESSION_DIR/${SESSION_TAG}_pull"
+# FRESH EVERY SESSION. rsync here does NOT use --delete, so a file the real run never
+# produces keeps whatever an earlier run (or a rehearsal) left under that name -- which is
+# exactly how a rehearsal row with context_length 4096 sat in the real run's directory and
+# read as a 0.18x "128k speedup" on 2026-10-11. Clearing the directory makes that
+# impossible rather than merely detectable.
+rm -rf "$OUT_STAGE"
 mkdir -p "$OUT_STAGE"
 SSH_USER=ubuntu
 SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
@@ -57,6 +63,8 @@ NPROC=${NPROC:-8}
 # way, through this variable, so the rehearsal exercises the same argument path.
 SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-}
 SESSION_GATE_PG19_META=${SESSION_GATE_PG19_META:-data/processed/pg19_1m_128kwin/documents.json}
+# The stage whose rows are inspected to decide whether the sampled (T>0) path is sane.
+SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-}
 SESSION_OUT=${SESSION_OUT:-results/mlsys/session_a}
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 say "SESSION_TYPE=$SESSION_TYPE rate=\$$RATE timer=${TIMER_MIN}min cap=\$$SESSION_CAP nproc=$NPROC"
@@ -232,6 +240,21 @@ if [ "$SSH_READY" != "1" ]; then
   exit 8
 fi
 
+# HF TOKEN TO THE POD VIA STDIN. It used to be interpolated into the ssh command, so it
+# appeared in the argv of every process involved and in `ps`. Piping it into `cat` on the
+# pod keeps it out of argv on both machines; the file is 600 and the remote script reads it
+# from there. Only the byte count is ever logged.
+say "--- hf token to pod (via stdin, mode 600) ---"
+if grep -E '^[[:space:]]*HF_TOKEN[[:space:]]*=' runpod_creds.md 2>/dev/null \
+     | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]' \
+     | timeout 120 ssh $SSH_OPTS "$SSH_USER@$IP" \
+       'umask 077; cat > ~/RASD/.hf_token && chmod 600 ~/RASD/.hf_token && wc -c < ~/RASD/.hf_token' >>"$LOG" 2>&1; then
+  say "token file written: $(tail -1 "$LOG") bytes"
+else
+  say "FATAL: could not write ~/RASD/.hf_token; refusing to start a session that will fail on gated repos"
+  exit 9
+fi
+
 say "--- provisioning ---"
 prov=1
 for attempt in 1 2; do
@@ -327,7 +350,40 @@ say "session_meta.json written (instance type travels with the results)"
 POLLER_PID=$!
 say "incremental puller pid=$POLLER_PID (every 240s)"
 
-say "--- running session A (remote driver) ---"
-timeout 30000 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "HF_TOKEN='$HF_TOKEN_VALUE' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
-say "remote rc=$?"
+# ---- START THE REMOTE SCRIPT DETACHED, THEN WAIT FOR ITS OWN DONE MARKER ----------
+# THE 2026-10-11 BUG. The remote script used to be the payload of this ssh command, and
+# the EXIT trap below terminates the instance. So whenever the ssh returned -- for ANY
+# reason, a dropped connection included -- the driver terminated a pod that was still
+# working. That is exactly what happened: ssh died at 04:12Z, the pod went on to finish
+# SCALING_512K_TARGET and SCALING_128K_SPEC, and the driver killed it at 05:35:32Z in the
+# middle of the last stage, losing the 128k target-only arm.
+# Now the remote script runs under setsid with its own log, and writes $SESSION_OUT/DONE
+# containing its exit code. This driver polls for that file with SHORT, FRESH ssh calls and
+# reconnects when one fails. It stops only on the DONE marker, on the poll deadline (the
+# dead-man timer's window less a margin, so the timer never races us), or on a fatal error.
+PODOUT="RASD/$SESSION_OUT"
+say "--- launching the remote session DETACHED on the pod ---"
+START_CMD="cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' bash scripts/mlsys_session_a_remote.sh >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
+say "remote launched; now polling for the DONE marker, not for this shell"
+
+POLL_DEADLINE=$(( LAUNCHED_AT + TIMER_MIN*60 - 900 ))
+say "poll deadline $(date -u -r "$POLL_DEADLINE" +%FT%TZ) (dead-man deadline less 15 min)"
+DONE_SEEN=""
+while :; do
+  if [ "$(date -u +%s)" -ge "$POLL_DEADLINE" ]; then
+    say "POLL DEADLINE reached; taking over (the dead-man timer remains the backstop)"
+    break
+  fi
+  POLL_OUT=$(timeout 90 ssh $SSH_OPTS -o ConnectTimeout=20 "$SSH_USER@$IP" \
+    "if [ -s $PODOUT/DONE ]; then echo MARKER \$(cat $PODOUT/DONE | tr '\n' ' '); else echo PENDING; fi" 2>/dev/null)
+  PRC=$?
+  case "$POLL_OUT" in
+    MARKER*) DONE_SEEN="${POLL_OUT#MARKER }"; say "DONE marker: $DONE_SEEN"; break ;;
+    PENDING) say "remote still working ($(date -u +%FT%TZ))" ;;
+    *)       say "POLL SSH FAILED (rc=$PRC). The pod keeps working and we keep waiting -- this is precisely the case that killed the 2026-10-11 session. Retrying in 60s." ;;
+  esac
+  sleep 60
+done
+say "remote session ended: DONE='${DONE_SEEN:-none}'"
+
