@@ -61,6 +61,19 @@ MLSys CAMPAIGN — MORNING REPORT
 #     NO vLLM STAGE ANYWHERE in this session.
 #     Limits: dead-man timer 8 hours, ceiling $200. Rehearsed on one 1x A100 at tiny
 #     settings (<= $3), INCLUDING the gate step, before the 8x follow-up launches.
+#  7g. ROPE GATE WIRING, corrected before the rehearsal. My first candidates file used
+#     "candidate" as the key and omitted expect/role/seed/native_baseline;
+#     mlsys_coherence_gate.py's load_candidates reads "name" plus those fields, so the
+#     file would have loaded ZERO candidates rather than failing loudly. Both files now
+#     mirror configs/mlsys_rope_intervention_candidates.json exactly and were verified by
+#     calling load_candidates on them: 3 candidates each, roles candidate/candidate/
+#     baseline with native_baseline on the control.
+#     configs/mlsys_followup_rope_candidates.json            context_length 131072
+#     configs/mlsys_followup_rope_candidates_rehearsal.json  context_length 4096
+#     The driver passes --pg19-meta through SESSION_GATE_PG19_META the same way in both
+#     runs (default: the ALIGNED pool), so the rehearsal exercises the identical argument
+#     path. THE REHEARSAL MUST SHOW ONE ROW PER ARM WITH status=ok (not oom, not error);
+#     if it does not, it is fixed and re-run before the 8x follow-up launches.
 #  7c. Quality redo is built and locally validated (configs/mlsys_quality_fix.yml, new
 #     stage ids QUALITY_FIX_128K/_1M, prompt_gen_tokens 1024, fixed pools) and will run
 #     as a 3-hour quality-only 8x session AFTER the main session ends, rehearsed first

@@ -1,0 +1,40 @@
+{
+  "_comment": "Rope-intervention arms for the FOLLOW-UP session. The schema mirrors configs/mlsys_rope_intervention_candidates.json exactly -- 'name' (not 'candidate'), 'expect', 'role' candidate/baseline, and 'native_baseline': true on the control -- because mlsys_coherence_gate.py's load_candidates reads those keys, and a file with the wrong key names yields no candidates at all rather than an error. Three arms, identical except the target's rotary block, all with rope_anchor_base 8192 so a difference is attributable to the FACTOR and not to swapping rope implementations. REHEARSAL TWIN: same arms and fields, context_length 4096, so the gate step genuinely executes on the 1x rehearsal GPU and every code path in the gate is exercised before the 8x follow-up launches.",
+  "candidates": [
+    {
+      "name": "ROFIX_F16",
+      "expect": "pass",
+      "role": "candidate",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 4096,
+      "seed": 42,
+      "rope_type": "llama3",
+      "rope_factor": 16,
+      "rope_anchor_base": 8192
+    },
+    {
+      "name": "ROFIX_F32",
+      "expect": "pass",
+      "role": "candidate",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 4096,
+      "seed": 42,
+      "rope_type": "llama3",
+      "rope_factor": 32,
+      "rope_anchor_base": 8192
+    },
+    {
+      "name": "ROFIX_NATIVE",
+      "expect": "pass",
+      "role": "baseline",
+      "target_model_name": "meta-llama/Llama-3.1-8B",
+      "target_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+      "context_length": 4096,
+      "seed": 42,
+      "native_baseline": true,
+      "rope_type": "none"
+    }
+  ]
+}

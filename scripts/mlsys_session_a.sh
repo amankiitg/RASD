@@ -44,6 +44,11 @@ SESSION_CAP=${SESSION_CAP:-500}       # safety net, never used to shorten a step
 SESSION_CFG=${SESSION_CFG:-configs/mlsys_sunday_1m.yml}
 SESSION_SANITY_CFG=${SESSION_SANITY_CFG:-configs/mlsys_sunday_sanity.yml}
 NPROC=${NPROC:-8}
+# The rope gate's inputs. The candidates file differs between the real run and the
+# rehearsal (131072 vs 4096) but the POOL does not: both pass --pg19-meta the same
+# way, through this variable, so the rehearsal exercises the same argument path.
+SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-}
+SESSION_GATE_PG19_META=${SESSION_GATE_PG19_META:-data/processed/pg19_1m_128kwin/documents.json}
 SESSION_OUT=${SESSION_OUT:-results/mlsys/session_a}
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 say "SESSION_TYPE=$SESSION_TYPE rate=\$$RATE timer=${TIMER_MIN}min cap=\$$SESSION_CAP nproc=$NPROC"
@@ -306,5 +311,5 @@ say "incremental puller pid=$POLLER_PID (every 240s)"
 
 say "--- running session A (remote driver) ---"
 timeout 30000 ssh $SSH_OPTS "$SSH_USER@$IP" \
-  "HF_TOKEN='$HF_TOKEN_VALUE' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
+  "HF_TOKEN='$HF_TOKEN_VALUE' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' bash ~/RASD/scripts/mlsys_session_a_remote.sh" 2>&1 | tee -a "$LOG"
 say "remote rc=$?"
