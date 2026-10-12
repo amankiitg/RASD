@@ -4,8 +4,10 @@ Instance `61d4c57d0fac41c18bcb8f6b93251f37`, `gpu_1x_a100_sxm4` (1x A100 **40 GB
 us-east-1, **$1.99/hr**. Launched 2026-10-12T08:28:46Z, terminated 09:05:54Z, wall
 2323 s = 0.65 h = **$1.28**. Detached dead-man timer (60 min) armed before any work,
 confirmed by **PPID 1** (pid 31562); 0 instances after terminate, verified by the API;
-timer cancelled. Evidence: `results/mlsys/profile/` (the CSV, both profiler sidecars,
-the meta file, and the two run logs).
+timer cancelled. Evidence committed here: `results/mlsys/profile/` (the CSV, both
+profiler sidecars, and the meta file). The two run logs
+(`profile.log`, `decode_a_nproc1.log`) are in the same local directory but are NOT
+committed — `.gitignore` excludes `*.log` repo-wide, as it does for every other stage.
 
 **Findings only. No engine code was changed** (`src/` untouched), because any change
 would invalidate every timing already measured.
