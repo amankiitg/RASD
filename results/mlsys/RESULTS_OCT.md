@@ -575,6 +575,33 @@ for first. Per-level `draft_window_cap` is also recorded in the rows themselves 
 16384 in the column), which is the first row-level evidence anywhere in these results that the
 key reaches the engine rather than falling back to the headline 4096.
 
+### 8.5 Stage f — temperature, 128k, 5 books, periodicity per row
+
+Greedy (T=0.0) and T=1.0 against the headline T=0.7. **0.0 and 1.0 are an in-session pair**;
+0.7 is the cross-session reference. Every row passed the repetition pass, and the counts of
+degenerate rows are reported rather than buried, because a looping row's acceptance is not a
+measurement of anything.
+
+| temperature | n | degenerate rows | accept (mean) | accept (clean only) | e2e tok/s | decode s/token | per-book acceptance |
+|---|---|---|---|---|---|---|---|
+| **0.0 (greedy)** | 5 | **1** (periodic tail 0.42, `first_periodic_token` 74) | 0.4604 | 0.4692 (n=4) | 0.69717 | 1.4469 | 0.2621 / 0.4255 / 0.7750 / 0.5000 / 0.3396 |
+| 0.7 (headline, other session) | 5 | 0 | 0.4681 | 0.4681 | 0.71557 | 1.3808 | §3 |
+| **1.0** | 5 | **0** | **0.7369** | 0.7369 | **0.97418** | **0.9660** | 0.6429 / 0.7045 / 0.8190 / 0.7917 / 0.7266 |
+
+**Temperature is the largest single knob measured in this session, and it points UP.** T=1.0
+against the headline T=0.7: **+0.269 acceptance** (+57% relative) and **+36% end-to-end
+throughput**, with **−30% per decode token**, and it happens on all five books individually
+(0.6429 vs 0.2712, 0.7045 vs 0.4255, 0.8190 vs 0.6081, 0.7917 vs 0.5855, 0.7266 vs 0.4500).
+Greedy, by contrast, buys nothing at 128k: 0.4604 against 0.4681, within noise, on one
+looping row of five.
+
+**That greedy result is context-dependent, and it is worth stating against the earlier
+headline.** At 1M the greedy condition looped on 9 of 15 rows and a looping row's acceptance
+is inflated by construction, which is why the campaign moved to sampling. At 128k only **1 of
+5** greedy rows loops. So "greedy degenerates" is a statement about long context in this
+engine, not a universal one, and it is not a reason to distrust the 128k ablation rows -- they
+are the ones carrying the observation.
+
 ### 8.3 Stage d — the seed stages are VOID as seed variation, and that is itself a result
 
 `SA_SEED_123_1M_SPEC` completed **5/5 ok rows** and is **not a seed replicate**. Every row
