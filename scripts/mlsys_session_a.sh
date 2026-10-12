@@ -106,10 +106,6 @@ print(names[0] if names else 'NONE')
 # An undeclared extra instance still stops the launch, so this cannot quietly
 # become a way to lose track of a second billing machine.
 EXPECTED_OTHER_INSTANCES=${EXPECTED_OTHER_INSTANCES:-}
-EXPECT_INSTANCES_AFTER=0
-if [ -n "$EXPECTED_OTHER_INSTANCES" ]; then
-  EXPECT_INSTANCES_AFTER=$(printf '%s' "$EXPECTED_OTHER_INSTANCES" | wc -w | tr -d ' ')
-fi
 BEFORE=$(count_instances)
 say "instances before launch: $BEFORE (declared others: '${EXPECTED_OTHER_INSTANCES:-<none>}')"
 if [ "$BEFORE" != "0" ]; then
@@ -201,23 +197,40 @@ finish() {
   [ "$terminated" = "1" ] && return $rc
   terminated=1
   [ -n "${POLLER_PID:-}" ] && kill "$POLLER_PID" 2>/dev/null
-  say "--- final pull ---"
+  # PULL $SESSION_OUT, NOT A HARDCODED NAME. These three paths said
+  # `results/mlsys/session_a/` while the stage CSVs live in `$SESSION_OUT`. Every
+  # session that overrode SESSION_OUT therefore pulled a directory the remote script
+  # never wrote: on 2026-10-12 the 1x n=5 rehearsal's pulled directory held only the
+  # COMMITTED Oct-10 leftovers (mtime 18:13) that the repo rsync had copied to the
+  # pod, the real stage CSVs stayed on the pod, and terminating it destroyed them. A
+  # session that costs $20-45 an hour cannot afford to lose its output to a literal.
+  say "--- final pull (pod: $SESSION_OUT) ---"
   timeout 420 rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
-    "$SSH_USER@$IP:~/RASD/results/mlsys/session_a/" "$OUT_STAGE/" >>"$LOG" 2>&1
+    "$SSH_USER@$IP:~/RASD/$SESSION_OUT/" "$OUT_STAGE/" >>"$LOG" 2>&1
   say "pulled $(find "$OUT_STAGE" -type f | wc -l | tr -d ' ') files"
   say "--- terminating $ID ---"
   curl -sS --max-time 60 -u "$KEY:" -X POST \
     "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
     -H 'Content-Type: application/json' -d "{\"instance_ids\":[\"$ID\"]}" >/dev/null 2>&1
-  # EXPECTED AFTER-TERMINATE COUNT. It is 0 unless other instances were declared,
-  # in which case waiting for 0 would stall for the full 10 minutes and then report
-  # a false alarm about a machine this session never owned.
+  # VERIFY BY EFFECT, ON THE RIGHT SUBJECT: ask about THIS id, not about a count.
+  # The count-based check was wrong in two directions. Requiring 0 stalls for ten
+  # minutes when a declared other instance is legitimately present; comparing
+  # against a STATIC expected count is worse -- the declared others can be gone by
+  # the time this runs, so a count equal to that number can be THIS session's own
+  # instance still terminating. That is what happened on 2026-10-12: it reported
+  # "1 (expected 1)" and broke immediately, and the instance happened to be gone a
+  # moment later, which is luck rather than verification.
+  local st=""
   for _ in $(seq 1 40); do
-    [ "$(count_instances)" = "$EXPECT_INSTANCES_AFTER" ] && break
-    sleep 15
+    st=$(api_get "instances/$ID" 2>/dev/null | "$PY" -c "
+import json,sys
+d=(json.load(sys.stdin).get('data') or {})
+print(d.get('status',''))" 2>/dev/null)
+    [ "$st" = "terminated" ] && break
+    sleep "${TERMINATE_POLL_S:-15}"
   done
-  local n; n=$(count_instances)
-  say "instances after terminate: $n (expected $EXPECT_INSTANCES_AFTER)"
+  say "instance $ID status after terminate: ${st:-unknown} (terminated required)"
+  say "instances still listed: $(count_instances) (declared others: '${EXPECTED_OTHER_INSTANCES:-<none>}')"
   local wall=$(( $(date -u +%s) - LAUNCHED_AT ))
   say "session wall: ${wall}s = $(awk -v w=$wall 'BEGIN{printf "%.2f", w/3600}')h at \$$RATE/hr = \$$(awk -v w=$wall -v r=$RATE 'BEGIN{printf "%.2f", w/3600*r}') of \$$SESSION_CAP"
   # CANCEL THE TIMER: it is bound to this id and would otherwise fire at its deadline
@@ -354,15 +367,19 @@ print(json.dumps({
 }, indent=2))
 META
 timeout 300 rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
-  "$OUT_STAGE/session_meta.json" "$SSH_USER@$IP:~/RASD/results/mlsys/session_a/" >>"$LOG" 2>&1
+  "$OUT_STAGE/session_meta.json" "$SSH_USER@$IP:~/RASD/$SESSION_OUT/" >>"$LOG" 2>&1
 say "session_meta.json written (instance type travels with the results)"
 
 # ---- incremental pulls, so a crash loses at most one row -------------------
+# CADENCE, overridable. 240s is right for an 8-hour session and wrong for a
+# rehearsal whose whole life is 20 minutes; it is also what a test has to wait for,
+# because the poller holds the driver's stdout open while it sleeps.
+PULL_EVERY_S=${MLSYS_PULL_EVERY_S:-240}
 (
   while :; do
-    sleep 240
+    sleep "$PULL_EVERY_S"
     rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
-      "$SSH_USER@$IP:~/RASD/results/mlsys/session_a/" "$OUT_STAGE/" >/dev/null 2>&1
+      "$SSH_USER@$IP:~/RASD/$SESSION_OUT/" "$OUT_STAGE/" >/dev/null 2>&1
     # After every pull, fold the newest progress block into the status block, so the
     # measured per-row time and the remaining work are recorded as they happen rather
     # than reconstructed at the end.
@@ -379,7 +396,7 @@ say "session_meta.json written (instance type travels with the results)"
   done
 ) &
 POLLER_PID=$!
-say "incremental puller pid=$POLLER_PID (every 240s)"
+say "incremental puller pid=$POLLER_PID (every ${PULL_EVERY_S}s)"
 
 # ---- START THE REMOTE SCRIPT DETACHED, THEN WAIT FOR ITS OWN DONE MARKER ----------
 # THE 2026-10-11 BUG. The remote script used to be the payload of this ssh command, and
