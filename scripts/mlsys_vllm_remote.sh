@@ -93,7 +93,7 @@ CSV="$OUT/vllm_baseline.csv"
 # 2026-10-12 the wrapper's defaults WERE the problem (TP=1, ctx=8192), so printing
 # them as "received" would have hidden the very thing being verified.
 mlsys_expect "vllm-remote" "${REMOTE_EXPECT:-}" \
-  "PROFILE_OUT=${PROFILE_OUT-<absent>};PROFILE_TAG=${PROFILE_TAG-<absent>};PROFILE_NPROC=${PROFILE_NPROC-<absent>};REHEARSE_TP=${REHEARSE_TP-<absent>};REHEARSE_CTXS=${REHEARSE_CTXS-<absent>};REHEARSE_PROMPT_DIR=${REHEARSE_PROMPT_DIR-<absent>};REHEARSE_MODEL=${REHEARSE_MODEL-<absent>};REHEARSE_REV=${REHEARSE_REV-<absent>};REHEARSE_CTX=${REHEARSE_CTX-<absent>};REHEARSE_NEW=${REHEARSE_NEW-<absent>}" || exit 2
+  "PROFILE_OUT=${PROFILE_OUT-<absent>};PROFILE_TAG=${PROFILE_TAG-<absent>};PROFILE_NPROC=${PROFILE_NPROC-<absent>};REHEARSE_TP=${REHEARSE_TP-<absent>};REHEARSE_CTXS=${REHEARSE_CTXS-<absent>};REHEARSE_PROMPT_DIR=${REHEARSE_PROMPT_DIR-<absent>};REHEARSE_MODEL=${REHEARSE_MODEL-<absent>};REHEARSE_REV=${REHEARSE_REV-<absent>};REHEARSE_CTX=${REHEARSE_CTX-<absent>};REHEARSE_NEW=${REHEARSE_NEW-<absent>};VLLM_PREFILL_PASS=${VLLM_PREFILL_PASS-<absent>}" || exit 2
 
 log "### installing the vLLM venv (this is the 8x run's own install path)"
 MLSYS_VLLM_BASE_PYTHON="$PY" bash scripts/mlsys_vllm_venv.sh 2>&1 | tee -a "$OUT/rehearsal.log"
@@ -147,6 +147,43 @@ env MLSYS_VLLM_PYTHON="$VENV/bin/python" \
     --out "$CSV" 2>&1 | tee -a "$OUT/rehearsal.log"
 run_rc=${PIPESTATUS[0]}
 log "### baseline rc=$run_rc"
+
+# ---- 2b. THE PREFILL PASS: a TTFT the offline path can be trusted not to have ----
+# WHY. The retry showed that vLLM 0.6.3's offline `RequestMetrics` carries ABSOLUTE
+# MONOTONIC stamps, so `ttft_s` came back as 1.79e9 and the decode-only columns as
+# -1.79e9 / 1.27e11. The recorder is fixed (it now takes a difference, or nothing), but
+# the fix can only turn a bad number into a BLANK: if the engine does not stamp
+# arrivals in this mode there is no TTFT to recover, and the decode-only number the
+# comparison needs would be missing.
+#
+# So the separation is MEASURED instead of inferred, from a second pass of the same
+# prompts with max_new_tokens=1. One row per context, the same prefill of the same
+# tokens, one decode step instead of 128, which makes `prefill ~= end_to_end` of that
+# row and `decode_only ~= end_to_end(128) - end_to_end(1)` -- a difference of two walls
+# the engine has no say in. It is written to its OWN CSV so it can never be averaged
+# into the comparison table.
+#
+# `--matched-max-new-tokens` is deliberately NOT passed here, so it keeps its default
+# 128 and every row in this file is marked `unit_matched=no` with the reason
+# "max_new_tokens != the matched RASD cell's 128". That is the truthful label: a
+# 1-token row is a prefill probe, not the matched cell. `--documents pg19_train_0`
+# keeps it to one book per context, which is sound because the prefill cost is a
+# function of the token count, identical for every book at a given context.
+if [ "${VLLM_PREFILL_PASS:-0}" = "1" ]; then
+  log "### prefill pass: max_new_tokens=1, one book, own CSV (prefill time by measurement)"
+  env MLSYS_VLLM_PYTHON="$VENV/bin/python" \
+    "$VENV/bin/python" scripts/mlsys_vllm_baseline.py \
+      --models "$MODEL" \
+      --context-lengths $CTXS \
+      --max-new-tokens 1 \
+      --tensor-parallel-size "$TP" \
+      --target-revision "$REV" \
+      --documents pg19_train_0 \
+      $PROMPT_ARG \
+      --out "$OUT/vllm_prefill.csv" 2>&1 | tee -a "$OUT/rehearsal.log"
+  pre_rc=${PIPESTATUS[0]}
+  log "### prefill pass rc=$pre_rc (rows in vllm_prefill.csv; unit_matched=no is EXPECTED there)"
+fi
 
 # ---- 3. the verdict, from the artifact --------------------------------------
 if [ ! -s "$CSV" ]; then

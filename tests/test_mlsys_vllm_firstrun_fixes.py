@@ -345,3 +345,75 @@ def test_missing_metrics_or_missing_fields_yield_no_ttft():
                                   end_to_end=18.3) is None
     assert mod._ttft_from_metrics(_Out(_Metrics(arrival_time=1.0)),
                                   end_to_end=18.3) is None
+
+
+class _FakeLLMWithMetrics(_FakeLLM):
+    """A worker whose RequestOutput carries the metrics vLLM 0.6.3 really carries."""
+
+    def generate(self, prompts, params, use_tqdm=False):
+        out = super().generate(prompts, params, use_tqdm)
+        out[0].metrics = types.SimpleNamespace(arrival_time=1000.0,
+                                               first_token_time=1006.0)
+        return out
+
+
+class _FakeLLMNoArrival(_FakeLLM):
+    def generate(self, prompts, params, use_tqdm=False):
+        out = super().generate(prompts, params, use_tqdm)
+        out[0].metrics = types.SimpleNamespace(first_token_time=1006.0)
+        return out
+
+
+def _run_with_row(tmp_path, monkeypatch, spec, llm_cls, ticks=None):
+    """`_run`, but on ONE module instance, so the LLM class and the clock we install
+    are the ones the worker actually uses. (`_run` re-installs its fakes internally,
+    which silently undid the first version of these two tests.)"""
+    import time as _time
+    mod = _load_module()
+    _install_fakes(monkeypatch, mod)
+    sys.modules["vllm"].LLM = llm_cls
+    if ticks is not None:
+        it = iter(ticks)
+        mod.time = types.SimpleNamespace(perf_counter=lambda: next(it),
+                                         time=_time.time, sleep=_time.sleep,
+                                         monotonic=_time.monotonic)
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(spec))
+    rc = mod.worker_main(p)
+    return rc, json.loads(Path(spec["result_path"]).read_text())
+
+
+def test_the_ttft_that_reaches_the_row_is_a_duration(tmp_path, monkeypatch):
+    """END TO END, THROUGH THE ROW THE CSV IS BUILT FROM -- not just the helper.
+
+    The 8x retry wrote `ttft_s` = 1.79e9 and `decode_only_wall_s` = -1.79e9 into
+    `vllm_baseline.csv`, because vLLM's stamps are ABSOLUTE MONOTONIC readings and the
+    recorder took one for a duration. This drives `worker_main` -- the function the
+    ladder calls per attempt, whose result dict IS the row the parent writes into that
+    CSV -- with the same shape of stamps and a known request wall, and asserts the row
+    carries the duration 6.0 s and the derived decode wall 12.321 s.
+    """
+    rc, result = _run_with_row(tmp_path, monkeypatch, _spec(tmp_path),
+                               _FakeLLMWithMetrics, ticks=[500.0, 518.321])
+    assert rc == 0, result
+    assert result["end_to_end_wall_s"] == 18.321, result["end_to_end_wall_s"]
+    assert result["ttft_s"] == 6.0, (
+        f"the row must carry the DURATION (6.0 s), not an absolute stamp: "
+        f"{result['ttft_s']}")
+    assert result["decode_only_wall_s"] == 12.321, result["decode_only_wall_s"]
+    rate = result["throughput_tps_decode_only"]
+    assert abs(rate - (4 - 1) / 12.321) < 1e-3, (
+        f"decode-only rate must follow from the decode wall, got {rate}")
+
+
+def test_a_stamp_with_no_arrival_time_leaves_the_ttft_blank(tmp_path, monkeypatch):
+    """The other half of the fix: with no usable TTFT the row is BLANK, not zero.
+
+    That difference is what tells a reader "we do not have it" apart from "it is 0".
+    """
+    rc, result = _run_with_row(tmp_path, monkeypatch, _spec(tmp_path),
+                               _FakeLLMNoArrival, ticks=[500.0, 518.321])
+    assert rc == 0, result
+    assert result["ttft_s"] == "", result["ttft_s"]
+    assert result["decode_only_wall_s"] == "", result["decode_only_wall_s"]
+    assert result["throughput_tps_decode_only"] == "", result["throughput_tps_decode_only"]

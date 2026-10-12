@@ -1,0 +1,250 @@
+# SEEDS + ABLATIONS. One 8x A100-80GB instance, ONE SETTING CHANGED PER STAGE from
+# the headline config (`mlsys_followup_sampling.yml`), new stage ids and CSVs so
+# nothing here can be confused with the Oct 12 rows or overwrite them.
+#
+# WHY THIS SESSION. The headline (2.37x at 1M, T=0.7, n=5 books) rests on one seed,
+# and every ablation so far was a context or a rope change. What is missing is
+# (i) evidence that the mechanism is not a seed accident, and (ii) direct
+# measurements of the knobs the mechanism is supposed to depend on -- the ring's
+# transfer granularity, the draft's window, the sampling temperature, the draft
+# length -- each moved with everything else held fixed.
+#
+# ORDER IS RUN ORDER, AND RUN ORDER IS PRIORITY. The remote script derives its step
+# list from this file's key order, and the Mac driver's deadline takes over from the
+# end, so a run cut short loses the LAST stages and never the first. The priority is
+# the operator's: (b) the profiled ring row, (c) ring chunk size, (d) the seeds,
+# (e) draft window, (f) temperature, (g) draft length.
+#
+# (a) THE SANITY PAIR is not a stage here: it is the session's own `SESSION_SANITY_CFG`
+# (`configs/mlsys_sanity_sampling.yml`, one target-only and one spec row, both arms in
+# one invocation), and the remote script runs it before anything else.
+#
+# STAGE b, THE PROFILED RING ROW, replaces the withdrawn 1-GPU profile: at nproc 8 the
+# ring patch is actually installed and exercised (`install_ring_attention` is a no-op
+# at world_size <= 1, which is why the 1-GPU profile measured comm_us = 0.0 exactly).
+# It is deliberately NOT an ablation and does not follow the one-setting rule below:
+# it is `configs/mlsys_profile_128k.yml` run at the rank count it was written for, so
+# the nproc-8 breakdown is comparable, field for field, with the withdrawn nproc-1 one
+# -- same pool, same book, same 8-token warm-up row then 24-token measured row, same
+# target-only greedy protocol. That config's own limitation still applies and is
+# restated: `--profile` wraps the WHOLE generate() call, so warm-up is done at ROW
+# granularity rather than inside the row.
+# `profile: true` is a PER-LEVEL key that run_experiment merges into that row's config,
+# so only these two rows are instrumented; RoundProfiler wraps exactly the
+# `engine.generate_text()` call whose wall the row records as `time_sec` (the row's
+# `t_start` is the first statement inside that call, and the model is loaded in engine
+# init, outside both) -- so the buckets and the row measure the same span, with the
+# profiler's own ~10-64% overhead inside it. Its comm bucket is a substring match on
+# `batch_isend_irecv` / `isend` / `irecv` / `nccl` / `c10d` / `broadcast`
+# (src/analysis/profiler.py), which is exactly what the ring uses per rotation.
+# THE PROFILED ROWS' tok/s IS NOT A THROUGHPUT MEASUREMENT and must not be quoted as
+# one: 8 and 24 tokens exist to produce a breakdown, not to reproduce the headline.
+
+# STAGES c-g ARE THE ABLATIONS and each changes EXACTLY ONE headline setting, verified
+# mechanically against `defaults` below rather than by eye.
+#
+# STAGE c MEMORY. kv_block_size 8192 raises the per-rotation transmission chunk from
+# 2048 to 8192 tokens. At 128k with 8 ranks each rank holds S_local = 16384 tokens of
+# KV = 16 KiB/token/rank-GPU (128 KiB/token across 8 ranked shards), so a chunk is
+# 8192 x 16 KiB = 128 MiB per layer per ring step, against a 32 MiB chunk at 2048; the
+# row's own `gpu_peak_mem_mb` is recorded so the claim is checked rather than assumed,
+# and the 128k target-only peak measured on Oct 12 was 8256 MB against 80 GB.
+#
+# STAGE d SPEEDUPS. The 1M target-only rate is reused for the new seeds: the
+# target-only rows carry no sampling at all and their measured variation across books
+# was under 2%, so a new seed cannot change the denominator. This is stated rather than
+# left for a reader to discover, and no target-only row is re-run.
+#
+# STAGES e/f/g run at the ALIGNED 128k pool on the FIVE headline books, so their
+# acceptance numbers are directly comparable with `SAMP_EXT_ALIGNED_128K_SPEC` (the
+# 5-book rung the n=5 extension just measured). `spec_steps 4`, `draft_window_cap`
+# 4096 and `temperature 0.7` are the headline values, and each stage moves exactly one
+# of them.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+
+SA_PROF_RING_128K:
+  name: sa_prof_ring_128k
+  factor: context_length
+  levels:
+  - id: SA_PROF_RING_128K_WARM
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    spec_steps: 0
+    profile: true
+    notes: 'STAGE b warm-up row: warms CUDA/allocator/kernels at nproc 8; its sidecar is not quoted'
+  - id: SA_PROF_RING_128K_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 24
+    spec_steps: 0
+    profile: true
+    notes: 'STAGE b measured row: the Phase 3 profiled row, now at nproc 8 so the ring patch is exercised'
+
+SA_RINGCHUNK_8192_TARGET:
+  name: sa_ringchunk_8192_target
+  factor: context_length
+  levels:
+  - id: SA_RINGCHUNK_8192_TARGET
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    kv_block_size: 8192
+    notes: 'STAGE c: ONESETTING kv_block_size 8192 (headline 2048), target-only, 2 books, pairs with the Oct 12 2048 target-only row on the same book'
+
+SA_RINGCHUNK_8192_SPEC:
+  name: sa_ringchunk_8192_spec
+  factor: context_length
+  levels:
+  - id: SA_RINGCHUNK_8192_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    kv_block_size: 8192
+    notes: 'STAGE c: ONESETTING kv_block_size 8192, spec, 2 books, matches SAMP_ALIGNED_128K_SPEC books 0 and 1'
+
+SA_SEED_123_1M_SPEC:
+  name: sa_seed_123_1m_spec
+  factor: context_length
+  levels:
+  - id: SA_SEED_123_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    seeds: [123]
+    notes: 'STAGE d: ONESETTING seed 123 (headline 42), 1M spec, the 5 headline books; target-only rate reused'
+
+SA_SEED_456_1M_SPEC:
+  name: sa_seed_456_1m_spec
+  factor: context_length
+  levels:
+  - id: SA_SEED_456_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    seeds: [456]
+    notes: 'STAGE d: ONESETTING seed 456 (headline 42), 1M spec, the 5 headline books; target-only rate reused'
+
+SA_DRAFTWIN_2048_128K_SPEC:
+  name: sa_draftwin_2048_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_DRAFTWIN_2048_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    draft_window_cap: 2048
+    notes: 'STAGE e: ONESETTING draft_window_cap 2048 (headline 4096), 128k spec, 5 books'
+
+SA_DRAFTWIN_16384_128K_SPEC:
+  name: sa_draftwin_16384_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_DRAFTWIN_16384_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    draft_window_cap: 16384
+    notes: 'STAGE e: ONESETTING draft_window_cap 16384 (headline 4096), 128k spec, 5 books'
+
+SA_TEMP_0_128K_SPEC:
+  name: sa_temp_0_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_TEMP_0_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 128
+    notes: 'STAGE f: ONESETTING temperature 0.0 greedy (headline 0.7), 128k spec, 5 books; the headline prediction is that greedy DEGENERATES and its acceptance is not usable'
+
+SA_TEMP_1_0_128K_SPEC:
+  name: sa_temp_1_0_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_TEMP_1_0_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 1.0
+    max_new_tokens: 128
+    notes: 'STAGE f: ONESETTING temperature 1.0 (headline 0.7), 128k spec, 5 books'
+
+SA_STEPS_2_128K_SPEC:
+  name: sa_steps_2_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_STEPS_2_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 2
+    notes: 'STAGE g: ONESETTING spec_steps 2 (headline 4), 128k spec, 5 books'
+
+SA_STEPS_6_128K_SPEC:
+  name: sa_steps_6_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_STEPS_6_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 6
+    notes: 'STAGE g: ONESETTING spec_steps 6 (headline 4), 128k spec, 5 books'

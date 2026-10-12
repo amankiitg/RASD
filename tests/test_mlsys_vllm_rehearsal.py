@@ -47,6 +47,12 @@ argv = sys.argv[1:]
 # wrapper actually passed rather than on the wrapper's own log line.
 if os.environ.get("FAKE_ARGV_OUT"):
     open(os.environ["FAKE_ARGV_OUT"], "w").write(json.dumps(argv))
+# One line per INVOCATION, so a test can assert on how many passes the wrapper ran and
+# on each pass's flags separately (the two-pass prefill run needs exactly that).
+if os.environ.get("FAKE_ARGV_LOG"):
+    with open(os.environ["FAKE_ARGV_LOG"], "a") as fh:
+        fh.write(json.dumps(argv))
+        fh.write(chr(10))
 out = "out.csv"
 for i, a in enumerate(argv):
     if a == "--out" and i + 1 < len(argv):
@@ -165,3 +171,52 @@ def test_a_failed_venv_install_fails_instead_of_running(tmp_path):
     rc, log, _ = _run(tmp_path, venv_rc=4)
     assert rc == 1, f"a failed install must fail the rehearsal, got {rc}\n{log[-2000:]}"
     assert "the vLLM install returned rc=4" in log
+
+
+def _invocations(tmp_path, extra_env):
+    """Every command line the wrapper handed the baseline, in order."""
+    home, env = _sandbox(tmp_path)
+    log = tmp_path / "argv.jsonl"
+    env.update({"FAKE_VLLM_MODE": "ok", "FAKE_ARGV_LOG": str(log)})
+    env.update(extra_env)
+    subprocess.run(
+        ["bash", str(home / "RASD" / "scripts" / "mlsys_vllm_remote.sh")],
+        cwd=str(home / "RASD"), env=env, capture_output=True, text=True, timeout=300)
+    if not log.exists():
+        return []
+    return [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+
+
+def test_the_prefill_pass_is_a_second_one_token_pass_in_its_own_csv(tmp_path):
+    """THE TTFT THE OFFLINE PATH CANNOT BE TRUSTED TO REPORT, measured instead.
+
+    The retry's `ttft_s` was 1.79e9 because vLLM's stamps are absolute. The recorder is
+    fixed, but a fix can only turn a bad number into a blank -- so the prefill is also
+    MEASURED, by a second pass of the same prompts with max_new_tokens=1, whose wall is
+    the prefill plus one step. This asserts the wrapper really runs that pass, with the
+    flags that keep it a probe rather than a measurement: no `--matched-max-new-tokens`
+    (so its rows are labelled unit_matched=no for the honest reason), one book, and its
+    own CSV.
+    """
+    invocations = _invocations(tmp_path, {"VLLM_PREFILL_PASS": "1",
+                                          "REHEARSE_CTXS": "131072 524288 1048576"})
+    assert len(invocations) == 2, f"expected a main pass and a prefill pass, got {invocations}"
+    main, pre = invocations
+    assert main[main.index("--max-new-tokens") + 1] == "128"
+    assert main[main.index("--matched-max-new-tokens") + 1] == "128"
+    assert pre[pre.index("--max-new-tokens") + 1] == "1"
+    assert "--matched-max-new-tokens" not in pre, (
+        "a 1-token probe must not declare itself the matched cell of a 128-token RASD row")
+    assert pre[pre.index("--documents") + 1] == "pg19_train_0", (
+        "one book is enough: the prefill cost is a function of the token count")
+    assert pre[pre.index("--out") + 1].endswith("vllm_prefill.csv"), (
+        "its own CSV, so it can never be averaged into the comparison")
+    assert pre[pre.index("--context-lengths") + 1:pre.index("--context-lengths") + 4] == \
+        ["131072", "524288", "1048576"], "the same contexts as the main pass"
+
+
+def test_without_the_flag_the_wrapper_runs_one_pass(tmp_path):
+    """The control: the 8x retry's behaviour must be unchanged by default."""
+    invocations = _invocations(tmp_path, {"REHEARSE_CTXS": "131072"})
+    assert len(invocations) == 1, invocations
+    assert "--documents" not in invocations[0]
