@@ -347,15 +347,33 @@ timeout 300 rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
   "$SSH_USER@$IP:~/RASD/$PROFILE_OUT/" "$PULL/" >>"$LOG" 2>&1
 say "pulled $(find "$PULL" -type f | wc -l | tr -d ' ') files"
 "$PY" - "$PULL" <<'PYSUM'
-import csv, glob, json, os, sys
+import csv, glob, os, sys
 d = sys.argv[1]
+# TWO SHAPES ARRIVE HERE, because REMOTE_SCRIPT can be either wrapper: a RASD stage CSV
+# (run_id / tokens_generated / time_sec) and a vLLM comparison CSV (context_length /
+# output_tokens / end_to_end_wall_s). Keying on 'run_id' unconditionally made the vLLM
+# summary die with a KeyError AFTER printing the row counts -- a traceback where the
+# numbers should be, which is how a summary stops being read. So each row is printed
+# from whichever of the two column sets it actually has.
+RASD_COLS = ("run_id", "tokens_generated", "time_sec")
+VLLM_COLS = ("context_length", "output_tokens", "end_to_end_wall_s", "ttft_s",
+             "decode_only_wall_s", "unit_matched", "doc_id")
 for f in sorted(glob.glob(os.path.join(d, "*.csv"))):
     rows = list(csv.DictReader(open(f)))
-    ok = [r for r in rows if r.get("status") == "ok"]
+    ok = [r for r in rows if (r.get("status") or "") == "ok"]
     print(f"  {os.path.basename(f)}: rows={len(rows)} ok={len(ok)}")
+    cols = set(rows[0].keys()) if rows else set()
+    if set(RASD_COLS) <= cols:
+        pick = RASD_COLS
+    else:
+        pick = tuple(c for c in VLLM_COLS if c in cols)
     for r in ok:
-        print(f"    {r['run_id']}: {r['tokens_generated']} tokens / {float(r['time_sec']):.1f} s "
-              f"= {int(r['tokens_generated'])/float(r['time_sec']):.4f} tok/s")
+        if set(RASD_COLS) <= cols:
+            t = float(r["time_sec"])
+            print(f"    {r['run_id']}: {r['tokens_generated']} tokens / {t:.1f} s "
+                  f"= {int(r['tokens_generated'])/t:.4f} tok/s")
+        else:
+            print("    " + " ".join(f"{c}={r.get(c, '')}" for c in pick))
 side = sorted(glob.glob(os.path.join(d, "profiler", "*.json")))
 if side:
     print("  sidecars:", [os.path.basename(p) for p in side])

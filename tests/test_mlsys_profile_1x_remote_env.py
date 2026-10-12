@@ -68,7 +68,17 @@ esac
 exit 0
 '''
 
-RSYNC_STUB = '#!/bin/sh\nexit 0\n'
+# The rsync stub can EMULATE a pull: the driver wipes its pull directory at startup
+# (`rm -rf "$PULL"`), so a test cannot pre-seed it -- the files have to arrive through
+# the pull itself, which is also the more faithful thing to test.
+RSYNC_STUB = '''#!/bin/sh
+for a in "$@"; do dest="$a"; done
+if [ -n "$RSYNC_STUB_FILES" ]; then
+  mkdir -p "$dest"
+  cp -R "$RSYNC_STUB_FILES/." "$dest/" 2>/dev/null
+fi
+exit 0
+'''
 
 
 def _sandbox(tmp_path: Path) -> tuple[Path, dict]:
@@ -174,3 +184,34 @@ def test_a_named_but_unset_variable_is_refused_before_anything_is_launched(tmp_p
     assert proc.returncode == 2, proc.stdout
     assert "REHEARSE_NOT_SET but it is unset or empty" in proc.stdout
     assert argv_log == "", "the refusal must happen before any ssh call"
+
+
+def test_the_pull_summary_survives_a_vllm_shaped_csv(tmp_path):
+    """The summary used to key on `run_id`, which only a RASD stage CSV has.
+
+    With REMOTE_SCRIPT pointing at the vLLM wrapper the pull holds a different shape
+    (context_length / output_tokens / end_to_end_wall_s), and the summary died with a
+    KeyError *after* printing the row counts -- a traceback where the numbers should be.
+    The driver still exits 0, so nothing else notices. Here the pull is pre-seeded with
+    a vLLM-shaped CSV and the summary must print its row and never traceback.
+    """
+    # STAGED FOR THE PULL, not written into it: the driver wipes its pull directory at
+    # startup, so these files have to arrive through rsync to be tested at all.
+    pull = tmp_path / "staged_pull"
+    pull.mkdir(parents=True, exist_ok=True)
+    (pull / "vllm_baseline.csv").write_text(
+        "model,context_length,output_tokens,end_to_end_wall_s,ttft_s,"
+        "decode_only_wall_s,unit_matched,doc_id,status\n"
+        "m,131072,128,17.8834,16.85,1.0334,yes,pg19_train_0,ok\n")
+    (pull / "profiler").mkdir(parents=True, exist_ok=True)
+    (pull / "profiler" / "ROW.json").write_text("{}")
+    proc, _argv = _run_driver(tmp_path, {"REMOTE_SCRIPT": "scripts/mlsys_vllm_remote.sh",
+                                         "REMOTE_ENV_NAMES": "REHEARSE_TP",
+                                         "REHEARSE_TP": "8",
+                                         "RSYNC_STUB_FILES": str(pull)})
+    out = proc.stdout + proc.stderr
+    assert "Traceback" not in out, out[-2000:]
+    assert "KeyError" not in out, out[-2000:]
+    assert "vllm_baseline.csv: rows=1 ok=1" in out, out[-2000:]
+    assert "context_length=131072" in out, out[-2000:]
+    assert "sidecars: ['ROW.json']" in out, out[-2000:]
