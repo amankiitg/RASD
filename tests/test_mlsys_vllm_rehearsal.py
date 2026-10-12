@@ -1,0 +1,119 @@
+"""The Phase 5 rehearsal wrapper must judge itself from the CSV, not the rc.
+
+The rehearsal's whole purpose is to find out whether vLLM installs, loads
+`gradientai/Llama-3-8B-Instruct-Gradient-1048k` at 8k and decodes -- on ONE card,
+where `unit_matched` is necessarily `no` because the fairness rule requires TP=8
+and the RASD prompt ids. So the wrapper has to distinguish "the engine worked but
+the row is not a fair 8-GPU comparison" (success) from "the engine produced no ok
+row at all" (failure), and it has to do it from the artifact: the baseline script's
+own exit status is unreliable (its stage is recorded FAILED when no row is
+unit-matched, which is exactly the expected case here).
+
+Driven in a sandbox with a stub venv builder and a stub baseline, so no GPU and no
+network are needed.
+"""
+from __future__ import annotations
+
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+REMOTE = REPO / "scripts" / "mlsys_vllm_rehearsal_remote.sh"
+
+VENV_STUB = '''\
+#!/usr/bin/env bash
+set -uo pipefail
+echo "STUB VENV: creating $MLSYS_VLLM_VENV (base $MLSYS_VLLM_BASE_PYTHON)"
+mkdir -p "$MLSYS_VLLM_VENV/bin"
+cat > "$MLSYS_VLLM_VENV/bin/python" <<EOF
+#!/bin/sh
+exec "$MLSYS_VLLM_BASE_PYTHON" "\\$@"
+EOF
+chmod +x "$MLSYS_VLLM_VENV/bin/python"
+exit ${FAKE_VENV_RC:-0}
+'''
+
+BASELINE_STUB = '''\
+import csv, sys
+
+argv = sys.argv[1:]
+out = "out.csv"
+for i, a in enumerate(argv):
+    if a == "--out" and i + 1 < len(argv):
+        out = argv[i + 1]
+mode = __import__("os").environ.get("FAKE_VLLM_MODE", "ok")
+status = "error" if mode == "no_ok_rows" else "ok"
+with open(out, "w", newline="") as fh:
+    w = csv.writer(fh)
+    w.writerow(["model", "context_length", "max_model_len", "tensor_parallel_size",
+                "attempt", "config_used", "status", "end_to_end_wall_s",
+                "output_tokens", "throughput_tps_end_to_end",
+                "throughput_tps_decode_only", "kv_dtype", "weight_precision",
+                "unit_matched", "error_class", "error"])
+    w.writerow(["gradientai/Llama-3-8B-Instruct-Gradient-1048k", 8192, 8192, 1, 1,
+                "1-default-tp8", status, 12.5, 128, 10.24, "", "bfloat16",
+                "bfloat16", "no", "", ""])
+'''
+
+
+def _sandbox(tmp_path: Path, venv_rc: int = 0) -> tuple[Path, dict]:
+    home = tmp_path / "home"
+    rasd = home / "RASD"
+    (rasd / "scripts").mkdir(parents=True)
+    (rasd / ".pod_env.sh").write_text("")
+    (home / "pod_env.log").write_text(f"INTERPRETER={sys.executable}\n")
+    (home / ".hf_token").write_text("stub\n")
+    # THE REAL SCRIPT UNDER TEST, and stubs for the two things it drives.
+    import shutil
+    shutil.copy(REMOTE, rasd / "scripts" / "mlsys_vllm_rehearsal_remote.sh")
+    vp = rasd / "scripts" / "mlsys_vllm_venv.sh"
+    vp.write_text(VENV_STUB)
+    vp.chmod(vp.stat().st_mode | stat.S_IEXEC)
+    (rasd / "scripts" / "mlsys_vllm_baseline.py").write_text(BASELINE_STUB)
+    env = dict(os.environ)
+    env.update({
+        "HOME": str(home),
+        "PROFILE_OUT": "results/mlsys/vllm_rehearsal",
+        "MLSYS_VLLM_VENV": str(rasd / ".venv-vllm"),
+        "MLSYS_VLLM_BASE_PYTHON": sys.executable,
+        "FAKE_VENV_RC": str(venv_rc),
+    })
+    return home, env
+
+
+def _run(tmp_path: Path, venv_rc: int = 0, mode: str = "ok"):
+    home, env = _sandbox(tmp_path, venv_rc)
+    env["FAKE_VLLM_MODE"] = mode
+    proc = subprocess.run(
+        ["bash", str(home / "RASD" / "scripts" / "mlsys_vllm_rehearsal_remote.sh")],
+        cwd=str(home / "RASD"), env=env, capture_output=True, text=True, timeout=300)
+    out = home / "RASD" / "results" / "mlsys" / "vllm_rehearsal"
+    marker = out / "DONE"
+    assert marker.exists(), f"no DONE marker\nstdout:{proc.stdout[-2000:]}"
+    return int(marker.read_text().split()[1]), (out / "rehearsal.log").read_text(), out
+
+
+def test_a_clean_rehearsal_succeeds_even_though_unit_matched_is_no(tmp_path):
+    """The expected 1x case: the engine works, the row is not a fair comparison."""
+    rc, log, out = _run(tmp_path)
+    assert rc == 0, f"a clean rehearsal must exit 0, got {rc}\n{log[-2000:]}"
+    assert "VLLM REHEARSAL DONE" in log
+    assert "rows=1 ok=1" in log
+    assert "unit_matched=no is EXPECTED" in log
+    assert (out / "vllm_baseline.csv").exists()
+
+
+def test_a_run_with_no_ok_row_fails(tmp_path):
+    rc, log, _ = _run(tmp_path, mode="no_ok_rows")
+    assert rc == 1, f"no ok row must not read as success, got {rc}\n{log[-2000:]}"
+    assert "FAILED: no ok row" in log
+
+
+def test_a_failed_venv_install_fails_instead_of_running(tmp_path):
+    """The install is the thing being rehearsed; if it fails, say so before running."""
+    rc, log, _ = _run(tmp_path, venv_rc=4)
+    assert rc == 1, f"a failed install must fail the rehearsal, got {rc}\n{log[-2000:]}"
+    assert "the vLLM install returned rc=4" in log

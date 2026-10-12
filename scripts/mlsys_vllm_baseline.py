@@ -115,6 +115,22 @@ DEFAULT_ROPE = {
     "meta-llama/Llama-3.1-8B": None,
 }
 
+# WHY THE CHUNK IS BOUNDED (fixed 2026-10-12, before the first 8x vLLM run).
+# Both long-context attempts used to pass `max_num_batched_tokens = ctx`, with a
+# note reading "chunked prefill sized to ctx". Those contradict each other: a
+# chunk equal to the context IS no chunking, so the scheduler batches the whole
+# prompt into one forward and the activations scale with the context. For the
+# Gradient-1048k model at 1M that is
+#     hidden states      1,048,576 x 4096 x 2 B  =  8.6 GB   per tensor
+#     MLP intermediate   1,048,576 x 22016 x 2 B = 46.2 GB   per tensor
+# on top of 17.2 GB of bf16 KV and 2.0 GB of weights per rank at TP=8 -- inside a
+# 0.95 x 80 GB = 76 GB budget that is a near-certain OOM, and an OOM here burns a
+# full attempt out of the ladder. A bounded chunk keeps every activation tensor
+# small while `enable_chunked_prefill` makes the scheduler actually use chunks.
+# 16384 divides all three rungs (131072, 524288, 1048576) exactly and is below
+# every rung's `max_model_len`.
+CHUNKED_PREFILL_TOKENS = 16384
+
 # Three DISTINCT fixes, tried in order, stopping at the first success.
 ATTEMPT_LADDER = [
     {
@@ -126,21 +142,22 @@ ATTEMPT_LADDER = [
         "note": "max_model_len exactly ctx; YaRN via hf_overrides",
     },
     {
-        "name": "2-eager-mem95-seq1",
+        "name": "2-eager-mem95-seq1-chunked",
         "kwargs": {"enforce_eager": True, "gpu_memory_utilization": 0.95,
-                   "max_num_seqs": 1},
+                   "max_num_seqs": 1, "enable_chunked_prefill": True},
         "env": {"VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1"},
         "max_model_len": "ctx",
-        "max_num_batched_tokens": "ctx",
-        "note": "eager, 0.95 util, seq=1, chunked prefill sized to ctx",
+        "max_num_batched_tokens": CHUNKED_PREFILL_TOKENS,
+        "note": f"eager, 0.95 util, seq=1, CHUNKED prefill at a bounded "
+                f"{CHUNKED_PREFILL_TOKENS} tokens per chunk",
     },
     {
         "name": "3-fallback-64k",
         "kwargs": {"enforce_eager": True, "gpu_memory_utilization": 0.95,
-                   "max_num_seqs": 1},
+                   "max_num_seqs": 1, "enable_chunked_prefill": True},
         "env": {"VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1"},
         "max_model_len": 65536,
-        "max_num_batched_tokens": None,
+        "max_num_batched_tokens": CHUNKED_PREFILL_TOKENS,
         "note": "valid 64k reference point if 128k cannot be made to load",
     },
 ]
@@ -284,6 +301,15 @@ def worker_main(spec_path: Path) -> int:
     max_model_len = spec["max_model_len"]
     rope = spec["rope"]
     quant = spec.get("quantization") or None
+    # THE DECLARED REVISION MUST BE THE LOADED ONE (fixed 2026-10-12). The row
+    # records `target_revision` and `_unit_match` refuses to certify a row whose
+    # recorded revision disagrees with the RASD cell's -- but the revision was
+    # NEVER passed to `LLM(...)` or to `AutoTokenizer.from_pretrained(...)`, so
+    # the engine served whatever `main` resolved to at load time while the row
+    # claimed a pin. A throughput ratio against a model whose revision is an
+    # assumption about the Hub is not citable, and nothing downstream could
+    # detect the disagreement. Pass it to both loads.
+    rev = spec.get("target_revision") or ""
 
     try:
         llm_kwargs = dict(
@@ -293,6 +319,9 @@ def worker_main(spec_path: Path) -> int:
             trust_remote_code=True,
             **spec["kwargs"],
         )
+        if rev:
+            llm_kwargs["revision"] = rev
+            llm_kwargs["tokenizer_revision"] = rev
         # C4: the RASD side that the draft story rests on runs 4-bit
         # bitsandbytes weights, so the baseline needs BOTH a matched-quant row
         # and a bf16 row. They are separate rows and are never averaged.
@@ -324,7 +353,8 @@ def worker_main(spec_path: Path) -> int:
         return 1
 
     try:
-        tokenizer = AutoTokenizer.from_pretrained(model)
+        tokenizer = AutoTokenizer.from_pretrained(
+            model, **({"revision": rev} if rev else {}))
         # C2: the EXACT token ids RASD generated with, passed as IDS.
         #
         # The previous version decoded them to text and let vLLM re-encode,

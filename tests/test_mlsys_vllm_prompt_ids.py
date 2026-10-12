@@ -566,7 +566,7 @@ def test_the_attempt_ladder_actually_retries(tmp_path, monkeypatch):
     with out.open() as fh:
         rows = list(csv.DictReader(fh))
     assert [r["config_used"] for r in rows] == [
-        "1-default-tp8", "2-eager-mem95-seq1", "3-fallback-64k"]
+        "1-default-tp8", "2-eager-mem95-seq1-chunked", "3-fallback-64k"]
     # Only attempt 3 ran, and it ran at 64k. Its row is REPORTED -- "128k did
     # not load" is a result -- but it is not certified as the 128k rung, so the
     # stage has no usable baseline and must not be recorded ok.

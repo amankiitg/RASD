@@ -39,6 +39,13 @@ SESSION_TYPE=${SESSION_TYPE:-gpu_1x_a100_sxm4}
 # reason, so the fallback is a small explicit list, not a wait.
 TYPE_FALLBACKS=${TYPE_FALLBACKS:-gpu_1x_a100_sxm4 gpu_1x_a100}
 PROFILE_OUT=${PROFILE_OUT:-results/mlsys/profile}
+# WHICH POD-SIDE SCRIPT TO RUN. Defaults to the Phase 3 profile, so the profile's
+# validated behaviour is unchanged; Phase 5's vLLM rehearsal points it at its own
+# wrapper. The contract a remote script must honour is the one both already do:
+# read PROFILE_OUT, write its artifacts there, and write $OUT/DONE with its own
+# exit code from an EXIT trap. That contract is what makes the Mac side able to
+# treat an ssh return as meaningless (L9) and an artifact as the result (L14).
+REMOTE_SCRIPT=${REMOTE_SCRIPT:-scripts/mlsys_profile_remote.sh}
 LOG="$SESSION_DIR/profile_${PROFILE_TAG}.log"
 PULL="$SESSION_DIR/profile_${PROFILE_TAG}_pull"
 rm -rf "$PULL"; mkdir -p "$PULL"
@@ -214,12 +221,12 @@ print(json.dumps({
                         "compute/comm/idle sidecar; target-only means spec_steps 0",
 }, indent=2))
 META
-say "profile_meta.json written"
+say "profile_meta.json written (remote=$REMOTE_SCRIPT)"
 
 # ---- the remote run, DETACHED, with its own DONE marker ---------------------
 PODOUT="RASD/$PROFILE_OUT"
 say "--- launching the profile DETACHED on the pod ---"
-START_CMD="mkdir -p ~/RASD/$PROFILE_OUT && cd ~/RASD && rm -f $PROFILE_OUT/DONE && setsid nohup env PROFILE_OUT='$PROFILE_OUT' PROFILE_TAG='$PROFILE_TAG' PROFILE_NPROC='$PROFILE_NPROC' bash scripts/mlsys_profile_remote.sh >> $PROFILE_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$PROFILE_OUT && cd ~/RASD && rm -f $PROFILE_OUT/DONE && setsid nohup env PROFILE_OUT='$PROFILE_OUT' PROFILE_TAG='$PROFILE_TAG' PROFILE_NPROC='$PROFILE_NPROC' bash $REMOTE_SCRIPT >> $PROFILE_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; polling for the DONE marker, not for this shell"
 
@@ -233,7 +240,7 @@ while :; do
   fi
   POLL_OUT=$(timeout 90 ssh $SSH_OPTS -o ConnectTimeout=20 "$SSH_USER@$IP" \
     "if [ -s $PODOUT/DONE ]; then echo MARKER \$(cat $PODOUT/DONE | tr '\n' ' '); \
-     elif pgrep -f mlsys_profile_remote.sh >/dev/null; then echo RUNNING; \
+     elif pgrep -f $(basename $REMOTE_SCRIPT) >/dev/null; then echo RUNNING; \
      elif [ -s $PODOUT/remote_stdout.log ]; then echo DIED; else echo NOPROC; fi" 2>/dev/null)
   PRC=$?
   case "$POLL_OUT" in
@@ -257,13 +264,15 @@ say "pulled $(find "$PULL" -type f | wc -l | tr -d ' ') files"
 "$PY" - "$PULL" <<'PYSUM'
 import csv, glob, json, os, sys
 d = sys.argv[1]
-for f in sorted(glob.glob(os.path.join(d, "profile_*.csv"))):
+for f in sorted(glob.glob(os.path.join(d, "*.csv"))):
     rows = list(csv.DictReader(open(f)))
     ok = [r for r in rows if r.get("status") == "ok"]
     print(f"  {os.path.basename(f)}: rows={len(rows)} ok={len(ok)}")
     for r in ok:
         print(f"    {r['run_id']}: {r['tokens_generated']} tokens / {float(r['time_sec']):.1f} s "
               f"= {int(r['tokens_generated'])/float(r['time_sec']):.4f} tok/s")
-print("  sidecars:", [os.path.basename(p) for p in sorted(glob.glob(os.path.join(d, "profiler", "*.json")))])
+side = sorted(glob.glob(os.path.join(d, "profiler", "*.json")))
+if side:
+    print("  sidecars:", [os.path.basename(p) for p in side])
 PYSUM
 say "PROFILE PULL COMPLETE"
