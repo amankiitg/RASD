@@ -65,25 +65,62 @@ for k in sorted(d): print(f'    {k} = {d[k]}')
 done
 echo "--- 3. measured vs profiled, per token ---"
 "$PY" - "$CSV" "$OUT" <<'PYEOF'
-import csv, glob, json, sys, os
+import csv, json, os, sys
 csvp, out = sys.argv[1], sys.argv[2]
 if not os.path.exists(csvp):
     print("  no CSV; the run did not produce a row"); raise SystemExit
 rows = [r for r in csv.DictReader(open(csvp)) if r.get('status') == 'ok']
 if not rows:
     print("  no ok rows"); raise SystemExit
+
+# THE CANONICAL SIDECAR SCHEMA, from src/analysis/profiler.py:214-226:
+#   compute_us, comm_us, idle_us, other_us   -- the four buckets
+#   total_us = compute+comm+other            -- a SUBTOTAL of the three above
+#   wall_us                                  -- the profiler context's wall clock
+#   overlap_us, *_pct                        -- derived
+# The FIRST version of this report added up EVERY *_us field. That double counts:
+# total_us duplicates compute+comm+other, and wall_us is the denominator rather than
+# a component, so the "sidecar total" it printed was never a share of anything. The
+# buckets and their shares of wall_us are the honest form, so they are read by NAME
+# here; a suffix-sum fallback is kept only for an unknown schema, and it says so.
+BUCKETS = ("compute_us", "comm_us", "idle_us", "other_us")
+
+def num(d, k):
+    v = d.get(k)
+    return float(v) if isinstance(v, (int, float)) else None
+
 for r in rows:
     tps = int(r['tokens_generated']) / float(r['time_sec'])
     print(f"  {r['run_id']}: tokens={r['tokens_generated']} time={float(r['time_sec']):.1f}s "
           f"-> {tps:.4f} tok/s = {1/tps*1000:.1f} ms/token (exact, not the rounded field)")
     side = os.path.join(out, 'profiler', r['run_id'] + '.json')
-    if os.path.exists(side):
-        # UNITS. The sidecar's fields are microseconds (`compute_us`, `comm_us`,
-        # `idle_us`); time_sec is seconds. The first version added the sidecar's numbers and
-        # divided by seconds, and reported a 99,166,666% share of wall time. The synthetic
-        # test above caught it precisely because it runs with no GPU. Convert by key suffix
-        # and say what was assumed, rather than printing a number with no unit.
-        d = json.load(open(side))
+    if not os.path.exists(side):
+        print(f"    no sidecar at {side}")
+        continue
+    d = json.load(open(side))
+    row_s = float(r['time_sec'])
+    wall_us = num(d, 'wall_us')
+    if all(num(d, k) is not None for k in BUCKETS) and wall_us:
+        print(f"    profiler wall = {wall_us/1e6:.2f} s vs the row's measured {row_s:.2f} s "
+              f"({wall_us/1e6/row_s*100:.1f}% of it; the profiler wraps generate(), which "
+              f"includes prefill)")
+        for k in BUCKETS:
+            v = num(d, k)
+            print(f"    {k:10s} = {v/1e6:9.2f} s   {v/wall_us*100:6.1f}% of the profiler wall")
+        cc = num(d, 'compute_us') + num(d, 'comm_us') + num(d, 'other_us')
+        tot = num(d, 'total_us')
+        print(f"    compute+comm+other = {cc/1e6:.2f} s"
+              + (f"  (the sidecar's own total_us = {tot/1e6:.2f} s, the same three buckets "
+                 f"-- which is why they must not be summed again)" if tot is not None else ""))
+        ov = num(d, 'overlap_us')
+        if ov is not None:
+            pct = num(d, 'overlap_pct')
+            print(f"    overlap    = {ov/1e6:9.2f} s"
+                  + (f"   {pct*100:6.1f}%" if pct is not None else "")
+                  + " -- CUDA time EXCEEDING the wall clock, i.e. kernels running"
+                    " concurrently; when this is nonzero the buckets are scaled, not additive")
+    else:
+        # Unknown schema: fall back to a suffix sum, and say that is what happened.
         sec, unknown = 0.0, []
         for k, v in d.items():
             if not isinstance(v, (int, float)):
@@ -96,13 +133,9 @@ for r in rows:
                 sec += v
             else:
                 unknown.append(k)
-        wall = float(r['time_sec'])
-        print(f"    sidecar total = {sec:.2f} s (converted from *_us/*_ms/*_s by key suffix)")
+        print(f"    UNKNOWN SIDECAR SCHEMA ({sorted(d)}); fell back to summing by suffix "
+              f"= {sec:.2f} s, which may double count")
         if unknown:
-            print(f"    NOT COUNTED (no unit suffix, so no unit was assumed): {unknown}")
-        if wall:
-            print(f"    share of the measured wall time: {sec/wall*100:.1f}%")
-    else:
-        print(f"    no sidecar at {side}")
+            print(f"    NOT COUNTED (no unit suffix): {unknown}")
 PYEOF
 echo "=== done: $TAG ==="
