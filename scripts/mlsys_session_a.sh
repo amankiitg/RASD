@@ -96,11 +96,34 @@ print(names[0] if names else 'NONE')
 " "$2" 2>/dev/null
 }
 
+# CONCURRENCY IS DECLARED, NOT BYPASSED. "This session owns exactly one instance"
+# is what makes the two guarantees below safe: the launch cannot collide with a
+# forgotten box, and the post-terminate check can require zero. A rehearsal is
+# sometimes sanctioned to run WHILE another campaign owns a node (2026-10-12: the
+# 1x n=5 rehearsal ran while the vLLM 8x comparison held one), and the honest form
+# of that permission is a POSITIVE ASSERTION -- EXPECTED_OTHER_INSTANCES names the
+# ids that are allowed to be there, and the API's list must be EXACTLY that set.
+# An undeclared extra instance still stops the launch, so this cannot quietly
+# become a way to lose track of a second billing machine.
+EXPECTED_OTHER_INSTANCES=${EXPECTED_OTHER_INSTANCES:-}
+EXPECT_INSTANCES_AFTER=0
+if [ -n "$EXPECTED_OTHER_INSTANCES" ]; then
+  EXPECT_INSTANCES_AFTER=$(printf '%s' "$EXPECTED_OTHER_INSTANCES" | wc -w | tr -d ' ')
+fi
 BEFORE=$(count_instances)
-say "instances before launch: $BEFORE"
+say "instances before launch: $BEFORE (declared others: '${EXPECTED_OTHER_INSTANCES:-<none>}')"
 if [ "$BEFORE" != "0" ]; then
-  say "REFUSING: $BEFORE instance(s) already exist; this session owns exactly one"
-  exit 3
+  OTHERS=$(api_get instances 2>/dev/null | "$PY" -c "
+import json,sys
+print(' '.join(sorted(i.get('id','') for i in json.load(sys.stdin).get('data',[]))))
+" 2>/dev/null)
+  if [ -n "$EXPECTED_OTHER_INSTANCES" ] && [ "$OTHERS" = "$EXPECTED_OTHER_INSTANCES" ]; then
+    say "PROCEEDING: the $BEFORE pre-existing instance(s) are exactly the declared ones ($OTHERS)"
+  else
+    say "REFUSING: instance(s) present are '$OTHERS', not the declared '${EXPECTED_OTHER_INSTANCES:-<none>}'."
+    say "  This session owns exactly one instance; declare the others via EXPECTED_OTHER_INSTANCES."
+    exit 3
+  fi
 fi
 
 # ---- capacity ---------------------------------------------------------------
@@ -186,12 +209,15 @@ finish() {
   curl -sS --max-time 60 -u "$KEY:" -X POST \
     "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
     -H 'Content-Type: application/json' -d "{\"instance_ids\":[\"$ID\"]}" >/dev/null 2>&1
+  # EXPECTED AFTER-TERMINATE COUNT. It is 0 unless other instances were declared,
+  # in which case waiting for 0 would stall for the full 10 minutes and then report
+  # a false alarm about a machine this session never owned.
   for _ in $(seq 1 40); do
-    [ "$(count_instances)" = "0" ] && break
+    [ "$(count_instances)" = "$EXPECT_INSTANCES_AFTER" ] && break
     sleep 15
   done
   local n; n=$(count_instances)
-  say "instances after terminate: $n (0 required)"
+  say "instances after terminate: $n (expected $EXPECT_INSTANCES_AFTER)"
   local wall=$(( $(date -u +%s) - LAUNCHED_AT ))
   say "session wall: ${wall}s = $(awk -v w=$wall 'BEGIN{printf "%.2f", w/3600}')h at \$$RATE/hr = \$$(awk -v w=$wall -v r=$RATE 'BEGIN{printf "%.2f", w/3600*r}') of \$$SESSION_CAP"
   # CANCEL THE TIMER: it is bound to this id and would otherwise fire at its deadline
