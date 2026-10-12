@@ -353,6 +353,55 @@ unaffected and was never derived from the metric. Spending ~$20 to refill three
 decorative columns would be the wrong trade, so the four rows keep their blanks —
 and the CSV's three unusable values are named here rather than quietly quoted later.
 
+### 5d. The rerun: prefill MEASURED, not inferred (2026-10-12, after the n=5 session)
+
+The retry's rows answer "how fast is the end-to-end wall at each context" and nothing
+about where that wall goes, because the only prefill evidence available was the
+unusable metric. The rerun fixes that from both ends: the recorder now takes a
+difference or writes a blank (5c), AND a second pass measures the prefill directly.
+
+**Exact command (Mac side).** Same contexts, same prompts, same settings as the retry;
+a new `PROFILE_OUT` and tag so the retry's CSV is not overwritten and the rerun's
+provenance is separate:
+
+```bash
+cd /Users/amankesarwani/PycharmProjects/RASD
+SESSION_TYPE=gpu_8x_a100_80gb_sxm4 SESSION_RATE=22.32 \
+REMOTE_SCRIPT=scripts/mlsys_vllm_remote.sh \
+PROFILE_OUT=results/mlsys/vllm_run2 PROFILE_TAG=vllm8x3 \
+TIMER_MIN=120 \
+REMOTE_ENV_NAMES="REHEARSE_TP REHEARSE_CTXS REHEARSE_PROMPT_DIR VLLM_PREFILL_PASS" \
+REHEARSE_TP=8 \
+REHEARSE_CTXS="131072 524288 1048576" \
+REHEARSE_PROMPT_DIR=samp_prompts \
+VLLM_PREFILL_PASS=1 \
+STAGE_EXTRA=/tmp/samp_prompts STAGE_EXTRA_DEST=samp_prompts \
+bash scripts/mlsys_profile_1x.sh
+```
+
+`/tmp/samp_prompts` was verified present and intact before launch: four sidecars, each
+carrying `engine_input_ids` (130048 / 523264 / 1047552 ids) alongside
+`prompt_token_ids` (one fewer -- the leading BOS, which is the one-token difference
+noted in §6.4 item 5).
+
+**What the rerun adds.** Four matched rows as before, plus a `vllm_prefill.csv` with one
+1-token row per context on book `pg19_train_0`. Then
+
+```
+prefill(context)      ~= end_to_end(1 token, context)
+decode_only(context)  ~= end_to_end(128 tokens) - end_to_end(1 token)
+decode_s_per_token    =  decode_only / (128 - 1)
+```
+
+which is a difference of two walls the engine has no say in, and is reported beside the
+metric-derived `ttft_s`/`decode_only_wall_s` (now fixed) so the two can be compared: if
+they agree, the metric path works on the pod and the probe confirms it; if the metric
+path is still blank, the probe is the answer. Either way the decode-only ratios against
+RASD target-only and RASD spec are the numbers the comparison has been missing.
+
+The prefill probe's own rows are `unit_matched=no` by construction and their tok/s is
+never quoted as a measurement.
+
 ### Verdict on the retry: **PASSED — 4/4 rows ok, at all three contexts.** (judged from the CSV)
 
 Judged from `vllm_baseline.csv` (4 rows, `status=ok`, `unit_matched=yes` on every
@@ -515,8 +564,44 @@ appears 0 times), which dates that block to after the run.
 
 ---
 
-## 7. GO / NO-GO for running vLLM on 8x tomorrow (handoff item 5)
+### 5e. The rerun's result: prefill measured, decode separated (2026-10-12, $28.23)
 
+Ran exactly the command in 5d (8x A100 80GB SXM4, us-east-1, 120-min timer = $44.64,
+PPID 1, 0 instances before and after, wall 4554 s = 1.26 h = **$28.23**). Both passes
+succeeded.
+
+**The recorder fix works on the pod.** `ttft_s` now holds durations —
+**16.85 / 222.805 / 859.306 s** at 128k / 512k / 1M — instead of 1.79e9, and
+`decode_only_wall_s` holds 1.0334 / 1.8401 / 2.9059 s instead of -1.79e9.
+
+**The prefill probe agrees with it**, which is what makes either usable: the 1-token
+rows report `end_to_end` = **17.078 / 222.576 / 859.596 s**, i.e. the metric and the
+probe differ by **1.3% at 128k, 0.10% at 512k, 0.03% at 1M**.
+
+| context | prefill (s) | decode s/token | decode tok/s | vLLM / RASD target-only | vLLM / RASD spec |
+|---|---|---|---|---|---|
+| 128k | 16.850 | 0.00814 | 122.90 | 429x | 182x |
+| 512k | 222.805 | 0.01449 | 69.02 | 690x | 244x |
+| 1M | 859.600 | 0.02337 | 42.80 | 731x | 247x |
+
+End-to-end for the same run: 7.1575 / 0.56979 / 0.14840 tok/s (the retry gave
+6.9865 / 0.56986 / 0.14828 — reproducible within 2.4% at 128k, 0.1% elsewhere).
+
+**The structural finding, and the honest reading of the earlier column.** vLLM's wall at
+these contexts is **94.2% / 99.2% / 99.7% prefill**, and its prefill throughput *falls*
+with length (7.7k / 2.3k / 1.2k tok/s) because attention is quadratic; RASD's 1M wall is
+**86% decode** (13.7% prefill). The end-to-end ratios (24.7x / 6.1x / 2.9x) are therefore
+ratios between a prefill-bound wall and a decode-bound one, which is exactly why they
+shrink with context instead of holding. The per-token comparison, once separated,
+is **429x-731x** against RASD target-only and **182x-247x** against RASD spec — a
+statement about kernels, precisions and execution models (fused CUDA + TP=8 + bf16 vs a
+Python ring loop + NF4), not a statement about speculative decoding.
+
+---
+
+---
+
+## 7. GO / NO-GO for running vLLM on 8x tomorrow (handoff item 5)
 ### **GO — with three conditions, and the run is NOT launched by this plan.**
 
 **Why GO.** The question the comparison answers is the one the paper is missing:

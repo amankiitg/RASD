@@ -1,0 +1,3 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+SAMP_EXT_ALIGNED_128K_SPEC_pg19_train_2204_s42,pg19_train_2204,4,131072,128,0.5855,0.5855,0.0,0.0,0.0,2,46,0.0366,128,0.0,False,,1,1,0,,0.5855,ok,
+SAMP_EXT_ALIGNED_128K_SPEC_pg19_train_2768_s42,pg19_train_2768,4,131072,128,0.45,0.462,0.0,0.0,0.0,6,13,0.1391,128,0.0,False,,1,1,0,,0.462,ok,

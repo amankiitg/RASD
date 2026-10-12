@@ -136,9 +136,30 @@ strictly like-for-like.
 
 | context | arm | n | accept (mean) | tok/s (mean) | per-book tok/s | target-only | speedup | vLLM 0.6.3 bf16 TP=8 (n) | vLLM / target-only | vLLM / spec |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 128k aligned | spec | 3 | 0.4349 | **0.67350** | 0.53084 / 0.65789 / 0.83175 | **0.28310** (n=1) | **2.38x** | **6.9865** (1) | **24.7x** | 10.4x |
-| 512k aligned | spec | 3 | 0.4892 | **0.24389** | 0.20607 / 0.22362 / 0.30197 | **0.09411** (n=1) | **2.59x** | **0.56986** (1) | **6.1x** | 2.3x |
-| 1M | spec | 5 | 0.5246 | 0.12077 | §1 | 0.05103 (n=2) | **2.37x** | **0.14828** (2) | **2.9x** | 1.2x |
+| 128k aligned | spec | **5** | **0.4681** | **0.71557** | 0.53084 / 0.65789 / 0.83175 / 0.86744 / 0.68993 | **0.28310** (n=1) | **2.53x** | **7.1575** (1) | **25.3x** | 10.0x |
+| 512k aligned | spec | **5** | **0.4745** | **0.24187** | 0.20607 / 0.22362 / 0.30197 / 0.24791 / 0.22976 | **0.09411** (n=1) | **2.57x** | **0.56979** (1) | **6.1x** | 2.4x |
+| 1M | spec | **5** | 0.5246 | 0.12077 | §1 | 0.05103 (n=2) | **2.37x** | **0.14840** (2) | **2.9x** | 1.2x |
+
+**ALL THREE RUNGS NOW COVER THE SAME FIVE BOOKS** (train_0, 1, 915, 2204, 2768), which is
+what the n=5 extension was for. Nothing was re-measured for books already present: the
+three Oct 12 rows per rung are joined by the two the rung lacked, and the target-only
+rates are the Oct 12 ones (measured variation across books under 2%). The extension ran
+2026-10-12 on `gpu_8x_a100_80gb_sxm4` (5 stages, 10 new rows, all `ok`, $25.36) with new
+stage ids (`SAMP_EXT_*`, `ROPE_EXT_*`) so nothing could be overwritten or confused.
+
+**The acceptance-vs-context trend is unchanged and now rests on matched books:
+0.4681 -> 0.4745 -> 0.5246.** The n=3 figures it replaces (0.4349 / 0.4892 / 0.5246) were
+computed over unequal book sets, so a "trend" there could have been a book effect; on the
+identical five it cannot be. Acceptance **rises** with context; the speedup stays flat
+(2.53x / 2.57x / 2.37x); the 128k speedup moves from 2.38x to **2.53x** purely because
+books 2204 and 2768 are faster on that rung than the three they join.
+
+One of the ten new rows is flagged by the repetition pass: `ROPE_EXT_SAMP_F16_SPEC` on
+`pg19_train_2768` has 77% of its tokens inside a repeated 16-gram (above the 60% ceiling),
+with a 36-token verbatim span. It has **no periodic tail** (`rep_periodic_tail_share` 0.0,
+`first_periodic_token` 128, i.e. no cycle), and its single acceptance window survives the
+non-degenerate filter, so its reported acceptance is unchanged at 0.7121; it is reported
+as a text-repetition observation, not as a looping row.
 
 Per-row acceptance at 128k: 0.2712 / 0.4255 / 0.6081 (train_0 / 1 / 915); at 512k:
 0.3349 / 0.4062 / 0.7266. All 11 spec rows at the three contexts are non-degenerate.
@@ -176,6 +197,46 @@ never inside them:
 Full ten-point caveat list, the per-row table and the provenance of the vLLM rows
 (HEAD `d11fdbc`) are in [VLLM_PLAN.md](./VLLM_PLAN.md) §5b-§6.
 
+### The vLLM comparison with PREFILL AND DECODE SEPARATED (rerun, 2026-10-12)
+
+The retry could only report an end-to-end wall, because vLLM 0.6.3's offline metrics
+came back as absolute monotonic stamps. The rerun fixes the recorder and also MEASURES
+the prefill, by repeating the same prompts with `max_new_tokens=1` (one book per
+context) so `prefill ~= end_to_end(1 token)`. The two agree to **0.03 % at 1M and
+0.10 % at 512k** (1.3% at 128k, where the prefill is only 17 s), which is what makes
+either of them usable:
+
+| context | vLLM prefill (s) | 1-token probe (s) | **vLLM decode s/token** | **vLLM decode tok/s** | RASD target-only dec tok/s | RASD spec dec tok/s | vLLM / RASD-T | vLLM / RASD-S |
+|---|---|---|---|---|---|---|---|---|
+| 128k | 16.85 | 17.08 | **0.00814** | **122.90** | 0.28632 | 0.6766 | **429x** | 182x |
+| 512k | 222.81 | 222.58 | **0.01449** | **69.02** | 0.10010 | 0.2829 | **690x** | 244x |
+| 1M | 859.60 | 859.60 | **0.02337** | **42.80** | 0.05853 | 0.1732 | **731x** | 247x |
+
+End-to-end for the same run: **7.1575 / 0.56979 / 0.14840 tok/s** at 128k / 512k / 1M
+(against the retry's 6.9865 / 0.56986 / 0.14828 — reproducible to within 2.4% at 128k
+and 0.1% elsewhere).
+
+**THE STRUCTURAL RESULT, and the reason the two tables disagree so violently.** The
+same wall is dominated by opposite things in the two engines:
+
+| context | vLLM: prefill share of its wall | RASD target-only: prefill share |
+|---|---|---|
+| 128k | 94.2% | 1.9% |
+| 512k | 99.2% | 6.7% |
+| 1M | 99.7% | 13.7% |
+
+vLLM at these contexts is a **prefill benchmark**: 99.7% of its 1M wall is reading the
+prompt, and its prefill throughput FALLS with length (7.7k tok/s at 128k, 2.3k at 512k,
+1.2k at 1M). RASD is the other way round — 86% of its 1M wall is the decode loop — so
+its end-to-end number is mostly a decode number, and the two engines' end-to-end ratio
+(24.7x / 6.1x / 2.9x) is a ratio between a prefill-bound wall and a decode-bound one,
+which is why it shrinks with context instead of holding. Separated, vLLM's decode is
+**429x to 731x** RASD's target-only decode and **182x to 247x** RASD's spec decode.
+
+Reported as a bound with the same caveats as the column above (bf16 vs FP4/NF4, fused
+CUDA kernels and TP=8 vs a Python ring loop, no speculative decoding on the vLLM side),
+and it says nothing that can be folded into the RASD-vs-RASD speedups.
+
 **What this supports:** throughput falls steeply with context (spec 0.674 → 0.244 → 0.121
 tok/s; target-only 0.283 → 0.094 → 0.051), the **speedup is roughly flat across a factor of
 8 in context (2.38x / 2.59x / 2.37x)**, and under sampling acceptance **rises** with
@@ -203,27 +264,31 @@ is a re-expression of the recorded numbers, not a new measurement.
 
 | context | n target / spec | target-only dec s/tok | spec dec s/tok (mean) | **decode-only speedup** | end-to-end speedup (for contrast) |
 |---|---|---|---|---|---|
-| 128k aligned | 1 / 3 | 3.4925 | **1.4779** | **2.36x** | 2.38x |
-| 512k aligned | 1 / 3 | 9.9900 | **3.5344** | **2.83x** | 2.59x |
+| 128k aligned | 1 / **5** | 3.4925 | **1.3808** | **2.53x** | 2.53x |
+| 512k aligned | 1 / **5** | 9.9900 | **3.5227** | **2.84x** | 2.57x |
 | 1M | 2 / 5 | 17.0902 | **5.7725** | **2.96x** | 2.37x |
 
-Per row (all 11 spec rows at the three contexts plus the four target-only rows):
+Per row (all 15 spec rows at the three contexts plus the four target-only rows):
 
 | context | doc | target-only s/tok | spec s/tok | spec decode-only speedup vs that book's window |
 |---|---|---|---|---|
 | 128k | pg19_train_0 | 3.4925 | 1.8320 | 1.91x |
 | 128k | pg19_train_1 | — | 1.4573 | 2.40x (vs train_0's window) |
 | 128k | pg19_train_915 | — | 1.1443 | 3.05x (vs train_0's window) |
+| 128k | pg19_train_2204 | — | 1.0303 | 3.39x (vs train_0's window) |
+| 128k | pg19_train_2768 | — | 1.4945 | 2.34x (vs train_0's window) |
 | 512k | pg19_train_0 | 9.9900 | 4.1901 | 2.38x |
 | 512k | pg19_train_1 | — | 3.7766 | 2.65x (vs train_0's window) |
 | 512k | pg19_train_915 | — | 2.6365 | 3.79x (vs train_0's window) |
+| 512k | pg19_train_2204 | — | 3.8483 | 2.60x (vs train_0's window) |
+| 512k | pg19_train_2768 | — | 4.1182 | 2.43x (vs train_0's window) |
 | 1M | pg19_train_0 | 16.8039 | 6.6353 | 2.53x |
 | 1M | pg19_train_1 | 17.3765 | 4.5226 | 3.84x |
 | 1M | pg19_train_915 | — | 5.2687 | 3.24x (vs train_0's window) |
 | 1M | pg19_train_2204 | — | 5.5767 | 3.06x (vs train_0's window) |
 | 1M | pg19_train_2768 | — | 6.8591 | 2.49x (vs train_0's window) |
 
-Only one book per rung has a target-only row, so the per-book speedups for the other books
+Only one book per rung has a target-only row (two at 1M), so the per-book speedups for the other books
 compare their decode against **that rung's single target-only rate**, which is legitimate
 because the target-only rate is book-independent (measured variation under 2% across books,
 §1) — but it is a comparison against a rate, not against a matched pair, and the table says
@@ -263,12 +328,17 @@ headline model at all; this section is about the mechanism, on a model that can 
 Only `factor` changes between the two candidate arms. The coherence gate ran immediately
 before these layers and its verdict is reported, never enforced.
 
-| arm | rope | factor | gate `ppl_ratio` vs native | gate window | matches intent | accept (mean) | tok/s (mean) | speedup vs native target |
+| arm | rope | factor | gate `ppl_ratio` vs native | gate window | matches intent | accept (mean, **n=5**) | tok/s (mean) | speedup vs native target |
 |---|---|---|---|---|---|---|---|---|
-| ROPE_SAMP_NATIVE_SPEC | none | – | 1.000 | 131072 | True | 0.7092 | 0.90239 | **3.33x** |
-| ROPE_SAMP_F16_SPEC | llama3 | 16 | **1.0005** | 131072 | True | 0.5002 | 0.72339 | 2.67x |
-| ROPE_SAMP_F32_SPEC | llama3 | 32 | **1.0156** | 131072 | True | 0.4990 | 0.75686 | 2.79x |
+| ROPE_SAMP_NATIVE_SPEC | none | – | 1.000 | 131072 | True | **0.7272** | 0.91087 | **3.36x** |
+| ROPE_SAMP_F16_SPEC | llama3 | 16 | **1.0005** | 131072 | True | **0.5336** | 0.76995 | 2.84x |
+| ROPE_SAMP_F32_SPEC | llama3 | 32 | **1.0156** | 131072 | True | **0.5006** | 0.74733 | 2.76x |
 | ROPE_SAMP_NATIVE_TARGET | none | – | 1.000 | 131072 | True | — | 0.27125 (n=1) | — |
+
+**The three arms are now n=5**, on the same five books as every other rung
+(`ROPE_EXT_*` added books 2204 and 2768, 6 new rows, all `ok`). Per book
+(native / f16 / f32): 0.5878 / 0.3170 / 0.3578, 0.7121 / 0.5724 / 0.3650,
+0.8276 / 0.6111 / 0.7742, 0.7661 / 0.4556 / 0.5000, 0.7422 / 0.7121 / 0.5060.
 
 **`gate_pass = True` on all three arms, `status = ok`, and no arm was excluded.** The
 intervention is nearly free in perplexity at these factors: **+0.05% at factor 16 and
@@ -278,7 +348,8 @@ own repetition block is clean on all three (periodic tail 0.0, `first_periodic_t
 = the gate's generation length, i.e. no cycle).
 
 **The acceptance drop IS a rope effect, and the arms are a controlled comparison.**
-Native 0.7092 vs f16 0.5002 and f32 0.4990 — a **0.21 absolute fall (29% relative)** that
+Native **0.7272** vs f16 **0.5336** and f32 **0.5006** — a **0.19-0.23 absolute fall
+(27-31% relative)** that
 appears the moment the positional basis is stretched. It is attributable to the
 intervention because **nothing else differs between the three arms: the same target
 (`meta-llama/Llama-3.1-8B`, same revision), the same draft
@@ -287,10 +358,19 @@ intervention because **nothing else differs between the three arms: the same tar
 mechanism is that speculation acceptance is a function of how peaked the target's
 next-token distribution is, and a stretched rotary basis flattens it. **The direction
 holds on every book individually**, not only in the mean: native ≥ stretched on all
-three (0.5878 vs 0.3170 / 0.3578; 0.7121 vs 0.5724 / 0.3650; 0.8276 vs 0.6111 / 0.7742),
-and f16 and f32 land within **0.0012** of each other — what a saturating rope effect
-looks like rather than noise. Reported as a rope finding, **n=3**, with the caveats that
-only the 128k rung was measured and 32 is the largest factor tried.
+**five** books (native >= f16 and native >= f32 on 5 of 5, at 128k: 0.5878 vs
+0.3170 / 0.3578; 0.7121 vs 0.5724 / 0.3650; 0.8276 vs 0.6111 / 0.7742; 0.7661 vs
+0.4556 / 0.5000; 0.7422 vs 0.7121 / 0.5060). Reported as a rope finding, **n=5**, with
+the caveats that only the 128k rung was measured and 32 is the largest factor tried.
+
+**One n=3 claim is weakened by the fifth book and is restated rather than repeated.** At
+n=3 the two stretched factors landed within **0.0012** of each other and that was offered
+as what a saturating effect looks like. At n=5 they are 0.5336 and 0.5006 — a 0.033 gap
+(6.6% relative), which is still much smaller than either's distance from native (0.19 and
+0.23) but is no longer "within noise of each other". The saturation reading survives as
+"both stretched factors land far closer to each other than to native"; the specific
+0.0012 is withdrawn. `pg19_train_2768` under f16 is also the one row the repetition pass
+flags (77% of tokens inside a repeated 16-gram, no periodic tail).
 
 ---
 
