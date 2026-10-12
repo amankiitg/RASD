@@ -551,6 +551,42 @@ difference could be host or session effect. The identical acceptance is evidence
 arms compute the same thing, and the direction is the same in all three pairs, but a
 2048-vs-8192 A/B inside one session is the experiment that would close it.
 
+### 8.3 Stage d — the seed stages are VOID as seed variation, and that is itself a result
+
+`SA_SEED_123_1M_SPEC` completed **5/5 ok rows** and is **not a seed replicate**. Every row
+records `seed=42`, and every row's `generated_tokens_sha256` is **byte-identical** to its
+seed-42 counterpart; the acceptance mean is 0.5246 with the same per-book values to four
+decimals (0.3776 / 0.6838 / 0.6250 / 0.5437 / 0.3929).
+
+**Cause, from the code rather than from the output:** `run_experiment.py` pops the seed list
+from `defaults` (590), merges each level over the defaults (611) and then sets
+`run["seed"] = seed` from that list (612) -- so a level's own `seeds:` key is overwritten on
+the next line, and the comment there says the rule was written because "greedy decoding makes
+a seed change a no-op". That is true for greedy and false for this session's T=0.7 arms. The
+config-only fix is `defaults.seeds`, one config per seed
+(`configs/mlsys_seed{123,456}_1m.yml`), not yet run: two seeds x 5 books x 1M is ~3.1 h of 8x
+time (~$69, needing approval). `SA_SEED_456` in the same session re-runs seed 42 the same way,
+for the same ~$36 as `SA_SEED_123` spent.
+
+**What it does support, and nothing else was needed to get it:** the engine is
+**bit-reproducible for a fixed seed across sessions and hosts**. The seed-42 rows were
+produced on 2026-10-12 in one 8x instance (`cad0d8cd…`, us-east-1); the seed-123 stage's rows
+were produced hours later on a different 8x instance (`d6cc…`, same region) and generated the
+identical token streams. Two consequences worth stating: every other delta in this section can
+be read as an effect of the setting under test rather than of the machine, and a "3 seeds x 5
+books" spread cannot be obtained by re-labelling a run -- it needs the seed to reach the
+sampler, which is exactly what the void stage demonstrated it did not.
+
+**The seeds/ablations session's other stages are unaffected, and that was checked rather than
+assumed.** Only `seeds` is popped and re-applied, so a level's `temperature`, `spec_steps` and
+`kv_block_size` survive the merge, and the rows prove it: `SA_RINGCHUNK_8192_*` records
+**`kv_block_size = 8192`** (headline 2048) with `spec_steps` 0 and 4 on its two arms;
+`QUALITY_FIX_128K` records `temperature 0.0` where its level set it and the sampling rows
+record 0.7. `draft_window_cap` has the same code path but **no row-level precedent anywhere in
+the committed results** (every row that carries the column says 4096), so
+`SA_DRAFTWIN_2048/16384` are the first rows that will test it; if it silently fell back, those
+two stages would be ~20-minute re-runs of 4096 each (~$7 apiece).
+
 ### 8.4 Stage e — draft window (`draft_window_cap`), 128k, 5 books
 
 The draft is a 1B model attending over a window capped at this many tokens. The headline is
@@ -615,41 +651,43 @@ to sampling. At 128k only **1 of 5** rows loops. So "greedy degenerates" is a st
 long context in this engine, not a universal one -- and it is a statement about the *mean*,
 not only about the looping row: the row that loops is the row that inflates.
 
-### 8.3 Stage d — the seed stages are VOID as seed variation, and that is itself a result
+### 8.6 Stage g — draft length (`spec_steps`), 128k, 5 books, periodicity per row
 
-`SA_SEED_123_1M_SPEC` completed **5/5 ok rows** and is **not a seed replicate**. Every row
-records `seed=42`, and every row's `generated_tokens_sha256` is **byte-identical** to its
-seed-42 counterpart; the acceptance mean is 0.5246 with the same per-book values to four
-decimals (0.3776 / 0.6838 / 0.6250 / 0.5437 / 0.3929).
+How many tokens the draft proposes per verify step. **2 and 6 are an in-session pair** on the
+same five books; **4 is the headline** and comes from the Oct 12 sampling session. The
+target-only reference is that session's 128k book-0 row (0.28310 tok/s, 3.4925 s/token), the
+same reference §8.2 uses.
 
-**Cause, from the code rather than from the output:** `run_experiment.py` pops the seed list
-from `defaults` (590), merges each level over the defaults (611) and then sets
-`run["seed"] = seed` from that list (612) -- so a level's own `seeds:` key is overwritten on
-the next line, and the comment there says the rule was written because "greedy decoding makes
-a seed change a no-op". That is true for greedy and false for this session's T=0.7 arms. The
-config-only fix is `defaults.seeds`, one config per seed
-(`configs/mlsys_seed{123,456}_1m.yml`), not yet run: two seeds x 5 books x 1M is ~3.1 h of 8x
-time (~$69, needing approval). `SA_SEED_456` in the same session re-runs seed 42 the same way,
-for the same ~$36 as `SA_SEED_123` spent.
+| `spec_steps` | n | degenerate | accept (all / non-degenerate) | e2e tok/s | decode s/token | speedup vs 128k target-only | decode speedup |
+|---|---|---|---|---|---|---|---|
+| **2** | 5 | 0/5 | 0.6558 / 0.6606 | 0.58904 | 1.6382 | 2.08x | 2.13x |
+| 4 (headline, other session) | 5 | 0/5 | 0.4681 / 0.4681 | 0.71557 | 1.3808 | 2.53x | 2.53x |
+| **6** | 5 | 0/5 | 0.4270 / 0.4392 | **0.83685** | **1.1621** | **2.96x** | **3.01x** |
 
-**What it does support, and nothing else was needed to get it:** the engine is
-**bit-reproducible for a fixed seed across sessions and hosts**. The seed-42 rows were
-produced on 2026-10-12 in one 8x instance (`cad0d8cd…`, us-east-1); the seed-123 stage's rows
-were produced hours later on a different 8x instance (`d6cc…`, same region) and generated the
-identical token streams. Two consequences worth stating: every other delta in this section can
-be read as an effect of the setting under test rather than of the machine, and a "3 seeds x 5
-books" spread cannot be obtained by re-labelling a run -- it needs the seed to reach the
-sampler, which is exactly what the void stage demonstrated it did not.
+Per-book (accept reported / non-degenerate): steps=2 `0.6792/0.6852`, `0.5678/0.5750`,
+`0.8021/0.8061`, `0.6140/0.6140`, `0.6161/0.6228`; steps=6 `0.3106/0.3259`, `0.3625/0.3625`,
+`0.6282/0.6420`, `0.4510/0.4667`, `0.3829/0.3991`.
 
-**The seeds/ablations session's other stages are unaffected, and that was checked rather than
-assumed.** Only `seeds` is popped and re-applied, so a level's `temperature`, `spec_steps` and
-`kv_block_size` survive the merge, and the rows prove it: `SA_RINGCHUNK_8192_*` records
-**`kv_block_size = 8192`** (headline 2048) with `spec_steps` 0 and 4 on its two arms;
-`QUALITY_FIX_128K` records `temperature 0.0` where its level set it and the sampling rows
-record 0.7. `draft_window_cap` has the same code path but **no row-level precedent anywhere in
-the committed results** (every row that carries the column says 4096), so
-`SA_DRAFTWIN_2048/16384` are the first rows that will test it; if it silently fell back, those
-two stages would be ~20-minute re-runs of 4096 each (~$7 apiece).
+**Acceptance falls with draft length while throughput rises, and both monotone.** 0.6558 →
+0.4681 → 0.4270 acceptance, 0.58904 → 0.71557 → **0.83685** tok/s. Accepting fewer tokens per
+proposal is worth it here because a verify step costs one target forward over a KV cache that
+is already paid for: the marginal cost of checking 5 more candidate tokens against 128k of
+context is small, so a longer draft amortizes the same expensive step over more emitted
+tokens. Decode time per token falls **15.8%** from 4 steps to 6 (1.1621 vs 1.3808 s) and
+**18.6%** the other way to 2 steps (1.6382 s) — the ordering is the same in all five books
+individually for both comparisons.
+
+**steps=6 is the fastest arm measured at 128k in the whole campaign: 2.96x end-to-end and
+3.01x decode-only over target-only**, against the headline's 2.53x. Nothing here says 6 is
+optimal -- 6 is simply the largest value tested, and the trend is still rising at the edge of
+the tested range.
+
+**The interaction to test, not to assume.** Temperature (§8.5) raises acceptance by 0.269 and
+this stage lowers it by 0.042 per added step, so the throughput-optimal step count almost
+certainly moves with temperature: at T=1.0 the draft is rewarded far more often per proposal,
+which is the regime where longer drafts pay most. Any final configuration should fix one
+before reading the other, and neither should be carried into a 1M headline without being
+re-measured at 1M, where the per-step cost is much larger.
 
 ### Limitations
 
