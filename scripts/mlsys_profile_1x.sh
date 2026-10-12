@@ -57,6 +57,35 @@ PY=python3
 RATE=${SESSION_RATE:-1.99}
 say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 
+# WHICH POD-SIDE ENV VARS CROSS THE BOUNDARY. An EXPLICIT ALLOWLIST, not "whatever
+# happens to be exported", because the failure it prevents is silent: on 2026-10-12
+# the driver forwarded only PROFILE_OUT/PROFILE_TAG/PROFILE_NPROC, so a vLLM run
+# launched with REHEARSE_TP=8, REHEARSE_CTXS='131072 524288 1048576' and
+# REHEARSE_PROMPT_DIR=samp_prompts started the pod with the WRAPPER'S OWN DEFAULTS
+# -- one card, 8192 tokens, a synthetic prompt -- on an 8-GPU box, and cost ~$5.5
+# before the CSV showed it. The wrapper's tests could not catch that: they called
+# the wrapper directly, so they proved the wrapper forwards what it is GIVEN and
+# never that the driver gave it anything (L12: testing the function is not calling
+# it). Validated HERE, before the instance count and before anything is launched.
+#
+# REMOTE_ENV_NAMES is a space-separated list of variable NAMES. Each is single-quoted
+# into the remote `env` call so a value containing spaces (REHEARSE_CTXS) survives;
+# the remote script splits it back apart itself. A named variable that is unset or
+# EMPTY is refused, rather than forwarded as '' for the pod to interpret as its own
+# default -- which is the exact shape of the mistake above.
+REMOTE_ENV_NAMES=${REMOTE_ENV_NAMES:-}
+REMOTE_ENV_PAIRS=""
+for _n in $REMOTE_ENV_NAMES; do
+  eval "_v=\${$_n:-}"
+  if [ -z "$_v" ]; then
+    say "FATAL: REMOTE_ENV_NAMES names $_n but it is unset or empty on this side"; exit 2
+  fi
+  case "$_v" in
+    *"'") say "FATAL: $_n contains a single quote; it cannot be forwarded safely"; exit 2 ;;
+  esac
+  REMOTE_ENV_PAIRS="$REMOTE_ENV_PAIRS $_n='$_v'"
+done
+
 KEY=$(grep -E '^[[:space:]]*LAMBDA_API_KEY[[:space:]]*=' runpod_creds.md 2>/dev/null \
       | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//' | tr -d '`"' | tr -d '[:space:]')
 HF_TOKEN_VALUE=$(grep -E '^[[:space:]]*HF_TOKEN[[:space:]]*=' runpod_creds.md 2>/dev/null \
@@ -255,12 +284,13 @@ if [ -n "$STAGE_EXTRA_DEST" ]; then
   say "extra payload on the pod: ${HAVE:-?} file(s), expected $WANT at ~/RASD/$STAGE_EXTRA_DEST"
   [ "${HAVE:-0}" = "$WANT" ] || say "WARN: the staged payload count disagrees with the local one"
 fi
+[ -n "$REMOTE_ENV_PAIRS" ] && say "forwarding to the pod:$(printf '%s' "$REMOTE_ENV_PAIRS" | sed -E "s/'[^']*'/=.../g")"
 say "profile_meta.json written (remote=$REMOTE_SCRIPT)"
 
 # ---- the remote run, DETACHED, with its own DONE marker ---------------------
 PODOUT="RASD/$PROFILE_OUT"
 say "--- launching the profile DETACHED on the pod ---"
-START_CMD="mkdir -p ~/RASD/$PROFILE_OUT && cd ~/RASD && rm -f $PROFILE_OUT/DONE && setsid nohup env PROFILE_OUT='$PROFILE_OUT' PROFILE_TAG='$PROFILE_TAG' PROFILE_NPROC='$PROFILE_NPROC' bash $REMOTE_SCRIPT >> $PROFILE_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$PROFILE_OUT && cd ~/RASD && rm -f $PROFILE_OUT/DONE && setsid nohup env PROFILE_OUT='$PROFILE_OUT' PROFILE_TAG='$PROFILE_TAG' PROFILE_NPROC='$PROFILE_NPROC'$REMOTE_ENV_PAIRS bash $REMOTE_SCRIPT >> $PROFILE_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; polling for the DONE marker, not for this shell"
 
