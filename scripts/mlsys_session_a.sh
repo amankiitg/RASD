@@ -128,14 +128,29 @@ fi
 # "under any circumstances". The fallback branches that used to live here (8x A100
 # 40GB, then 8x H100 after six hours) are gone, not merely ordered last.
 #
-# The poll runs until the operator's Monday 09:00 ET cutoff (13:00Z on 2026-10-12).
-# At the cutoff with nothing launched it stops cleanly and records the fact, because
-# a poll that outlives its deadline is a bill waiting to happen.
+# The poll runs until the operator's deadline -- Monday 09:00 ET (13:00Z on 2026-10-12)
+# unless POLL_CUTOFF_UTC overrides it. At the cutoff with nothing launched it stops
+# cleanly and records the fact, because a poll that outlives its deadline is a bill
+# waiting to happen.
+#
+# WHY IT IS AN OVERRIDE (2026-10-12). This was a literal timestamp, and by 13:41Z that
+# deadline had passed: the loop checks availability FIRST, so a launch with capacity
+# still worked, but a launch WITHOUT it would have exited NO_CAPACITY on the first poll
+# and never waited at all -- a safety deadline silently turned into "this driver cannot
+# be used after 13:00Z". Same class of defect as the hardcoded pull path that lost a
+# rehearsal's evidence. The default is unchanged, so every existing command line keeps
+# the deadline it was written against; a session that legitimately runs after it says so
+# explicitly, in its own command line, where the operator can see it.
+POLL_CUTOFF_UTC=${POLL_CUTOFF_UTC:-2026-10-12T13:00:00Z}
 CUTOFF_EPOCH=$(python3 -c "
-import datetime
-print(int(datetime.datetime(2026,10,12,13,0,0,tzinfo=datetime.timezone.utc).timestamp()))")
+import datetime, sys
+s = '$POLL_CUTOFF_UTC'.replace('Z', '+00:00')
+print(int(datetime.datetime.fromisoformat(s).timestamp()))")
 ONLY_TYPE=$SESSION_TYPE
-say "polling ONLY $ONLY_TYPE, any region, until $(date -u -r $CUTOFF_EPOCH +%FT%TZ) (Monday 09:00 ET)"
+# NAME THE DEADLINE THAT IS ACTUALLY IN FORCE. The old label said "(Monday 09:00 ET)"
+# whatever the cutoff was, so an overridden deadline still printed the operator's
+# original one -- a log line that disagrees with the value it is describing.
+say "polling ONLY $ONLY_TYPE, any region, until $(date -u -r $CUTOFF_EPOCH +%FT%TZ) (deadline $POLL_CUTOFF_UTC)"
 while :; do
   AVAIL=$(api_get instance-types 2>/dev/null)
   REGION=$(regions_for "$AVAIL" "$ONLY_TYPE")

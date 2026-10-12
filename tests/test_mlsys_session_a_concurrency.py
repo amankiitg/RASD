@@ -111,3 +111,49 @@ def test_two_instances_need_two_declarations(tmp_path):
     proc = _run(tmp_path, '[{"id": "a"}, {"id": "b"}]', expected="a")
     assert proc.returncode == 3, proc.stdout
     assert "not the declared" in proc.stdout
+
+
+# ---------------------------------------------------------------- the deadline --
+def test_the_poll_cutoff_is_an_override_and_not_a_dead_literal(tmp_path):
+    """THE DEADLINE THAT HAD ALREADY PASSED (2026-10-12).
+
+    `CUTOFF_EPOCH` was a literal 2026-10-12T13:00:00Z. The poll checks availability
+    FIRST, so a launch with capacity still worked after it -- but a launch without it
+    exited NO_CAPACITY on the first poll and never waited at all, turning a safety
+    deadline into "this driver is unusable after 13:00Z". These two cases pin both
+    halves: the deadline still stops a hopeless poll, and an explicit override makes it
+    wait instead.
+    """
+    # (a) no capacity, deadline in the past: stop at once, record why, launch nothing.
+    repo, env = _sandbox(tmp_path)
+    env["INSTANCES_JSON"] = "[]"
+    env["TYPES_JSON"] = '{"gpu_1x_a100_sxm4": {"regions_with_capacity_available": []}}'
+    env["POLL_CUTOFF_UTC"] = "2020-01-01T00:00:00Z"
+    proc = subprocess.run(["bash", str(repo / "scripts" / "mlsys_session_a.sh")],
+                          cwd=str(repo), env=env, capture_output=True, text=True,
+                          timeout=120)
+    assert "CUTOFF REACHED" in proc.stdout, proc.stdout[-800:]
+    assert (tmp_path / "sess" / "SESSION_A_NO_CAPACITY").exists(), \
+        "the fact must be recorded where the operator looks for it"
+    assert "launched gpu_1x_a100_sxm4 id=" not in proc.stdout, \
+        "nothing may be launched at the deadline (the wording of the message also \
+         contains the word 'launched', so assert on the launch line)"
+
+
+def test_a_future_cutoff_keeps_polling_instead_of_giving_up(tmp_path):
+    """The other half: with the deadline moved, a session that has no capacity yet
+    WAITS for it rather than exiting on the first poll."""
+    repo, env = _sandbox(tmp_path)
+    env["INSTANCES_JSON"] = "[]"
+    env["TYPES_JSON"] = '{"gpu_1x_a100_sxm4": {"regions_with_capacity_available": []}}'
+    env["POLL_CUTOFF_UTC"] = "2999-01-01T00:00:00Z"
+    try:
+        proc = subprocess.run(["bash", str(repo / "scripts" / "mlsys_session_a.sh")],
+                              cwd=str(repo), env=env, capture_output=True, text=True,
+                              timeout=12)
+        out = proc.stdout
+    except subprocess.TimeoutExpired as exc:      # it was still polling: the point
+        out = (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+    assert "no gpu_1x_a100_sxm4 capacity yet" in out, out[-800:]
+    assert "CUTOFF REACHED" not in out, "a future deadline must not be treated as past"
+    assert not (tmp_path / "sess" / "SESSION_A_NO_CAPACITY").exists()
