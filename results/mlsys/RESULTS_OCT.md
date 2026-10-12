@@ -578,29 +578,42 @@ key reaches the engine rather than falling back to the headline 4096.
 ### 8.5 Stage f — temperature, 128k, 5 books, periodicity per row
 
 Greedy (T=0.0) and T=1.0 against the headline T=0.7. **0.0 and 1.0 are an in-session pair**;
-0.7 is the cross-session reference. Every row passed the repetition pass, and the counts of
-degenerate rows are reported rather than buried, because a looping row's acceptance is not a
-measurement of anything.
+0.7 is the cross-session reference. Because a looping row's acceptance is not a measurement of
+anything, each arm is reported twice: over every ok row, and over the clean rows only, with the
+degenerate row named.
 
-| temperature | n | degenerate rows | accept (mean) | accept (clean only) | e2e tok/s | decode s/token | per-book acceptance |
-|---|---|---|---|---|---|---|---|
-| **0.0 (greedy)** | 5 | **1** (periodic tail 0.42, `first_periodic_token` 74) | 0.4604 | 0.4692 (n=4) | 0.69717 | 1.4469 | 0.2621 / 0.4255 / 0.7750 / 0.5000 / 0.3396 |
-| 0.7 (headline, other session) | 5 | 0 | 0.4681 | 0.4681 | 0.71557 | 1.3808 | §3 |
-| **1.0** | 5 | **0** | **0.7369** | 0.7369 | **0.97418** | **0.9660** | 0.6429 / 0.7045 / 0.8190 / 0.7917 / 0.7266 |
+| temperature | n | degenerate rows | accept (all ok rows) | accept (clean only) | e2e tok/s | decode s/token |
+|---|---|---|---|---|---|---|
+| **0.0 (greedy)** | 5 | **1** — `pg19_train_915` | 0.4604 | **0.3818** (n=4) | 0.69717 | 1.4469 |
+| 0.7 (headline, other session) | 5 | 0 | 0.4681 | 0.4681 | 0.71557 | 1.3808 |
+| **1.0** | 5 | **0** | **0.7369** | 0.7369 | **0.97418** | **0.9660** |
+
+Per-book acceptance (reported / non-degenerate): T=0 `0.2621/0.2621`, `0.4255/0.4255`,
+**`0.7750` degenerate**, `0.5000/0.5116`, `0.3396/0.3519`; T=1.0 `0.6429/0.6528`,
+`0.7045/0.7132`, `0.8190/0.8250`, `0.7917/0.7984`, `0.7266/0.7348`.
+
+**Correction to the first version of this table.** It reported the degenerate row as
+`pg19_train_1` and the clean-only mean as 0.4692, and both were wrong: the detector flags
+`pg19_train_915` (69% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 69% of
+the row, period 15, > 50% absolute), while `pg19_train_1` is clean -- it merely carries a
+42% periodic tail, below the ceiling. The mistaken row made greedy look level with the
+headline (0.4692 vs 0.4681). **Dropping the right row, greedy is 0.086 behind (0.3818 vs
+0.4681, -18% relative), and the looping row is what was holding its mean up** -- the same
+inflation mechanism the 1M headline was withdrawn for, reappearing at 128k in 1 row of 5
+where it moves the mean by 0.079. The T=1.0 arm is unaffected: 0/5 degenerate.
 
 **Temperature is the largest single knob measured in this session, and it points UP.** T=1.0
 against the headline T=0.7: **+0.269 acceptance** (+57% relative) and **+36% end-to-end
-throughput**, with **−30% per decode token**, and it happens on all five books individually
-(0.6429 vs 0.2712, 0.7045 vs 0.4255, 0.8190 vs 0.6081, 0.7917 vs 0.5855, 0.7266 vs 0.4500).
-Greedy, by contrast, buys nothing at 128k: 0.4604 against 0.4681, within noise, on one
-looping row of five.
+throughput** (0.97418 vs 0.71557), with **-30% per decode token** (0.9660 vs 1.3808 s) -- and
+it happens on all five books individually: 0.6429 vs 0.2712, 0.7045 vs 0.4255, 0.8190 vs
+0.6081, 0.7917 vs 0.5855, 0.7266 vs 0.4500. Greedy buys nothing at 128k once its looping row
+is set aside.
 
-**That greedy result is context-dependent, and it is worth stating against the earlier
-headline.** At 1M the greedy condition looped on 9 of 15 rows and a looping row's acceptance
-is inflated by construction, which is why the campaign moved to sampling. At 128k only **1 of
-5** greedy rows loops. So "greedy degenerates" is a statement about long context in this
-engine, not a universal one, and it is not a reason to distrust the 128k ablation rows -- they
-are the ones carrying the observation.
+**The greedy result is context-dependent, and it is worth stating against the earlier
+headline.** At 1M the greedy condition looped on 9 of 15 rows, which is why the campaign moved
+to sampling. At 128k only **1 of 5** rows loops. So "greedy degenerates" is a statement about
+long context in this engine, not a universal one -- and it is a statement about the *mean*,
+not only about the looping row: the row that loops is the row that inflates.
 
 ### 8.3 Stage d — the seed stages are VOID as seed variation, and that is itself a result
 
