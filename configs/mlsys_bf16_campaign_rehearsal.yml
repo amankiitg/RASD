@@ -1,0 +1,197 @@
+# REHEARSAL for the Phase 3 bf16 campaign: SAME STAGE IDS AND SAME KEY SHAPE, TINY SIZES.
+#
+# WHY IT RUNS BEFORE THE 8x LAUNCH. Three of the things Phase 3 depends on have no
+# precedent in this project: bf16 weights AND bf16 KV together (every headline row so far
+# is FP4/NF4), the memory those settings need at 1M, and the twelve stage ids this
+# campaign introduces. A rehearsal that produces one row per stage proves the config->pod
+# path carries the two precision keys and that every stage id is accepted by the
+# stage-naming gate, BEFORE an 8x instance is rented to find out.
+#
+# WHAT IT PROVES, AND WHAT IT CANNOT. It proves every stage runs in priority order and
+# that each row records the precision its arm set. It cannot prove anything about
+# timing: 8192 context is 16x cheaper per step than 128k, the card is one 1x GPU, and at
+# one rank the ring is a no-op. Phase 1 is what prices the real campaign.
+#
+# 48 TOKENS, NOT 4: the seeds/ablations rehearsal's first attempt at 4 tokens made every
+# acceptance 0.0 and the session's OWN GATE stopped it at stage 3, leaving eight stages
+# unexercised. A rehearsal that the gate stops early is not a rehearsal of the rest.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  # THE SETTINGS UNDER TEST, identical to the campaign config.
+  kv_quant: false
+  quantize_target: false
+  quantize_draft: true
+  dtype: bfloat16
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 48
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+
+# Every stage below mirrors its campaign twin: same id, same one-setting change, one book
+# at 8192 context. Key order is run order, as in the campaign config.
+BF16_GATE_128K_SPEC:
+  name: bf16_gate_128k_spec
+  factor: context_length
+  levels:
+  - id: BF16_GATE_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    notes: 'rehearsal of the P1 gate spec stage at 8192/48'
+BF16_GATE_128K_TARGET:
+  name: bf16_gate_128k_target
+  factor: context_length
+  levels:
+  - id: BF16_GATE_128K_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 0
+    notes: 'rehearsal of the P1 gate target-only stage'
+BF16_1M_SPEC:
+  name: bf16_1m_spec
+  factor: context_length
+  levels:
+  - id: BF16_1M_SPEC
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    notes: 'rehearsal of P2 (1M spec)'
+BF16_1M_TARGET:
+  name: bf16_1m_target
+  factor: context_length
+  levels:
+  - id: BF16_1M_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 0
+    notes: 'rehearsal of P3 (1M target-only)'
+BF16_512K_SPEC:
+  name: bf16_512k_spec
+  factor: context_length
+  levels:
+  - id: BF16_512K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    notes: 'rehearsal of P4 (512k spec)'
+BF16_512K_TARGET:
+  name: bf16_512k_target
+  factor: context_length
+  levels:
+  - id: BF16_512K_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 0
+    notes: 'rehearsal of P4 partner (512k target-only)'
+BF16_128K_SPEC:
+  name: bf16_128k_spec
+  factor: context_length
+  levels:
+  - id: BF16_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    notes: 'rehearsal of P5 (128k spec)'
+BF16_128K_TARGET:
+  name: bf16_128k_target
+  factor: context_length
+  levels:
+  - id: BF16_128K_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 0
+    notes: 'rehearsal of P5 partner (128k target-only)'
+BF16_128K_STEPS_6:
+  name: bf16_128k_steps_6
+  factor: context_length
+  levels:
+  - id: BF16_128K_STEPS_6
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 6
+    notes: 'rehearsal of P8 spec_steps 6'
+BF16_128K_STEPS_8:
+  name: bf16_128k_steps_8
+  factor: context_length
+  levels:
+  - id: BF16_128K_STEPS_8
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 8
+    notes: 'rehearsal of P8 spec_steps 8'
+BF16_QUALITY_128K:
+  name: bf16_quality_128k
+  factor: context_length
+  levels:
+  - id: BF16_QUALITY_128K
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: 'rehearsal of P9 quality 128k (greedy ppl)'
+BF16_QUALITY_1M:
+  name: bf16_quality_1m
+  factor: context_length
+  levels:
+  - id: BF16_QUALITY_1M
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: 'rehearsal of P9 quality at the 1M stage shape (greedy ppl)'

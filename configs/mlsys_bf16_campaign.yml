@@ -1,0 +1,249 @@
+# PHASE 3 — the bf16 campaign. PROTOCOL A, UNCHANGED; ONLY THE PRECISION FLAGS MOVE.
+#
+# WHY THIS EXISTS. The quant ablation (Phase 1) measures what the FP4 weights and the
+# NF4 KV round-trip cost per decode token at 128k. If they cost a lot, the campaign
+# re-runs its headline numbers without them, because the paper's engine has to be the
+# faster of the two and because vLLM 0.6.3 -- the only production reference in this
+# project -- runs bf16 weights and bf16 KV. In the chosen precision the vLLM comparison
+# becomes precision-matched, which it has never been.
+#
+# WHAT IS IDENTICAL TO SESSION A, and every item is deliberate:
+#   target  gradientai/Llama-3-8B-Instruct-Gradient-1048k @ cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+#   draft   meta-llama/Llama-3.2-1B @ 4e20de362430cd3b72f300e6b0f18e50e7166e08
+#   temperature 0.7, top_p 1.0, max_new_tokens 128, spec_steps 4, draft_window_cap 4096,
+#   kv_block_size 2048, prefetch_depth 1, ignore_eos true, prompt_gen_tokens 1024,
+#   prompt_source pg19_document, seed 42, log_per_token + save_generated_tokens true.
+#   The SAME prompt JSONs and therefore the same book offsets, so rows pair by
+#   continuation_sha256 against the FP4 rows without an alignment step.
+#
+# WHAT MOVES: `quantize_target` and `kv_quant` below, set to the Phase 2 decision and
+# nothing else. They are written here as a single explicit pair so that the diff from
+# Session A is two lines, and Phase 2 edits them if it chooses W_OFF or KV_OFF instead
+# of BOTH_OFF. `quantize_draft` stays true: the ablation's arms never moved it, so
+# moving it here would change two things at once and make this campaign's rows
+# incomparable with the ablation it is built on.
+#
+# VERIFIED FROM THE ROWS, NOT FROM THIS FILE. Every row's token sidecar carries
+# `weight_precision` (read off the loaded model by detect_weight_precision, not echoed
+# from the config) and `kv_dtype` (read off the cache). The expected pairs are:
+#   CONTROL  fp4 / nf4      W_OFF  <compute dtype e.g. bfloat16> / nf4
+#   KV_OFF   fp4 / <dtype>  BOTH_OFF <dtype> / <dtype>
+# A row whose sidecar disagrees with the arm it belongs to is a silent fallback and
+# stops the campaign (standing rule R2 / stop condition S2).
+#
+# BOOKS: the FIVE known-good PG-19 books. Session A configured six at 1M and
+# pg19_train_1726 failed twice on a 765-token continuation against a 1024-token
+# requirement (RESULTS_OCT.md 1, N11), so listing it again would spend ~20 minutes to
+# reproduce a known data defect. The exclusion is inherited, not new.
+#
+# ORDER IS RUN ORDER (the remote script derives its step list from this file's key
+# order), and it is the PRIORITY order: a run cut short loses the LAST stage it was
+# going to lose and never the first. P1 is the gate, because its measured rates are
+# what the budget sweep uses to decide which later stages survive.
+#
+# WHERE THE SEED STAGES LIVE, AND WHY NOT HERE. P6/P7 want seeds 123 and 456, and the
+# seed key can only be set in `defaults` (run_experiment.py:590-612 overwrites a
+# per-level `seeds`). A config's defaults apply to EVERY stage in it, so mixing seed-42
+# stages and seed-123/456 stages in one file would either duplicate the seed-42 stages
+# across three seeds or silently drop the seeds -- the exact bug this project already
+# paid $36 to discover. P6/P7 are therefore two separate small configs
+# (mlsys_bf16_seed123_1m.yml, mlsys_bf16_seed456_1m.yml) and, being last in priority,
+# they run only if the budget sweep after P1 leaves room for a second short session.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  # THE PHASE 2 DECISION. Phase 2 rewrites these two lines if it chooses W_OFF or
+  # KV_OFF; with BOTH_OFF it leaves them.
+  kv_quant: false
+  quantize_target: false
+  quantize_draft: true
+  dtype: bfloat16
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+
+# P1 — THE GATE. One book at 128k, spec and target-only, so the measured rates can
+# price the rest of the campaign before any of it is committed to. This is also the
+# stage whose rows are checked for the precision flags (R2).
+BF16_GATE_128K_SPEC:
+  name: bf16_gate_128k_spec
+  factor: context_length
+  levels:
+  - id: BF16_GATE_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'P1 gate: spec at 128k, one book, same protocol as Session A'
+BF16_GATE_128K_TARGET:
+  name: bf16_gate_128k_target
+  factor: context_length
+  levels:
+  - id: BF16_GATE_128K_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'P1 gate partner: target-only at 128k, the campaign denominator'
+
+# P2 — THE HEADLINE. Five books at 1M, the rung the paper's main claim rests on.
+BF16_1M_SPEC:
+  name: bf16_1m_spec
+  factor: context_length
+  levels:
+  - id: BF16_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'P2 headline: 1M spec, the five known-good books, seed 42'
+
+# P3 — the 1M denominator, subsampled to two books for the same reason Session A did.
+BF16_1M_TARGET:
+  name: bf16_1m_target
+  factor: context_length
+  levels:
+  - id: BF16_1M_TARGET
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'P3: 1M target-only, two books'
+
+# P4/P5 — the aligned rungs. n=3 books, as Session A's rungs were before the n=5
+# extension, and the FP4 side of every comparison at these two rungs is restricted to
+# the same three books so the pairing stays exact.
+BF16_512K_SPEC:
+  name: bf16_512k_spec
+  factor: context_length
+  levels:
+  - id: BF16_512K_SPEC
+    context_length: 524288
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'P4: aligned 512k spec, three books'
+BF16_512K_TARGET:
+  name: bf16_512k_target
+  factor: context_length
+  levels:
+  - id: BF16_512K_TARGET
+    context_length: 524288
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'P4 partner: aligned 512k target-only, one book'
+BF16_128K_SPEC:
+  name: bf16_128k_spec
+  factor: context_length
+  levels:
+  - id: BF16_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'P5: aligned 128k spec, three books'
+BF16_128K_TARGET:
+  name: bf16_128k_target
+  factor: context_length
+  levels:
+  - id: BF16_128K_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'P5 partner: aligned 128k target-only, one book'
+
+# P8 — draft length at 128k, in the new precision. 4 is above (P5, as the headline
+# value); these two are the ones the FP4 session measured only at 128k, and the
+# precision change is exactly the kind of thing that can move an optimum.
+BF16_128K_STEPS_6:
+  name: bf16_128k_steps_6
+  factor: context_length
+  levels:
+  - id: BF16_128K_STEPS_6
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 6
+    notes: 'P8: spec_steps 6 at 128k, five books, new precision'
+BF16_128K_STEPS_8:
+  name: bf16_128k_steps_8
+  factor: context_length
+  levels:
+  - id: BF16_128K_STEPS_8
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 8
+    notes: 'P8: spec_steps 8 at 128k, five books -- beyond the tested range in FP4'
+
+# P9 — the quality check. Greedy and perplexity only, exactly the shape of the FP4
+# QUALITY_FIX stages, so ppl is comparable to them: it answers "did turning the
+# quantization off break the model", and nothing about speculation.
+BF16_QUALITY_128K:
+  name: bf16_quality_128k
+  factor: context_length
+  levels:
+  - id: BF16_QUALITY_128K
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: 'P9: ppl of the final 1024 tokens at 128k, GREEDY, same shape as QUALITY_FIX_128K'
+BF16_QUALITY_1M:
+  name: bf16_quality_1m
+  factor: context_length
+  levels:
+  - id: BF16_QUALITY_1M
+    context_length: 1048576
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: 'P9: ppl of the same final 1024 tokens at 1M, GREEDY, same shape as QUALITY_FIX_1M'
