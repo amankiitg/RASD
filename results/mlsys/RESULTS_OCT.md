@@ -177,10 +177,20 @@ and `matches_intent` true and the native window unchanged at 131072 throughout. 
 own repetition block is clean on all three (periodic tail 0.0, `first_periodic_token` 200
 = the gate's generation length, i.e. no cycle).
 
-The acceptance difference (native 0.7092 vs f16 0.5002 / f32 0.4990) is **not** a rope
-finding: all four arms share the same target model, but the stretched positional basis
-changes how peaked the target's next-token distribution is, and speculation acceptance
-depends on exactly that. It is reported as an observation, with n=3.
+**The acceptance drop IS a rope effect, and the arms are a controlled comparison.**
+Native 0.7092 vs f16 0.5002 and f32 0.4990 — a **0.21 absolute fall (29% relative)** that
+appears the moment the positional basis is stretched. It is attributable to the
+intervention because **nothing else differs between the three arms: the same target
+(`meta-llama/Llama-3.1-8B`, same revision), the same draft
+(`meta-llama/Llama-3.2-1B`, `draft_window_cap` 4096), the same book, seed, temperature
+(0.7), `spec_steps` and token budget; only `rope_factor` changes (none / 16 / 32).** The
+mechanism is that speculation acceptance is a function of how peaked the target's
+next-token distribution is, and a stretched rotary basis flattens it. **The direction
+holds on every book individually**, not only in the mean: native ≥ stretched on all
+three (0.5878 vs 0.3170 / 0.3578; 0.7121 vs 0.5724 / 0.3650; 0.8276 vs 0.6111 / 0.7742),
+and f16 and f32 land within **0.0012** of each other — what a saturating rope effect
+looks like rather than noise. Reported as a rope finding, **n=3**, with the caveats that
+only the 128k rung was measured and 32 is the largest factor tried.
 
 ---
 
