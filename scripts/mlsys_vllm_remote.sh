@@ -27,6 +27,10 @@
 set -uo pipefail
 cd "$HOME/RASD" || exit 3
 OUT=${PROFILE_OUT:-results/mlsys/vllm_rehearsal}
+# PROFILE_TAG is reported in the parameter contract below; it was read nowhere before,
+# so `set -u` made the contract itself the first thing to notice it was unset.
+TAG=${PROFILE_TAG:-}
+NPROC=${PROFILE_NPROC:-1}
 mkdir -p "$OUT"
 PODDONE="$OUT/DONE"
 
@@ -71,6 +75,26 @@ CSV="$OUT/vllm_baseline.csv"
 # mlsys_vllm_venv.sh documents: the two then share a Python ABI, and `python3 -m
 # venv`'s dependence on the distro's python3-venv package (absent on many images)
 # never enters the picture.
+# ---- THE PARAMETER CONTRACT, BEFORE THE HEAVY WORK --------------------------
+# This is the check that would have caught the 2026-10-12 8x run: it installed vLLM,
+# loaded the model and decoded at 8192 tokens on ONE card because the driver never
+# forwarded REHEARSE_TP/CTXS/PROMPT_DIR, and nothing here could tell that the pod was
+# running defaults. It runs before the venv install and before any model load.
+# shellcheck disable=SC1090
+. scripts/mlsys_remote_expect.sh
+# KEYS ARE THE DRIVER'S VARIABLE NAMES on both sides. The driver forwards
+# PROFILE_OUT/PROFILE_TAG/PROFILE_NPROC and whatever REMOTE_ENV_NAMES names, and that
+# is exactly what it can assert; reporting the same names here means a key present in
+# the manifest but absent from "received" is a variable that did not survive the
+# boundary, which is the failure being checked for. The wrapper's own defaults
+# (REHEARSE_MODEL, REHEARSE_REV, REHEARSE_CTX, REHEARSE_NEW) are printed but only
+# asserted when the driver declares them. A setting that never arrived is reported as
+# `<absent>` rather than as the wrapper default this script fell back to: on
+# 2026-10-12 the wrapper's defaults WERE the problem (TP=1, ctx=8192), so printing
+# them as "received" would have hidden the very thing being verified.
+mlsys_expect "vllm-remote" "${REMOTE_EXPECT:-}" \
+  "PROFILE_OUT=${PROFILE_OUT-<absent>};PROFILE_TAG=${PROFILE_TAG-<absent>};PROFILE_NPROC=${PROFILE_NPROC-<absent>};REHEARSE_TP=${REHEARSE_TP-<absent>};REHEARSE_CTXS=${REHEARSE_CTXS-<absent>};REHEARSE_PROMPT_DIR=${REHEARSE_PROMPT_DIR-<absent>};REHEARSE_MODEL=${REHEARSE_MODEL-<absent>};REHEARSE_REV=${REHEARSE_REV-<absent>};REHEARSE_CTX=${REHEARSE_CTX-<absent>};REHEARSE_NEW=${REHEARSE_NEW-<absent>}" || exit 2
+
 log "### installing the vLLM venv (this is the 8x run's own install path)"
 MLSYS_VLLM_BASE_PYTHON="$PY" bash scripts/mlsys_vllm_venv.sh 2>&1 | tee -a "$OUT/rehearsal.log"
 venv_rc=${PIPESTATUS[0]}

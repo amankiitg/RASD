@@ -135,20 +135,33 @@ fi
 # different config (the quality-only redo) could not be run by this same script without
 # editing it -- and this script is the one thing a running session's pod is reading.
 # Deriving the list keeps ONE tested script for every session shape.
-STEPS=$("$PY" - "$CFG" <<'PYEOF'
-import sys
-try:
-    import yaml
-    cfg = yaml.safe_load(open(sys.argv[1]))
-except Exception as e:                                      # noqa: BLE001
-    print(f"# could not read {sys.argv[1]}: {e}", file=sys.stderr)
-    sys.exit(0)
-for k in cfg:
-    if k not in ('defaults', 'canary'):
-        print(k)
-PYEOF
-)
+# THE STAGE LIST HAS ONE IMPLEMENTATION, shared with the drivers that assert it
+# (scripts/mlsys_stage_list.py). An inline copy here and another in a driver is how a
+# campaign comes to disagree with itself about what it ran.
+STEPS=$("$PY" scripts/mlsys_stage_list.py "$CFG")
+steps_rc=$?
+if [ "$steps_rc" != "0" ] || [ -z "$STEPS" ]; then
+  log "FATAL: could not derive a stage list from $CFG (rc=$steps_rc); refusing to record stages without knowing which ones"
+  exit 2
+fi
 log "steps from $CFG: $(echo $STEPS | tr '\n' ' ')"
+
+# ---- THE PARAMETER CONTRACT, BEFORE THE FIRST STAGE -------------------------
+# The stage ids are derived above from the config, and the driver sends the list it
+# intended; if they disagree, or if the config/output/nproc the pod received is not
+# what the driver sent, this stops before the sanity pair rather than after five
+# hours. On 2026-10-12 an 8x run spent ~$5.5 executing a different parameter set than
+# its driver had set, and nothing on the pod could notice.
+# shellcheck disable=SC1090
+. scripts/mlsys_remote_expect.sh
+# ONE SPACE BETWEEN, NONE AT THE END. `echo $STEPS | tr '\n' ' '` leaves a TRAILING
+# space, and the driver's manifest (mlsys_stage_list.py --space) does not -- so the
+# contract would have refused every session over a whitespace difference. Caught by
+# the boundary test before any 8x money was spent on it.
+STEPS_ONELINE=$(printf '%s' "$STEPS" | tr '\n' ' ' | sed -E 's/ +$//')
+# KEYS ARE THE DRIVER'S VARIABLE NAMES on both sides (see the vllm wrapper for why).
+mlsys_expect "session-a-remote" "${REMOTE_EXPECT:-}" \
+  "SESSION_OUT=$OUT;SESSION_CFG=$CFG;SESSION_SANITY_CFG=$SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STEPS_ONELINE" || exit 2
 prev=0
 for name in $STEPS; do
   tmo=21600

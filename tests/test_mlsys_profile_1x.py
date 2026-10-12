@@ -28,6 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 REMOTE = REPO / "scripts" / "mlsys_profile_remote.sh"
 DECODE = REPO / "scripts" / "mlsys_profile_decode.sh"
 DRIVER = REPO / "scripts" / "mlsys_profile_1x.sh"
+EXPECT = REPO / "scripts" / "mlsys_remote_expect.sh"
 
 # A stub runner that writes the two artifacts the wrapper judges on, controlled by
 # env so the three cases (ok, no ok rows, no sidecar) share one file.
@@ -77,6 +78,9 @@ def _pod_sandbox(tmp_path: Path) -> tuple[Path, dict]:
 
     shutil.copy(DECODE, rasd / "scripts" / "mlsys_profile_decode.sh")
     shutil.copy(REMOTE, rasd / "scripts" / "mlsys_profile_remote.sh")
+    # The wrapper sources this before measuring anything (the parameter contract), so
+    # the sandbox has to carry it -- see the same fix in test_mlsys_vllm_rehearsal.py.
+    shutil.copy(EXPECT, rasd / "scripts" / "mlsys_remote_expect.sh")
     (rasd / "configs" / "mlsys_profile_128k.yml").write_text(
         "defaults:\n  seeds: [42]\nPROFILES:\n  name: p\n  factor: context_length\n"
         "  levels:\n  - id: PROF_MAIN\n    context_length: 131072\n    documents: [d0]\n"
@@ -97,6 +101,11 @@ def _pod_sandbox(tmp_path: Path) -> tuple[Path, dict]:
         "PROFILE_OUT": "results/mlsys/profile",
         "PROFILE_TAG": "a",
         "PROFILE_NPROC": "1",
+        # The wrapper verifies these against the driver's manifest before it measures
+        # anything, so a direct invocation has to bring one (the same shape the driver
+        # builds: the variable names it forwarded, with their intended values).
+        "REMOTE_EXPECT": ("PROFILE_OUT=results/mlsys/profile;PROFILE_TAG=a;"
+                          "PROFILE_NPROC=1"),
         "MLSYS_PY": sys.executable,
     })
     return home, env

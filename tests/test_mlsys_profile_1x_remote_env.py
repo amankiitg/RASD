@@ -43,9 +43,13 @@ case "$url" in
   *"/launch")
       echo '{"data": {"instance_ids": ["stub-instance-0001"]}}' ;;
   *"/instances/stub-instance-0001")
-      echo '{"data": {"id": "stub-instance-0001", "status": "active", "ip": "10.0.0.9"}}' ;;
+      if [ -f "$CURL_STATE" ]; then
+        echo '{"data": {"id": "stub-instance-0001", "status": "terminated"}}'
+      else
+        echo '{"data": {"id": "stub-instance-0001", "status": "active", "ip": "10.0.0.9"}}'
+      fi ;;
   *"/terminate")
-      echo '{}' ;;
+      : > "$CURL_STATE"; echo '{}' ;;
   *) echo "STUB CURL: unexpected URL $url" >&2; exit 9 ;;
 esac
 '''
@@ -98,6 +102,8 @@ def _sandbox(tmp_path: Path) -> tuple[Path, dict]:
     env["MLSYS_SESSION_DIR"] = str(tmp_path / "sess")
     env["SSH_ARGV_LOG"] = str(tmp_path / "ssh_argv.log")
     env["PODOUT"] = "RASD/results/mlsys/stub_out"
+    env["CURL_STATE"] = str(tmp_path / "terminate_called")
+    env["TERMINATE_POLL_S"] = "0.1"
     env["PROFILE_OUT"] = "results/mlsys/stub_out"
     env["PROFILE_TAG"] = "stub"
     env["TIMER_MIN"] = "5"
@@ -133,6 +139,8 @@ def test_named_remote_env_vars_reach_the_pod_command(tmp_path):
         "REHEARSE_PROMPT_DIR": "samp_prompts",
     })
     cmd = _start_cmd(argv_log)
+    # The terminate check asks about THIS id and must see it terminated.
+    assert "status after terminate: terminated (terminated required)" in proc.stdout,         proc.stdout[-2000:]
     assert "REHEARSE_TP='8'" in cmd, cmd
     assert "REHEARSE_CTXS='131072 524288 1048576'" in cmd, cmd
     assert "REHEARSE_PROMPT_DIR='samp_prompts'" in cmd, cmd

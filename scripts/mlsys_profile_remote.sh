@@ -53,6 +53,17 @@ set -a; . "$HOME/RASD/.pod_env.sh"; set +a
 log "=== profile tag=$TAG nproc=$NPROC out=$OUT interpreter=$PY ==="
 "$PY" -c 'import torch,transformers;print("torch",torch.__version__,"transformers",transformers.__version__,"gpus",torch.cuda.device_count())' 2>&1 | tee -a "$OUT/profile.log"
 
+# ---- THE PARAMETER CONTRACT, BEFORE THE MEASUREMENT -------------------------
+# Same check as the other pod-side scripts: what arrived must be what the driver
+# intended, verified before the measurement rather than inferred from it afterwards.
+# KEYS ARE THE DRIVER'S VARIABLE NAMES on both sides, and each falls back to the
+# literal `<absent>` when it never crossed the boundary, so a dropped setting reads
+# as "never received" rather than as the default this script silently fell back to.
+# shellcheck disable=SC1090
+. scripts/mlsys_remote_expect.sh
+mlsys_expect "profile-remote" "${REMOTE_EXPECT:-}" \
+  "PROFILE_OUT=${PROFILE_OUT-<absent>};PROFILE_TAG=${PROFILE_TAG-<absent>};PROFILE_NPROC=${PROFILE_NPROC-<absent>}" || exit 2
+
 # THE MEASUREMENT. One script, one parameter changed between profile (a) and (b).
 bash scripts/mlsys_profile_decode.sh --nproc "$NPROC" --tag "$TAG" --out "$OUT" >> "$OUT/decode_${TAG}_nproc${NPROC}.log" 2>&1
 drc=$?

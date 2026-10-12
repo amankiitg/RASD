@@ -298,3 +298,50 @@ def test_the_bitsandbytes_label_is_still_int4_bnb(tmp_path, monkeypatch):
     result = json.loads(Path(_spec(tmp_path)["result_path"]).read_text())
     assert rc == 0
     assert result["weight_precision"] == "int4_bnb"
+
+
+class _Metrics:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class _Out:
+    def __init__(self, metrics):
+        self.metrics = metrics
+
+
+def test_ttft_is_a_delta_and_not_an_absolute_clock_reading():
+    """THE 2026-10-12 BUG, as a test.
+
+    vLLM 0.6.3's RequestMetrics carries ABSOLUTE MONOTONIC timestamps. The first
+    version of this helper returned `first_token_time` on its own, so the 8x run's CSV
+    recorded ttft_s = 1.79e9, decode_only_wall_s = -1.79e9 and a decode rate of
+    1.27e11 tok/s. The helper must return the DIFFERENCE, or nothing at all.
+    """
+    mod = _load_module()
+    # The stamp the real run produced, with a prefill of 300 s inside it.
+    out = _Out(_Metrics(arrival_time=1791804235.0333, first_token_time=1791804535.0333))
+    assert mod._ttft_from_metrics(out, end_to_end=863.5764) == 300.0
+    assert mod._ttft_from_metrics(out, end_to_end=863.5764) != 1791804535.0333
+
+
+def test_an_implausible_ttft_is_refused_rather_than_recorded():
+    """A delta longer than the request that produced it cannot be a TTFT."""
+    mod = _load_module()
+    out = _Out(_Metrics(arrival_time=0.0, first_token_time=900.0))
+    assert mod._ttft_from_metrics(out, end_to_end=18.3) is None
+
+
+def test_a_negative_delta_is_refused():
+    mod = _load_module()
+    out = _Out(_Metrics(arrival_time=100.0, first_token_time=50.0))
+    assert mod._ttft_from_metrics(out, end_to_end=18.3) is None
+
+
+def test_missing_metrics_or_missing_fields_yield_no_ttft():
+    mod = _load_module()
+    assert mod._ttft_from_metrics(_Out(None), end_to_end=18.3) is None
+    assert mod._ttft_from_metrics(_Out(_Metrics(first_token_time=5.0)),
+                                  end_to_end=18.3) is None
+    assert mod._ttft_from_metrics(_Out(_Metrics(arrival_time=1.0)),
+                                  end_to_end=18.3) is None

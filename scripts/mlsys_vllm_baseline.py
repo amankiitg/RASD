@@ -231,23 +231,38 @@ def vllm_version_candidates(vllm_module) -> list[tuple[str, str]]:
     return out
 
 
-def _ttft_from_metrics(request_output) -> float | None:
-    """Best-effort TTFT from a vLLM RequestOutput.
+def _ttft_from_metrics(request_output, end_to_end: float | None = None) -> float | None:
+    """Best-effort TTFT from a vLLM RequestOutput, or None.
 
-    vLLM only populates detailed timings in async/server mode; offline
-    `generate()` typically exposes `metrics` as None. Return None rather
-    than inventing a value — the caller marks the row accordingly.
+    THE TRAP THIS EXISTS FOR (2026-10-12, on the real 8x run). The first version of
+    this function returned `metrics.first_token_time` directly, on the reasoning that
+    offline `generate()` exposes no TTFT. It does expose one -- but vLLM 0.6.3's
+    `RequestMetrics` carries ABSOLUTE MONOTONIC CLOCK READINGS, not durations. So
+    `first_token_time` came back as ~1.79e9, `end_to_end - ttft` came out as
+    -1.79e9 seconds, and the CSV shipped a decode rate of 1.27e11 tok/s in a column
+    that read as a measurement. A number that cannot be true is worse than a blank.
+
+    So: subtract `arrival_time` (the engine's own start-of-request stamp, the same
+    clock), and accept the result ONLY if it is a plausible duration inside this very
+    request. Anything else -- missing fields, a negative delta, a delta longer than
+    the request itself -- returns None, and the row writes a blank.
     """
     m = getattr(request_output, "metrics", None)
     if m is None:
         return None
-    val = getattr(m, "first_token_time", None)
-    if val is None:
+    first = getattr(m, "first_token_time", None)
+    arrival = getattr(m, "arrival_time", None)
+    if first is None or arrival is None:
         return None
     try:
-        return float(val)
+        delta = float(first) - float(arrival)
     except (TypeError, ValueError):
         return None
+    if delta < 0:
+        return None
+    if end_to_end is not None and delta > end_to_end:
+        return None
+    return delta
 
 
 _EXC_LINE = re.compile(
@@ -447,7 +462,9 @@ def worker_main(spec_path: Path) -> int:
 
         end_to_end = t1 - t0
         out_tokens = len(outs[0].outputs[0].token_ids)
-        ttft = _ttft_from_metrics(outs[0])
+        # end_to_end is passed so an implausible delta (longer than the request that
+        # produced it) is rejected instead of being written down as a measurement.
+        ttft = _ttft_from_metrics(outs[0], end_to_end)
         decode_only = (end_to_end - ttft) if ttft is not None else None
         # C5: raw success is not enough; main() re-checks the fairness rules.
         unit_ok = end_to_end > 0 and out_tokens > 0
@@ -527,8 +544,9 @@ def worker_main(spec_path: Path) -> int:
             "error": "", "error_class": "",
         })
         if ttft is None:
-            print("[WARN] TTFT unavailable; end-to-end is still comparable "
-                  "(includes prefill), decode-only is blank.")
+            print("[WARN] TTFT unavailable (vLLM metrics missing or not a duration); "
+                  "end-to-end is still comparable (it includes prefill), "
+                  "decode-only is blank.")
     except Exception as e:  # noqa: BLE001
         import traceback
         traceback.print_exc()

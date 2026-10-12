@@ -75,6 +75,7 @@ say() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG"; }
 # default -- which is the exact shape of the mistake above.
 REMOTE_ENV_NAMES=${REMOTE_ENV_NAMES:-}
 REMOTE_ENV_PAIRS=""
+REMOTE_EXPECT_NAMED=""
 for _n in $REMOTE_ENV_NAMES; do
   eval "_v=\${$_n:-}"
   if [ -z "$_v" ]; then
@@ -84,6 +85,8 @@ for _n in $REMOTE_ENV_NAMES; do
     *"'") say "FATAL: $_n contains a single quote; it cannot be forwarded safely"; exit 2 ;;
   esac
   REMOTE_ENV_PAIRS="$REMOTE_ENV_PAIRS $_n='$_v'"
+  # The same value, collected for the manifest the pod verifies itself against.
+  REMOTE_EXPECT_NAMED="$REMOTE_EXPECT_NAMED$_n=$_v;"
 done
 
 KEY=$(grep -E '^[[:space:]]*LAMBDA_API_KEY[[:space:]]*=' runpod_creds.md 2>/dev/null \
@@ -202,11 +205,20 @@ finish() {
   curl -sS --max-time 60 -u "$KEY:" -X POST \
     "https://cloud.lambda.ai/api/v1/instance-operations/terminate" \
     -H 'Content-Type: application/json' -d "{\"instance_ids\":[\"$ID\"]}" >/dev/null 2>&1
+  # ASK ABOUT THIS ID. A count of 0 is not the question -- another campaign's
+  # instance may legitimately be present, and a terminating instance can still be
+  # listed. `status: terminated` for THIS id is the answer.
+  local st=""
   for _ in $(seq 1 40); do
-    [ "$(count_instances)" = "0" ] && break
-    sleep 15
+    st=$(api_get "instances/$ID" 2>/dev/null | "$PY" -c "
+import json,sys
+d=(json.load(sys.stdin).get('data') or {})
+print(d.get('status',''))" 2>/dev/null)
+    [ "$st" = "terminated" ] && break
+    sleep "${TERMINATE_POLL_S:-15}"
   done
-  say "instances after terminate: $(count_instances) (0 required)"
+  say "instance $ID status after terminate: ${st:-unknown} (terminated required)"
+  say "instances still listed: $(count_instances)"
   local wall=$(( $(date -u +%s) - LAUNCHED_AT ))
   say "profile wall: ${wall}s = $(awk -v w=$wall 'BEGIN{printf "%.2f", w/3600}')h at \$$RATE/hr = \$$(awk -v w=$wall -v r=$RATE 'BEGIN{printf "%.2f", w/3600*r}')"
   TPID=$(cat "$SESSION_DIR/deadman_${ID}.pid" 2>/dev/null || echo "")
@@ -284,13 +296,22 @@ if [ -n "$STAGE_EXTRA_DEST" ]; then
   say "extra payload on the pod: ${HAVE:-?} file(s), expected $WANT at ~/RASD/$STAGE_EXTRA_DEST"
   [ "${HAVE:-0}" = "$WANT" ] || say "WARN: the staged payload count disagrees with the local one"
 fi
-[ -n "$REMOTE_ENV_PAIRS" ] && say "forwarding to the pod:$(printf '%s' "$REMOTE_ENV_PAIRS" | sed -E "s/'[^']*'/=.../g")"
+[ -n "$REMOTE_ENV_PAIRS" ] && say "forwarding to the pod:$(printf '%s' "$REMOTE_ENV_PAIRS" | sed -E "s/='[^']*'/=<set>/g")"
+
+# THE MANIFEST. The settings travel in the START_CMD's `env` list, and the values
+# the driver INTENDED travel separately, so a setting dropped in transit still has
+# a stated target to be compared against. A missing manifest is itself a failure on
+# the pod, which is why this is built here and not left to the remote script's
+# defaults. The named allowlist settings are appended in the same "K=V;" shape.
+REMOTE_EXPECT="PROFILE_OUT=$PROFILE_OUT;PROFILE_TAG=$PROFILE_TAG;PROFILE_NPROC=$PROFILE_NPROC;${REMOTE_EXPECT_NAMED}"
+REMOTE_EXPECT=${REMOTE_EXPECT%;}
+say "expecting on the pod:$(printf '%s' "$REMOTE_EXPECT" | sed -E 's/=[^;]*/=<set>/g' | tr ';' ' ')"
 say "profile_meta.json written (remote=$REMOTE_SCRIPT)"
 
 # ---- the remote run, DETACHED, with its own DONE marker ---------------------
 PODOUT="RASD/$PROFILE_OUT"
 say "--- launching the profile DETACHED on the pod ---"
-START_CMD="mkdir -p ~/RASD/$PROFILE_OUT && cd ~/RASD && rm -f $PROFILE_OUT/DONE && setsid nohup env PROFILE_OUT='$PROFILE_OUT' PROFILE_TAG='$PROFILE_TAG' PROFILE_NPROC='$PROFILE_NPROC'$REMOTE_ENV_PAIRS bash $REMOTE_SCRIPT >> $PROFILE_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$PROFILE_OUT && cd ~/RASD && rm -f $PROFILE_OUT/DONE && setsid nohup env PROFILE_OUT='$PROFILE_OUT' PROFILE_TAG='$PROFILE_TAG' PROFILE_NPROC='$PROFILE_NPROC' REMOTE_EXPECT='$REMOTE_EXPECT'$REMOTE_ENV_PAIRS bash $REMOTE_SCRIPT >> $PROFILE_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; polling for the DONE marker, not for this shell"
 

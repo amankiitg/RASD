@@ -101,6 +101,10 @@ def _sandbox(tmp_path: Path, stage_order: list[str]) -> tuple[Path, dict]:
     (tmp_path / "bin").mkdir()
 
     shutil.copy(REMOTE, rasd / "scripts" / "mlsys_session_a_remote.sh")
+    # The remote script sources the parameter contract and derives its stage list with
+    # the shared implementation; both are real files it must find on the pod.
+    for helper in ("mlsys_remote_expect.sh", "mlsys_stage_list.py"):
+        shutil.copy(REPO / "scripts" / helper, rasd / "scripts" / helper)
     (rasd / "run_experiment.py").write_text(STUB)
     (rasd / ".pod_env.sh").write_text("")
     (home / "pod_env.log").write_text(f"INTERPRETER={sys.executable}\n")
@@ -123,6 +127,14 @@ def _sandbox(tmp_path: Path, stage_order: list[str]) -> tuple[Path, dict]:
         "  levels:\n  - id: SANITY\n    context_length: 1048576\n    documents: [d0]\n"
         "    max_new_tokens: 8\n")
 
+    # THE PARAMETER CONTRACT. The remote script refuses to start without a manifest
+    # (see scripts/mlsys_remote_expect.sh), so the sandbox must send one exactly as the
+    # driver does -- and the stage list is derived with the SHARED implementation, which
+    # is what keeps the two sides from disagreeing about which stages are running.
+    import subprocess as _sp
+    stages = _sp.run([sys.executable, str(REPO / "scripts" / "mlsys_stage_list.py"),
+                      str(rasd / "configs" / "stages.yml"), "--space"],
+                     capture_output=True, text=True).stdout.strip()
     env = dict(os.environ)
     env.update({
         "HOME": str(home),
@@ -133,12 +145,17 @@ def _sandbox(tmp_path: Path, stage_order: list[str]) -> tuple[Path, dict]:
         "SESSION_CHECK_STAGE": "CHECK",
         "SESSION_GATE_CANDIDATES": "",
         "NPROC": "2",
+        "REMOTE_EXPECT": ("SESSION_OUT=out;SESSION_CFG=configs/stages.yml;"
+                          "SESSION_SANITY_CFG=configs/sanity.yml;NPROC=2;"
+                          "SESSION_CHECK_STAGE=CHECK;SESSION_GATE_CANDIDATES=;"
+                          f"STAGES={stages}"),
     })
     return home, env
 
 
 def _run(tmp_path: Path, stage_order: list[str], check: str,
-         precheck: str = "ok") -> tuple[int, str, Path, str]:
+         precheck: str = "ok", expect: str | None = None
+         ) -> tuple[int, str, Path, str]:
     """Run the real script; return (DONE rc, session log, output dir, stdout).
 
     The rc is read from the DONE marker the script's own EXIT trap writes -- the
@@ -147,6 +164,8 @@ def _run(tmp_path: Path, stage_order: list[str], check: str,
     home, env = _sandbox(tmp_path, stage_order)
     env["FAKE_CHECK"] = check
     env["FAKE_PRECHECK"] = precheck
+    if expect is not None:
+        env["REMOTE_EXPECT"] = expect
     proc = subprocess.run(
         ["bash", str(home / "RASD" / "scripts" / "mlsys_session_a_remote.sh")],
         cwd=str(home / "RASD"), env=env, capture_output=True, text=True, timeout=300)
@@ -157,7 +176,9 @@ def _run(tmp_path: Path, stage_order: list[str], check: str,
         f"stdout:\n{proc.stdout[-3000:]}\nstderr:\n{proc.stderr[-3000:]}")
     rc = int(marker.read_text().split()[1])
     log = (out / "session_a.log").read_text() if (out / "session_a.log").exists() else ""
-    return rc, log, out, proc.stdout
+    # stdout AND stderr: on the pod both are redirected into remote_stdout.log, so the
+    # script's own FATAL lines and its progress lines end up in one place there.
+    return rc, log, out, proc.stdout + proc.stderr
 
 
 STAGES = ["CANARY", "PRECHECK", "CHECK", "LATER1", "LATER2"]
@@ -219,3 +240,36 @@ def test_a_healthy_check_stage_runs_the_whole_chain(tmp_path):
     for later in ("LATER1", "LATER2"):
         assert (out / f"session_a_{later}.csv").exists(), f"{later} did not run"
     assert "SKIP LATER1" not in log
+
+
+# ---------------------------------------------------------------------------
+# the parameter contract (scripts/mlsys_remote_expect.sh), from the pod's side
+# ---------------------------------------------------------------------------
+
+def test_a_wrong_intended_value_stops_the_session_before_any_stage(tmp_path):
+    """The 2026-10-12 failure in its general form: the pod's parameters differ from
+    what the driver intended, and the pod must refuse rather than run."""
+    rc, log, out, stdout = _run(tmp_path, STAGES, check="ok",
+                                expect="SESSION_OUT=out;SESSION_CFG=configs/stages.yml;"
+                                       "SESSION_SANITY_CFG=configs/sanity.yml;NPROC=99;"
+                                       "SESSION_CHECK_STAGE=CHECK;"
+                                       "SESSION_GATE_CANDIDATES=;"
+                                       "STAGES=" + " ".join(STAGES))
+    assert rc == 2, f"a wrong NPROC must stop the session, got {rc}\n{log[-1500:]}"
+    assert "NPROC" in stdout and "intended" in stdout
+    assert "### STEP a" in log, "the refusal must come after the cheap sanity, not instead of it"
+
+
+def test_a_parameter_the_pod_never_received_is_named(tmp_path):
+    """A key in the manifest that the pod's own set does not carry means the pod is
+    using a DEFAULT for it -- the exact shape of the $5.5 mistake."""
+    rc, log, out, stdout = _run(tmp_path, STAGES, check="ok",
+                                expect="SESSION_OUT=out;SESSION_CFG=configs/stages.yml;"
+                                       "SESSION_SANITY_CFG=configs/sanity.yml;NPROC=2;"
+                                       "SESSION_CHECK_STAGE=CHECK;"
+                                       "SESSION_GATE_CANDIDATES=;"
+                                       "SESSION_TAG=never_sent;"
+                                       "STAGES=" + " ".join(STAGES))
+    assert rc == 2, f"an unverifiable parameter must stop the session, got {rc}\n{log[-1500:]}"
+    assert "SESSION_TAG" in stdout
+    assert "never received that setting" in stdout

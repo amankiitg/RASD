@@ -411,7 +411,21 @@ say "incremental puller pid=$POLLER_PID (every ${PULL_EVERY_S}s)"
 # dead-man timer's window less a margin, so the timer never races us), or on a fatal error.
 PODOUT="RASD/$SESSION_OUT"
 say "--- launching the remote session DETACHED on the pod ---"
-START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' bash scripts/mlsys_session_a_remote.sh >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+# THE EXPECTATION MANIFEST (see scripts/mlsys_remote_expect.sh). Every value this
+# driver controls is sent in its own variable, so the pod can prove it received the
+# parameters that were intended instead of silently running its defaults. STAGES is
+# derived by the SAME implementation the remote script uses (scripts/mlsys_stage_list.py)
+# -- two derivations of "which stages" is how a campaign starts disagreeing with itself
+# about what it ran.
+STAGES_INTENDED=$("$PY" scripts/mlsys_stage_list.py "$SESSION_CFG" --space 2>/dev/null)
+if [ -z "$STAGES_INTENDED" ]; then
+  say "FATAL: could not derive the intended stage list from $SESSION_CFG; refusing to launch a session whose stages cannot be asserted"
+  exit 2
+fi
+say "intended stages: $STAGES_INTENDED"
+REMOTE_EXPECT="SESSION_OUT=$SESSION_OUT;SESSION_CFG=$SESSION_CFG;SESSION_SANITY_CFG=$SESSION_SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STAGES_INTENDED"
+
+START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash scripts/mlsys_session_a_remote.sh >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; now polling for the DONE marker, not for this shell"
 

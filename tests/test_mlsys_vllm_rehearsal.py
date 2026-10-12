@@ -23,6 +23,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 REMOTE = REPO / "scripts" / "mlsys_vllm_remote.sh"
+# The parameter-contract helper every pod-side wrapper sources before it does any work.
+EXPECT = REPO / "scripts" / "mlsys_remote_expect.sh"
 
 VENV_STUB = '''\
 #!/usr/bin/env bash
@@ -74,6 +76,11 @@ def _sandbox(tmp_path: Path, venv_rc: int = 0) -> tuple[Path, dict]:
     # THE REAL SCRIPT UNDER TEST, and stubs for the two things it drives.
     import shutil
     shutil.copy(REMOTE, rasd / "scripts" / "mlsys_vllm_remote.sh")
+    # The wrapper verifies its parameters against the driver's manifest before it
+    # installs anything, and it sources this helper to do it -- so the sandbox must
+    # carry it, or the wrapper dies at the source line with 127/2 instead of testing
+    # anything (found 2026-10-12: four tests failed exactly this way).
+    shutil.copy(EXPECT, rasd / "scripts" / "mlsys_remote_expect.sh")
     vp = rasd / "scripts" / "mlsys_vllm_venv.sh"
     vp.write_text(VENV_STUB)
     vp.chmod(vp.stat().st_mode | stat.S_IEXEC)
@@ -82,6 +89,12 @@ def _sandbox(tmp_path: Path, venv_rc: int = 0) -> tuple[Path, dict]:
     env.update({
         "HOME": str(home),
         "PROFILE_OUT": "results/mlsys/vllm_rehearsal",
+        "PROFILE_NPROC": "1",
+        # THE MANIFEST THE DRIVER SENDS. The wrapper verifies what it received against
+        # it before installing anything, and refuses when there is no manifest at all,
+        # so a direct invocation must bring one -- built here from the same settings
+        # this test passes, which is what the driver does.
+        "REMOTE_EXPECT": "PROFILE_OUT=results/mlsys/vllm_rehearsal;PROFILE_NPROC=1",
         "MLSYS_VLLM_VENV": str(rasd / ".venv-vllm"),
         "MLSYS_VLLM_BASE_PYTHON": sys.executable,
         "FAKE_VENV_RC": str(venv_rc),
@@ -125,6 +138,11 @@ def test_the_8x_parameters_reach_the_engine(tmp_path):
         "REHEARSE_TP": "8",
         "REHEARSE_CTXS": "131072 524288 1048576",
         "REHEARSE_PROMPT_DIR": "results/mlsys/vllm_prompts",
+        # The manifest grows with the settings: these three are the ones that were
+        # dropped in transit on 2026-10-12, so they are exactly what must be declared.
+        "REMOTE_EXPECT": ("PROFILE_OUT=results/mlsys/vllm_rehearsal;PROFILE_NPROC=1;"
+                          "REHEARSE_TP=8;REHEARSE_CTXS=131072 524288 1048576;"
+                          "REHEARSE_PROMPT_DIR=results/mlsys/vllm_prompts"),
     })
     subprocess.run(
         ["bash", str(home / "RASD" / "scripts" / "mlsys_vllm_remote.sh")],
