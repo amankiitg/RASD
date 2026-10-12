@@ -279,26 +279,239 @@ the ladder's long-context attempts load — those need the 8x run.
 The 49.60 tok/s is **not** a comparison number: 8k context, TP=1, a synthetic
 prompt. It is one data point that the engine runs at the right order of magnitude.
 
+## 5b. The first 8x attempt failed on the DRIVER, and the retry
+
+**Attempt 1** (`gpu_8x_a100_80gb_sxm4`, us-east-1, launched 10:40:49Z, terminated
+~10:55:30Z, **wall 0.245 h = $5.47**, 0 instances afterward, timer killed by hand
+because the driver itself was reaped mid-trap): **zero rows at 131072, 524288 or
+1048576.** The CSV holds exactly ONE row, at **context 8192** —
+`max_model_len 8192`, `TP 1`, `prompt_source synthetic_same_paragraph_NOT_rasd_ids`,
+`doc_id` empty, `status ok` at 54.92 tok/s, and `unit_matched=no` for
+`prompt token ids are not the RASD ids (C2); tensor_parallel_size != 8 (C5); no
+doc_id`. Log: `### running the baseline: ... @ [8192] tokens, TP=1, 128 new tokens`
+and `prompt: synthetic, NOT the RASD ids`.
+
+**WHY.** `REHEARSE_TP=8`, `REHEARSE_CTXS='131072 524288 1048576'` and
+`REHEARSE_PROMPT_DIR=samp_prompts` were set on the Mac, but the driver built its
+remote command as `env PROFILE_OUT=... PROFILE_TAG=... PROFILE_NPROC=...` and nothing
+else crossed the boundary. The pod therefore started the wrapper with **its own
+defaults**: one card, 8192 tokens, a synthetic prompt — on an 8-GPU box.
+
+**WHY THE TESTS DID NOT CATCH IT.** `tests/test_mlsys_vllm_rehearsal.py` invokes the
+WRAPPER directly. It therefore proved the wrapper forwards what it is GIVEN, and
+never that the driver gave it anything: the gap was the boundary itself. This is the
+campaign's own L12 ("testing the function is not calling it") expiring for a third
+time, now at $5.47.
+
+**THE FIX.** `REMOTE_ENV_NAMES` — an explicit, documented allowlist of variable names
+the driver forwards into the remote `env` call, each single-quoted so a value with
+spaces survives. Validated in the preflight, before the instance count and before
+anything is launched: a named variable that is unset or EMPTY is refused (forwarding
+`''` lets the pod fall back to its own default, which is the shape of this exact
+mistake) and a value containing a single quote is refused as unsafe to quote.
+
+**THE TEST NOW SPANS THE BOUNDARY.**
+`tests/test_mlsys_profile_1x_remote_env.py` drives the REAL driver with stub `curl`,
+`ssh` and `rsync` on PATH and asserts on the argv actually handed to ssh — the bytes
+that would have gone to the pod, not the driver's own log line about them. Three
+cases: the named vars are present; without the allowlist they are absent (that IS the
+old behaviour, so it is the control); a named-but-unset variable is refused before
+any ssh call. The driver also logs the forwarded names with values masked.
+
+**An unrelated defect found in the same window, and now fixed:** the driver's three
+result paths named `results/mlsys/session_a/` literally instead of `$SESSION_OUT`, so
+the 1x n=5 rehearsal pulled only the committed Oct-10 leftovers that the repo rsync
+had copied onto the pod, while its real stage CSVs stayed on the pod and died with
+it. Fixed, with a test that asserts on the rsync argv; at $1.99/hr this was cheap to
+find and at $22.32/hr it would have thrown away a ~$30 result.
+
+**Attempt 2 — the retry, ONCE, on the 8x, 2-hour timer.** Same command with
+`REMOTE_ENV_NAMES="REHEARSE_TP REHEARSE_CTXS REHEARSE_PROMPT_DIR"`,
+`REHEARSE_TP=8`, `REHEARSE_CTXS='131072 524288 1048576'`,
+`REHEARSE_PROMPT_DIR=samp_prompts`, `TIMER_MIN=120` ($44.64, inside the $60 ceiling).
+Launched 11:13:44Z in us-midwest-1 with the 120-minute dead-man timer confirmed by
+**PPID 1**; the payload staged 4/4 files and the driver logged the forwarded names, so
+the boundary that failed last time is visibly crossed this time.
+
+### 5c. The TTFT defect the retry exposed, and the fix (no re-run)
+`_ttft_from_metrics()` returned `metrics.first_token_time` directly, on the
+assumption that offline `generate()` exposes no TTFT at all. vLLM 0.6.3 does expose
+`RequestMetrics`, but its fields are **absolute monotonic clock readings**, not
+durations: at 1M `first_token_time - arrival_time` is the real prefill time, while
+`first_token_time` alone is 1.79e9. `end_to_end - ttft` therefore came out as
+-1.79e9 s and `throughput_tps_decode_only` as **1.27e11 tok/s** in a column that
+reads as a measurement. A number that cannot be true is worse than a blank.
+
+The fix makes the function return a *duration or nothing*: subtract `arrival_time`,
+and accept the result only if it is non-negative and no longer than the request that
+produced it (the caller now passes `end_to_end`); otherwise return None and let the
+row write a blank. The warning text says which of the two happened.
+
+**No re-run.** The affected columns are exactly the ones this campaign does not need:
+the comparison quantity is end-to-end (`throughput_tps_end_to_end`), which is
+unaffected and was never derived from the metric. Spending ~$20 to refill three
+decorative columns would be the wrong trade, so the four rows keep their blanks —
+and the CSV's three unusable values are named here rather than quietly quoted later.
+
+### Verdict on the retry: **PASSED — 4/4 rows ok, at all three contexts.** (judged from the CSV)
+
+Judged from `vllm_baseline.csv` (4 rows, `status=ok`, `unit_matched=yes` on every
+row), never from rc. Pod timeline from `remote_stdout.log`: venv r=0 at 11:26:52Z,
+baseline started 11:26:52Z, `DONE 2026-10-12T12:04:52Z 0`, terminated 12:08:37Z.
+
+| context | doc | prompt_tokens | out | end-to-end s | **tok/s** | unit_matched |
+|---|---|---|---|---|---|---|
+| 131072 | pg19_train_0 | 130048 | 128 | 18.3210 | **6.9865** | yes |
+| 524288 | pg19_train_0 | 523264 | 128 | 224.6151 | **0.5699** | yes |
+| 1048576 | pg19_train_0 | 1047552 | 128 | 863.5764 | **0.1482** | yes |
+| 1048576 | pg19_train_1 | 1047552 | 128 | 862.9615 | **0.1483** | yes |
+
+- **The three conditions of the GO all held.** (1) `prompt_ids_from_engine=yes` and
+  `prompt_ids_verified=yes` on all four rows, with the same sha256 the RASD sidecars
+  carry (`eaf3abc1…` at 128k, `d22068eb…` at 512k, `c9b20fa4…`/`ec40d6c5…` at 1M) —
+  the staged ORIGINAL sidecars with `engine_input_ids`, 4 cells found
+  (`2 documents x 3 context(s)`). (2) TP=8 in every row, `1-default-tp8`, i.e.
+  `max_num_seqs: 1` + chunked prefill (`enable_chunked_prefill`, 16384). (3) The 1M
+  cell ran first among the long rungs and **succeeded on its first attempt**, ~900 s.
+- **The unit matches.** Same target revision `cd3069b6…`, same 128 tokens, same
+  doc_ids, `max_model_len == ctx`, `temperature 0.0`: these are the same prompts the
+  RASD target-only rungs used, so the column in `RESULTS_OCT.md` is like for like.
+- **Cost: wall 3285 s = 0.91 h = $20.37** (inside the $44.64 the 2-hour timer allowed,
+  and half the estimated worst case). 0 instances afterward, timer cancelled by the
+  driver. Cumulative campaign spend after this run: **~$341 of $450**.
+- **A known defect in the CSV, recorded rather than hidden.** `ttft_s`,
+  `decode_only_wall_s` and `throughput_tps_decode_only` are **unusable for this
+  offline path**: vLLM 0.6.3's `RequestOutput.metrics` is NOT None (the docstring in
+  `mlsys_vllm_baseline.py` assumed it would be), and `first_token_time` is an
+  absolute monotonic clock reading, not a duration, so `end_to_end - ttft` came out
+  as ≈ -1.79e9 and the decode rate as 1.27e11. Only the end-to-end columns are quoted
+  above; the fix (treating the metric as `first_token_time - arrival_time`, and
+  writing `<NA>` rather than a number when either is missing) is in §5c. No re-run is
+  justified: the end-to-end number, which is the comparable one, is unaffected.
+
 ## 6. How it will be reported next to RASD
 
 One table in `results/mlsys/RESULTS_OCT.md`, beside — never inside — the RASD
-numbers:
+numbers. **The numbers below are the measured ones** (retry of 2026-10-12, §5b);
+every tok/s is `tokens_generated / time_sec`, never the rounded `throughput_tps`.
 
-| context | RASD target-only tok/s (measured, this campaign) | vLLM 0.6.3 target-only tok/s (end-to-end, same prompt ids) | ratio |
+### 6.1 Means over each arm's own rows (all arms on the same aligned window, TP=8)
+
+| context | vLLM target-only (n) | RASD target-only (n) | RASD spec T=0.7 (n) | vLLM / RASD target-only | vLLM / RASD spec |
+|---|---|---|---|---|---|
+| 128k | **6.9865** (1) | 0.28310 (1) | 0.67350 (3) | **24.68x** | 10.37x |
+| 512k | **0.56986** (1) | 0.09411 (1) | 0.24389 (3) | **6.06x** | 2.34x |
+| 1M | **0.14828** (2) | 0.05103 (2) | 0.12077 (5) | **2.91x** | 1.23x |
+
+The RASD-spec ratios are NOT like for like: the vLLM rows cover 1-2 books while the
+spec means cover 3 (128k/512k) and 5 (1M). The matched-book column below is the one
+to quote when a single document matters.
+
+### 6.2 Matched book only (`pg19_train_0`, present in every arm)
+
+| context | vLLM target-only | RASD target-only | RASD spec | vLLM / RASD target-only | vLLM / RASD spec | RASD spec / RASD target-only |
+|---|---|---|---|---|---|---|
+| 128k | 6.9865 | 0.28310 | 0.53084 | **24.68x** | 13.16x | 1.875x |
+| 512k | 0.56986 | 0.09411 | 0.20607 | **6.06x** | 2.77x | 2.190x |
+| 1M | 0.14822 | 0.05175 | 0.10801 | **2.86x** | 1.37x | 2.087x |
+
+### 6.3 TTFT and peak memory
+
+**vLLM TTFT: NOT AVAILABLE, and the column in the CSV must not be quoted.** The
+retry's `ttft_s` holds `1.79e9` and `decode_only_wall_s` holds `-1.79e9` — see §5c:
+vLLM 0.6.3 reports `RequestMetrics` timestamps as ABSOLUTE MONOTONIC CLOCK readings,
+and the first version of the recorder subtracted one from a delta and wrote the
+result down. So the honest statement is: **the offline `generate()` path used here
+exposes no usable first-token time, and the run recorded none.** What the run does
+support is the end-to-end wall per context, which includes the prefill of the whole
+window. The one sound inference from it: vLLM's *total* wall is 2.1x (128k), 2.5x
+(512k) and 2.5x (1M) longer than RASD's *prefill-only* `ttft_ms`, and vLLM's total
+includes its own prefill plus 128 decode steps — so vLLM's prefill is the slower of
+the two here, which is the opposite of the decode ordering.
+
+| context | vLLM end-to-end wall | RASD `ttft_ms` (prefill only) | vLLM wall / RASD prefill |
 |---|---|---|---|
-| 128k | 0.28310 | *to be measured* | — |
-| 512k | 0.09411 | *to be measured* | — |
-| 1M | 0.05103 (mean of 2) | *to be measured* | — |
+| 128k | 18.321 s | 8.589 s | 2.13x |
+| 512k | 224.615 s | 91.447 s | 2.46x |
+| 1M | 863.576 s | 339.284 s | 2.55x |
 
-with, in the same table's notes: the precision asymmetry (NF4 KV/FP4 weights vs
-bf16/bf16), `max_num_seqs: 1`, the exact `engine_input_ids` prompt hash per row,
-`unit_matched` per row, and the statement that the ratio bounds **one direction
-only** — it says how much slower RASD's target-only path is than a production
-engine on the same prompt; it says nothing about RASD's speculative path against a
-production speculative path, because vLLM has none installed here.
+**Peak memory per GPU.** vLLM recorded `peak_mem_mb` of **68798.7 / 68798.8 /
+68799.0 MB (about 68.8 GB) at 128k / 512k / 1M** — flat across contexts, in the shape
+a fixed `gpu_memory_utilization` preallocation gives, so it is the KV pool size and
+NOT the working set at each window. RASD's `gpu_peak_mem_mb` on the same cells is
+**8256.4 / 15781.2 / 25814.2 MB**: about 2.7x-8.3x smaller, and it *does* rise with
+context. The two are not the same quantity (vLLM: preallocated pool from the driver
+process at TP=8; RASD: peak of a 4-bit run incl. NF4 KV shards), so the table is
+reported as-is and no ratio is claimed from it.
+
+### 6.4 Everything a reviewer would flag about these two setups
+
+1. **Weight precision — the biggest one.** vLLM ran **bf16** weights; RASD ran the
+   **FP4** quantized target (`quantize_target: true`). The comparison is
+   "production-precision engine" against "4-bit research path", not two engines at
+   equal precision.
+2. **KV precision.** vLLM **bf16** KV; RASD **NF4** KV (`kv_quant: true`,
+   `kv_block_size 2048`). At 1M this is where RASD's 2.7x-lower memory peak and its
+   flat decode cost come from.
+3. **Decoding mode.** vLLM is **greedy** (`temperature 0.0`, `ignore_eos`, exactly
+   128 tokens). Both RASD arms are **`temperature 0.7`, `top_p 1.0`, `ignore_eos`**,
+   seed 42 (rows carry `temperature 0.7`). With EOS ignored this does not change how
+   many tokens are produced, so the *throughput* comparison is unaffected; it does
+   mean the vLLM row cannot be used for acceptance or for the acceptance-vs-context
+   trend.
+4. **No speculative decoding on the vLLM side.** The venv has no spec-decoding
+   implementation, so vLLM is target-only. vLLM-vs-RASD-spec therefore compares a
+   production target-only engine against a research spec path — it bounds one
+   direction only and says nothing about RASD's spec path against a production spec
+   path.
+5. **Prompt ids: the same ids, one leading token apart.** vLLM was fed the sidecars'
+   `engine_input_ids` — the ids the TARGET was actually fed, **including the leading
+   BOS** — so its `prompt_tokens` reads 130048 / 523264 / 1047552 while RASD's CSV
+   records 130047 / 523263 / 1047551 for the same window. The loader verifies the
+   sidecar's `prompt_token_ids` hash (RASD's `prompt_sha256`,
+   `dc21d9f3…` at 128k) before using it, and the one-token difference is the BOS, so
+   the ids are the same prompt. vLLM's own `prompt_sha256` column hashes the 130048
+   ids it fed (`eaf3abc1…`) and is therefore NOT comparable string-for-string with
+   RASD's 130047-id hash — that is an artefact of hashing different objects, not a
+   different prompt.
+6. **Prefill strategy.** vLLM: chunked prefill (16384) + `max_num_seqs: 1` on **8
+   ranks of one 8x A100 box**, no ring. RASD: ring attention across the same 8 ranks
+   with `kv_block_size 2048`, `prefetch_depth 1`.
+7. **`time_sec` includes prefill on both sides — verified, not assumed.** RASD's
+   `time_sec` (2473.37 s at 1M) contains its `ttft_ms` (339.28 s), and
+   `decode_tps = (tokens-1)/(time_sec - ttft)` reproduces the recorded 0.06, so its
+   convention is the same end-to-end one vLLM's `end_to_end_wall_s` uses. The two
+   numbers are therefore comparable *in convention*; they are not comparable in
+   precision or in kernel set.
+8. **n.** vLLM: 1 book at 128k/512k, 2 at 1M. RASD target-only: 1 book at 128k/512k,
+   2 at 1M. RASD spec: 3 books at 128k/512k (the n=5 extension for these two rungs is
+   running as this is written) and 5 at 1M (of 6 attempted — `pg19_train_1726` has
+   only 765 continuation tokens at the 1M window and is excluded by data, §4 of
+   `RESULTS_OCT.md`). No target-only rung has n>2, so the RASD target-only ratios rest
+   on a single book at two of three contexts.
+9. **Region/host.** The vLLM retry ran in us-midwest-1; the Oct 12 RASD session ran in
+   us-east-1. Same 8x A100 80GB SXM4 type, different hosts.
+10. **`unit_matched=yes` on all four vLLM rows** — target revision `cd3069b6…`, 128
+    tokens, a real `doc_id`, TP=8, ids from the engine. The unit check is *within*
+    vLLM's own ladder; it does not remove items 1-3.
 
 The ratio must never be multiplied into, averaged with, or used to adjust the
 2.37x/2.38x/2.59x headline speedups: those are RASD-vs-RASD and stand on their own.
+
+### 6.5 Provenance of the vLLM rows (what code produced them)
+
+The pod does not hold a git checkout: `scripts/mlsys_setup_probe.sh` rsyncs the Mac
+**worktree** verbatim into `~/RASD`, so the executable revision is whatever the tree
+was at the moment of provisioning. For the retry that was **11:24:44Z**, i.e.
+**HEAD `d11fdbc`** ("Fix: the session driver pulled a hardcoded path, not
+`$SESSION_OUT`", committed 11:24:21Z, 23 s earlier). Every file the vLLM path
+executes — `scripts/mlsys_vllm_remote.sh`, `scripts/mlsys_vllm_baseline.py`,
+`scripts/mlsys_vllm_venv.sh`, `scripts/mlsys_profile_decode.sh` — was **clean at
+that commit**, so the four rows are reproducible from `d11fdbc` alone. Two
+corroborating details in the pulled log: the 34b955d forwarding fix is visibly in
+effect (`@ [131072 524288 1048576] tokens, TP=8`), and the parameter-contract block
+that the wrapper carries today is **absent** from it (`parameters as received`
+appears 0 times), which dates that block to after the run.
 
 ---
 

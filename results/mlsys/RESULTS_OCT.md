@@ -134,14 +134,47 @@ identical windows**, and the numbers below carry that caveat. Only book 0 is exa
 aligned, and it is the only book for which a cross-context acceptance difference is
 strictly like-for-like.
 
-| context | arm | n | accept (mean) | tok/s (mean) | per-book tok/s | target-only | speedup |
-|---|---|---|---|---|---|---|---|
-| 128k aligned | spec | 3 | 0.4349 | **0.67350** | 0.53084 / 0.65789 / 0.83175 | **0.28310** (n=1) | **2.38x** |
-| 512k aligned | spec | 3 | 0.4892 | **0.24389** | 0.20607 / 0.22362 / 0.30197 | **0.09411** (n=1) | **2.59x** |
-| 1M | spec | 5 | 0.5246 | 0.12077 | §1 | 0.05103 (n=2) | **2.37x** |
+| context | arm | n | accept (mean) | tok/s (mean) | per-book tok/s | target-only | speedup | vLLM 0.6.3 bf16 TP=8 (n) | vLLM / target-only | vLLM / spec |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 128k aligned | spec | 3 | 0.4349 | **0.67350** | 0.53084 / 0.65789 / 0.83175 | **0.28310** (n=1) | **2.38x** | **6.9865** (1) | **24.7x** | 10.4x |
+| 512k aligned | spec | 3 | 0.4892 | **0.24389** | 0.20607 / 0.22362 / 0.30197 | **0.09411** (n=1) | **2.59x** | **0.56986** (1) | **6.1x** | 2.3x |
+| 1M | spec | 5 | 0.5246 | 0.12077 | §1 | 0.05103 (n=2) | **2.37x** | **0.14828** (2) | **2.9x** | 1.2x |
 
 Per-row acceptance at 128k: 0.2712 / 0.4255 / 0.6081 (train_0 / 1 / 915); at 512k:
 0.3349 / 0.4062 / 0.7266. All 11 spec rows at the three contexts are non-degenerate.
+
+### The vLLM column (2026-10-12, 8x A100 80GB SXM4, `results/mlsys/vllm_run` → pulled to the session pull dir)
+
+Every number in it is `tokens_generated / time_sec` on the **same prompts** — the
+sidecars' `engine_input_ids`, the ids the target was actually fed — with
+`unit_matched=yes` and `prompt_ids_verified=yes` on all four rows. It is a different
+engine at a different precision, so it is a **column beside** the RASD numbers and
+never inside them:
+
+* **vLLM is bf16 weights and bf16 KV, greedy**; RASD is **FP4 weights, NF4 KV, T=0.7**.
+  The gap is therefore "production engine at full precision" vs "4-bit research path",
+  not two engines at equal precision — and the 4-bit path is what makes RASD's memory
+  peak 2.7-8.3x smaller (8.3 GB / 15.8 GB / 25.8 GB against vLLM's ~68.8 GB
+  preallocated pool).
+* **The comparison is target-only against target-only.** vLLM has no speculative
+  decoding in this venv, so the ratio bounds **one direction only**: how much slower
+  RASD's target-only path is than a production engine on the same prompt. It says
+  nothing about RASD's spec path against a production spec path.
+* **Book sets differ.** The vLLM rows cover 1 book at 128k/512k and 2 at 1M while the
+  spec means cover 3 and 5, so the `vLLM / spec` column mixes book sets. On the one
+  book present in every arm (`pg19_train_0`) the ratios are **24.7x / 6.1x / 2.9x**
+  against target-only and **13.2x / 2.8x / 1.4x** against spec.
+* **vLLM's TTFT is not available.** Its CSV's `ttft_s` and `decode_only_wall_s` are
+  unusable (vLLM 0.6.3 reports absolute monotonic timestamps; the values are ~1.79e9
+  and ~-1.79e9). What the run supports is that vLLM's *total* wall is 2.1x / 2.5x /
+  2.5x longer than RASD's *prefill-only* `ttft_ms`, so vLLM's prefill is the slower of
+  the two here — the opposite of the decode ordering.
+* **Convention matches:** RASD's `time_sec` contains its own `ttft_ms` (verified:
+  `decode_tps = (tokens-1)/(time_sec - ttft)` reproduces the recorded value), so both
+  columns are end-to-end including prefill.
+
+Full ten-point caveat list, the per-row table and the provenance of the vLLM rows
+(HEAD `d11fdbc`) are in [VLLM_PLAN.md](./VLLM_PLAN.md) §5b-§6.
 
 **What this supports:** throughput falls steeply with context (spec 0.674 → 0.244 → 0.121
 tok/s; target-only 0.283 → 0.094 → 0.051), the **speedup is roughly flat across a factor of

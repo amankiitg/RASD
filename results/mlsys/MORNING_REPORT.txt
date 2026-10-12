@@ -4187,3 +4187,35 @@ states what the redo must show: 1M vs 128k perplexity per document over the SAME
 #   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
 #   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
 #   - measured row time total 18666.9s = 5.19h over 33 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T12:06:14Z
+#   ### progress 2026-10-12T12:05:24Z
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 3.9s = 0.00h over 2 rows
+#   ### progress 2026-10-12T12:05:24Z
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 3.9s = 0.00h over 2 rows
+#   ### progress 2026-10-12T12:06:06Z
+#   - SAMP_EXT_ALIGNED_512K_SPEC: rows=2 ok=2 median_row_s=2.4 max_row_s=2.4 tps=3.290 accept=0.2291
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 8.8s = 0.00h over 4 rows
+#   ### progress 2026-10-12T12:06:06Z
+#   - SAMP_EXT_ALIGNED_512K_SPEC: rows=2 ok=2 median_row_s=2.4 max_row_s=2.4 tps=3.290 accept=0.2291
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 8.8s = 0.00h over 4 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T12:08:15Z
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 12.8s = 0.00h over 6 rows
+#   ### progress 2026-10-12T12:07:54Z
+#   - ROPE_EXT_SAMP_NATIVE_SPEC: rows=2 ok=2 median_row_s=2.1 max_row_s=2.1 tps=3.830 accept=0.1250
+#   - SAMP_EXT_ALIGNED_128K_SPEC: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=3.930 accept=0.2188
+#   - SAMP_EXT_ALIGNED_512K_SPEC: rows=2 ok=2 median_row_s=2.4 max_row_s=2.4 tps=3.290 accept=0.2291
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 17.0s = 0.00h over 8 rows
+#   ### progress 2026-10-12T12:07:54Z
+#   - ROPE_EXT_SAMP_NATIVE_SPEC: rows=2 ok=2 median_row_s=2.1 max_row_s=2.1 tps=3.830 accept=0.1250
+#   - SAMP_EXT_ALIGNED_128K_SPEC: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=3.930 accept=0.2188
+#   - SAMP_EXT_ALIGNED_512K_SPEC: rows=2 ok=2 median_row_s=2.4 max_row_s=2.4 tps=3.290 accept=0.2291
+#   - sanity: rows=2 ok=2 median_row_s=2.0 max_row_s=2.0 tps=4.120 accept=0.0625
+#   - measured row time total 17.0s = 0.00h over 8 rows
