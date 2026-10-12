@@ -116,21 +116,15 @@ run_stage() {   # name timeout
   [ "$n" -gt 0 ] && return 0 || return 1
 }
 
-# ------------------------------------------------------------------ (a) sanity --
-log "### STEP a: sanity pair (both arms, one invocation)"
-timeout 3600 "$PY" run_experiment.py --config "$SANITY_CFG" --nproc "$NPROC" \
-  --output "$OUT/session_a_sanity.csv" --stage-id session_a_sanity \
-  --log-per-token --save-generated-tokens 2>&1 | tee -a "$OUT/group_SANITY.log" | tail -20
-SAN_RC=$?
-SAN=$(ok_rows "$OUT/session_a_sanity.csv")
-log "### STEP a rc=$SAN_RC ok_rows=$SAN (need 2)"
-progress
-if [ "${SAN:-0}" -lt 2 ]; then
-  log "STOP: the sanity pair produced $SAN ok rows, expected 2. Not spending the session."
-  exit 4
-fi
-
-# ------------------------------------- (b) quality, (c) headline, (d) scaling ---
+# ---------------------- THE STAGE LIST AND THE PARAMETER CONTRACT, FIRST OF ALL --
+# ORDER MATTERS HERE, AND MOVING THIS WAS THE FIX (2026-10-12, found while judging the
+# n=5 run). This block used to sit AFTER the sanity pair, because the stage list is
+# derived from the session config while the sanity pair uses a different one. That made
+# the claim in its own comment false: a pod that had received the wrong parameter set
+# still loaded two models and generated two rows before refusing -- and the sanity pair
+# is not a cheap check, it is a model load. "Before any heavy work" has to mean before
+# the sanity pair too, so the derivation and the check now run first.
+#
 # THE STEP LIST COMES FROM THE CONFIG, in file order. A hardcoded list meant a
 # different config (the quality-only redo) could not be run by this same script without
 # editing it -- and this script is the one thing a running session's pod is reading.
@@ -146,12 +140,12 @@ if [ "$steps_rc" != "0" ] || [ -z "$STEPS" ]; then
 fi
 log "steps from $CFG: $(echo $STEPS | tr '\n' ' ')"
 
-# ---- THE PARAMETER CONTRACT, BEFORE THE FIRST STAGE -------------------------
-# The stage ids are derived above from the config, and the driver sends the list it
-# intended; if they disagree, or if the config/output/nproc the pod received is not
-# what the driver sent, this stops before the sanity pair rather than after five
-# hours. On 2026-10-12 an 8x run spent ~$5.5 executing a different parameter set than
-# its driver had set, and nothing on the pod could notice.
+# ---- THE PARAMETER CONTRACT, BEFORE THE SANITY PAIR AND BEFORE ANY STAGE ----
+# The stage ids are derived just above, and the driver sends the list it intended; if
+# they disagree, or if the config/output/nproc the pod received is not what the driver
+# sent, this stops BEFORE the sanity pair rather than after it. On 2026-10-12 an 8x run
+# spent ~$5.5 executing a different parameter set than its driver had set, and nothing
+# on the pod could notice.
 # shellcheck disable=SC1090
 . scripts/mlsys_remote_expect.sh
 # ONE SPACE BETWEEN, NONE AT THE END. `echo $STEPS | tr '\n' ' '` leaves a TRAILING
@@ -162,6 +156,22 @@ STEPS_ONELINE=$(printf '%s' "$STEPS" | tr '\n' ' ' | sed -E 's/ +$//')
 # KEYS ARE THE DRIVER'S VARIABLE NAMES on both sides (see the vllm wrapper for why).
 mlsys_expect "session-a-remote" "${REMOTE_EXPECT:-}" \
   "SESSION_OUT=$OUT;SESSION_CFG=$CFG;SESSION_SANITY_CFG=$SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STEPS_ONELINE" || exit 2
+
+# ------------------------------------------------------------------ (a) sanity --
+log "### STEP a: sanity pair (both arms, one invocation)"
+timeout 3600 "$PY" run_experiment.py --config "$SANITY_CFG" --nproc "$NPROC" \
+  --output "$OUT/session_a_sanity.csv" --stage-id session_a_sanity \
+  --log-per-token --save-generated-tokens 2>&1 | tee -a "$OUT/group_SANITY.log" | tail -20
+SAN_RC=$?
+SAN=$(ok_rows "$OUT/session_a_sanity.csv")
+log "### STEP a rc=$SAN_RC ok_rows=$SAN (need 2)"
+progress
+if [ "${SAN:-0}" -lt 2 ]; then
+  log "STOP: the sanity pair produced $SAN ok rows, expected 2. Not spending the session."
+  exit 4
+fi
+
+# ------------------------------------- (b) quality, (c) headline, (d) scaling ---
 prev=0
 for name in $STEPS; do
   tmo=21600
@@ -233,7 +243,10 @@ print(f"{len(rows)} ok row(s); " + ("acceptance sane, spec steps set, tokens pre
 sys.exit(1 if bad else 0)
 PYCHK
     then
-      log "### STEP c check PASSED: the sampled 1M path is sane; continuing to step d"
+      # NAMES THE STAGE, not "the 1M path": SESSION_CHECK_STAGE can be any spec stage
+      # (the seeds/ablations session gates on a 128k one), and a message that names the
+      # wrong one is how a reader concludes the wrong thing was checked.
+      log "### STEP c check PASSED: $name is sane (acceptance inside (0,1], spec steps set, tokens present); continuing"
     else
       log "### STEP c check FAILED: STOPPING. Nothing else runs at T>0; the quality rows that already landed are kept."
       exit 5

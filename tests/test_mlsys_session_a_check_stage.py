@@ -257,7 +257,14 @@ def test_a_wrong_intended_value_stops_the_session_before_any_stage(tmp_path):
                                        "STAGES=" + " ".join(STAGES))
     assert rc == 2, f"a wrong NPROC must stop the session, got {rc}\n{log[-1500:]}"
     assert "NPROC" in stdout and "intended" in stdout
-    assert "### STEP a" in log, "the refusal must come after the cheap sanity, not instead of it"
+    # BEFORE THE SANITY PAIR, BY EFFECT. This assertion used to say the opposite --
+    # "the refusal must come after the cheap sanity" -- and that was wrong twice over:
+    # the sanity pair is not cheap (it loads two models), and a refusal that has already
+    # run it is not "before any heavy work". Verified by the artifact the sanity step
+    # would have written, not by the absence of a log line.
+    assert not (out / "session_a_sanity.csv").exists(), (
+        "the refusal must land before the sanity pair runs: that step loads models")
+    assert "### STEP a" not in log, log[-1500:]
 
 
 def test_a_parameter_the_pod_never_received_is_named(tmp_path):
@@ -273,3 +280,21 @@ def test_a_parameter_the_pod_never_received_is_named(tmp_path):
     assert rc == 2, f"an unverifiable parameter must stop the session, got {rc}\n{log[-1500:]}"
     assert "SESSION_TAG" in stdout
     assert "never received that setting" in stdout
+
+
+def test_the_contract_is_checked_before_the_sanity_pair(tmp_path):
+    """ORDER, ON THE HAPPY PATH TOO: the stage list is derived and the parameters are
+    verified BEFORE the sanity pair, not after it. A pod that received the wrong
+    parameters must not spend a model load finding out."""
+    rc, log, out, stdout = _run(tmp_path, STAGES, check="ok")
+    assert rc == 0, f"a healthy session must still pass, got {rc}\n{log[-1500:]}"
+    assert "steps from" in log, log[-1500:]
+    assert "expected setting(s) verified" in stdout, stdout[-1500:]
+    i_steps = log.index("steps from")
+    i_contract = stdout.index("expected setting(s) verified")
+    i_sanity = log.index("### STEP a")
+    assert i_steps < i_sanity, "the stage list must be derived before the sanity pair"
+    assert i_contract >= 0 and "### STEP a" in log, "the sanity pair still has to run"
+    # and the sanity file exists on the happy path, so the assertion above is a real
+    # difference and not an artifact of the stub never writing it
+    assert (out / "session_a_sanity.csv").exists()
