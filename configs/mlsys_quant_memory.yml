@@ -14,6 +14,10 @@
 # speculation. Running the spec arms here would add rows about memory that the target-only arm
 # already answers, and would put the tracer's snapshots inside a timed spec row for no gain.
 #
+# ORDER IS RUN ORDER AND IT IS CHOSEN FOR TRUNCATION: the two ends first (CONTROL, the
+# denominator, then BOTH_OFF, the arm Phase 2 chose), because a timer-capped run that ends
+# early should still have measured the pair the decision rests on.
+#
 # THE FOUR ARMS, unchanged from the ablation config, one setting apart each:
 #   SAQ_CONTROL  fp4 weights + nf4 KV   (the headline pair, in-session denominator)
 #   SAQ_W_OFF    bf16 weights + nf4 KV
@@ -87,7 +91,6 @@ defaults:
   # lifecycle points, so it does not change the measured protocol.
   memory_trace: true
   memory_trace_dir: results/mlsys/quant_memory/memory_trace
-
 SAQ_CONTROL:
   name: saq_control
   factor: context_length
@@ -101,37 +104,6 @@ SAQ_CONTROL:
     max_new_tokens: 128
     spec_steps: 0
     notes: 'mem pass: fp4 weights, nf4 KV, target-only'
-
-SAQ_W_OFF:
-  name: saq_w_off
-  factor: context_length
-  levels:
-  - id: SAQ_W_OFF_TARGET
-    context_length: 131072
-    documents: [pg19_train_0]
-    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
-    checkpoint_every: 0
-    temperature: 0.7
-    max_new_tokens: 128
-    spec_steps: 0
-    quantize_target: false
-    notes: 'mem pass: bf16 weights, nf4 KV, target-only'
-
-SAQ_KV_OFF:
-  name: saq_kv_off
-  factor: context_length
-  levels:
-  - id: SAQ_KV_OFF_TARGET
-    context_length: 131072
-    documents: [pg19_train_0]
-    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
-    checkpoint_every: 0
-    temperature: 0.7
-    max_new_tokens: 128
-    spec_steps: 0
-    kv_quant: false
-    notes: 'mem pass: fp4 weights, bf16 KV, target-only'
-
 SAQ_BOTH_OFF:
   name: saq_both_off
   factor: context_length
@@ -147,3 +119,31 @@ SAQ_BOTH_OFF:
     quantize_target: false
     kv_quant: false
     notes: 'mem pass: bf16 weights, bf16 KV, target-only'
+SAQ_KV_OFF:
+  name: saq_kv_off
+  factor: context_length
+  levels:
+  - id: SAQ_KV_OFF_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    kv_quant: false
+    notes: 'mem pass: fp4 weights, bf16 KV, target-only'
+SAQ_W_OFF:
+  name: saq_w_off
+  factor: context_length
+  levels:
+  - id: SAQ_W_OFF_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    quantize_target: false
+    notes: 'mem pass: bf16 weights, nf4 KV, target-only'
