@@ -551,6 +551,42 @@ difference could be host or session effect. The identical acceptance is evidence
 arms compute the same thing, and the direction is the same in all three pairs, but a
 2048-vs-8192 A/B inside one session is the experiment that would close it.
 
+### 8.3 Stage d — the seed stages are VOID as seed variation, and that is itself a result
+
+`SA_SEED_123_1M_SPEC` completed **5/5 ok rows** and is **not a seed replicate**. Every row
+records `seed=42`, and every row's `generated_tokens_sha256` is **byte-identical** to its
+seed-42 counterpart; the acceptance mean is 0.5246 with the same per-book values to four
+decimals (0.3776 / 0.6838 / 0.6250 / 0.5437 / 0.3929).
+
+**Cause, from the code rather than from the output:** `run_experiment.py` pops the seed list
+from `defaults` (590), merges each level over the defaults (611) and then sets
+`run["seed"] = seed` from that list (612) -- so a level's own `seeds:` key is overwritten on
+the next line, and the comment there says the rule was written because "greedy decoding makes
+a seed change a no-op". That is true for greedy and false for this session's T=0.7 arms. The
+config-only fix is `defaults.seeds`, one config per seed
+(`configs/mlsys_seed{123,456}_1m.yml`), not yet run: two seeds x 5 books x 1M is ~3.1 h of 8x
+time (~$69, needing approval). `SA_SEED_456` in the same session re-runs seed 42 the same way,
+for the same ~$36 as `SA_SEED_123` spent.
+
+**What it does support, and nothing else was needed to get it:** the engine is
+**bit-reproducible for a fixed seed across sessions and hosts**. The seed-42 rows were
+produced on 2026-10-12 in one 8x instance (`cad0d8cd…`, us-east-1); the seed-123 stage's rows
+were produced hours later on a different 8x instance (`d6cc…`, same region) and generated the
+identical token streams. Two consequences worth stating: every other delta in this section can
+be read as an effect of the setting under test rather than of the machine, and a "3 seeds x 5
+books" spread cannot be obtained by re-labelling a run -- it needs the seed to reach the
+sampler, which is exactly what the void stage demonstrated it did not.
+
+**The seeds/ablations session's other stages are unaffected, and that was checked rather than
+assumed.** Only `seeds` is popped and re-applied, so a level's `temperature`, `spec_steps` and
+`kv_block_size` survive the merge, and the rows prove it: `SA_RINGCHUNK_8192_*` records
+**`kv_block_size = 8192`** (headline 2048) with `spec_steps` 0 and 4 on its two arms;
+`QUALITY_FIX_128K` records `temperature 0.0` where its level set it and the sampling rows
+record 0.7. `draft_window_cap` has the same code path but **no row-level precedent anywhere in
+the committed results** (every row that carries the column says 4096), so
+`SA_DRAFTWIN_2048/16384` are the first rows that will test it; if it silently fell back, those
+two stages would be ~20-minute re-runs of 4096 each (~$7 apiece).
+
 ### Limitations
 
 1. **5 books at 1M** (6 configured; one excluded for a data defect), 3 books per aligned
