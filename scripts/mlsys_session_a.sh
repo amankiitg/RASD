@@ -48,10 +48,35 @@ SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -o ServerAliveInterval=30 -i $SSH_KEY"
 PY=python3
 RATE_80GB=22.32
-# ONE instance type. The default is the only type the main session may use; the
-# REHEARSAL overrides it to a 1x A100, which the operator explicitly sanctioned, and
-# nothing else may override it.
-SESSION_TYPE=${SESSION_TYPE:-gpu_8x_a100_80gb_sxm4}
+# ONE instance type, and it is REQUIRED -- there is deliberately no default.
+#
+# WHY NO DEFAULT. A default is a silent fallback: on 2026-10-12 the 1x rehearsal
+# picker exported SESSION_TYPE before validating its own selection, and when that
+# selection came back empty the driver quietly substituted the 8x type and would have
+# rented eight A100s (about $22/hr) to run a five-minute rehearsal that is supposed to
+# cost under $3. It was stopped by hand before it launched anything. An empty
+# SESSION_TYPE is never a value to be defaulted; it is a bug upstream, and the only
+# safe response is to stop before any instance is created.
+#
+# The allowed list is exactly the types this campaign has sanctioned: the 8x A100 80GB
+# SXM4 main session, the 1x and 2x A100 types used by the rehearsals and the profiler,
+# and the five 1x fallbacks the operator approved for the quant-ablation rehearsal.
+ALLOWED_TYPES="gpu_8x_a100_80gb_sxm4 gpu_2x_a100_sxm4 gpu_2x_a100 \
+gpu_1x_a100_sxm4 gpu_1x_a100 gpu_1x_h100_pcie gpu_1x_a6000 gpu_1x_a10"
+if [ -z "${SESSION_TYPE:-}" ]; then
+  echo "FATAL: SESSION_TYPE is empty. It is required and has no default; refusing to" >&2
+  echo "FATAL: guess an instance type and risk renting the wrong one. Set it to one of:" >&2
+  echo "FATAL:   $ALLOWED_TYPES" >&2
+  exit 2
+fi
+case " $ALLOWED_TYPES " in
+  *" $SESSION_TYPE "*) : ;;
+  *)
+    echo "FATAL: SESSION_TYPE='$SESSION_TYPE' is not in the allowed list; refusing to run." >&2
+    echo "FATAL: allowed: $ALLOWED_TYPES" >&2
+    exit 2
+    ;;
+esac
 RATE=${SESSION_RATE:-22.32}
 TIMER_MIN=${TIMER_MIN:-1200}          # 20 h (rehearsal: 60)
 SESSION_CAP=${SESSION_CAP:-500}       # safety net, never used to shorten a step

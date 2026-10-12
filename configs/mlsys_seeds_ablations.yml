@@ -60,6 +60,38 @@
 # 5-book rung the n=5 extension just measured). `spec_steps 4`, `draft_window_cap`
 # 4096 and `temperature 0.7` are the headline values, and each stage moves exactly one
 # of them.
+# THE EXACT COMMAND LINES. The rehearsal is a 1x A100 with the SAME stage ids at tiny
+# sizes; the 8x run is the same script with the 8x type. The rehearsal is driven with a
+# non-default SESSION_OUT, SESSION_CFG and SESSION_CHECK_STAGE on purpose, so every
+# forwarded parameter has a value the parameter check would refuse if it were dropped.
+#
+# REHEARSAL (1x, <= $3):
+#   SESSION_TYPE=gpu_1x_a100_sxm4 SESSION_RATE=1.99 NPROC=1 TIMER_MIN=60 \
+#   SESSION_TAG=sa_rehearsal \
+#   SESSION_CFG=configs/mlsys_seeds_ablations_rehearsal.yml \
+#   SESSION_SANITY_CFG=configs/mlsys_rehearsal_sanity.yml \
+#   SESSION_OUT=results/mlsys/sa_rehearsal \
+#   SESSION_CHECK_STAGE=SA_RINGCHUNK_8192_SPEC \
+#   MLSYS_PULL_EVERY_S=120 \
+#   bash scripts/mlsys_session_a.sh
+#
+# 8x (gpu_8x_a100_80gb_sxm4 only), 8-hour detached timer confirmed by PPID 1, $200
+# ceiling (8 h x $22.32 = $178.56, so the timer cannot breach the ceiling):
+#   SESSION_TYPE=gpu_8x_a100_80gb_sxm4 SESSION_RATE=22.32 SESSION_CAP=200 \
+#   TIMER_MIN=480 NPROC=8 \
+#   SESSION_TAG=seeds_ablations \
+#   SESSION_CFG=configs/mlsys_seeds_ablations.yml \
+#   SESSION_SANITY_CFG=configs/mlsys_sanity_sampling.yml \
+#   SESSION_OUT=results/mlsys/seeds_ablations \
+#   SESSION_CHECK_STAGE=SA_RINGCHUNK_8192_SPEC \
+#   MLSYS_PULL_EVERY_S=600 \
+#   bash scripts/mlsys_session_a.sh
+#
+# SESSION_CHECK_STAGE is `SA_RINGCHUNK_8192_SPEC` -- a spec row at the headline
+# temperature with spec_steps >= 1, which is what the check requires (acceptance inside
+# (0,1], spec steps set, tokens present). A GREEDY stage would be a bad gate: the
+# T=0.0 stage is expected to degenerate, and the gate would stop the session on a
+# result that is the point of the experiment.
 defaults:
   target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
   target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73

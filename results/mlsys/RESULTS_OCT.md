@@ -507,10 +507,25 @@ token sidecars, per-round traces, and one repetition report per stage.
 
 ## 8. The seeds and ablations session (2026-10-12)
 
-One 8x A100 80GB SXM4 instance, **one setting changed per stage** from the headline config,
-new stage ids and CSVs (`SA_*`) so nothing here can be confused with or overwrite the
-sampling session's rows, stages ordered by priority so a run cut short loses the LAST stage
-and never the first. Rehearsed on one 1x A100 first (11 stages, 24/24 ok rows, $1.00) —
+One 8x A100 80GB SXM4 instance (`6d8cd2c13c364cddab1de3009e0f40c7`, us-east-1, detached
+dead-man timer confirmed by PPID 1, 480-minute deadline, $200 ceiling), **one setting changed
+per stage** from the headline config, new stage ids and CSVs (`SA_*`) so nothing here can be
+confused with or overwrite the sampling session's rows, stages ordered by priority so a run
+cut short loses the LAST stage and never the first.
+
+**All 12 stages ran and every stage is ok: 48/48 ok rows, 0 bad.** In order, with rows:
+sanity pair 2/2; `SA_PROF_RING_128K` 2/2; `SA_RINGCHUNK_8192_TARGET` 2/2;
+`SA_RINGCHUNK_8192_SPEC` 2/2; `SA_SEED_123_1M_SPEC` 5/5 and `SA_SEED_456_1M_SPEC` 5/5 (both
+void, §8.3); `SA_DRAFTWIN_2048_128K_SPEC` 5/5; `SA_DRAFTWIN_16384_128K_SPEC` 5/5;
+`SA_TEMP_0_128K_SPEC` 5/5; `SA_TEMP_1_0_128K_SPEC` 5/5; `SA_STEPS_2_128K_SPEC` 5/5;
+`SA_STEPS_6_128K_SPEC` 5/5. Session wall **5.95 h = $132.70** of the $200 ceiling; the
+instance was terminated, the API read **0 instances**, and the timer was cancelled, all
+before any of these numbers were read. Two of the twelve stages are consumable only as a
+determinism result rather than as the experiment they were designed for (§8.3), so the
+priority ordering did its job: the stages that were meant to be droppable were the ones whose
+result was already known.
+
+Rehearsed on one 1x A100 first (11 stages, 24/24 ok rows, $1.00) —
 and that rehearsal earned its $1.00 twice: the first attempt used 4-token rows, every
 acceptance came out 0.0/4, and the session's own gate stopped it at stage 3, so eight of the
 eleven stages went unexercised.
