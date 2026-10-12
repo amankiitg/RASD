@@ -1,0 +1,4 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+ROPE_SAMP_NATIVE_SPEC_pg19_train_0_s42,pg19_train_0,4,131072,128,0.5878,0.5987,0.0,0.0,0.0,8,56,0.1111,128,0.0,False,,1,1,0,,0.5987,ok,
+ROPE_SAMP_NATIVE_SPEC_pg19_train_1_s42,pg19_train_1,4,131072,128,0.7121,0.7121,0.0,0.0,0.0,6,34,0.1702,93,0.2734,False,,1,1,0,,0.7121,ok,
+ROPE_SAMP_NATIVE_SPEC_pg19_train_915_s42,pg19_train_915,4,131072,128,0.8276,0.8333,0.0,0.0,0.0,3,56,0.0694,128,0.0,False,,1,1,0,,0.8333,ok,

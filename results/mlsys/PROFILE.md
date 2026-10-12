@@ -128,7 +128,7 @@ a profiler mode that attributes by operator; the sidecar's three categories cann
 ## 5. Profile (b) — SKIPPED, for two independent reasons
 
 **(1) There is no 2-GPU A100 SXM (NVLink) instance to run it on.** Queried from the API
-at 08:26Z and again at 09:11Z:
+at 08:26Z, 09:11Z and 09:15Z (still inside the plan's two-hour window):
 
 | type | description | $/hr | capacity |
 |---|---|---|---|

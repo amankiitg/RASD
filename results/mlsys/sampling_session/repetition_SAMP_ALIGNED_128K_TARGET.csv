@@ -1,0 +1,2 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+SAMP_ALIGNED_128K_TARGET_pg19_train_0_s42,pg19_train_0,0,131072,128,0.0,,0.0,0.0,0.0,11,56,0.0556,128,0.0,False,,,,,,,ok,

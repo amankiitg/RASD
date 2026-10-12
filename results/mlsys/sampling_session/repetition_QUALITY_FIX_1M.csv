@@ -1,0 +1,4 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+QUALITY_FIX_1M_pg19_train_0_s42,pg19_train_0,4,1048576,8,0.1875,0.1875,0.0,0.0,0.0,0,0,0.0,8,0.0,False,,1,1,0,,0.1875,ok,
+QUALITY_FIX_1M_pg19_train_1_s42,pg19_train_1,4,1048576,8,0.625,0.625,0.0,0.0,0.0,0,0,0.0,8,0.0,False,,1,1,0,,0.625,ok,
+QUALITY_FIX_1M_pg19_train_915_s42,pg19_train_915,4,1048576,8,0.625,0.625,0.0,0.0,0.0,0,0,0.0,8,0.0,False,,1,1,0,,0.625,ok,

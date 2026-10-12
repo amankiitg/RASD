@@ -1,6 +1,32 @@
 MLSys CAMPAIGN — MORNING REPORT
 
 ################################################################################
+# *** PHASE 2-4 SUMMARY — 2026-10-12T09:20Z. NO DRIVER IS RUNNING. ***
+# 0 INSTANCES. No driver, no poller, no timer (ps + the API at 08:08:46Z).
+#
+# HEADLINE (sampling, T=0.7, seed 42, 8x A100 80GB SXM4, session cad0d8cdaf2e4):
+#   1M: 2.37x. Spec mean 0.12077 tok/s (n=5) vs this session's mean target-only
+#   0.05103 (n=2, subsampled). Acceptance 0.5246. ZERO of 26 sampled rows degenerate
+#   (greedy had 9 of 15). Aligned rungs 128k 2.38x / 512k 2.59x / 1M 2.37x: roughly
+#   FLAT. Greedy stays separate: 1M clean n=1 = 1.61x, unchanged. Quality redo: 1M
+#   ppl within ~10% of 128k on identical tokens (1.805 vs 1.649, the one exactly
+#   aligned book) — coherent, NOT "better at long context". One 1M book EXCLUDED:
+#   pg19_train_1726 (765-token continuation where 1024 is required).
+#
+# PROFILING (1x A100 40GB SXM4, $1.28, 60-min timer PPID 1, 0 instances after):
+#   comm_us = 0.0 EXACTLY with the ring removed (nproc 1), and the engine is STILL
+#   28x above its 59 ms/token floor — 1.658 s per decode token. 87% of the row is
+#   recorded local op time. The 42-59x gap is NOT only ring traffic; the ring's
+#   multiplier is ~2.1x. Profile (b) SKIPPED: no 2-GPU A100 SXM type exists and the
+#   only 2-GPU A100 (PCIe) has no capacity. Findings only — no src/ change.
+#
+# SPEND: ~$328 of the $450 cap (this session $152.24; profile $1.28).
+# LEFT TO DECIDE: (1) the vLLM comparison — GO/NO-GO in VLLM_PLAN.md, the 8x run is
+#   NOT launched; (2) fix the LOCAL per-step cost first (the profile says it is the
+#   larger term); (3) pg19_train_1726's continuation length.
+################################################################################
+
+################################################################################
 # *** PAUSED ON OPERATOR INSTRUCTION — 2026-10-11T12:35Z ***
 # 0 INSTANCES. NO DRIVERS, NO POLLERS, NO TIMERS (verified by ps and by the API).
 #
