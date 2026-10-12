@@ -513,6 +513,13 @@ per stage** from the headline config, new stage ids and CSVs (`SA_*`) so nothing
 confused with or overwrite the sampling session's rows, stages ordered by priority so a run
 cut short loses the LAST stage and never the first.
 
+**The rows are committed**, in the shape the campaign already uses for the October
+sampling sessions: `results/mlsys/seeds_ablations/` holds the 12 stage CSVs, a
+`repetition_<STAGE>.csv` for every stage (regenerated from the committed tree, so the
+degeneracy flags in this section are reproducible from the repository rather than only
+from the pod), and `tokens_slim/` with the 48 token sidecars. The per-round traces and the
+full sidecars stay in the session pull directory, as they do for the other sessions.
+
 **All 12 stages ran and every stage is ok: 48/48 ok rows, 0 bad.** In order, with rows:
 sanity pair 2/2; `SA_PROF_RING_128K` 2/2; `SA_RINGCHUNK_8192_TARGET` 2/2;
 `SA_RINGCHUNK_8192_SPEC` 2/2; `SA_SEED_123_1M_SPEC` 5/5 and `SA_SEED_456_1M_SPEC` 5/5 (both

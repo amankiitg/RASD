@@ -1,0 +1,6 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+SA_SEED_456_1M_SPEC_pg19_train_0_s42,pg19_train_0,4,1048576,128,0.3776,0.39,0.0,0.0,0.0,3,34,0.0532,128,0.0,False,,1,1,0,,0.39,ok,
+SA_SEED_456_1M_SPEC_pg19_train_1_s42,pg19_train_1,4,1048576,128,0.6838,0.6838,0.0,0.0,0.0,5,48,0.1125,128,0.0,False,,1,1,0,,0.6838,ok,
+SA_SEED_456_1M_SPEC_pg19_train_915_s42,pg19_train_915,4,1048576,128,0.625,0.6284,0.0,0.0,0.0,2,54,0.0541,128,0.0,False,,1,1,0,,0.6284,ok,
+SA_SEED_456_1M_SPEC_pg19_train_2204_s42,pg19_train_2204,4,1048576,128,0.5437,0.5437,0.0,0.0,0.0,6,43,0.1059,128,0.0,False,,1,1,0,,0.5437,ok,
+SA_SEED_456_1M_SPEC_pg19_train_2768_s42,pg19_train_2768,4,1048576,128,0.3929,0.405,0.0,0.0,0.0,4,64,0.0781,128,0.0,False,,1,1,0,,0.405,ok,
