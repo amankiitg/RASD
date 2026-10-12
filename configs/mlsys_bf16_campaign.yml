@@ -75,6 +75,14 @@ defaults:
   measure_target_ppl: false
   prompt_gen_tokens: 1024
   prompt_source: pg19_document
+  # PER-RANK MEMORY SIDECARS. Phase 1 requires peak memory per rank, ALLOCATED and
+  # RESERVED, for all eight ranks -- the CSV's gpu_peak_mem_mb is rank 0's allocated
+  # peak only, so it cannot answer that. The remote script's run_experiment.py call has
+  # no --memory-trace flag and no env switch for it, so this config key is the only
+  # config-only route; it writes <out>/memory_trace/<run_id>.rank<r>.json per rank, which
+  # is the same facility Figure 3 used. It is a sidecar: the snapshots are taken at
+  # lifecycle points, so it does not change the measured protocol.
+  memory_trace: true
 
 # P1 — THE GATE. One book at 128k, spec and target-only, so the measured rates can
 # price the rest of the campaign before any of it is committed to. This is also the

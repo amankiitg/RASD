@@ -40,6 +40,11 @@ defaults:
   measure_target_ppl: false
   prompt_gen_tokens: 1024
   prompt_source: pg19_document
+  # Carried here on purpose: Phase 3 reports peak memory per rank (allocated AND
+  # reserved, all eight), which the CSV's rank-0 allocated column cannot do. The key is
+  # rehearsed here rather than only on the configs that run at 8x, so the sidecars are
+  # seen to appear before an 8x instance is rented.
+  memory_trace: true
 
 # Every stage below mirrors its campaign twin: same id, same one-setting change, one book
 # at 8192 context. Key order is run order, as in the campaign config.
