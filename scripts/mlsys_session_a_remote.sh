@@ -181,10 +181,28 @@ for name in $STEPS; do
   # row, acceptance outside (0,1], zero spec steps, no tokens -- the session STOPS HERE,
   # before the other T>0 stages run, so a broken sampling path costs one row instead of
   # five hours. Driven by SESSION_CHECK_STAGE so the same code path is rehearsed.
-  if [ -n "${SESSION_CHECK_STAGE:-}" ] && [ "$SESSION_CHECK_STAGE" = "$name" ] && [ "$prev" = "0" ]; then
+  #
+  # NO `prev` GUARD, AND THAT IS THE POINT (closed 2026-10-12). `run_stage` returns
+  # non-zero exactly when the stage produced ZERO ok rows, so an empty check stage set
+  # prev=1 and the `[ "$prev" = "0" ]` that used to sit here SKIPPED the one inspection
+  # that was meant to catch exactly that. The stages after it logged SKIP, the rerun pass
+  # retried the empty row WITHOUT re-verifying it, and the script exited 0 -- a "clean"
+  # session that had run none of d/e/f/g, with the DONE marker's rc agreeing.
+  # An empty check stage is a failure of the check, so it must reach this check and exit
+  # 5. See tests/test_mlsys_session_a_check_stage.py.
+  #
+  # WHAT THIS DOES NOT CLOSE. If a stage BEFORE the check fails, the SKIP guard above
+  # `continue`s to the next name, so the check stage is never reached and its check never
+  # runs. That path is the designed chain-stop (and the rerun pass below still retries the
+  # failed row once), but it too ends in rc=0. It is loud rather than silent -- the stage
+  # and its SKIP lines are in the log -- so judge THAT case from the stage log lines, as
+  # L1 says. Only an empty check stage that was actually reached exits 5.
+  if [ -n "${SESSION_CHECK_STAGE:-}" ] && [ "$SESSION_CHECK_STAGE" = "$name" ]; then
     log "### STEP c check: inspecting $name"
     if "$PY" - "$OUT/session_a_$name.csv" <<'PYCHK'
-import csv, sys
+import csv, os, sys
+if not os.path.exists(sys.argv[1]):
+    print(f"no CSV at {sys.argv[1]}: the stage produced no row at all"); sys.exit(1)
 rows = [r for r in csv.DictReader(open(sys.argv[1])) if r.get('status') == 'ok']
 if not rows:
     print("no ok rows"); sys.exit(1)

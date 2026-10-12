@@ -4025,3 +4025,139 @@ states what the redo must show: 1M vs 128k perplexity per document over the SAME
 #   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.8 max_row_s=28.9 tps=0.363 accept=0.3056
 #   - sanity: rows=2 ok=2 median_row_s=237.3 max_row_s=237.3 tps=0.435 accept=0.1900
 #   - measured row time total 414.7s = 0.12h over 5 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T00:34:37Z
+#   ### progress 2026-10-12T00:33:39Z
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 335.0s = 0.09h over 2 rows
+#   ### progress 2026-10-12T00:33:39Z
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 335.0s = 0.09h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T00:38:38Z
+#   ### progress 2026-10-12T00:33:39Z
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 335.0s = 0.09h over 2 rows
+#   ### progress 2026-10-12T00:33:39Z
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 335.0s = 0.09h over 2 rows
+#   ### progress 2026-10-12T00:37:05Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 407.2s = 0.11h over 5 rows
+#   ### progress 2026-10-12T00:37:05Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 407.2s = 0.11h over 5 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T01:18:47Z
+#   ### progress 2026-10-12T00:37:05Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 407.2s = 0.11h over 5 rows
+#   ### progress 2026-10-12T01:16:49Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 1568.9s = 0.44h over 8 rows
+#   ### progress 2026-10-12T01:16:49Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 1568.9s = 0.44h over 8 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T01:38:51Z
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 1568.9s = 0.44h over 8 rows
+#   ### progress 2026-10-12T01:37:48Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 2767.3s = 0.77h over 9 rows
+#   ### progress 2026-10-12T01:37:48Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 2767.3s = 0.77h over 9 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T03:15:14Z
+#   ### progress 2026-10-12T03:14:16Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 8125.5s = 2.26h over 14 rows
+#   ### progress 2026-10-12T03:14:16Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 8125.5s = 2.26h over 14 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T04:43:31Z
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_1M_TARGET: rows=2 ok=2 median_row_s=2544.0 max_row_s=2544.0 tps=0.050 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 13142.8s = 3.65h over 16 rows
+#   ### progress 2026-10-12T04:39:56Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_1M_TARGET: rows=2 ok=2 median_row_s=2544.0 max_row_s=2544.0 tps=0.050 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 13142.8s = 3.65h over 16 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T05:11:38Z
+#   - SAMP_1M_TARGET: rows=2 ok=2 median_row_s=2544.0 max_row_s=2544.0 tps=0.050 accept=0.0000
+#   - SAMP_ALIGNED_512K_SPEC: rows=3 ok=3 median_row_s=572.4 max_row_s=621.1 tps=0.243 accept=0.4892
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 14760.3s = 4.10h over 19 rows
+#   ### progress 2026-10-12T05:09:29Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_1M_TARGET: rows=2 ok=2 median_row_s=2544.0 max_row_s=2544.0 tps=0.050 accept=0.0000
+#   - SAMP_ALIGNED_512K_SPEC: rows=3 ok=3 median_row_s=572.4 max_row_s=621.1 tps=0.243 accept=0.4892
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 14760.3s = 4.10h over 19 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T05:40:39Z
+#   - SAMP_ALIGNED_512K_TARGET: rows=1 ok=1 median_row_s=1360.2 max_row_s=1360.2 tps=0.090 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 16120.4s = 4.48h over 20 rows
+#   ### progress 2026-10-12T05:32:54Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_1M_TARGET: rows=2 ok=2 median_row_s=2544.0 max_row_s=2544.0 tps=0.050 accept=0.0000
+#   - SAMP_ALIGNED_512K_SPEC: rows=3 ok=3 median_row_s=572.4 max_row_s=621.1 tps=0.243 accept=0.4892
+#   - SAMP_ALIGNED_512K_TARGET: rows=1 ok=1 median_row_s=1360.2 max_row_s=1360.2 tps=0.090 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 16120.4s = 4.48h over 20 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T06:30:57Z
+#   - QUALITY_FIX_128K: rows=3 ok=3 median_row_s=24.7 max_row_s=30.6 tps=0.350 accept=0.3056
+#   - QUALITY_FIX_1M: rows=3 ok=3 median_row_s=382.1 max_row_s=410.7 tps=0.020 accept=0.4792
+#   - ROPE_SAMP_F16_SPEC: rows=3 ok=3 median_row_s=169.4 max_row_s=219.3 tps=0.723 accept=0.5002
+#   - ROPE_SAMP_F32_SPEC: rows=3 ok=3 median_row_s=202.3 max_row_s=207.6 tps=0.757 accept=0.4990
+#   - ROPE_SAMP_NATIVE_SPEC: rows=3 ok=3 median_row_s=139.5 max_row_s=152.7 tps=0.903 accept=0.7092
+#   - SAMP_1M_SPEC: rows=6 ok=5 median_row_s=1048.5 max_row_s=1206.6 tps=0.122 accept=0.5246
+#   - SAMP_1M_TARGET: rows=2 ok=2 median_row_s=2544.0 max_row_s=2544.0 tps=0.050 accept=0.0000
+#   - SAMP_ALIGNED_128K_SPEC: rows=3 ok=3 median_row_s=194.6 max_row_s=241.1 tps=0.673 accept=0.4349
+#   - SAMP_ALIGNED_128K_TARGET: rows=1 ok=1 median_row_s=452.1 max_row_s=452.1 tps=0.280 accept=0.0000
+#   - SAMP_ALIGNED_512K_SPEC: rows=3 ok=3 median_row_s=572.4 max_row_s=621.1 tps=0.243 accept=0.4892
+#   - SAMP_ALIGNED_512K_TARGET: rows=1 ok=1 median_row_s=1360.2 max_row_s=1360.2 tps=0.090 accept=0.0000
+#   - SAMP_CHECK_1M_SPEC: rows=1 ok=1 median_row_s=1198.4 max_row_s=1198.4 tps=0.110 accept=0.3776
+#   - sanity: rows=2 ok=2 median_row_s=224.7 max_row_s=224.7 tps=0.430 accept=0.1900
+#   - measured row time total 18666.9s = 5.19h over 33 rows
