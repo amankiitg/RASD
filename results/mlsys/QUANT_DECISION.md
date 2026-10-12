@@ -147,3 +147,41 @@ provisioning that is ~205 min = **$76** at $22.32/hr against the $75 ceiling. Th
 therefore runs with a timer capped by the ceiling (201 min), seed 123 first: if the timer
 intervenes mid-second-replicate the first replicate's rows are already pulled and committed
 (R8) and the truncation is reported as such.
+
+---
+
+## Phase 1 addendum — per-rank memory (128k), measured where it could be, bounded where not
+
+The ablation's CSVs carry only rank 0's *allocated* peak (`gpu_peak_mem_mb`), so a separate
+target-only pass ran the same four arms with the tracer on (both `memory_trace` and
+`memory_trace_dir` set — see the note in `configs/mlsys_bf16_campaign.yml`: the boolean alone
+is inert). Rows: `results/mlsys/quant_memory/`.
+
+**CONTROL (fp4 weights, nf4 KV) at 128k — all eight ranks, allocated and reserved:**
+
+| rank | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| max allocated MB | 8256 | 8378 | 8503 | 8503 | 8503 | 8503 | 8503 | 8503 |
+| max reserved MB | 8642 | 8892 | 9012 | 9012 | 9012 | 9012 | 9012 | 9012 |
+
+Rank 0's traced peak (8256 MB) is **identical to the CSV's column**, and the trace reaches an
+`end` snapshot (n_rounds=127), so for this arm the numbers are the run's real high-water marks.
+Ranks 1-7 sit ~250 MB above rank 0, consistently across all seven.
+
+**The other three arms have rank-0 allocated only**, from their Phase 1 rows: W_OFF 17824
+(target) / 19681 (spec); KV_OFF 13159 / 17633; BOTH_OFF 22727 / 27207 MB. Per-rank reserved for
+those arms is **not measured**, and that gap is a consequence of two things worth stating:
+
+1. The memory pass was sized with a 45-minute timer, but the driver stops waiting 15 minutes
+   before that, so only ~30 minutes of work fit. CONTROL completed inside it; BOTH_OFF was
+   killed mid-decode. Its sidecars exist and are quarantined under `killed_run/`, because they
+   stop at `post_target_prefill` and rank 0's 19208 MB there is a lower bound, not the arm's
+   22727 MB peak.
+2. Phase 1's $45 ceiling was then $4 short of repeating the pass with a correctly sized timer,
+   so the rule "drop lower-priority stages rather than exceed the ceiling" was applied and the
+   lower-priority arms were dropped.
+
+For the decision this is sufficient: Phase 2's memory projection used the **CSV** peaks, which
+are the true rank-0 high-water marks (conservative), and branch C means no bf16 run happens at
+1M at all. If precision work resumes, the memory pass is the first thing to re-run — with
+`TIMER_MIN = work + 30`.
