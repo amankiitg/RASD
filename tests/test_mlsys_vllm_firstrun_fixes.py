@@ -261,3 +261,40 @@ def test_the_venv_pins_transformers_below_five():
     assert "MLSYS_VLLM_TRANSFORMERS_PIN:-4.46.3" in src
     assert "is 5.x, which cannot" in src and "sys.exit(7)" in src, \
         "the install must fail when the pin did not take"
+
+
+# ---------------------------------------------------------------------------
+# 5. the bf16 label must not be reported as 4-bit weights
+# ---------------------------------------------------------------------------
+
+def test_a_bf16_row_is_not_labelled_int4_bnb(tmp_path, monkeypatch):
+    """FOUND ON THE REHEARSAL ROW, 2026-10-12.
+
+    `--quantizations` DEFAULTS TO ["bfloat16"], and the worker tested that label for
+    truthiness, so every bf16 row carried `weight_precision=int4_bnb` -- beside its
+    own `kv_dtype=bfloat16`, which cannot both be true, and in the column the
+    cross-check puts next to RASD's `fp4`. The rehearsal CSV in
+    `results/mlsys/vllm_rehearsal/` still shows the wrong label; the fix is here.
+    """
+    mod = _load_module()
+    _install_fakes(monkeypatch, mod)
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(_spec(tmp_path, quantization="bfloat16")))
+    rc = mod.worker_main(p)
+    result = json.loads(Path(_spec(tmp_path)["result_path"]).read_text())
+    assert rc == 0
+    assert result["weight_precision"] != "int4_bnb", (
+        "a bf16 row was labelled as 4-bit weights")
+    assert result["weight_precision"] == result["kv_dtype"]
+
+
+def test_the_bitsandbytes_label_is_still_int4_bnb(tmp_path, monkeypatch):
+    """The control: the bnb path is the one that IS un-introspectable."""
+    mod = _load_module()
+    _install_fakes(monkeypatch, mod)
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(_spec(tmp_path, quantization="bitsandbytes")))
+    rc = mod.worker_main(p)
+    result = json.loads(Path(_spec(tmp_path)["result_path"]).read_text())
+    assert rc == 0
+    assert result["weight_precision"] == "int4_bnb"

@@ -121,7 +121,8 @@ rsync -az --no-perms -e "ssh $SSH_OPTS" /tmp/vllm_prompts/ \
 
 ```bash
 export HF_TOKEN=$(cat ~/.hf_token)              # gradientai/... and meta-llama/... are gated
-bash scripts/mlsys_vllm_venv.sh                 # the ONLY sanctioned install path: torch 2.4.0+cu121, vllm==0.6.3
+bash scripts/mlsys_vllm_venv.sh                 # the ONLY sanctioned install path: torch 2.4.0+cu121,
+                                                # transformers==4.46.3, vllm==0.6.3
 VLLM_PY=~/RASD/.venv-vllm/bin/python
 
 MLSYS_VLLM_PYTHON="$VLLM_PY" "$VLLM_PY" scripts/mlsys_vllm_baseline.py \
@@ -140,6 +141,23 @@ Notes on the flags, each of which is load-bearing:
   this phase: it previously reached the CSV row and `_unit_match` but neither
   `LLM(...)` nor `AutoTokenizer.from_pretrained(...)`, so a row could claim a pin
   while the engine served `main`).
+* **The install itself is two pins, not one, and the first rehearsal proved it.**
+  vLLM 0.6.3 declares `transformers>=4.45.0` with **no upper bound**, so pip
+  resolved **5.19.0** on 2026-10-12 — and the repo's own `requirements.txt` pins
+  `transformers==5.5.4` for the analysis env, so "latest" is exactly the wrong
+  major version here. transformers 5.x cannot see torch 2.4.0 ("PyTorch was not
+  found. Models won't be available..."), which surfaced as a vLLM load error about
+  torch. `mlsys_vllm_venv.sh` now installs `transformers==4.46.3` **before** vllm
+  so the resolver cannot upgrade it, then asserts the installed versions and fails
+  the install with the package named if either pin did not take. 4.46.3 is inside
+  the GPU env's own range (`environment_gpu.yml`: `transformers>=4.46,<4.48`) and
+  is the version the provisioned pod's campaign env actually reported.
+* **The version gate:** `vllm.__version__` reads **`'dev'`** on that pod (vLLM's
+  version module degrades when it cannot read its build; the same log carried
+  "Failed to read commit hash"). The worker consequently refused a correctly
+  pinned install on every attempt. It now verifies the pin against *every* identity
+  the install exposes, preferring the distribution metadata, and records which
+  source agreed in `vllm_version_source`. A wrong release is still refused.
 * `--tensor-parallel-size 8` is required for `unit_matched=yes`; anything else is
   recorded but not certified.
 * `rope`: `DEFAULT_ROPE` has **no entry** for Gradient-1048k, and that is correct —
@@ -172,19 +190,28 @@ of this comparison.
 ### 3.3 Driving it on the Mac
 
 `scripts/mlsys_profile_1x.sh` is the driver for a paid single-box run and is
-already parameterised:
+parameterised; `scripts/mlsys_vllm_remote.sh` is the pod side and is the SAME
+script the rehearsal ran, with four env vars changed — that is the whole
+difference between the rehearsal and the comparison:
 
 ```bash
-SESSION_TYPE=gpu_8x_a100_80gb_sxm4 \
-REMOTE_SCRIPT=scripts/mlsys_vllm_run_remote.sh \
-PROFILE_OUT=results/mlsys/vllm_run PROFILE_TAG=vllm8x TIMER_MIN=120 \
-RAW_CMD='bash scripts/mlsys_vllm_venv.sh && ...' \
+cd /Users/amankesarwani/PycharmProjects/RASD
+SESSION_TYPE=gpu_8x_a100_80gb_sxm4 SESSION_RATE=22.32 \
+REMOTE_SCRIPT=scripts/mlsys_vllm_remote.sh \
+PROFILE_OUT=results/mlsys/vllm_run PROFILE_TAG=vllm8x \
+TIMER_MIN=120 \
+REHEARSE_TP=8 \
+REHEARSE_CTXS='131072 524288 1048576' \
+REHEARSE_PROMPT_DIR=results/mlsys/vllm_prompts \
 bash scripts/mlsys_profile_1x.sh
 ```
 
-(The 8x remote wrapper is the rehearsal's own script with `--tensor-parallel-size
-8` and the staged prompt directory; it is written when the run is approved, not
-before, so that nothing suggests this plan launched anything.)
+The driver refuses to launch while any instance exists, arms a **120-minute
+detached dead-man timer and proves it by PPID 1 before any work starts**, writes
+the HF token over stdin into a 600-mode file, launches the pod script detached
+with its own `DONE` marker, and terminates with the instance count re-read from
+the API. `REHEARSE_PROMPT_DIR` is staged into `~/RASD/results/mlsys/vllm_prompts`
+by §3.1; a path with spaces is refused rather than mis-split.
 
 ## 4. Expected hours and cost
 
@@ -201,7 +228,54 @@ before, so that nothing suggests this plan launched anything.)
 case) plus the rehearsal's cost keeps the campaign inside the cap with margin;
 **nothing else in this plan spends after it.**
 
-## 5. How it will be reported next to RASD
+## 5. The 1x rehearsal (handoff item 4) — PASSED, on the second attempt
+
+**Attempt 1** (`gpu_1x_a100_sxm4`, us-east-1, 09:56-10:03Z, **$0.35**, 0 instances
+afterward): installed fine, then produced **3 error rows and no measurement**. It
+found the two blockers above — `transformers` 5.19.0 resolved by pip, and
+`vllm.__version__ == 'dev'` tripping the pin gate. Both were fixed with tests, and
+the first attempt's CSV and log are kept as evidence
+(`results/mlsys/vllm_rehearsal/vllm_baseline_attempt1_failed.csv`,
+`rehearsal_attempt1.log`).
+
+**Attempt 2** (`gpu_1x_a100_sxm4`, asia-south-1, 10:10:41Z launch → 10:25:54Z DONE,
+wall 0.31 h = **$0.61**, 90-minute dead-man timer confirmed PPID 1, **0 instances**
+after terminate verified by the API, timer cancelled):
+
+| what the rehearsal asked | what happened |
+|---|---|
+| install vLLM exactly as the 8x run would | **rc=0**: `torch 2.4.0+cu121`, `vllm 0.6.3`, `transformers 4.46.3` — the assertions the install now performs all passed |
+| load Gradient-1048k | loaded at `max_model_len` 8192 on **the first ladder attempt**, no fallback needed; revision pinned to `cd3069b6...` |
+| decode 128 tokens | **128 tokens in 2.5807 s end-to-end = 49.5996 tok/s** (`end_to_end_s` 2.5807, `output_tokens` 128) |
+| ran cleanly? | `status=ok`, no error, `attempt=1`, `config_used=1-default-tp8` |
+| `unit_matched` | **`no`, as designed** — it requires TP=8 and the RASD prompt ids, and this was one card with a synthetic prompt |
+
+The wrapper's own verdict: `rows=1 ok=1`, `VLLM RUN DONE`. Note that the baseline
+script's exit status was **1** (its stage-level rule records FAILED when no row is
+unit-matched), which is exactly why the wrapper judges itself on the CSV instead.
+
+**A third defect, found in the successful row itself and fixed immediately.**
+Its `weight_precision` column read **`int4_bnb`** while `kv_dtype` on the same row
+read `bfloat16` — which cannot both be true. Cause: `--quantizations` **defaults to
+`["bfloat16"]`**, and the worker tested that label for *truthiness* when deciding
+whether to report the un-introspectable bitsandbytes path. So every bf16 row was
+labelled as 4-bit weights, in the column the cross-check prints beside RASD's `fp4`.
+Fixed to key on `quant == "bitsandbytes"`, with the bnb path kept as the control
+test. **The committed rehearsal CSV still shows the wrong label** — it is the
+artifact the buggy version produced, and it is kept rather than edited; the row's
+`kv_dtype=bfloat16`, its attempt log name and the load path all agree the weights
+were bf16. Rows produced by the 8x run will carry the fix.
+
+**What the rehearsal therefore establishes:** the install path, the tokenizer, the
+`rope_theta` / `max_position_embeddings` handling, the model load and the decode
+path all work on a real pod with the pinned versions. **What it does not**: anything
+about 8-GPU behaviour, the `gradientai` prompt ids, 128k/512k/1M memory, or whether
+the ladder's long-context attempts load — those need the 8x run.
+
+The 49.60 tok/s is **not** a comparison number: 8k context, TP=1, a synthetic
+prompt. It is one data point that the engine runs at the right order of magnitude.
+
+## 6. How it will be reported next to RASD
 
 One table in `results/mlsys/RESULTS_OCT.md`, beside — never inside — the RASD
 numbers:
@@ -221,3 +295,45 @@ production speculative path, because vLLM has none installed here.
 
 The ratio must never be multiplied into, averaged with, or used to adjust the
 2.37x/2.38x/2.59x headline speedups: those are RASD-vs-RASD and stand on their own.
+
+---
+
+## 7. GO / NO-GO for running vLLM on 8x tomorrow (handoff item 5)
+
+### **GO — with three conditions, and the run is NOT launched by this plan.**
+
+**Why GO.** The question the comparison answers is the one the paper is missing:
+every speedup in `RESULTS_OCT.md` is against RASD's own target-only path, which the
+profile shows sits ~28x above its own bandwidth floor, and a reader cannot tell a
+working engine from a slow one without an external reference. The machinery is now
+proven on real hardware: the install, the pins, the revision, the load at 8k, the
+decode and the DONE/terminate protocol all ran end-to-end for $0.96 total across
+two attempts, on the second attempt with zero defects. The 8x run is the same
+script with four env vars changed. Per-GPU memory at TP=8 fits all three contexts
+(§2), and `bitsandbytes`, the only missing dependency, is not needed for a bf16 row.
+
+**The three conditions, each of which is a way the run could still fail:**
+
+1. **Stage the ORIGINAL sidecars** to `results/mlsys/vllm_prompts/` (§3.1). The
+   committed `tokens_slim` set has no `engine_input_ids`, so pointing the run at it
+   converts the whole comparison into synthetic prompts — it now fails in seconds
+   at the CLI instead of after hours, but it would still fail.
+2. **Keep `max_num_seqs: 1` and chunked prefill.** Without them the 1M rung does
+   not fit (§2: 76.9 GiB against a 70.8 GiB budget) and the OOM would consume one
+   of the three ladder attempts.
+3. **Watch the 1M cell first.** It is the only rung that could not be rehearsed at
+   its real size, and it is the one the comparison most needs. If its first attempt
+   fails, the ladder's remaining two attempts are the fallback.
+
+**Estimated hours and cost:** **1.0-1.5 h, $22-34**; worst case, if the 1M rung
+burns all three attempts, **2.0 h, $45** (§4). Cumulative spend is **~$330 of the
+$450 cap** (including the failing rehearsal's $0.35), so even the worst case leaves
+~$75 of margin and this is the last planned spend.
+
+**What is explicitly NOT part of this GO:**
+* No 8x vLLM run is launched by this plan. It needs the operator's start, and the
+  staging step in §3.1 to be executed first.
+* No `src/` change, and no change to any RASD number. The vLLM rows are a new
+  column beside the existing ones, never folded into them.
+* No speculative-decoding comparison, because vLLM has no speculative decoding
+  installed in this venv; the comparison is target-only against target-only.

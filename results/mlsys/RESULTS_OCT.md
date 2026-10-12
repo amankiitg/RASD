@@ -263,8 +263,9 @@ with the 128k arm at 1/8 the context.
 | Condition A session | instance `cad0d8cdaf2e4994ae7a70322ef1efe3`, `gpu_8x_a100_80gb_sxm4`, us-east-1, $22.32/hr, 2026-10-12T00:11:06Z → 06:39:41Z = **6.82 h = $152.24** |
 | Condition A timer | 480-minute detached dead-man timer, PPID 1, cancelled after 0 instances were confirmed via the API |
 | Phase 3 profile | `gpu_1x_a100_sxm4` (1x A100 40 GB SXM4), $1.99/hr, 0.65 h = **$1.28**, 60-minute timer, 0 instances confirmed |
+| Phase 5 vLLM rehearsals | 2 x `gpu_1x_a100_sxm4` (40 GB SXM4), $1.99/hr, 0.18 h + 0.31 h = **$0.96** total; first attempt found two install blockers, second passed; both times 0 instances confirmed and the timer cancelled |
 | Condition B session | `gpu_8x_a100_80gb_sxm4`, us-east-1, $22.32/hr, 6.08 h = **$135.62**, 0 instances, timer cancelled |
-| **cumulative campaign spend** | **~$328 of the $450 cap** |
+| **cumulative campaign spend** | **~$329 of the $450 cap** |
 
 Condition A ran every planned stage — sanity, the 128k and 1M quality redo, the 1M sampling
 check, the 1M headline and its target-only partner, both aligned rungs, the rope gate and

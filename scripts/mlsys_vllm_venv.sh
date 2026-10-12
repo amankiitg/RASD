@@ -61,13 +61,14 @@ TORCH_PINS="${MLSYS_VLLM_TORCH_PINS:---extra-index-url https://download.pytorch.
 
 # TRANSFORMERS MUST BE PINNED BELOW 5.x, AND THE FIRST REHEARSAL PROVED IT.
 # vLLM 0.6.3 declares `transformers>=4.45.0` with NO upper bound, so pip resolved
-# **5.19.0** on 2026-10-12. transformers 5.x cannot see torch 2.4.0 and says so
-# ("PyTorch was not found. Models won't be available..."), which then surfaces as
-# a vLLM load failure with an unrelated message. 4.46.3 is a release from vLLM
-# 0.6.3's own era (October 2024); it satisfies `>=4.45.0`, keeps the tokenizer
-# API the engine expects, and is deliberately NOT the campaign env's 4.47.1 --
-# this venv is isolated precisely so the two can differ, and the campaign's pin
-# is not what vLLM 0.6.3 was built against.
+# **5.19.0** on 2026-10-12 -- and the repo's own requirements.txt pins 5.5.4 for
+# the local analysis env, so a resolver reaching for "latest" lands on exactly the
+# major version that breaks this. transformers 5.x cannot see torch 2.4.0 and says
+# so ("PyTorch was not found. Models won't be available..."), which then surfaces
+# as a vLLM load failure about torch. 4.46.3 satisfies `>=4.45.0`, keeps the
+# tokenizer API vLLM 0.6.3 expects, and is inside the range the GPU environment
+# already uses (`environment_gpu.yml`: `transformers>=4.46,<4.48`) -- in fact it is
+# the exact version the provisioned pod's campaign env reported.
 TRANSFORMERS_PIN="${MLSYS_VLLM_TRANSFORMERS_PIN:-4.46.3}"
 "$VENV/bin/python" -m pip install --quiet "transformers==$TRANSFORMERS_PIN" || {
   echo "FATAL: transformers==$TRANSFORMERS_PIN install into the vLLM venv failed" >&2; exit 6; }

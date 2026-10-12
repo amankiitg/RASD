@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
-# POD side of the Phase 5 vLLM REHEARSAL. Runs on ONE 1x A100 through
-# scripts/mlsys_profile_1x.sh (the same driver the Phase 3 profile used, with
-# REMOTE_SCRIPT pointed here), which supplies the detached dead-man timer, the
+# POD side of every paid vLLM run, rehearsal and the 8x comparison alike. Started
+# through scripts/mlsys_profile_1x.sh (the driver the Phase 3 profile validated,
+# with REMOTE_SCRIPT pointed here), which supplies the detached dead-man timer, the
 # 600-mode token file, the DONE-marker protocol and API-verified termination.
 #
-# WHAT THIS REHEARSES, per the handoff: install vLLM EXACTLY as the 8x run would
-# (`scripts/mlsys_vllm_venv.sh`, the campaign's own interpreter as the venv base),
-# load `gradientai/Llama-3-8B-Instruct-Gradient-1048k` at 8k context, decode 128
-# tokens greedily, and report the tok/s and whether it ran cleanly. TP=1 on one
-# card, so the row is deliberately NOT unit_matched -- that is the 8x run's job and
-# requires 8 GPUs. The rehearsal's question is "does the install, the load, the
-# rope_theta, the tokenizer and the decode path work at all", not "is it fair".
+# ONE SCRIPT, ONE PARAMETER, the same reason the profile has one script for both
+# nproc values: the rehearsal and the real run must differ ONLY in the things that
+# are named here, or "the rehearsal proves the 8x run works" stops being true.
+#
+# DEFAULTS = THE 1x REHEARSAL, which is what the handoff asked for and what ran on
+# 2026-10-12: install vLLM exactly as the 8x run would
+# (`scripts/mlsys_vllm_venv.sh`, the campaign interpreter as the venv base), load
+# `gradientai/Llama-3-8B-Instruct-Gradient-1048k` at 8k, decode 128 tokens greedily,
+# report the tok/s. TP=1 there, so the row is deliberately NOT unit_matched -- that
+# requires 8 GPUs and the RASD prompt ids, which is the 8x run's job.
+#
+# THE 8x COMPARISON IS THE SAME SCRIPT WITH FOUR ENV VARS:
+#   REHEARSE_TP=8
+#   REHEARSE_CTXS='131072 524288 1048576'
+#   REHEARSE_PROMPT_DIR=results/mlsys/vllm_prompts   (original sidecars, see the plan)
+#   out: PROFILE_OUT=results/mlsys/vllm_run
 #
 # THE RC COMES FROM THE ARTIFACT: a CSV that exists and holds at least one ok row.
 # `unit_matched=no` is EXPECTED here and must not fail the rehearsal, so the
@@ -24,7 +33,7 @@ PODDONE="$OUT/DONE"
 remote_finish() {
   local rc=$?
   printf '%s %s\n' "$(date -u +%FT%TZ)" "$rc" > "$PODDONE" 2>/dev/null
-  printf '%s %s\n' "$(date -u +%FT%TZ)" "=== VLLM REHEARSAL EXIT rc=$rc; DONE marker written ===" \
+  printf '%s %s\n' "$(date -u +%FT%TZ)" "=== VLLM RUN EXIT rc=$rc; DONE marker written ===" \
     >> "$OUT/rehearsal.log" 2>/dev/null
 }
 trap remote_finish EXIT
@@ -51,7 +60,10 @@ log "=== vLLM rehearsal: campaign interpreter $PY, out $OUT ==="
 MODEL=${REHEARSE_MODEL:-gradientai/Llama-3-8B-Instruct-Gradient-1048k}
 REV=${REHEARSE_REV:-cd3069b65a8eb13da639d332a5f61b0fbb29fa73}
 CTX=${REHEARSE_CTX:-8192}
+CTXS=${REHEARSE_CTXS:-$CTX}
 NEW=${REHEARSE_NEW:-128}
+TP=${REHEARSE_TP:-1}
+PROMPT_DIR=${REHEARSE_PROMPT_DIR:-}
 CSV="$OUT/vllm_baseline.csv"
 
 # ---- 1. the install, EXACTLY as the 8x run would ----------------------------
@@ -80,15 +92,34 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 
 # ---- 2. load + decode, one row ---------------------------------------------
-log "### running the baseline: $MODEL @ $CTX tokens, TP=1, $NEW new tokens, revision $REV"
+# THE PROMPT IDS. Without a directory the stage builds a SYNTHETIC prompt of the
+# right length and the row can never be unit_matched. `load_rasd_cells` refuses a
+# directory that yields no cell (the committed slim sidecars are exactly that
+# case), so a wrong path fails here rather than after the comparison's wall time.
+#
+# WHY THIS IS A SCALAR AND NOT AN ARRAY. macOS ships bash 3.2, where
+# `"${arr[@]}"` on an EMPTY array under `set -u` is an unbound-variable error --
+# this script failed there on the first local run, and every other campaign script
+# avoids arrays for the same reason. The path is therefore checked for spaces
+# rather than silently relied on not to have any.
+PROMPT_ARG=""
+if [ -n "$PROMPT_DIR" ]; then
+  case "$PROMPT_DIR" in
+    *" "*) log "FATAL: REHEARSE_PROMPT_DIR must not contain spaces (bash 3.2 cannot expand an optional array)"; exit 2 ;;
+  esac
+  PROMPT_ARG="--prompt-ids-from-sidecars $PROMPT_DIR"
+  log "### prompt ids from $PROMPT_DIR (original RASD sidecars, engine_input_ids required)"
+fi
+log "### running the baseline: $MODEL @ [$CTXS] tokens, TP=$TP, $NEW new tokens, revision $REV"
 env MLSYS_VLLM_PYTHON="$VENV/bin/python" \
   "$VENV/bin/python" scripts/mlsys_vllm_baseline.py \
     --models "$MODEL" \
-    --context-lengths "$CTX" \
+    --context-lengths $CTXS \
     --max-new-tokens "$NEW" \
     --matched-max-new-tokens "$NEW" \
-    --tensor-parallel-size 1 \
+    --tensor-parallel-size "$TP" \
     --target-revision "$REV" \
+    $PROMPT_ARG \
     --out "$CSV" 2>&1 | tee -a "$OUT/rehearsal.log"
 run_rc=${PIPESTATUS[0]}
 log "### baseline rc=$run_rc"
@@ -114,8 +145,8 @@ for r in rows:
           f"unit_matched={r.get('unit_matched')}")
     if r.get("status") != "ok":
         print(f"      error_class={r.get('error_class')} error={str(r.get('error'))[:400]}")
-print("NOTE: unit_matched=no is EXPECTED here -- it requires TP=8 and the RASD "
-      "prompt ids, and this rehearsal is one card by design.")
+print("NOTE: at TP=1 and/or without a prompt-ids directory, unit_matched=no is "
+      "EXPECTED and is not a failure -- it requires TP=8 and the RASD ids.")
 sys.exit(0 if ok else 1)
 PYSUM
 sum_rc=${PIPESTATUS[0]}
@@ -123,4 +154,4 @@ if [ "$sum_rc" != "0" ]; then
   log "FAILED: no ok row in $CSV"
   exit 1
 fi
-log "=== VLLM REHEARSAL DONE: the engine installed, loaded and decoded ==="
+log "=== VLLM RUN DONE: the engine installed, loaded and decoded ==="

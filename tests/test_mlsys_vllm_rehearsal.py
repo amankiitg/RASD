@@ -14,6 +14,7 @@ network are needed.
 """
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -21,7 +22,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-REMOTE = REPO / "scripts" / "mlsys_vllm_rehearsal_remote.sh"
+REMOTE = REPO / "scripts" / "mlsys_vllm_remote.sh"
 
 VENV_STUB = '''\
 #!/usr/bin/env bash
@@ -37,9 +38,13 @@ exit ${FAKE_VENV_RC:-0}
 '''
 
 BASELINE_STUB = '''\
-import csv, sys
+import csv, json, os, sys
 
 argv = sys.argv[1:]
+# Record the exact command line, so the 8x path can be asserted on what the
+# wrapper actually passed rather than on the wrapper's own log line.
+if os.environ.get("FAKE_ARGV_OUT"):
+    open(os.environ["FAKE_ARGV_OUT"], "w").write(json.dumps(argv))
 out = "out.csv"
 for i, a in enumerate(argv):
     if a == "--out" and i + 1 < len(argv):
@@ -68,7 +73,7 @@ def _sandbox(tmp_path: Path, venv_rc: int = 0) -> tuple[Path, dict]:
     (home / ".hf_token").write_text("stub\n")
     # THE REAL SCRIPT UNDER TEST, and stubs for the two things it drives.
     import shutil
-    shutil.copy(REMOTE, rasd / "scripts" / "mlsys_vllm_rehearsal_remote.sh")
+    shutil.copy(REMOTE, rasd / "scripts" / "mlsys_vllm_remote.sh")
     vp = rasd / "scripts" / "mlsys_vllm_venv.sh"
     vp.write_text(VENV_STUB)
     vp.chmod(vp.stat().st_mode | stat.S_IEXEC)
@@ -88,7 +93,7 @@ def _run(tmp_path: Path, venv_rc: int = 0, mode: str = "ok"):
     home, env = _sandbox(tmp_path, venv_rc)
     env["FAKE_VLLM_MODE"] = mode
     proc = subprocess.run(
-        ["bash", str(home / "RASD" / "scripts" / "mlsys_vllm_rehearsal_remote.sh")],
+        ["bash", str(home / "RASD" / "scripts" / "mlsys_vllm_remote.sh")],
         cwd=str(home / "RASD"), env=env, capture_output=True, text=True, timeout=300)
     out = home / "RASD" / "results" / "mlsys" / "vllm_rehearsal"
     marker = out / "DONE"
@@ -100,10 +105,35 @@ def test_a_clean_rehearsal_succeeds_even_though_unit_matched_is_no(tmp_path):
     """The expected 1x case: the engine works, the row is not a fair comparison."""
     rc, log, out = _run(tmp_path)
     assert rc == 0, f"a clean rehearsal must exit 0, got {rc}\n{log[-2000:]}"
-    assert "VLLM REHEARSAL DONE" in log
+    assert "VLLM RUN DONE" in log
     assert "rows=1 ok=1" in log
     assert "unit_matched=no is EXPECTED" in log
     assert (out / "vllm_baseline.csv").exists()
+
+
+def test_the_8x_parameters_reach_the_engine(tmp_path):
+    """The rehearsal and the real run are ONE script with named differences.
+
+    If these flags did not travel, "the rehearsal proves the 8x run works" would be
+    a claim about a different command line.
+    """
+    home, env = _sandbox(tmp_path)
+    argv_path = tmp_path / "argv.json"
+    env.update({
+        "FAKE_VLLM_MODE": "ok",
+        "FAKE_ARGV_OUT": str(argv_path),
+        "REHEARSE_TP": "8",
+        "REHEARSE_CTXS": "131072 524288 1048576",
+        "REHEARSE_PROMPT_DIR": "results/mlsys/vllm_prompts",
+    })
+    subprocess.run(
+        ["bash", str(home / "RASD" / "scripts" / "mlsys_vllm_remote.sh")],
+        cwd=str(home / "RASD"), env=env, capture_output=True, text=True, timeout=300)
+    argv = json.loads(argv_path.read_text())
+    assert argv[argv.index("--tensor-parallel-size") + 1] == "8"
+    ctxs = argv[argv.index("--context-lengths") + 1:argv.index("--context-lengths") + 4]
+    assert ctxs == ["131072", "524288", "1048576"], ctxs
+    assert argv[argv.index("--prompt-ids-from-sidecars") + 1] == "results/mlsys/vllm_prompts"
 
 
 def test_a_run_with_no_ok_row_fails(tmp_path):

@@ -477,7 +477,15 @@ def worker_main(spec_path: Path) -> int:
             # dtype and a table showing them as different would invent a
             # difference. The bitsandbytes path is `int4_bnb` rather than a
             # storage type this process cannot introspect from vLLM.
-            "weight_precision": ("int4_bnb" if quant
+            # `quant` is the CLI's LABEL and its default is "bfloat16", so testing
+            # it for TRUTHINESS labelled every bf16 row `int4_bnb` -- a 4-bit weight
+            # precision recorded for a row whose weights were bf16, in a column that
+            # sits beside RASD's own `fp4` in the cross-check. Found on the
+            # 2026-10-12 rehearsal row (`weight_precision=int4_bnb` next to
+            # `kv_dtype=bfloat16`, which cannot both be true). Only the bitsandbytes
+            # path is un-introspectable from vLLM; everything else reports what was
+            # actually loaded.
+            "weight_precision": ("int4_bnb" if quant == "bitsandbytes"
                                  else normalize_dtype_name(torch_dtype)),
             "kv_dtype": normalize_dtype_name(torch_dtype),
             "eos_policy": EOS_POLICY,
