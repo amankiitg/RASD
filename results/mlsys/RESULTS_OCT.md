@@ -185,6 +185,73 @@ is flat, not increasing.
 **What it does not support:** an exact like-for-like scaling curve. Two of three books have
 offset scored windows; n=3 per rung; one seed; one temperature.
 
+### Decode-only numbers, per row (prefill excluded)
+
+The end-to-end rates above include the prompt prefill, which both arms pay identically and
+which at 1M is **339 s against a 1185 s spec wall**. To separate the effect from the cost of
+reading the prompt, every row is also reported as **decode seconds per token**:
+
+```
+decode_s_per_token = (time_sec - ttft_ms/1000) / (tokens_generated - 1)
+decode_only_tok/s  = (tokens_generated - 1) / (time_sec - ttft_ms/1000)
+```
+
+The `-1` is the campaign's existing convention (the first token is a prefill product). The
+formula reproduces each CSV's own `decode_tps` column to its 2-4 recorded digits — e.g. 1M
+target `0.05951` against a recorded `0.06`, 128k target `0.28632` against `0.286` — so this
+is a re-expression of the recorded numbers, not a new measurement.
+
+| context | n target / spec | target-only dec s/tok | spec dec s/tok (mean) | **decode-only speedup** | end-to-end speedup (for contrast) |
+|---|---|---|---|---|---|
+| 128k aligned | 1 / 3 | 3.4925 | **1.4779** | **2.36x** | 2.38x |
+| 512k aligned | 1 / 3 | 9.9900 | **3.5344** | **2.83x** | 2.59x |
+| 1M | 2 / 5 | 17.0902 | **5.7725** | **2.96x** | 2.37x |
+
+Per row (all 11 spec rows at the three contexts plus the four target-only rows):
+
+| context | doc | target-only s/tok | spec s/tok | spec decode-only speedup vs that book's window |
+|---|---|---|---|---|
+| 128k | pg19_train_0 | 3.4925 | 1.8320 | 1.91x |
+| 128k | pg19_train_1 | — | 1.4573 | 2.40x (vs train_0's window) |
+| 128k | pg19_train_915 | — | 1.1443 | 3.05x (vs train_0's window) |
+| 512k | pg19_train_0 | 9.9900 | 4.1901 | 2.38x |
+| 512k | pg19_train_1 | — | 3.7766 | 2.65x (vs train_0's window) |
+| 512k | pg19_train_915 | — | 2.6365 | 3.79x (vs train_0's window) |
+| 1M | pg19_train_0 | 16.8039 | 6.6353 | 2.53x |
+| 1M | pg19_train_1 | 17.3765 | 4.5226 | 3.84x |
+| 1M | pg19_train_915 | — | 5.2687 | 3.24x (vs train_0's window) |
+| 1M | pg19_train_2204 | — | 5.5767 | 3.06x (vs train_0's window) |
+| 1M | pg19_train_2768 | — | 6.8591 | 2.49x (vs train_0's window) |
+
+Only one book per rung has a target-only row, so the per-book speedups for the other books
+compare their decode against **that rung's single target-only rate**, which is legitimate
+because the target-only rate is book-independent (measured variation under 2% across books,
+§1) — but it is a comparison against a rate, not against a matched pair, and the table says
+so rather than implying otherwise.
+
+**The result this exposes.** The decode-only speedup is **larger than the end-to-end
+speedup and rises with context: 2.36x → 2.83x → 2.96x**, while end-to-end is flat
+(2.38x / 2.59x / 2.37x). The two are not in conflict: the prefill is identical in absolute
+terms for both arms on a given window, but it is a far larger share of the *faster* arm's
+wall, so it dilutes the ratio more as context grows (at 1M prefill is 339/1185 s = 29% of
+the spec wall against 339/2473 s = 14% of the target-only wall). The mechanism the campaign
+is testing acts on the **decoding loop**, and the honest headline for the mechanism is the
+decode-only number; the end-to-end number is the honest headline for *this engine's wall
+time*. Both are reported, and neither is substituted for the other.
+
+The rope arms, on the same formula (their target-only row is `ROPE_SAMP_NATIVE_TARGET`,
+3.6493 s/tok decode = 0.27402 tok/s decode-only against 0.27125 tok/s end-to-end):
+
+| rope arm | dec s/tok (mean) | decode-only speedup | end-to-end speedup (§4) |
+|---|---|---|---|
+| NATIVE | 1.0441 | **3.50x** | 3.33x |
+| F16 | 1.3452 | **2.71x** | 2.67x |
+| F32 | 1.3239 | **2.76x** | 2.79x |
+
+These arms run at 128k on `meta-llama/Llama-3.1-8B`, whose prefill is small, so decode-only
+and end-to-end nearly agree (unlike the 1M rungs above) — the divergence between the two
+columns is a property of the context, not of the arm.
+
 ---
 
 ## 4. Condition A — the RoPE section, with the gate's verdicts
