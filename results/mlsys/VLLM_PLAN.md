@@ -234,9 +234,13 @@ case) plus the rehearsal's cost keeps the campaign inside the cap with margin;
 afterward): installed fine, then produced **3 error rows and no measurement**. It
 found the two blockers above — `transformers` 5.19.0 resolved by pip, and
 `vllm.__version__ == 'dev'` tripping the pin gate. Both were fixed with tests, and
-the first attempt's CSV and log are kept as evidence
-(`results/mlsys/vllm_rehearsal/vllm_baseline_attempt1_failed.csv`,
-`rehearsal_attempt1.log`).
+both attempts' CSVs are committed as evidence
+(`results/mlsys/vllm_rehearsal/vllm_baseline_attempt1_failed.csv` — the failing one
+— and `vllm_baseline.csv`). The per-attempt logs
+(`rehearsal_attempt1.log`, `rehearsal.log`, `remote_stdout.log`) sit beside them in
+the local working tree but are **not** committed: `.gitignore` excludes `*.log`
+repo-wide, as it does for every other stage. Quoting the log is still legitimate —
+it is the file the row's `log_path` column names — but it is not a committed blob.
 
 **Attempt 2** (`gpu_1x_a100_sxm4`, asia-south-1, 10:10:41Z launch → 10:25:54Z DONE,
 wall 0.31 h = **$0.61**, 90-minute dead-man timer confirmed PPID 1, **0 instances**
