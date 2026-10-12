@@ -551,6 +551,30 @@ difference could be host or session effect. The identical acceptance is evidence
 arms compute the same thing, and the direction is the same in all three pairs, but a
 2048-vs-8192 A/B inside one session is the experiment that would close it.
 
+### 8.4 Stage e — draft window (`draft_window_cap`), 128k, 5 books
+
+The draft is a 1B model attending over a window capped at this many tokens. The headline is
+4096; this moves it to 2048 and 16384, changing nothing else. **2048 and 16384 are an
+in-session pair**; 4096 is the cross-session reference and is flagged as such.
+
+| `draft_window_cap` | n | accept (mean) | e2e tok/s | decode s/token | per-book acceptance |
+|---|---|---|---|---|---|
+| 2048 | 5 | 0.4981 | 0.72666 | 1.3710 | 0.2421 / 0.5641 / 0.6765 / 0.5250 / 0.4826 |
+| **4096 (headline, other session)** | 5 | 0.4681 | 0.71557 | 1.3808 | §3 |
+| **16384** | 5 | **0.5598** | **0.79637** | **1.2086** | 0.4115 / 0.5641 / 0.6838 / 0.4826 / 0.6571 |
+
+**A larger draft window helps, and the effect is real but modest and NOT monotone.** Against
+2048 in-session, 16384 buys **+0.062 acceptance** (+12.4% relative), **+9.6% end-to-end
+throughput** and **−11.8% per decode token**, winning on 3 of the 5 books, tying on one
+(`pg19_train_1`, 0.5641 in both) and losing on one (`pg19_train_2204`, 0.5250 → 0.4826). The
+4096 reference sits *below both*, which is the interesting part: if the effect were monotone
+in the cap, 4096 would lie between them. It does not, and 4096 is from a different session, so
+the defensible claim is the in-session one — **16384 > 2048** — plus the observation that
+**4096 is not obviously better than either**, i.e. the cap is not the free win one would reach
+for first. Per-level `draft_window_cap` is also recorded in the rows themselves (2048 and
+16384 in the column), which is the first row-level evidence anywhere in these results that the
+key reaches the engine rather than falling back to the headline 4096.
+
 ### 8.3 Stage d — the seed stages are VOID as seed variation, and that is itself a result
 
 `SA_SEED_123_1M_SPEC` completed **5/5 ok rows** and is **not a seed replicate**. Every row
