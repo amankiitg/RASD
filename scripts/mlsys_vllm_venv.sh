@@ -59,13 +59,26 @@ TORCH_PINS="${MLSYS_VLLM_TORCH_PINS:---extra-index-url https://download.pytorch.
 "$VENV/bin/python" -m pip install --quiet $TORCH_PINS || {
   echo "FATAL: torch install into the vLLM venv failed" >&2; exit 4; }
 
+# TRANSFORMERS MUST BE PINNED BELOW 5.x, AND THE FIRST REHEARSAL PROVED IT.
+# vLLM 0.6.3 declares `transformers>=4.45.0` with NO upper bound, so pip resolved
+# **5.19.0** on 2026-10-12. transformers 5.x cannot see torch 2.4.0 and says so
+# ("PyTorch was not found. Models won't be available..."), which then surfaces as
+# a vLLM load failure with an unrelated message. 4.46.3 is a release from vLLM
+# 0.6.3's own era (October 2024); it satisfies `>=4.45.0`, keeps the tokenizer
+# API the engine expects, and is deliberately NOT the campaign env's 4.47.1 --
+# this venv is isolated precisely so the two can differ, and the campaign's pin
+# is not what vLLM 0.6.3 was built against.
+TRANSFORMERS_PIN="${MLSYS_VLLM_TRANSFORMERS_PIN:-4.46.3}"
+"$VENV/bin/python" -m pip install --quiet "transformers==$TRANSFORMERS_PIN" || {
+  echo "FATAL: transformers==$TRANSFORMERS_PIN install into the vLLM venv failed" >&2; exit 6; }
+
 "$VENV/bin/python" -m pip install --quiet "vllm==$VLLM_PIN" || {
   echo "FATAL: vllm==$VLLM_PIN install failed" >&2; exit 5; }
 
 # Report what actually landed. The manifest records this in every row and refuses
 # to unit-match a row whose version is not the pin, so a resolver that quietly
 # installed 0.6.4 must be visible here rather than at analysis time.
-"$VENV/bin/python" - <<'PY'
+"$VENV/bin/python" - "$VLLM_PIN" <<'PY'
 import importlib.metadata as md
 import sys
 
@@ -75,8 +88,32 @@ def _v(name):
     except Exception:
         return "absent"
 
+pin = sys.argv[1]
+versions = {p: _v(p) for p in ("torch", "vllm", "transformers")}
 print(f"  python      : {sys.version.split()[0]}")
-for pkg in ("torch", "vllm", "transformers"):
-    print(f"  {pkg:<12}: {_v(pkg)}")
+for pkg, v in versions.items():
+    print(f"  {pkg:<12}: {v}")
+
+# ASSERT, DO NOT MERELY REPORT. The first rehearsal printed exactly this table,
+# with `transformers: 5.19.0`, and went on to run -- the failure surfaced later as
+# a vLLM load error about torch. An install that cannot work must fail HERE, where
+# the message names the package.
+bad = []
+if versions["vllm"] != pin:
+    bad.append(f"vllm is {versions['vllm']!r}, pin is {pin!r}")
+try:
+    if int(versions["transformers"].split(".")[0]) >= 5:
+        bad.append(f"transformers {versions['transformers']} is 5.x, which cannot "
+                   f"see torch 2.4.0 (pin it below 5)")
+except (ValueError, IndexError):
+    bad.append(f"transformers version unreadable: {versions['transformers']!r}")
+if bad:
+    print("FATAL: " + "; ".join(bad), file=sys.stderr)
+    sys.exit(7)
 PY
+report_rc=$?
+if [ "$report_rc" != "0" ]; then
+  echo "FATAL: the vLLM venv does not satisfy its own pins (rc=$report_rc)" >&2
+  exit 7
+fi
 echo "done. The campaign's own environment was not modified."

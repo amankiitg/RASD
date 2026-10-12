@@ -1,4 +1,4 @@
-"""Two first-run blockers in the vLLM baseline, fixed before spending on the 8x.
+"""Three first-run blockers in the vLLM baseline, fixed before spending on the 8x.
 
 1. THE DECLARED REVISION WAS NEVER PASSED TO THE LOAD. `target_revision` travelled
    from the CLI into the spec, into the CSV row, and into `_unit_match`, which
@@ -18,6 +18,15 @@
 
 These tests run the real worker with stub `torch`/`transformers`/`vllm` modules, so
 they assert on what the code does with a spec, not on the source text.
+
+3. THE SIDECAR SET THE STAGE WILL BE POINTED AT. The stage takes its prompts from
+   RASD token sidecars, and the set committed for this session
+   (`results/mlsys/sampling_session/tokens_slim/`) deliberately DROPS
+   `engine_input_ids` -- it is the whole prompt, 130k-1M ids per row. This was
+   checked before the 8x run so that the discovery would not happen on a paid
+   instance. The check found that `load_rasd_cells` already refuses an empty
+   result by itself, at the CLI, before any worker starts: that behaviour is
+   asserted here rather than re-implemented.
 """
 from __future__ import annotations
 
@@ -151,3 +160,104 @@ def test_no_ladder_attempt_asks_for_an_unchunked_long_context():
             f"{a['name']} batches {mnbt} tokens in one forward"
         assert a["kwargs"].get("enable_chunked_prefill") is True, \
             f"{a['name']} bounds the batch but never asks for chunked prefill"
+
+
+# ---------------------------------------------------------------------------
+# 3. zero RASD cells must fail before the stage spends hours
+# ---------------------------------------------------------------------------
+
+def test_a_sidecar_set_without_engine_ids_fails_before_running(tmp_path):
+    """The committed SLIM sidecars are exactly this case, and it already fails fast.
+
+    Asserted from the CLI, because that is where the refusal has to happen: once
+    a cell loop starts, every row would run a synthetic prompt and the stage
+    would be recorded FAILED hours later.
+    """
+    import subprocess
+    d = tmp_path / "slim_tokens"
+    d.mkdir()
+    (d / "SAMP_1M_TARGET_pg19_train_0_s42.json").write_text(json.dumps({
+        "run_id": "SAMP_1M_TARGET_pg19_train_0_s42",
+        "doc_id": "pg19_train_0",
+        "context_length": 1048576,
+        "spec_steps": 0,
+        "generated_token_ids": [1, 2, 3],
+        "prompt_tokens": 1047551,
+        "prompt_source_len": 1047551,
+        # engine_input_ids and prompt_token_ids: absent, as in the slim set.
+    }))
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT),
+         "--models", "gradientai/Llama-3-8B-Instruct-Gradient-1048k",
+         "--prompt-ids-from-sidecars", str(d),
+         "--out", str(tmp_path / "out.csv")],
+        cwd=str(REPO), capture_output=True, text=True, timeout=300)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, "zero cells must not proceed to run"
+    assert "no usable sidecar" in out
+    assert "engine_input_ids" in out, "the refusal must name the missing field"
+
+
+# ---------------------------------------------------------------------------
+# 4. the version gate must not refuse a correctly pinned install
+# ---------------------------------------------------------------------------
+
+def test_a_dev_version_attribute_does_not_refuse_a_pinned_distribution(
+        tmp_path, monkeypatch):
+    """THE REHEARSAL'S FAILURE, 2026-10-12.
+
+    `vllm==0.6.3` from PyPI reported `vllm.__version__ == 'dev'` on that pod, and
+    the worker compared that single value against the pin and raised SystemExit --
+    for ALL THREE ladder attempts. Three "wrong version" rows, no measurement.
+    The distribution metadata is the citable identity and says 0.6.3.
+    """
+    import importlib.metadata as md
+    real = md.version
+    monkeypatch.setattr(md, "version",
+                        lambda n: "0.6.3" if n == "vllm" else real(n))
+    mod = _load_module()
+    _install_fakes(monkeypatch, mod)
+    # The fake module reports the value the real one reported on the pod.
+    monkeypatch.setattr(sys.modules["vllm"], "__version__", "dev")
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(_spec(tmp_path)))
+    rc = mod.worker_main(p)
+    result = json.loads(Path(_spec(tmp_path)["result_path"]).read_text())
+    assert rc == 0, f"a correctly pinned install must not be refused: {result}"
+    assert result["vllm_version"] == "0.6.3"
+    assert result["vllm_version_source"] == "importlib.metadata", \
+        "the row must say WHICH identity agreed"
+
+
+def test_a_wrong_version_is_still_refused(tmp_path, monkeypatch):
+    """The control: the gate must still refuse a genuinely wrong release."""
+    import importlib.metadata as md
+    real = md.version
+    monkeypatch.setattr(md, "version",
+                        lambda n: "0.6.4" if n == "vllm" else real(n))
+    mod = _load_module()
+    _install_fakes(monkeypatch, mod)
+    monkeypatch.setattr(sys.modules["vllm"], "__version__", "0.6.4")
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(_spec(tmp_path)))
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        mod.worker_main(p)
+    assert "0.6.3" in str(e.value) and "0.6.4" in str(e.value)
+
+
+def test_the_venv_pins_transformers_below_five():
+    """The other half of the rehearsal's failure.
+
+    vLLM 0.6.3 declares `transformers>=4.45.0` with no cap, so pip resolved
+    5.19.0; transformers 5.x cannot see torch 2.4.0. The pin must be installed
+    BEFORE vllm (so the resolver never upgrades it) and the script must ASSERT the
+    result rather than print it.
+    """
+    src = (REPO / "scripts" / "mlsys_vllm_venv.sh").read_text()
+    i_tf = src.index('pip install --quiet "transformers==$TRANSFORMERS_PIN"')
+    i_vllm = src.index('pip install --quiet "vllm==$VLLM_PIN"')
+    assert i_tf < i_vllm, "transformers must be pinned before vllm is installed"
+    assert "MLSYS_VLLM_TRANSFORMERS_PIN:-4.46.3" in src
+    assert "is 5.x, which cannot" in src and "sys.exit(7)" in src, \
+        "the install must fail when the pin did not take"

@@ -69,6 +69,12 @@ CSV_FIELDS = [
     # which EOS policy, and — most importantly — WHICH PROMPT.
     "vllm_version", "quantization", "eos_policy", "prompt_source",
     "prompt_sha256",
+    # WHICH SOURCE agreed that the installed vLLM is the pin. vLLM 0.6.3 from
+    # PyPI reports `__version__ == 'dev'` when its own version module cannot read
+    # the build/commit, so the pin must be checked against the DISTRIBUTION
+    # metadata as well -- and a reader has to be able to see which of the two
+    # agreed, or "vllm_version = 0.6.3" is an assertion with no provenance.
+    "vllm_version_source",
     # Which RASD cell this vLLM cell is the counterpart of. The comparison is
     # paired per document, so a row that does not name its document cannot be
     # paired with anything.
@@ -197,6 +203,34 @@ def build_prompt(tokenizer, n_tokens: int) -> str:
     return tokenizer.decode(ids)
 
 
+def vllm_version_candidates(vllm_module) -> list[tuple[str, str]]:
+    """Every version identity the installed vLLM exposes, best first.
+
+    MEASURED on the 2026-10-12 rehearsal pod: `vllm==0.6.3` installed from PyPI
+    reports `vllm.__version__ == 'dev'` -- vLLM's own version module degrades to
+    'dev' when it cannot read its build, and the same attempt log carried
+    `RuntimeWarning: Failed to read commit hash ... No ...`. The pin check compared
+    THAT single value against the pin, so a correctly pinned install was refused on
+    every attempt; the 1x rehearsal produced three "wrong version" rows and no
+    measurement, which is exactly what a rehearsal is for.
+
+    The installed DISTRIBUTION's metadata is the citable identity of a release
+    (what `pip show vllm` reports and what a paper cites), so it is consulted
+    first; the module attribute is kept as a second opinion. 'dev' is never
+    treated as a pin match.
+    """
+    out: list[tuple[str, str]] = []
+    try:
+        import importlib.metadata as md
+        out.append(("importlib.metadata", md.version("vllm")))
+    except Exception:                                      # noqa: BLE001
+        pass
+    v = getattr(vllm_module, "__version__", "") or ""
+    if v:
+        out.append(("vllm.__version__", v))
+    return out
+
+
 def _ttft_from_metrics(request_output) -> float | None:
     """Best-effort TTFT from a vLLM RequestOutput.
 
@@ -283,17 +317,23 @@ def worker_main(spec_path: Path) -> int:
         return 1
 
     # C1: record the ACTUAL vLLM that ran, not the pin we hoped for.
-    # ENFORCE the pin. The previous line fell back to reporting the pin when the
-    # installed version was unreadable, so a row could claim the pinned release
-    # while running something else -- and the pin is the one thing that makes a
-    # speedup ratio citable. Refuse instead.
-    vllm_version = getattr(_vllm, "__version__", "") or ""
-    if vllm_version != VLLM_PIN:
+    # ENFORCE the pin -- against EVERY identity the install exposes. Comparing
+    # only `vllm.__version__` refused a correct 0.6.3 install on 2026-10-12
+    # because that attribute reads 'dev'; see vllm_version_candidates.
+    vllm_candidates = vllm_version_candidates(_vllm)
+    source = next((s for s, v in vllm_candidates if v == VLLM_PIN), "")
+    if not source:
         raise SystemExit(
-            f"vLLM version is {vllm_version!r}, pin is {VLLM_PIN!r}. "
-            f"A throughput ratio is only comparable against a named release; "
-            f"install the pin or update VLLM_PIN deliberately."
+            f"vLLM version is {vllm_candidates} (source, version) and none of "
+            f"them is the pin {VLLM_PIN!r}. A throughput ratio is only "
+            f"comparable against a named release; install the pin or update "
+            f"VLLM_PIN deliberately."
         )
+    vllm_version = VLLM_PIN
+    result["vllm_version"] = vllm_version
+    result["vllm_version_source"] = source
+    print(f"[version] vllm=={VLLM_PIN} confirmed via {source}; all candidates "
+          f"{vllm_candidates}", flush=True)
 
     model = spec["model"]
     ctx = spec["context_length"]
@@ -1171,6 +1211,10 @@ def main() -> int:
     # A single prompt shared by every cell cannot be paired with anything.
     rasd_cells: list[dict] = []
     if args.prompt_ids_from_sidecars:
+        # load_rasd_cells REFUSES an empty result itself ("no usable sidecar in
+        # <dir>", naming engine_input_ids), so an empty set can never reach the
+        # cell loop and a sidecar set without the target's ids fails here rather
+        # than after hours of 8x time. No second guard is needed.
         rasd_cells = load_rasd_cells(args.prompt_ids_from_sidecars)
         if args.documents:
             want = [d.strip() for d in args.documents.split(",") if d.strip()]
