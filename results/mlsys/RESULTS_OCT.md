@@ -505,6 +505,52 @@ that the stages ran. Full report: `results/mlsys/SESSION_A_JUDGMENT.txt`.
 Evidence tree for condition A: `results/mlsys/sampling_session/` — every stage CSV, slim
 token sidecars, per-round traces, and one repetition report per stage.
 
+## 8. The seeds and ablations session (2026-10-12)
+
+One 8x A100 80GB SXM4 instance, **one setting changed per stage** from the headline config,
+new stage ids and CSVs (`SA_*`) so nothing here can be confused with or overwrite the
+sampling session's rows, stages ordered by priority so a run cut short loses the LAST stage
+and never the first. Rehearsed on one 1x A100 first (11 stages, 24/24 ok rows, $1.00) —
+and that rehearsal earned its $1.00 twice: the first attempt used 4-token rows, every
+acceptance came out 0.0/4, and the session's own gate stopped it at stage 3, so eight of the
+eleven stages went unexercised.
+
+### 8.1 Stage b — the profiled ring row
+
+See §5a: at nproc 8 the communication bucket is **1.512 s, not the 0.0 the 1-GPU profile
+could report**, compute is 87.9% of recorded ops, and the profiler's window is a superset of
+the row's own timer (137.487 s against 96.059 s). The row's tok/s is not a throughput
+measurement and is not quoted as one.
+
+### 8.2 Stage c — ring chunk size, `kv_block_size` 8192 against 2048, at 128k
+
+The knob moves the size of each ring transmission (2048 → 8192 tokens), which the floor
+analysis says the per-token time is nearly linear in. Same two books in both arms.
+
+| arm | book | `kv_block_size` | accept | e2e tok/s | decode s/token | peak MB |
+|---|---|---|---|---|---|---|
+| target-only | pg19_train_0 | 2048 (headline session) | — | 0.28310 | 3.4925 | 8256.4 |
+| target-only | pg19_train_0 | **8192** | — | **0.30375** | **3.2524** | **8256.4** |
+| spec | pg19_train_0 | 2048 (headline session) | 0.2712 | 0.53084 | 1.8320 | — |
+| spec | pg19_train_0 | **8192** | **0.2712** | **0.58621** | **1.6461** | 10113.6 |
+| spec | pg19_train_1 | 2048 (headline session) | 0.4255 | 0.65789 | 1.4573 | — |
+| spec | pg19_train_1 | **8192** | **0.4255** | **0.74480** | **1.2853** | 10112.8 |
+
+**Fewer, larger transfers are faster, and the change is numerically transparent.** Target-only
+**+7.3%** end-to-end (**-6.9%** per decode token); spec **+10.4%** and **+13.2%**
+(**-10.1%** and **-11.8%** per decode token). The acceptance of each spec row is
+**unchanged to four decimal places** (0.2712, 0.4255), which is what a purely scheduling
+change should look like — the same arithmetic, the same sampled tokens, less overhead between
+them. Peak memory is **identical** on the target-only arm (8256.4 MB) and 10.1 GB on the spec
+arm, against 80 GB: the memory question the plan said to answer first is answered by
+measurement, not by an estimate.
+
+**The caveat on this one is a session boundary, not a measurement.** The 2048 arm is the
+Oct 12 sampling session's rows; this session did not re-measure 2048, so part of a 7-13%
+difference could be host or session effect. The identical acceptance is evidence that the two
+arms compute the same thing, and the direction is the same in all three pairs, but a
+2048-vs-8192 A/B inside one session is the experiment that would close it.
+
 ### Limitations
 
 1. **5 books at 1M** (6 configured; one excluded for a data defect), 3 books per aligned
