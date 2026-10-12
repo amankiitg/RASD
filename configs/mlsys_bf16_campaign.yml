@@ -83,6 +83,14 @@ defaults:
   # is the same facility Figure 3 used. It is a sidecar: the snapshots are taken at
   # lifecycle points, so it does not change the measured protocol.
   memory_trace: true
+  # BOTH KEYS OR NEITHER: memory_trace alone is inert. The flag sets the boolean AND the
+  # directory (run_experiment.py:1743-1750); a config sets only the boolean, and with
+  # `memory_trace_dir` unset there is nowhere to write, so no sidecar appears -- which is how
+  # the bf16 rehearsal produced 12/12 clean rows and ZERO memory traces. The dir must also sit
+  # INSIDE the session out dir, because the puller rsyncs `~/RASD/$SESSION_OUT/` and nothing
+  # else: a sidecar written elsewhere never comes home. CONSTRAINT ON THE LAUNCH: this path
+  # must equal SESSION_OUT/memory_trace, so Phase 3 runs with SESSION_OUT=results/mlsys/bf16_campaign.
+  memory_trace_dir: results/mlsys/bf16_campaign/memory_trace
 
 # P1 — THE GATE. One book at 128k, spec and target-only, so the measured rates can
 # price the rest of the campaign before any of it is committed to. This is also the
