@@ -209,3 +209,49 @@ def test_the_driver_refuses_rather_than_waiting_with_no_capacity(tmp_path):
     _assert_stub_was_used(tmp_path)
     assert proc.returncode == 4, f"expected the no-capacity exit, got {proc.returncode}\n{proc.stdout}"
     assert "NO CAPACITY" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# STAGE_EXTRA: the optional payload a run needs on the pod but cannot keep in
+# the repository (Phase 5's 29 MB of original RASD token sidecars).
+# ---------------------------------------------------------------------------
+
+def _driver_preflight(tmp_path, extra: dict) -> subprocess.CompletedProcess:
+    repo, env = _driver_sandbox(tmp_path)
+    # The stub must not be consulted at all: these are refused before the API.
+    env["INSTANCES_JSON"] = "[]"
+    env["TYPES_JSON"] = "{}"
+    env.update(extra)
+    return subprocess.run(["bash", str(repo / "scripts" / "mlsys_profile_1x.sh")],
+                          cwd=str(repo), env=env, capture_output=True, text=True,
+                          timeout=120)
+
+
+def test_a_payload_without_a_destination_is_refused(tmp_path):
+    """A half-specified payload must cost nothing rather than half-arrive."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "one.json").write_text("{}")
+    proc = _driver_preflight(tmp_path, {"STAGE_EXTRA": str(payload)})
+    assert proc.returncode == 2, proc.stdout
+    assert "needs STAGE_EXTRA_DEST" in proc.stdout
+    assert not (tmp_path / "curl_was_the_stub").exists(), \
+        "the refusal must happen before any API call"
+
+
+def test_an_empty_payload_is_refused(tmp_path):
+    """An empty directory would rsync successfully and stage nothing -- the
+    silent no-op this check exists for."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    proc = _driver_preflight(tmp_path, {"STAGE_EXTRA": str(payload),
+                                       "STAGE_EXTRA_DEST": "samp_prompts"})
+    assert proc.returncode == 2, proc.stdout
+    assert "is empty" in proc.stdout
+
+
+def test_a_missing_payload_directory_is_refused(tmp_path):
+    proc = _driver_preflight(tmp_path, {"STAGE_EXTRA": str(tmp_path / "nope"),
+                                       "STAGE_EXTRA_DEST": "samp_prompts"})
+    assert proc.returncode == 2, proc.stdout
+    assert "is not a directory" in proc.stdout

@@ -64,6 +64,26 @@ HF_TOKEN_VALUE=$(grep -E '^[[:space:]]*HF_TOKEN[[:space:]]*=' runpod_creds.md 2>
 if [ -z "${KEY:-}" ] || [ -z "${HF_TOKEN_VALUE:-}" ]; then
   say "FATAL: could not read the API key / HF token from runpod_creds.md by label"; exit 2
 fi
+# OPTIONAL EXTRA PAYLOAD, staged after provisioning and BEFORE the remote script
+# starts. Phase 5's vLLM comparison needs the ORIGINAL RASD token sidecars -- the
+# ones carrying `engine_input_ids`, the ids the target was actually fed -- and those
+# are 29 MB for four cells (a single 1M prompt is 11 MB), so they travel from a
+# local directory instead of living in the repository. Validated HERE, before the
+# instance count and before anything is launched, so a half-specified payload costs
+# nothing.
+STAGE_EXTRA=${STAGE_EXTRA:-}
+STAGE_EXTRA_DEST=${STAGE_EXTRA_DEST:-}
+if [ -n "$STAGE_EXTRA" ]; then
+  if [ -z "$STAGE_EXTRA_DEST" ]; then
+    say "FATAL: STAGE_EXTRA=$STAGE_EXTRA needs STAGE_EXTRA_DEST (pod path under ~/RASD)"; exit 2
+  fi
+  if [ ! -d "$STAGE_EXTRA" ]; then
+    say "FATAL: STAGE_EXTRA=$STAGE_EXTRA is not a directory"; exit 2
+  fi
+  if [ -z "$(ls -A "$STAGE_EXTRA" 2>/dev/null)" ]; then
+    say "FATAL: STAGE_EXTRA=$STAGE_EXTRA is empty; an empty payload is a silent no-op"; exit 2
+  fi
+fi
 api_get() { curl -sS --max-time 60 -u "$KEY:" "https://cloud.lambda.ai/api/v1/$1"; }
 count_instances() {
   api_get instances 2>/dev/null | "$PY" -c \
@@ -221,6 +241,20 @@ print(json.dumps({
                         "compute/comm/idle sidecar; target-only means spec_steps 0",
 }, indent=2))
 META
+if [ -n "$STAGE_EXTRA_DEST" ]; then
+  say "--- staging extra payload $STAGE_EXTRA -> ~/RASD/$STAGE_EXTRA_DEST ---"
+  timeout 120 ssh $SSH_OPTS "$SSH_USER@$IP" "mkdir -p ~/RASD/$STAGE_EXTRA_DEST" >>"$LOG" 2>&1
+  timeout 900 rsync -az --no-perms --no-owner -e "ssh $SSH_OPTS" \
+    "$STAGE_EXTRA/" "$SSH_USER@$IP:~/RASD/$STAGE_EXTRA_DEST/" >>"$LOG" 2>&1
+  # VERIFY BY EFFECT: count them on the pod. A payload that did not arrive turns the
+  # vLLM comparison into synthetic prompts, which is the failure this staging exists
+  # to prevent.
+  HAVE=$(timeout 120 ssh $SSH_OPTS "$SSH_USER@$IP" \
+    "ls ~/RASD/$STAGE_EXTRA_DEST | wc -l" 2>/dev/null | tr -d ' ')
+  WANT=$(ls -A "$STAGE_EXTRA" | wc -l | tr -d ' ')
+  say "extra payload on the pod: ${HAVE:-?} file(s), expected $WANT at ~/RASD/$STAGE_EXTRA_DEST"
+  [ "${HAVE:-0}" = "$WANT" ] || say "WARN: the staged payload count disagrees with the local one"
+fi
 say "profile_meta.json written (remote=$REMOTE_SCRIPT)"
 
 # ---- the remote run, DETACHED, with its own DONE marker ---------------------
