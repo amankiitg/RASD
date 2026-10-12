@@ -411,6 +411,44 @@ like-for-like per-rank baseline, and 1.658 s must not be subtracted from 3.526 s
 local cost into dequantization vs Python vs kernel launches needs engine changes, which
 this plan forbids because they would invalidate every timing quoted here.
 
+### 5a. Profile (b), finally measured at 8 ranks (SA_PROF_RING_128K, 2026-10-12)
+
+Profile (a) could only say that the ring was *not* needed to be slow: at one rank `comm_us`
+was 0.0 exactly. It could not say what the ring costs, because the ring is a no-op at
+`world_size <= 1`. The seeds/ablations session opens with the row that closes that gap —
+`configs/mlsys_profile_128k.yml` field for field, run at the rank count it was written for
+(nproc 8), target-only, 128k, a 8-token warm row then a 24-token measured row, `profile:
+true` on both.
+
+| what | measured row (24 tokens, nproc 8) |
+|---|---|
+| the row's OWN `time_sec` | 96.059 s (ttft 8.805 s) |
+| the profiler's window (`wall_us`) | **137.487 s** |
+| recorded ops (compute + comm + other) | 85.866 s |
+| compute | 75.461 s = **87.9%** of recorded ops |
+| **communication** | **1.512 s = 1.8% of recorded ops** (1.1% of the profiler window) |
+| other | 8.894 s = 10.4% |
+| no recorded op (idle + the profiler's own stop/flush) | 51.621 s = 37.5% of the window |
+
+**The profiler does capture the ring.** `comm_us` is **1.512 s, not 0.0** — the same bucket
+that was exactly zero at one rank — and the ring's primitives (`batch_isend_irecv`, `nccl`,
+`c10d`) are exactly what `src/analysis/profiler.py` bins as communication. So the bucket the
+withdrawn 1-GPU profile could not fill is filled, and it is **small**: at nproc 8 with the
+ring actually running, communication is under 2% of the recorded time while compute is 88%.
+That is the 8-rank version of profile (a)'s conclusion, and it is the last word on C8.
+
+**Two cautions, both measured.** (1) `RoundProfiler` wraps the whole `generate_text()`
+call, so its window is a **superset** of the row's own timer: 137.487 s of window against
+96.059 s of `time_sec`, the ~41 s difference being the profiler's stop/export, which
+happens after `t_end`. The buckets are inside the same call as the row, and the row's timer
+is inside the window — but the window is not the row. (2) The JSON's `*_pct` fields are
+shares of the **profiler window**, not of the recorded total, which is why "compute 54.9%"
+and "compute 87.9% of recorded ops" are both in the JSON's arithmetic and only one of them
+means what it sounds like. The table above gives both, labelled.
+
+The row's tok/s is **not** a throughput measurement (24 tokens, and profiled), and is not
+quoted as one anywhere in this document.
+
 **Profile (b) — the 2-rank run — was SKIPPED, as a stated gap rather than a silent one.**
 The plan says to run it only if (a) does not explain the time; (a) attributes 0% to
 communication, so there is no remainder to attribute. Independently, there is no 2-GPU A100
