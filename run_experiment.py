@@ -182,7 +182,75 @@ CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     # metric because prefill is identical across arms and under 5% of the
     # decode wall (measured 0.22% at 128k, 0.54% at 512k).
     "decode_tps",
+    # ENGINE PROVENANCE (2026-10-13, decode-diagnosis Part 3). The rerun compares two
+    # ENGINES, not two configurations of one engine, so a row has to be able to prove which
+    # engine produced it. `ring_decode_mode`, `ring_chunk_size` and
+    # `ring_expand_after_rotation` are read OFF THE PATCHED MODULES after the run (see
+    # `_ring_engine_report`) rather than copied from the config: a config key that stops
+    # being wired through leaves the engine at its default while the config still claims the
+    # new value, and the row would look correct. `ring_layers_patched` makes a world_size=1
+    # run (where the patch is a no-op) visible instead of silently comparing two identical
+    # engines. `git_commit` and `nccl_env` record the rest of "which engine".
+    "ring_decode_mode", "ring_chunk_size", "ring_expand_after_rotation",
+    "ring_layers_patched", "git_commit", "nccl_env",
 ]
+
+
+def _git_commit() -> str:
+    """The commit the ROW was produced from. Cached: this is called per row."""
+    global _GIT_COMMIT_CACHE
+    if _GIT_COMMIT_CACHE is None:
+        try:
+            _GIT_COMMIT_CACHE = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
+                text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:                                   # noqa: BLE001
+            _GIT_COMMIT_CACHE = "unknown"
+    return _GIT_COMMIT_CACHE
+
+
+_GIT_COMMIT_CACHE = None
+
+# The NCCL knobs that change the transport or the ring's collective behaviour. Only those
+# that are SET are recorded, so the column is short and says exactly what was special.
+_NCCL_KEYS = ("NCCL_DEBUG", "NCCL_DEBUG_SUBSYS", "NCCL_P2P_LEVEL", "NCCL_P2P_DISABLE",
+              "NCCL_SHM_DISABLE", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_TOPO_FILE",
+              "NCCL_ALGO", "NCCL_PROTO", "NCCL_NVLS_ENABLE", "NCCL_BUFFSIZE", "NCCL_MIN_NCHANNELS",
+              "NCCL_MAX_NCHANNELS", "NCCL_NSOCKS_PERTHREAD", "NCCL_SOCKET_NTHREADS")
+
+
+def _nccl_env_report() -> str:
+    return ";".join(f"{k}={os.environ[k]}" for k in _NCCL_KEYS if os.environ.get(k))
+
+
+def _ring_engine_report(engine) -> dict:
+    """The ring settings the ENGINE actually holds, read off the patched attention modules.
+
+    A single value per knob, or a `MIXED(...)` marker if the modules disagree -- which is
+    what a half-applied arm would look like, and is worth seeing rather than averaging away.
+    """
+    layers = getattr(getattr(engine.target_model, "model", None), "layers", None) or []
+
+    def _one(attr, default, cast=str):
+        vals = set()
+        n = 0
+        for layer in layers:
+            attn = getattr(layer, "self_attn", None)
+            if attn is None or not hasattr(attn, "_ring_chunk_size"):
+                continue
+            n += 1
+            vals.add(cast(getattr(attn, attr, default)))
+        if n == 0:
+            return "", 0
+        if len(vals) == 1:
+            return next(iter(vals)), n
+        return f"MIXED({sorted(vals)})", n
+
+    mode, n = _one("_ring_decode_mode", "ring")
+    chunk, _ = _one("_ring_chunk_size", None, lambda v: "" if v is None else int(v))
+    expand, _ = _one("_ring_expand_after_rotation", False, bool)
+    return {"ring_decode_mode": mode, "ring_chunk_size": chunk,
+            "ring_expand_after_rotation": expand, "ring_layers_patched": n}
 
 
 def _per_token_sidecar_path(output_csv: str | Path, run_id: str) -> Path:
@@ -1584,6 +1652,16 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
 
     # Write results BEFORE destroy_process_group — destroy can hang if peers
     # are slow to reach the same barrier, and we don't want to lose metrics.
+    # ENGINE PROVENANCE (R2), read from the live modules: see `_ring_engine_report`.
+    # Wrapped because a provenance read must never cost a good generation its row.
+    try:
+        row.update(_ring_engine_report(engine))
+    except Exception as _re:                                # noqa: BLE001
+        row["ring_layers_patched"] = ""
+        row["ring_report_error"] = f"{type(_re).__name__}: {_re}"
+    row["git_commit"] = _git_commit()
+    row["nccl_env"] = _nccl_env_report()
+
     if local_rank == 0:
         # mkdir -p the output_csv's parent so writing the .tmp file
         # doesn't FileNotFoundError on first-run output dirs that
