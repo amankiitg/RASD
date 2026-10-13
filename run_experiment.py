@@ -1192,6 +1192,8 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # M4 paper memory attribution. Off by default. When True,
             # rasd_inference.generate() snapshots per-stage GPU memory
             # via MemoryTracer and writes a JSON sidecar.
+            # DECODE-DIAGNOSIS counterfactual switch (default keeps the ring path).
+            ring_decode_mode       = str(run.get("ring_decode_mode", "ring")),
             memory_trace           = bool(run.get("memory_trace", False)),
             memory_trace_dir       = run.get("memory_trace_dir") or None,
             seed              = int(run["seed"]),

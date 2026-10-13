@@ -454,6 +454,119 @@ def _ring_against_sharded(
     return out_acc, lse_acc
 
 
+def merge_split_kv_partials(
+    outs, lses, out_dtype=None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Merge per-rank (out, lse) partials by the log-sum-exp identity. PURE.
+
+    WHY IT IS A FUNCTION OF LISTS RATHER THAN OF COLLECTIVES. The merge is the part that
+    can be wrong -- a double-counted shard or a max taken before the weights are formed
+    both produce plausible-looking output -- and a function that takes the partials
+    directly can be tested against a single full attention over the concatenated shards.
+    The distributed path (world_size > 1) gathers with one all_gather and then calls this,
+    so the tested code IS the code that runs.
+
+    Math, per rank r with `lse_r = logsumexp(scores_r)` and `out_r = softmax(scores_r) @ V_r`
+    in the flash-attention convention:
+        M   = max_r lse_r                (numerical safety, fp32)
+        num = sum_r out_r * exp(lse_r - M)
+        den = sum_r exp(lse_r - M)
+        out = num / den,      lse = M + log(den)
+    """
+    import torch as _t
+    if not outs:
+        raise ValueError("merge_split_kv_partials: no partials")
+    if len(outs) == 1:
+        return outs[0], lses[0]
+    lse_f = _t.stack([l.to(_t.float32) for l in lses], dim=0)      # (R,B,H,S_q)
+    out_f = _t.stack([o.to(_t.float32) for o in outs], dim=0)      # (R,B,H,S_q,D)
+    m = lse_f.amax(dim=0)                                          # (B,H,S_q)
+    w = _t.exp(lse_f - m.unsqueeze(0))                             # (R,B,H,S_q)
+    num = (out_f * w.unsqueeze(-1)).sum(dim=0)
+    den = w.sum(dim=0)
+    out = num / den.unsqueeze(-1)
+    lse = m + _t.log(den)
+    dtype = out_dtype or outs[0].dtype
+    return out.to(dtype), lse
+
+
+def ring_attention_decode_split_kv(
+    q_global: torch.Tensor,       # (B, H, S_q, D)  — replicated Q (S_q = 1 for decode)
+    k_local: torch.Tensor,        # (B, H, S_prefill_local + tail_count, D)
+    v_local: torch.Tensor,
+    rank: int,
+    world_size: int,
+    tail_count: int,
+    scale: Optional[float] = None,
+    dropout_p: float = 0.0,
+    process_group: Optional["dist.ProcessGroup"] = None,
+) -> torch.Tensor:
+    """DECODE-DIAGNOSIS COUNTERFACTUAL: split-KV attention with no rotation.
+
+    WHY THIS EXISTS. For a query of length 1 the ring protocol is pure overhead: the
+    baseline rotates the whole local K/V shard around the ring `world_size` times so that
+    every rank can see every shard, which means each rank's attention kernel reads the
+    ENTIRE context (its own shard once per rotation) instead of just its own slice. The
+    standard split-KV formulation gets the same result with no rotation at all:
+
+        each rank r computes (out_r, lse_r) against ITS OWN shard only,
+        then the partial results are merged by the log-sum-exp identity:
+            num = sum_r out_r * exp(lse_r - M),  den = sum_r exp(lse_r - M),  out = num/den
+
+    with M the max lse across ranks for numerical safety. `out` is (B, H, S_q, D) and
+    `lse` is (B, H, S_q), both tiny when S_q = 1, so the combine moves bytes proportional
+    to heads x head_dim, not to context length.
+
+    WHAT IT DOES NOT CHANGE. K/V construction, `repeat_kv`, the cache layout, and the
+    replicated tail's handling are all untouched -- this swaps the attention combination
+    only, which is what makes it a one-thing counterfactual. It is NOT numerically
+    bit-identical to the ring path: summation order differs, so bf16 rounding differs.
+    """
+    import torch.distributed as dist
+    B, H, S_q, D = q_global.shape
+    if scale is None:
+        scale = 1.0 / math.sqrt(D)
+    S_total_local = k_local.shape[2]
+    S_prefill_local = S_total_local - tail_count
+    assert S_prefill_local >= 0, "tail_count exceeds the local cache"
+    if S_prefill_local == 0:
+        raise ValueError("split-KV decode needs a non-empty prefill shard")
+
+    out_r, lse_r = _attn_step(q_global, k_local[:, :, :S_prefill_local, :],
+                              v_local[:, :, :S_prefill_local, :],
+                              scale=scale, dropout_p=dropout_p, causal=False)
+
+    if world_size > 1:
+        assert dist.is_initialized(), "split-KV decode needs torch.distributed"
+        # ONE all_gather of the packed (out, lse) pair. Both are tiny when S_q = 1, so the
+        # collective moves bytes proportional to heads x head_dim rather than to context.
+        # Assumption: every rank's shard is the same size, which the ring layout guarantees
+        # for the prefill part (S_local = N / world_size).
+        packed = torch.cat([out_r.to(torch.float32),
+                            lse_r.to(torch.float32).unsqueeze(-1)], dim=-1)
+        gathered = [torch.empty_like(packed) for _ in range(world_size)]
+        dist.all_gather(gathered, packed, group=process_group)
+        outs = [g[..., :D] for g in gathered]
+        lses = [g[..., D].squeeze(-1) for g in gathered]
+        out_prefill, lse_prefill = merge_split_kv_partials(outs, lses, out_r.dtype)
+    else:
+        out_prefill, lse_prefill = merge_split_kv_partials([out_r], [lse_r], out_r.dtype)
+
+    if tail_count <= 0:
+        return out_prefill
+
+    # The replicated tail is identical on every rank, so it is merged ONCE, AFTER the
+    # combine -- counting it inside the cross-rank sum would multiply its contribution by
+    # world_size.
+    k_tail = k_local[:, :, S_prefill_local:, :]
+    v_tail = v_local[:, :, S_prefill_local:, :]
+    out_tail, lse_tail = _attn_step(q_global, k_tail, v_tail,
+                                    scale=scale, dropout_p=dropout_p,
+                                    causal=(S_q == tail_count))
+    out_combined, _ = _combine(out_prefill, lse_prefill, out_tail, lse_tail)
+    return out_combined
+
+
 def ring_attention_decode(
     q_global: torch.Tensor,       # (B, H, S_q, D)  — replicated Q
     k_local: torch.Tensor,        # (B, H, S_local_prefill + tail_count, D)
@@ -466,6 +579,7 @@ def ring_attention_decode(
     process_group: Optional["dist.ProcessGroup"] = None,
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
+    split_kv: bool = False,
 ) -> torch.Tensor:
     """Ring attention for decode/verify under the dual-cache layout.
 
@@ -508,6 +622,16 @@ def ring_attention_decode(
 
     has_prefill = S_prefill_local > 0
     has_tail    = tail_count > 0
+
+    # DECODE-DIAGNOSIS counterfactual switch. Default False keeps the ring path exactly as
+    # measured for every existing row; the diagnosis sets it from config so baseline and
+    # counterfactual can be measured in ONE session on ONE box.
+    if split_kv and world_size > 1 and has_prefill:
+        return ring_attention_decode_split_kv(
+            q_global, k_local, v_local,
+            rank=rank, world_size=world_size, tail_count=tail_count,
+            scale=scale, dropout_p=dropout_p, process_group=process_group,
+        )
 
     if not has_prefill and not has_tail:
         raise ValueError("ring_attention_decode: empty K/V")

@@ -135,6 +135,10 @@ class RASDConfig:
     # Speculative decoding
     spec_steps: int = 4                  # k — draft tokens per round (A2)
     temperature: float = 1.0
+    # DECODE-DIAGNOSIS counterfactual: "ring" (default) rotates the sharded prefill K/V
+    # around the ring; "split_kv" has each rank attend to its own shard and merges the
+    # partial results with two tiny all_reduces. Default preserves every existing row.
+    ring_decode_mode: str = "ring"
     top_p: float = 1.0
 
     # KV-cache ring communication
@@ -1273,6 +1277,7 @@ class RASDInference:
             chunk_size=cfg.kv_block_size,
             prefetch_depth=cfg.prefetch_depth,
             kv_quant=cfg.kv_quant,
+            decode_mode=cfg.ring_decode_mode,
         )
 
         # M4 Phase C 2026-05-10: target-only baseline mode. When

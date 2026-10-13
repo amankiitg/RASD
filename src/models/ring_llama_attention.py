@@ -91,6 +91,7 @@ def _ring_llama_attention_forward(
     world_size = self._ring_world_size
     chunk_size     = getattr(self, "_ring_chunk_size", None)
     prefetch_depth = getattr(self, "_ring_prefetch_depth", 0)
+    decode_mode    = getattr(self, "_ring_decode_mode", "ring")
 
     bsz, q_len, _ = hidden_states.size()
     head_dim = self.head_dim
@@ -153,6 +154,7 @@ def _ring_llama_attention_forward(
             rank=rank, world_size=world_size,
             tail_count=tail_count, scale=scale,
             chunk_size=chunk_size, prefetch_depth=prefetch_depth,
+            split_kv=(decode_mode == "split_kv"),
         )
 
     # 6. Output projection
@@ -257,6 +259,7 @@ def install_ring_attention(
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
     kv_quant: bool = False,
+    decode_mode: str = "ring",
 ) -> int:
     """Replace each LlamaAttention.forward with the ring-aware version.
 
@@ -304,6 +307,8 @@ def install_ring_attention(
         attn._ring_chunk_size = chunk_size
         attn._ring_prefetch_depth = prefetch_depth
         attn._ring_kv_quant = bool(kv_quant)
+        # DECODE-DIAGNOSIS: "ring" (default, unchanged) or "split_kv" (the counterfactual).
+        attn._ring_decode_mode = decode_mode
         attn._ring_original_forward = attn.forward
         attn.forward = MethodType(_ring_llama_attention_forward, attn)
         n_patched += 1
