@@ -155,7 +155,7 @@ log "steps from $CFG: $(echo $STEPS | tr '\n' ' ')"
 STEPS_ONELINE=$(printf '%s' "$STEPS" | tr '\n' ' ' | sed -E 's/ +$//')
 # KEYS ARE THE DRIVER'S VARIABLE NAMES on both sides (see the vllm wrapper for why).
 mlsys_expect "session-a-remote" "${REMOTE_EXPECT:-}" \
-  "SESSION_OUT=$OUT;SESSION_CFG=$CFG;SESSION_SANITY_CFG=$SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STEPS_ONELINE" || exit 2
+  "SESSION_OUT=$OUT;SESSION_CFG=$CFG;SESSION_SANITY_CFG=$SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STEPS_ONELINE;CODE_COMMIT=${CODE_COMMIT-<absent>}" || exit 2
 
 # ------------------------------------------------------------------ (a) sanity --
 log "### STEP a: sanity pair (both arms, one invocation)"
