@@ -139,6 +139,12 @@ class RASDConfig:
     # around the ring; "split_kv" has each rank attend to its own shard and merges the
     # partial results with two tiny all_reduces. Default preserves every existing row.
     ring_decode_mode: str = "ring"
+    # DECODE-DIAGNOSIS counterfactual: the GQA `repeat_kv` expansion currently happens
+    # BEFORE the rotation, so the ring ships num_heads copies of every KV head (32 instead
+    # of 8 at 128k = 4x the bytes). True defers the expansion to after receipt: the same
+    # values reach attention in the same head order, so the output is bit-identical, but
+    # the wire payload drops 4x. Decode path only; prefill keeps the current behaviour.
+    ring_expand_after_rotation: bool = False
     top_p: float = 1.0
 
     # KV-cache ring communication
@@ -1278,6 +1284,7 @@ class RASDInference:
             prefetch_depth=cfg.prefetch_depth,
             kv_quant=cfg.kv_quant,
             decode_mode=cfg.ring_decode_mode,
+            expand_after_rotation=getattr(cfg, "ring_expand_after_rotation", False),
         )
 
         # M4 Phase C 2026-05-10: target-only baseline mode. When

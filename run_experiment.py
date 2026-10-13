@@ -1194,6 +1194,9 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # via MemoryTracer and writes a JSON sidecar.
             # DECODE-DIAGNOSIS counterfactual switch (default keeps the ring path).
             ring_decode_mode       = str(run.get("ring_decode_mode", "ring")),
+            # DECODE-DIAGNOSIS counterfactual: defer the GQA repeat_kv to after the ring
+            # receive, so the rotation ships num_kv_heads instead of num_heads copies.
+            ring_expand_after_rotation = bool(run.get("ring_expand_after_rotation", False)),
             memory_trace           = bool(run.get("memory_trace", False)),
             memory_trace_dir       = run.get("memory_trace_dir") or None,
             seed              = int(run["seed"]),

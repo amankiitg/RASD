@@ -100,6 +100,19 @@ if [ "$REMOTE_SCRIPT" != "scripts/mlsys_session_a_remote.sh" ]; then
   done
   OPS_ENV="PROFILE_OUT='$PROFILE_OUT' OPS_CTX='$OPS_CTX' OPS_TOKENS='$OPS_TOKENS' OPS_BOOK='$OPS_BOOK' OPS_QUANT='$OPS_QUANT' OPS_TOP='$OPS_TOP' OPS_RANKS='${OPS_RANKS:-0,4}'"
 fi
+# GENERIC, FAIL-FAST FORWARDING (2026-10-13). The list above is one script's parameter set;
+# a second custom pod-side script would need a second list, and every name added to a list
+# like that is a name that can be silently dropped. FORWARD_ENV is a space-separated list of
+# variable names instead: each one MUST be set here (an unset name stops the launch before an
+# instance exists, which is the whole point of R9) and each is forwarded verbatim, so the
+# pod-side script sees exactly what the driver intended and `REMOTE_EXPECT` can prove it.
+EXTRA_ENV=""
+for _fv in ${FORWARD_ENV:-}; do
+  eval "[ -n \"\${$_fv:-}\" ]" || {
+    echo "FATAL: FORWARD_ENV names $_fv but it is unset; refusing to launch." >&2; exit 2; }
+  eval "EXTRA_ENV=\"\$EXTRA_ENV $_fv='\${$_fv}'\""
+done
+if [ -n "$EXTRA_ENV" ]; then echo "FORWARD_ENV: forwarding$EXTRA_ENV" >&2; fi
 # The rope gate's inputs. The candidates file differs between the real run and the
 # rehearsal (131072 vs 4096) but the POOL does not: both pass --pg19-meta the same
 # way, through this variable, so the rehearsal exercises the same argument path.
@@ -489,8 +502,13 @@ if [ -z "$STAGES_INTENDED" ]; then
 fi
 say "intended stages: $STAGES_INTENDED"
 REMOTE_EXPECT="SESSION_OUT=$SESSION_OUT;SESSION_CFG=$SESSION_CFG;SESSION_SANITY_CFG=$SESSION_SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STAGES_INTENDED"
+# A custom pod-side script's own manifest is appended, so its parameter contract (R9) is
+# asserted in the SAME variable and with the same comparison as the built-in one.
+if [ -n "${REMOTE_EXPECT_EXTRA:-}" ]; then
+  REMOTE_EXPECT="$REMOTE_EXPECT;$REMOTE_EXPECT_EXTRA"
+fi
 
-START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup $OPS_ENV env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash '$REMOTE_SCRIPT' >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup $OPS_ENV$EXTRA_ENV env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash '$REMOTE_SCRIPT' >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; now polling for the DONE marker, not for this shell"
 

@@ -123,6 +123,21 @@ def _sdpa_step(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return out, lse
 
 
+def _expand_kv_heads(t: torch.Tensor, groups: int) -> torch.Tensor:
+    """HF's `repeat_kv`: (B, H, S, D) -> (B, H*groups, S, D), values duplicated.
+
+    Byte-for-byte what `transformers.models.llama.modeling_llama.repeat_kv` computes (the
+    same expand-then-reshape, so the same head order and the same copies), reproduced here
+    so the kernel does not import transformers. It returns a fresh tensor, not a view:
+    `_attn_step` permutes and copies immediately afterwards anyway, so the expansion costs
+    one local copy either way -- what changes is that the RING no longer carries it.
+    """
+    if groups <= 1:
+        return t
+    B, H, S, D = t.shape
+    return t[:, :, None, :, :].expand(B, H, groups, S, D).reshape(B, H * groups, S, D)
+
+
 def _attn_step(q_bhsd: torch.Tensor, k_bhsd: torch.Tensor, v_bhsd: torch.Tensor,
                scale: float, dropout_p: float, causal: bool
                ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -326,6 +341,7 @@ def _ring_against_sharded(
     process_group,
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
+    kv_groups: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Ring W steps over the sharded prefill K/V.
 
@@ -344,9 +360,16 @@ def _ring_against_sharded(
                         Saturates at 1 under the standard ring P2P pattern;
                         higher values are accepted but produce identical
                         behaviour to 1.
+        kv_groups       GQA repeat factor, when the caller has NOT already expanded
+                        the KV heads. `k_sharded_local`/`v_sharded_local` then hold
+                        num_kv_heads; the expansion to num_heads happens on each
+                        RECEIVED slice, so the rotation ships 1/kv_groups the bytes.
+                        The values and their head order are unchanged, so the result
+                        is bit-identical to expanding before the rotation.
     """
     if world_size == 1:
-        return _attn_step(q_global, k_sharded_local, v_sharded_local,
+        return _attn_step(q_global, _expand_kv_heads(k_sharded_local, kv_groups),
+                          _expand_kv_heads(v_sharded_local, kv_groups),
                           scale=scale, dropout_p=dropout_p, causal=False)
 
     assert _DIST_AVAILABLE and dist.is_initialized(), \
@@ -415,7 +438,7 @@ def _ring_against_sharded(
         if _trace:
             print(f"[ring rank={rank}] step={step} computing attn", flush=True)
         out_step, lse_step = _attn_step(
-            q_global, k_cur, v_cur,
+            q_global, _expand_kv_heads(k_cur, kv_groups), _expand_kv_heads(v_cur, kv_groups),
             scale=scale, dropout_p=dropout_p, causal=False,
         )
         if out_acc is None:
@@ -500,6 +523,7 @@ def ring_attention_decode_split_kv(
     scale: Optional[float] = None,
     dropout_p: float = 0.0,
     process_group: Optional["dist.ProcessGroup"] = None,
+    kv_groups: int = 1,
 ) -> torch.Tensor:
     """DECODE-DIAGNOSIS COUNTERFACTUAL: split-KV attention with no rotation.
 
@@ -532,8 +556,9 @@ def ring_attention_decode_split_kv(
     if S_prefill_local == 0:
         raise ValueError("split-KV decode needs a non-empty prefill shard")
 
-    out_r, lse_r = _attn_step(q_global, k_local[:, :, :S_prefill_local, :],
-                              v_local[:, :, :S_prefill_local, :],
+    out_r, lse_r = _attn_step(q_global,
+                              _expand_kv_heads(k_local[:, :, :S_prefill_local, :], kv_groups),
+                              _expand_kv_heads(v_local[:, :, :S_prefill_local, :], kv_groups),
                               scale=scale, dropout_p=dropout_p, causal=False)
 
     if world_size > 1:
@@ -569,7 +594,8 @@ def ring_attention_decode_split_kv(
     # world_size.
     k_tail = k_local[:, :, S_prefill_local:, :]
     v_tail = v_local[:, :, S_prefill_local:, :]
-    out_tail, lse_tail = _attn_step(q_global, k_tail, v_tail,
+    out_tail, lse_tail = _attn_step(q_global, _expand_kv_heads(k_tail, kv_groups),
+                                    _expand_kv_heads(v_tail, kv_groups),
                                     scale=scale, dropout_p=dropout_p,
                                     causal=(S_q == tail_count))
     out_combined, _ = _combine(out_prefill, lse_prefill, out_tail, lse_tail)
@@ -589,6 +615,7 @@ def ring_attention_decode(
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
     split_kv: bool = False,
+    kv_groups: int = 1,
 ) -> torch.Tensor:
     """Ring attention for decode/verify under the dual-cache layout.
 
@@ -640,6 +667,7 @@ def ring_attention_decode(
             q_global, k_local, v_local,
             rank=rank, world_size=world_size, tail_count=tail_count,
             scale=scale, dropout_p=dropout_p, process_group=process_group,
+            kv_groups=kv_groups,
         )
 
     if not has_prefill and not has_tail:
@@ -648,7 +676,7 @@ def ring_attention_decode(
     if not has_prefill:
         # Only tail (degenerate; no prefill positions to ring over).
         out, _ = _attn_step(
-            q_global, k_local, v_local,
+            q_global, _expand_kv_heads(k_local, kv_groups), _expand_kv_heads(v_local, kv_groups),
             scale=scale, dropout_p=dropout_p, causal=(S_q == tail_count),
         )
         return out
@@ -663,6 +691,7 @@ def ring_attention_decode(
         process_group=process_group,
         chunk_size=chunk_size,
         prefetch_depth=prefetch_depth,
+        kv_groups=kv_groups,
     )
 
     if not has_tail:
@@ -672,7 +701,7 @@ def ring_attention_decode(
     k_tail = k_local[:, :, S_prefill_local:, :]
     v_tail = v_local[:, :, S_prefill_local:, :]
     out_tail, lse_tail = _attn_step(
-        q_global, k_tail, v_tail,
+        q_global, _expand_kv_heads(k_tail, kv_groups), _expand_kv_heads(v_tail, kv_groups),
         scale=scale, dropout_p=dropout_p, causal=(S_q == tail_count),
     )
 
