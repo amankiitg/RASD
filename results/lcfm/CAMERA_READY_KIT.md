@@ -44,7 +44,7 @@ old-engine only, it says so.
 | **precision** | FP4 weights + NF4 KV |
 | **source** | `repetition_*.csv` in `results/mlsys/sampling_session/` (one per stage); the 31 new rows are `results/mlsys/rerun_r1|r2/session_a_*.csv` scored with `src/analysis/repetition.py`. Longest verbatim repeat span 8 tokens against a 128 ceiling; tokens-in-repeat 0.00 against a 0.60 ceiling. |
 | **rule** | the campaign's **absolute** repetition rule, plus the periodicity detector's periodic-tail-share >= 0.50 threshold |
-| **caveats** | The candidate-engine extension used 0.50 as the degeneracy threshold and found a **maximum periodic tail of 0.172** across the 31 rows, so nothing came close. It measures T=0.7 rows only — no greedy row has been run under the candidate engine. |
+| **caveats** | The candidate-engine extension used 0.50 as the degeneracy threshold and found a **maximum periodic tail of 0.172** across the 31 rows, so nothing came close. It measures T=0.7 rows only — no greedy row has been run under the candidate engine. Wider census for Fig C, over **every** released sampled row (83 rows: the 26, the 31, the 11 n=5-extension rows, the 8 seed replicates and the 7 decode-diagnosis arms): **1 loop**, and it is `ROPE_EXT_SAMP_F16_SPEC_pg19_train_2768_s42` — the f16 row already named in F1's caveat (v), outside both pools above, so the 0-of-26 and 0-of-31 counts stand. |
 
 ### F3 — The native-1M model stays coherent at 1M
 
@@ -185,32 +185,44 @@ sampling with speculative decoding**. Prompts are matched (`unit_matched=yes`: v
 sidecars' `engine_input_ids`). **This is not a precision-matched comparison and must not be
 called one.**
 
-| context | vLLM e2e tok/s (bf16, greedy) | candidate spec | candidate target-only | old-engine spec | candidate / vLLM | old / vLLM |
-|---|---|---|---|---|---|---|
-| 128k | 6.9865 | 1.6064 | 0.8435 | 0.67350 | **0.23x** | 0.096x |
-| 512k | 0.56986 | 0.6208 | 0.3312 | 0.24389 | **1.09x** | 0.43x |
-| 1M | 0.14828 | 0.2460 | 0.1731 | 0.12077 | **1.66x** | 0.81x |
+**Corrected in this revision.** An earlier version of this section concluded that "a vLLM
+decode-per-token figure cannot be computed from the recorded data". That was wrong, and the
+error was reading the wrong file. There are two vLLM runs:
 
-All rates are end-to-end (`tokens_generated / time_sec`, prefill included), because **vLLM's
-first-token time is unusable**: vLLM 0.6.3 reports `RequestMetrics` timestamps as absolute
-monotonic clock readings and the recorder stored `1.79e9` for `ttft_s` and `-1.79e9` for
-`decode_only_wall_s`. **A vLLM decode-per-token figure therefore cannot be computed from the
-recorded data, and this kit does not invent one.** What can be compared is the end-to-end wall
-for the same 128 tokens at the same prompt, which is what the table above does.
+| file | `ttft_s` / `decode_only_wall_s` | usable for |
+|---|---|---|
+| `results/mlsys/vllm_run2/vllm_baseline.csv` | **16.85 / 222.81 / 859.31 s** and **1.03 / 1.84 / 2.91 s** | **everything — this is the engine of record** |
+| `results/mlsys/vllm_run/vllm_baseline.csv` | `1.79e9` / `-1.79e9` (absolute monotonic clock readings) | end-to-end only |
 
-**Prefill, and it is unchanged by split-KV** (split-KV is a decode-path switch; the candidate
-engine's 1M prefill measures 335 s against the old engine's 344 s, a 2.6% difference):
+`vllm_run2` (session `e5c80acccf24481dae409d2c1a888c65`) recorded first-token and decode wall
+times separately, and `CLAIMS.md` C10 quotes them. The retry reproduced the *end-to-end* numbers
+within 2.4% at 128k and 0.1% elsewhere but its clocks are unusable; the table below uses
+`vllm_run2`, with RASD decode on the same matched cells as 3a (`scripts/lcfm_figures.py`).
 
-| context | vLLM **total wall** | RASD **prefill only** (`ttft_ms`) | vLLM total / RASD prefill |
-|---|---|---|---|
-| 128k | 18.321 s | 8.589 s | 2.13x |
-| 512k | 224.615 s | 91.447 s | 2.46x |
-| 1M | 863.576 s | 339.284 s | 2.55x |
+| context | prefill s (vLLM / RASD) | vLLM ÷ RASD prefill | decode s/token (vLLM / old ring / split-KV) | old ÷ vLLM | **split-KV ÷ vLLM** |
+|---|---|---|---|---|---|
+| 128k | 16.85 / 8.76 | **1.92x** | 0.0081 / 3.4925 / 1.0596 | 429x | **130x** |
+| 512k | 222.80 / 88.56 | **2.52x** | 0.0145 / 9.9900 / 2.3460 | 689x | **162x** |
+| 1M | 859.60 / 335.34 | **2.56x** | 0.0234 / 17.0902 / 3.2107 | 731x | **137x** |
 
-So vLLM's *entire run* — its own prefill plus 128 decode steps — takes longer than RASD's
-prefill alone at every context, which means vLLM's prefill is the slower of the two and it is
-the opposite of the decode ordering. The decode ordering flips with the candidate engine:
-RASD overtakes vLLM at 512k (**1.09x**) and 1M (**1.66x**) and remains behind at 128k (0.23x).
+**Reading, and the one number that must not be spun.** Every ratio above is bf16-greedy vLLM
+against FP4/NF4-sampled RASD and is **not precision-matched**. Two things follow, and they point
+in opposite directions:
+
+1. **RASD's prefill beats vLLM's entire run** (prefill *plus* 128 decode steps) by 1.92x / 2.52x
+   / 2.56x. Split-KV is a decode-path switch and cannot move this: it is a property of the ring
+   prefill, and it is unchanged from the old engine (1M prefill 335 s candidate vs 344 s old,
+   2.6%).
+2. **vLLM's decode is still 130-162x faster than the candidate engine's**, from 429-731x before
+   the fix. The split-KV change therefore removed ~70% of the decode gap and left RASD's decode
+   far behind a production engine: **the correct framing is "the ring's rotation was the decode
+   pathology, and removing it made RASD's decode merely slow", never "RASD decode is
+   competitive"**. Speculative decoding does not close it either — candidate spec ÷ vLLM is
+   **65x / 65x / 59x** (old spec was 182x / 244x / 259x).
+
+End-to-end (`tokens_generated / time_sec`, prefill included) the candidate engine is 0.23x /
+1.09x / 1.66x of vLLM at 128k / 512k / 1M — the ordering that flips with context, because
+prefill dominates at 1M and decode dominates at 128k.
 
 **Peak memory per GPU.** vLLM recorded 68,798.7 / 68,798.8 / 68,799.0 MB — flat across contexts,
 which is the shape a fixed `gpu_memory_utilization` preallocation gives, so it is the **KV pool
