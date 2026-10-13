@@ -325,3 +325,46 @@ The bucket total does none of those things. **Phase D is the arbiter** — if th
 is the cost, then removing the rotation must cut decode s/tok by a large factor; if it is not,
 split-KV will show little change. Until then, any claim that "the ring is only 1.8%" must be
 treated as unverified.
+
+### C7. Context scaling of decode s/tok (unprofiled, 16 tokens per rung)
+
+Stage `PROBE_SCALING` cleaned **4/4 ok rows** in the same session, same book, same precision,
+unprofiled — so per R11 these are the absolute numbers.
+
+| context | decode s/tok | TTFT s |
+|---|---|---|
+| 32k | 2.8040 | 4.1 |
+| 64k | 3.0133 | 4.9 |
+| 128k | 3.6998 | 8.6 |
+| 256k | 5.7416 | 27.3 |
+
+Least-squares line through the four points: **decode s/tok ≈ 2.384 s + 12.8 µs per 1k tokens
+of context**. At 128k that decomposes as **2.38 s of context-INDEPENDENT cost (64%) and 1.32 s
+that scales with context**, and the fit is exact enough to be worth stating as a shape rather
+than a curiosity.
+
+**This contradicts the bandwidth story I proposed two subsections ago, and in an informative
+way.** A pure transfer-volume explanation predicts decode ≈ a small constant + a slope
+proportional to bytes, because the ring ships `S_local = context/8`. Instead the constant
+dominates: the step costs ~2.4 s before the context is long at all, and doubling from 128k to
+256k costs only ~2.0 s more.
+
+A context-independent cost of that size, in a step whose only per-step structure is
+`world_size = 8` rotations × `32` layers = **256 serialized rotation rounds**, is ~9.3 ms per
+rotation round regardless of payload. That is the signature of **P2P latency and per-round
+serialization, not bandwidth** — and it explains the earlier chunk experiment exactly: cutting
+the chunk count 4× removes transfer *ops* without removing a single serialized *round*, so it
+bought only 7.3%.
+
+So the two candidate mechanisms now stand as:
+
+* **bandwidth**: 68 GB per token per rank at ~20 GB/s, which reconciles the volume with the
+  measured time but predicts a slope-dominated curve, and the curve is intercept-dominated;
+* **latency/serialization**: 256 rotation rounds per step at ~9.3 ms each, which matches the
+  measured shape and the chunk experiment, and predicts that removing the rotation removes most
+  of the cost.
+
+**Phase D decides between them, and it is running now.** `PD_SPLIT_TARGET` removes all 256
+rounds (each rank attends to its own shard, and one all_gather merges the tiny partials). If the
+latency reading is right, decode s/tok should fall far below the ~2.4 s floor; if the bandwidth
+reading is right, it should fall by roughly the ratio of moved bytes (about 4x, not more).
