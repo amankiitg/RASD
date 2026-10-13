@@ -546,6 +546,8 @@ def ring_attention_decode_split_kv(
         # ring is not, so this uses the two primitives that have no list argument and no
         # output allocation: a MAX reduce for the numerical offset and a SUM reduce for the
         # packed numerator and denominator. Same arithmetic, fewer ways to be wrong.
+        out_f = out_r.to(torch.float32)
+        lse_f = lse_r.to(torch.float32)
         m = lse_f.amax(dim=-1, keepdim=True).contiguous()
         dist.all_reduce(m, op=dist.ReduceOp.MAX, group=process_group)
         w = torch.exp(lse_f - m)                                  # (B, H, S_q)

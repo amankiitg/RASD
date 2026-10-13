@@ -104,3 +104,88 @@ def test_split_kv_decode_merges_the_tail_once():
                                          tail_count=tail, scale=scale, dropout_p=0.0)
     assert torch.allclose(got, ref, atol=1e-5, rtol=1e-4), \
         f"tail counted wrong: max abs {(got - ref).abs().max():.3e}"
+
+
+class _FakeDist:
+    """Enough of torch.distributed to run the REAL distributed branch on one machine.
+
+    WHY THIS EXISTS. The first two pod attempts failed inside this branch and neither failure
+    was reachable from tests that only take the world_size == 1 path: the first was a CUDA
+    fault in the collective, the second a NameError from a dropped local definition. A test
+    that never enters the branch cannot see either.
+
+    WHY IT IS BUILT THIS WAY. Two earlier versions of this fake were unfaithful and made the
+    kernel look wrong when it was not. `all_reduce` is BLOCKING: no rank may compute anything
+    from the reduced value until every rank has arrived, and every participant ends holding
+    the same reduced tensor. A fake that lets one rank run to completion and then combines
+    its stale contribution will mix contributions computed against different offsets, which
+    is a real error the emulation invented. So the fake is handed, per collective, the TRUE
+    reduced value -- the test can compute it, because it knows both ranks' partials -- and
+    copies it into every caller's tensor, which is exactly NCCL's contract.
+    """
+
+    ReduceOp = type("ReduceOp", (), {"SUM": "sum", "MAX": "max"})
+
+    def __init__(self, max_result, sum_result):
+        self.max_result, self.sum_result = max_result, sum_result
+        self.calls: list[tuple[str, int]] = []
+
+    def is_initialized(self):
+        return True
+
+    def all_reduce(self, tensor, op=None, group=None):        # noqa: A002
+        self.calls.append((str(op), int(tensor.numel())))
+        src = self.max_result if str(op) == "max" else self.sum_result
+        if src.shape != tensor.shape:
+            raise AssertionError(f"emulated reduce shape {tuple(src.shape)} vs caller "
+                                 f"{tuple(tensor.shape)}")
+        tensor.copy_(src)
+        return tensor
+
+
+def test_the_distributed_branch_runs_and_merges_correctly(monkeypatch):
+    """Split-KV across two ranks, through the real world_size > 1 code path.
+
+    The assertions are the two properties that matter: the branch actually calls the
+    collectives (so it was really exercised), and EVERY rank ends with the same output, equal
+    to one attention over the concatenated shards.
+    """
+    torch.manual_seed(3)
+    B, H, S_q, D = 1, 2, 1, 8
+    S_local = 12
+    q = torch.randn(B, H, S_q, D, dtype=torch.float32)
+    k = torch.randn(B, H, 2 * S_local, D, dtype=torch.float32)
+    v = torch.randn(B, H, 2 * S_local, D, dtype=torch.float32)
+    scale = 1.0 / math.sqrt(D)
+    ref, _ = _attn_step(q, k, v, scale=scale, dropout_p=0.0, causal=False)
+
+    shards = [(k[:, :, r * S_local:(r + 1) * S_local, :],
+               v[:, :, r * S_local:(r + 1) * S_local, :]) for r in range(2)]
+    parts = [_attn_step(q, ks, vs, scale=scale, dropout_p=0.0, causal=False)
+             for ks, vs in shards]
+
+    # What the two collectives must return, computed from the same partials the ranks hold.
+    lse_f = [p[1].to(torch.float32) for p in parts]
+    out_f = [p[0].to(torch.float32) for p in parts]
+    m_global = torch.maximum(lse_f[0].amax(dim=-1, keepdim=True),
+                             lse_f[1].amax(dim=-1, keepdim=True))
+    w = [torch.exp(l - m_global) for l in lse_f]
+    packed_total = sum(torch.cat([o * wi.unsqueeze(-1), wi.unsqueeze(-1)], dim=-1)
+                       for o, wi in zip(out_f, w))
+
+    fake = _FakeDist(max_result=m_global, sum_result=packed_total)
+    monkeypatch.setattr("torch.distributed.all_reduce", fake.all_reduce, raising=False)
+    monkeypatch.setattr("torch.distributed.is_initialized", fake.is_initialized, raising=False)
+    monkeypatch.setattr("torch.distributed.ReduceOp", fake.ReduceOp, raising=False)
+
+    outs = [ring_attention_decode_split_kv(q, ks, vs, rank=r, world_size=2, tail_count=0,
+                                           scale=scale, dropout_p=0.0, process_group=None)
+            for r, (ks, vs) in enumerate(shards)]
+
+    assert len(fake.calls) == 4, f"expected MAX+SUM on each of 2 ranks, got {fake.calls}"
+    assert [op for op, _ in fake.calls][:2] == ["max", "sum"]
+    for label, got in (("rank0", outs[0]), ("rank1", outs[1])):
+        assert torch.allclose(got, ref, atol=1e-5, rtol=1e-4), \
+            f"{label} differs from full attention by {(got - ref).abs().max():.3e}"
+    assert torch.allclose(outs[0], outs[1], atol=1e-6), \
+        "every rank must end with the same merged output"
