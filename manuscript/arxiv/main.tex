@@ -1299,13 +1299,15 @@ reviewed version said ``39.3\,GiB peak per rank, half of the
 available 80\,GiB''; the reading was \textbf{rank 0 only}, and the
 over-rank maxima are the ones quoted here.
 % SRC: results/mlsys/LCFM_RECONCILE.md (AUDIT E18); results/mlsys/CLAIMS.md C6
-\emph{Nominal versus actual context}: the cells this paper calls
-``1\,M'' hold \textbf{1{,}002{,}984} prompt tokens, not
-1{,}048{,}576 --- the alignment offset the harness applies to keep
-each rung's window ending at the same document position). The
-``128\,k'' and ``512\,k'' cells are 128\,k and 512\,k in the same
-convention.
-% SRC: results/mlsys/LCFM_RECONCILE.md (AUDIT E13); results/mlsys/nominal_vs_actual_context.csv
+\emph{Nominal versus actual context}: the rows reported in this
+paper record \textbf{1{,}047{,}551} prompt tokens at the ``1\,M''
+rung and \textbf{523{,}263} at ``512\,k'' --- the nominal length less
+the 1024-token scored continuation and the current token. The
+reviewed version's Llama-2 matrix was built by an older harness that
+landed at \textbf{1{,}002{,}984} and 501{,}472 for the same nominal
+lengths, which is why quotes of ``1\,M'' differ between the two
+halves of the paper unless the builder is named.
+% SRC: results/mlsys/rerun_r1/session_a_RR_1M_*.csv (prompt_tokens); results/mlsys/nominal_vs_actual_context.csv
 % TODO AMAN: the ceiling test in this subsection is vanilla HF FA-2 on Llama-2-7B
 % (bf16), while every throughput result in the paper is on the 1M-native
 % gradientai/Llama-3-8B-Instruct-Gradient-1048k target (FP4/NF4). Should we (a) re-run
