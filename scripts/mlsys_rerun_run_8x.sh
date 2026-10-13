@@ -25,6 +25,12 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 MODE=${1:-}
+# PARALLEL LAUNCHES. The driver asserts that it owns exactly one instance and refuses to start
+# if any other is present, unless the others are declared positively through
+# EXPECTED_OTHER_INSTANCES. That guard is worth keeping -- it is what stops a launch against a
+# stale box -- so R2 declares R1's instance rather than disabling the check.
+#   EXPECTED_OTHER_INSTANCES=<id> bash scripts/mlsys_rerun_run_8x.sh r2
+export EXPECTED_OTHER_INSTANCES=${EXPECTED_OTHER_INSTANCES:-}
 case "$MODE" in
   r1)
     SESSION_TYPE=gpu_8x_a100_80gb_sxm4
