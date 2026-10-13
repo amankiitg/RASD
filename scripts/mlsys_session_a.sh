@@ -93,7 +93,12 @@ REMOTE_SCRIPT=${REMOTE_SCRIPT:-scripts/mlsys_session_a_remote.sh}
 # REQUIRED here: unset means the launch stops before an instance exists, rather than a
 # profile quietly running at the wrong context or on the wrong book.
 OPS_ENV=""
-if [ "$REMOTE_SCRIPT" != "scripts/mlsys_session_a_remote.sh" ]; then
+# SCOPED TO THE OPS SCRIPT (2026-10-13). This block required its parameter set from ANY
+# custom REMOTE_SCRIPT, which made it impossible to add a second one: a script that does not
+# use OPS_* would be rejected for not setting them. The generic fail-fast forwarding below
+# (FORWARD_ENV) is the mechanism for custom scripts now; this block keeps the ops script's
+# behaviour byte-identical, including the OPS_RANKS default.
+if [ "$REMOTE_SCRIPT" = "scripts/mlsys_ops_remote.sh" ]; then
   for v in PROFILE_OUT OPS_CTX OPS_TOKENS OPS_BOOK OPS_QUANT OPS_TOP OPS_RANKS; do
     eval "[ -n "\${$v:-}" ]" || {
       echo "FATAL: $v must be set when REMOTE_SCRIPT=$REMOTE_SCRIPT" >&2; exit 2; }
