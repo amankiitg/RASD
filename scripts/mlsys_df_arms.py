@@ -67,7 +67,7 @@ ROW_FIELDS = [
     "peak_alloc_mb", "peak_reserved_mb", "peak_alloc_mb_worst_rank",
     "peak_reserved_mb_worst_rank",
     "target_ppl", "ppl_tokens", "git_commit", "world_size", "ring_layers_patched",
-    "status", "error",
+    "rng_reseeded", "status", "error",
 ]
 
 
@@ -97,6 +97,34 @@ def _git_commit() -> str:
                                        stderr=subprocess.DEVNULL).strip()
     except Exception:                                     # noqa: BLE001
         return "unknown"
+
+
+def _reseed(seed: int) -> None:
+    """Put the RNG back to the state a FRESH PROCESS would start a single generation in.
+
+    WHY THIS IS NOT OPTIONAL. `RASDInference.__init__` calls `torch.manual_seed(config.seed)`
+    ONCE (rasd_inference.py:1015) and `generate()` never reseeds. In the main runner that is
+    invisible: one process builds one engine and generates once, so the single generation
+    sees the seeded stream -- which is why a fixed seed reproduces byte-identically across
+    sessions and hosts. This driver generates 8 times from ONE engine, so without a reseed
+    each arm inherits the RNG state its predecessors left behind, and a token-stream
+    difference between two arms can be an artefact of ARM ORDER rather than of the engine
+    change under test. That would turn the bit-identity check into a coin flip and could
+    either pass a broken change or fail a correct one (stop condition S1).
+
+    The 1x rehearsal caught exactly this: identical arms (world_size==1, no ring patch, so
+    all four arms run the same code) produced three identical spec streams and a fourth that
+    differed, because the RNG state before each generation depends on how many draws the
+    preceding generations consumed.
+    """
+    import random
+    torch.manual_seed(int(seed))
+    random.seed(int(seed))
+    try:
+        import numpy as _np
+        _np.random.seed(int(seed) % (2 ** 32))
+    except Exception:                                       # noqa: BLE001
+        pass
 
 
 def set_arm(engine, arm_name: str, single_rank_ok: bool = False) -> tuple:
@@ -264,6 +292,8 @@ def main(argv=None):
         engine.cfg.max_new_tokens = (args.target_tokens if mode == "target"
                                      else args.spec_tokens)
         run_id = f"DF_{arm}_{mode}_{args.book}_ctx{args.ctx}_s{args.seed}"
+        # Restore the per-process RNG state, so this arm sees what a fresh process would.
+        _reseed(args.seed)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         t0 = time.perf_counter()
@@ -307,6 +337,7 @@ def main(argv=None):
             "target_ppl": "", "ppl_tokens": "",
             "git_commit": commit,
             "world_size": world, "ring_layers_patched": n_patched,
+            "rng_reseeded": True,
             "status": "ok" if not err else "error",
             "error": err,
         }
@@ -318,6 +349,8 @@ def main(argv=None):
                 "engine": spec, "spec_steps": engine.cfg.spec_steps,
                 "quantize_target": engine.cfg.quantize_target,
                 "kv_quant": engine.cfg.kv_quant, "git_commit": commit,
+                "world_size": world, "ring_layers_patched": n_patched,
+                "rng_reseeded": True,
                 "generated_token_ids": metrics.get("generated_token_ids"),
                 "per_token_trace": metrics.get("per_token_trace"),
                 "text_head": text[:200],
@@ -370,6 +403,23 @@ def main(argv=None):
                     json.dumps(ids).encode()).hexdigest()[:16]
             json.dump(dig, open(os.path.join(args.out, "token_digests.json"), "w"), indent=1)
             log(f"token digests: {dig}")
+            # SELF-TEST (world_size == 1 only). With no ring patch installed, all four arms
+            # are the SAME code, so every arm's stream must be identical to every other's.
+            # If they are not, the arms are not independent and the bit-identity claims this
+            # session exists to make would be meaningless -- so say so loudly rather than
+            # report a divergence as an engine result.
+            if world == 1:
+                for mode in ("target", "spec"):
+                    vals = {a: d for (a, m), d in dig.items() if m == mode}
+                    distinct = set(vals.values())
+                    verdict = "PASS" if len(distinct) <= 1 else "FAIL"
+                    log(f"single-rank self-test [{mode}]: {verdict} "
+                        f"({len(distinct)} distinct stream(s) over {len(vals)} arms; "
+                        f"expected 1 because no ring knob is installed at world_size==1)")
+                    if len(distinct) > 1:
+                        log("  -> the arms are coupled, most likely through the global RNG "
+                            "(torch.manual_seed runs once per engine, not per generation). "
+                            "Check that _reseed() runs before every arm.")
 
     elif args.mode == "ppl":
         # NOTE, recorded here because it changes how the number may be read: _measure_target_ppl
