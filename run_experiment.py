@@ -1299,10 +1299,33 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
 
         # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
         # run["profile"] = True (set from --profile CLI flag below).
-        profile_enabled = bool(run.get("profile", False)) and local_rank == 0
+        # DECODE-DIAGNOSIS: WHICH RANKS GET PROFILED, AND WHAT IS WRITTEN OUT.
+        #
+        # Rank 0 alone was hardcoded, and rank 0 is the one rank whose behaviour differs:
+        # it is where the row's metrics are written and (in this engine) where the
+        # replicated-Q attention has no ring sender to wait on first. A profile that only
+        # ever sees rank 0 cannot tell a ring-wide cost from a rank-0 artefact, which is
+        # why the diagnosis asks for a middle rank too. `profile_ranks` defaults to [0], so
+        # every existing config keeps its previous behaviour exactly.
+        #
+        # The op tables and chrome trace land beside the row's CSV under
+        # <csv_dir>/profiler_ops/ and <csv_dir>/profiler_traces/, named by run and rank.
+        _profile_ranks = run.get("profile_ranks")
+        if _profile_ranks is None:
+            _profile_ranks = [0]
+        profile_enabled = bool(run.get("profile", False)) and local_rank in _profile_ranks
         if profile_enabled:
             from src.analysis.profiler import RoundProfiler
-            with RoundProfiler(enabled=True) as _prof:
+            _pdir = Path(output_csv).resolve().parent
+            _rid = run["run_id"]
+            with RoundProfiler(
+                enabled=True,
+                rank=local_rank,
+                ops_path=_pdir / "profiler_ops" / f"{_rid}.rank{local_rank}.json",
+                trace_path=_pdir / "profiler_traces" / f"{_rid}.rank{local_rank}.json.gz",
+                top=int(run.get("profile_top", 30)),
+                record_shapes=True,
+            ) as _prof:
                 generated_text, metrics = engine.generate_text(prompt)
             metrics["_profiler_summary"] = _prof.summary
         else:
