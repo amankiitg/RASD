@@ -160,20 +160,24 @@ log "### stage2 smoke rc=$smoke_rc"
 grep -h "^\[df\]" "$OUT/smoke.log" 2>/dev/null | tee -a "$OUT/df.log" || true
 
 # The transport evidence, extracted from THIS process's NCCL debug stream.
+# WRITTEN VIA A TEMP FILE: the first version appended a block that began by `cat`-ting the
+# output file into itself, which is an error and left the first section empty.
+NCCL_RAW="$OUT/nccl_transport_raw.txt"
 grep -aE "NCCL INFO (Channel|P2P|NET|SHM|Setting affinity|NVLS|Bootstrap|Connected|via )" \
-     "$OUT/smoke.log" 2>/dev/null | sort -u | head -60 > "$OUT/nccl_transport.txt" || true
+     "$OUT/smoke.log" 2>/dev/null | sort -u | head -80 > "$NCCL_RAW" || true
 {
-  echo "### distinct transport/init lines (NCCL_DEBUG=INIT,P2P)"
-  cat "$OUT/nccl_transport.txt"
+  echo "### distinct transport/init lines (NCCL_DEBUG=INIT,P2P), from the smoke process"
+  if [ -s "$NCCL_RAW" ]; then cat "$NCCL_RAW"; else echo "(none -- see smoke.log)"; fi
   echo
-  echo "### every distinct 'via ' phrase"
-  grep -aoE "via [A-Za-z0-9/_. :\\-]*" "$OUT/smoke.log" 2>/dev/null | sort | uniq -c | sort -rn | head -20
+  echo "### every distinct 'via ' phrase with its count"
+  grep -aoE "via [A-Za-z0-9/_. :-]*" "$OUT/smoke.log" 2>/dev/null | sort | uniq -c | sort -rn | head -20 || true
   echo
-  echo "### P2P / NVLink / SHM / NET mentions (counts)"
-  for pat in NVLink "P2P/IPC" SHM NET/direct "shared memory" "nvidia_peermem" NVLINK; do
-    printf '%-18s %s\n' "$pat" "$(grep -ac -- "$pat" "$OUT/smoke.log" 2>/dev/null || echo 0)"
+  echo "### transport keyword counts in smoke.log"
+  for pat in NVLink "P2P/IPC" SHM "NET/" "shared memory" nvidia_peermem; do
+    n=$(grep -ac -- "$pat" "$OUT/smoke.log" 2>/dev/null || true)
+    printf '%-16s %s\n' "$pat" "${n:-0}"
   done
-} >> "$OUT/nccl_transport.txt" 2>&1
+} > "$OUT/nccl_transport.txt" 2>&1
 log "### stage2 transport evidence written to $OUT/nccl_transport.txt ($(wc -l < "$OUT/nccl_transport.txt") lines)"
 
 # ============================== STAGE 3: ARMS ================================
