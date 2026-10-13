@@ -196,3 +196,132 @@ of a target-only row as a deterministic argmax continuation.
   measured (under 2%)."*
 * `CLAIMS.md`: add a negative claim that target-only at T>0 is **not** greedy, and that its
   token stream therefore cannot be compared for identity with any other row's.
+
+---
+
+## C. The profile, at nproc 8, with the ring proven active
+
+Session `fa4646d372b441708b8f148c5b4729de` (8x A100 80GB SXM4, us-midwest-1), target-only, 128k,
+CONTROL precision (FP4/NF4), one book. Stage `PROBE_PROFILE_128K` cleaned **2/2 ok rows**;
+`PROBE_WARM_128K` (8 tokens) runs first and `PROBE_MAIN_128K` (24 tokens) is the row reported.
+**Both ranks 0 and 4 were profiled** (`profile_ranks: [0, 4]`), which needed a small
+instrumentation change: the runner had `local_rank == 0` hardcoded, so rank 4 — and therefore
+"is this ring-wide or a rank-0 artefact?" — was unanswerable before this run.
+
+### C6 first, because everything else depends on it: the ring path ran
+
+* `nproc 8` on 8x, so `_ring_llama_attention_forward` takes the distributed branch rather than
+  the `world_size <= 1` fall-through (`ring_llama_attention.py:71-79`) that voided the earlier
+  one-rank profile.
+* The op tables contain **`ncclDevKernel_SendRecv` ×5,376** and **`nccl:coalesced` ×10,560** on
+  rank 0 (and 5,376 / 10,688 on rank 4) — the ring's P2P primitives by name, in the rank's own
+  trace. `comm_us > 0` here, against exactly `0.0` at one rank.
+* The attention call count is the ring's structural fingerprint: **6,656 `_flash_attn_forward`
+  calls ÷ 26 steps (24 decode + prefill) = 256 per step = 8 rotations × 32 layers**, exactly the
+  loop in `_ring_against_sharded` (`for step in range(world_size)`, `:379`) times the layer
+  count. **Section A's structural model is confirmed on call counts.**
+
+### C1. Top ops by self device time — rank 0 and rank 4 agree
+
+`PROBE_MAIN_128K`, 24 decode tokens, self device total **212.70 s** (rank 0) / **222.98 s**
+(rank 4); profiler wall 202.9 s / 207.0 s.
+
+| op | rank 0 s | % | calls | rank 4 s | % | calls |
+|---|---|---|---|---|---|---|
+| `nccl:coalesced` | **133.230** | **62.6%** | 10,560 | **137.278** | **61.6%** | 10,688 |
+| `ncclDevKernel_SendRecv` | **44.738** | **21.0%** | 5,376 | **45.274** | **20.3%** | 5,376 |
+| `aten::copy_` | 11.749 | 5.5% | 317,829 | 11.874 | 5.3% | 318,355 |
+| `elementwise_kernel<128,4,…>` | 11.120 | 5.2% | 189,056 | 11.243 | 5.0% | 189,376 |
+| **`flash_attn::_flash_attn_forward`** | **1.375** | **0.7%** | 6,656 | **3.879** | **1.7%** | 6,784 |
+| `aten::cat` | 1.154 | 0.5% | 34,329 | 1.154 | 0.5% | 34,329 |
+| `flash_fwd_splitkv_kernel` | 0.969 | 0.5% | 5,888 | 0.966 | 0.4% | 5,888 |
+| `flash_fwd_kernel` | 0.351 | 0.2% | 32 | 2.512 | 1.1% | 128 |
+| `aten::mm` | 0.813 | 0.4% | 248 | 0.822 | 0.4% | 248 |
+
+**NCCL send/recv is 83.7% of rank 0's device time and 81.9% of rank 4's. Attention is under 2%
+on both.** Copies (`copy_`, `cat`, the elementwise kernels that implement the casts around them)
+are ~11%.
+
+### C2. Is the GPU busy or idle? Busy — but "busy in NCCL" conflates moving with waiting
+
+Self device time (212.7 s) **exceeds the profiler's own wall (202.9 s)**, which is expected when
+streams overlap and means the device is essentially never idle: H2's "the host is stalling the
+GPU" is **refuted as the primary mechanism**, because the GPU is occupied by NCCL kernels for
+84% of the step.
+
+The honest caveat: an NCCL `SendRecv` kernel occupying the device can be *transferring* or
+*spinning until its peer arrives*. This profile cannot separate those two, so "the GPU is busy"
+does not by itself mean "the bytes are the cost". That is precisely what Phase D's
+counterfactual is for, and why it is the arbiter rather than this table.
+
+### C3. Kernel counts per decode token per rank
+
+| what | per token | how derived |
+|---|---|---|
+| attention calls (ring, prefill part) | **256** | 6,656 ÷ 26 steps = 8 rotations × 32 layers |
+| attention calls (tail + split-kv combine kernels) | ~227 | 5,888 ÷ 26 |
+| NCCL `SendRecv` kernels | **~207** | 5,376 ÷ 26 (= one per rotation, minus the last per layer) |
+| NCCL coalesced launches | **~406** | 10,560 ÷ 26 |
+| `aten::copy_` | **~12,224** | 317,829 ÷ 26 |
+| `aten::cat` | ~1,320 | 34,329 ÷ 26 |
+
+### C4. Bytes: what the calls imply, and the reconciliation this section owes
+
+**Shapes were not recorded.** `record_shapes=True` was passed and the runner forwards it, but
+`key_averages()` on this torch build returns an empty `input_shapes` for these entries (the
+attribute is present and blank), so the per-call K/V shapes below are **derived from the code**
+— `ring_attention_decode` passes `k_local`/`v_local` for the whole local shard, and
+`repeat_kv` has already expanded 8 KV heads to 32 (`ring_llama_attention.py:134-135`) — and the
+derivation is checked against the measured time rather than trusted:
+
+| quantity per decode token per rank | value |
+|---|---|
+| local shard, post-`repeat_kv` | 16,256 tokens × 32 heads × 128 dim × 2 B = **133 MB per K, per layer** |
+| K+V sent per rotation, per layer | **266 MB** |
+| rotations per token | 8 (one per rank) |
+| **ring traffic per token** | **266 MB × 8 × 32 layers = 68 GB** |
+| flash-attention reads per token | 256 calls × 266 MB = 68 GB |
+| `repeat_kv` copy per token (2.1 GB → 8.5 GB, 32 layers) | ~6.4 GB |
+| measured decode | **3.296-4.105 s/token** |
+
+**Reconciliation: 68 GB ÷ 3.4 s ≈ 20 GB/s per rank of effective NCCL throughput.** That is the
+number that closes the model, and it is the one I had wrong.
+
+**The structural assumption in §A.2 that was wrong: I assumed the ring transfers would run near
+NVLink line rate (150-200 GB/s) and were therefore negligible, and that the attention kernels
+would dominate HBM traffic.** Both are false. The ring moves **68 GB per token per rank** — four
+times the context's own KV volume, because `repeat_kv` materializes 32 heads where the cache
+holds 8 and the ring then ships all four copies — and it runs at **~20 GB/s**, an order of
+magnitude below the fabric's capability here. Attention, by contrast, costs **1.375 s over the
+whole row** (0.7%): the kernels are fast and the shapes are handled well. So the decode step is
+not a compute problem, not a copy problem and not a host problem; it is **the ring's payload
+volume at the throughput this NCCL P2P pattern achieves**, and §A.2's "68 GB is impossible in
+3.3 s" was the tell that it had to be the transfers rather than the reads.
+
+### C5. Which attention kernel ran
+
+`flash_attn::_flash_attn_forward` (FA-2) at 6,656 calls, plus `flash_fwd_kernel` and
+`flash_fwd_splitkv_kernel`/`combine_kernel` on the tail and remainder. **No SDPA-math fallback
+appears in either rank's table**, so H4's "is it silently falling back to a materialised score
+matrix?" is answered: it is not.
+
+### C.7 — the correction this section forces
+
+The campaign's standing assumption, restated at the top of this run's brief as "already ruled
+out, do not re-test", is that **ring communication is 1.8% of recorded ops** (stage b,
+`SA_PROF_RING_128K`). The op-level evidence above says NCCL is **~84% of device time** on the
+same code path, at nproc 8, on the same 128k target-only shape, with the ring's kernels visible
+by name and their counts matching the loop.
+
+The two numbers come from different instruments on the same engine. `aggregate_events` classifies
+by op-name substring and `"nccl"` **is** in its `COMM_PATTERNS` (`profiler.py:46-54`), so the
+bucket should have caught these events; its sidecar nevertheless reports `comm_us = 1.51 s` of
+`total_us = 85.87 s`. One of the two runs therefore measured a different event set, and this
+document cannot say which from the data it has.
+
+**What can be said without ambiguity:** the op-level table names the kernels and their call
+counts, its counts reproduce the code's loop structure exactly, and it agrees across two ranks.
+The bucket total does none of those things. **Phase D is the arbiter** — if the ring's transfer
+is the cost, then removing the rotation must cut decode s/tok by a large factor; if it is not,
+split-KV will show little change. Until then, any claim that "the ring is only 1.8%" must be
+treated as unverified.
