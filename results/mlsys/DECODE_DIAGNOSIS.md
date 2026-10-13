@@ -368,3 +368,38 @@ So the two candidate mechanisms now stand as:
 rounds (each rank attends to its own shard, and one all_gather merges the tiny partials). If the
 latency reading is right, decode s/tok should fall far below the ~2.4 s floor; if the bandwidth
 reading is right, it should fall by roughly the ratio of moved bytes (about 4x, not more).
+
+### C8. The decode window alone, sliced from the chrome trace
+
+The op tables above cover the whole `generate_text()` call, prefill included — and prefill is
+also ring-heavy, so "NCCL dominates the row" is not yet "NCCL dominates a *decode step*". The
+exported chrome trace answers that directly: it spans **102.9 s**, which is the row's own
+`time_sec` to the second, and its kernel events can be cut by timestamp. The prefill occupies
+the first ~15 s (TTFT 8.5 s plus its profiling inflation), so the window after 15 s is
+decode-dominated: 24 decode steps in ~88 s = 3.67 s/step, matching the measured 3.6998 s/token.
+
+| kernel class | first 15 s (prefill) | after 15 s (decode) |
+|---|---|---|
+| `ncclDevKernel_SendRecv` | 6.614 s (66.4%) ×579 | **38.124 s (73.4%) ×4,797** |
+| `elementwise_kernel` (casts, dequant, softmax bookkeeping) | 1.084 s (10.9%) | **10.035 s (19.3%)** ×168,598 |
+| `flash_fwd_kernel` / `flash_fwd_splitkv_kernel` (**attention**) | 0.351 s (3.5%) | **0.902 s (1.7%)** ×5,483 |
+| `CatArrayBatchedCopy` (`aten::cat`) | — | 0.195 s (0.4%) ×2,740 |
+| reduction kernels | 0.349 s (3.5%) | — |
+
+**4,797 SendRecv calls ÷ 24 decode steps ≈ 200 per step, against the code's 8 rotations × 32
+layers = 256** (the last rotation in each layer sends nothing, which accounts for the
+difference). So the decode step is ~73% NCCL receive/send, ~19% elementwise arithmetic, and
+**under 2% attention**. The three largest non-NCCL entries are all elementwise kernels, i.e. the
+bf16 casts and the softmax bookkeeping that surround the rotation, not the attention math.
+
+**The bytes, as asked, with the honest caveat.** `record_shapes=True` was passed and the runner
+forwards it, but `key_averages()` on this torch build returns an empty `input_shapes` for these
+entries, so shapes are derived from the code and checked against time rather than read off the
+profile: after `repeat_kv` the local shard is 16,256 tokens × 32 heads × 128 dim × 2 B =
+**133 MB per K per layer**, so each rotation moves **266 MB of K+V per layer**, 8 rotations ×
+32 layers = **68 GB per decode token per rank**. Attention kernel calls per token are **256**
+(6,656 ÷ 26 steps = 8 × 32, confirmed by the trace's ~200 sendrecv per step). Over the decode
+window the attention kernels total 0.902 s for ~24 tokens = **38 ms per token**, which is
+1.7% — so the attention is not reading 68 GB in any sense that costs time; the transfers are
+what cost time, and C7's intercept-dominated curve says their cost is per-round serialization
+rather than volume.
