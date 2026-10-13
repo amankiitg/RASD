@@ -1,0 +1,34 @@
+# The old-engine 1M seed baseline, corrected
+
+## Excluded from every old-engine pool
+
+Seed bug (their run ids say s123/s456; they ran seed 42):
+  - `results/mlsys/seeds_ablations/session_a_SA_SEED_123_1M_SPEC.csv`
+  - `results/mlsys/seeds_ablations/session_a_SA_SEED_456_1M_SPEC.csv`
+  - `results/mlsys/seeds_ablations/repetition_SA_SEED_123_1M_SPEC.csv`
+  - `results/mlsys/seeds_ablations/repetition_SA_SEED_456_1M_SPEC.csv`
+  - `results/mlsys/seeds_ablations/tokens_slim/SA_SEED_123_1M_SPEC_pg19_train_*.json`
+  - `results/mlsys/seeds_ablations/tokens_slim/SA_SEED_456_1M_SPEC_pg19_train_*.json`
+
+Different target family (Llama-2-7b, not poolable with the Llama-3 headline):
+  - `results/mlsys/llama2_matrix_multiseed.csv  (meta-llama/Llama-2-7b-hf)`
+  - `results/mlsys/pg19_multiseed.csv           (meta-llama/Llama-2-7b-hf)`
+
+13 old cells over seeds ['123', '42', '456']; 15 new cells over seeds ['123', '42', '456']; 13 matched (seed, book) cells
+
+## Per seed, matched books only
+
+| seed | books | old acceptance | new acceptance | delta | old s/tok | new s/tok | speedup |
+|---|---|---|---|---|---|---|---|
+| 42 | 5 | 0.5246 | 0.4424 | -15.7% | 5.7725 | 1.4370 | 4.017x |
+| 123 | 5 | 0.4656 | 0.5164 | +10.9% | 6.1598 | 1.4078 | 4.376x |
+| 456 | 3 | 0.4466 | 0.4969 | +11.3% | 6.3323 | 1.2517 | 5.059x |
+| **pooled** | **13** | **0.4839** | **0.4834** | **-0.1%** | **6.0506** | **1.3830** | **4.375x** |
+
+## Is the new acceptance inside the old engine's own seed spread?
+
+- old seed means: 123 **0.4656**, 42 **0.5246**, 456 **0.4466**
+- new seed means: 123 **0.5164**, 42 **0.4424**, 456 **0.4505**
+- old range **0.4466 - 0.5246**, i.e. **16.3%** of the mean; new range 0.4424 - 0.5164
+- on the matched three books (0/1/915): old range 0.1155 = **23.0%** of the mean; new range 0.1587 = 31.3%
+- **4 of 13** new cells fall inside the old range

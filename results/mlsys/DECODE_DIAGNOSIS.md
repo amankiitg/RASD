@@ -799,7 +799,7 @@ spec on five books for each seed. Every row records `split_kv` / 32768 / expand=
 | 128k | target-only | 1.1312 | 3.3665 | **2.98x** (3.30x like-for-like) |
 | 512k | spec | 0.9384 | 3.5227 | **3.75x** |
 | 512k | target-only | 2.3460 | 9.9900 | **4.26x** |
-| 1M | spec | 1.4264 | 5.7519 | **4.03x** |
+| 1M | spec | 1.4264 | 6.0506 | **4.03x** (**4.375x** on matched (seed, book) cells, G.4) |
 | 1M | target-only | 3.2107 | 17.0902 | **5.32x** |
 
 **The speedup grows with context**, which is the prediction F.3 makes and did not test: the
@@ -826,12 +826,49 @@ Left open, in the order I would take them:
 
 1. **The 512k and 1M target-only denominators are thin** (1 and 2 rows). The spec arms have 3
    and 15. A reviewer who wants the 5.32x at 1M on five books needs more target-only rows.
-2. **Acceptance behaviour under the new kernel is not characterised.** It falls 10.4% at 1M and
-   is flat at 128k. The explanation offered (a flipped near-tie cascading through the draft's
-   proposals) is consistent with every measurement here but was not tested directly — the test
-   would be to hold the emitted prefix fixed and re-measure the acceptance decision.
+2. ~~Acceptance behaviour under the new kernel is not characterised.~~ **Retired by G.4: the
+   acceptance is unchanged (-0.1% pooled over 13 matched cells), so there is no behaviour to
+   characterise.** What the original item described was an artefact of a contaminated old-engine
+   baseline, not an effect.
 3. **The 19.3% elementwise term from section C is now the largest remaining non-attention
    cost**, and it was never attributed. With the rotation gone it is a much bigger share of
    what is left.
 4. **The 1M prefill (335 s) now dominates a 1M row** — 570 s total of which 335 s is prefill.
    The decode work that this run optimised is no longer the long pole at 1M.
+
+
+### G.4 Correction: the old-engine 1M seed baseline was contaminated
+
+Applied 2026-10-14, on the way into the camera-ready. It is recorded here because section G.2's
+1M number and G.3's second open item both depended on it.
+
+`build_run_configs` merges a level into the config's defaults and then sets
+`run["seed"] = seed` from the **defaults'** `seeds:` list (run_experiment.py:590-612), so a level
+that declares its own `seeds:` is overridden and runs the default seed. Two stages did this, both
+in `configs/mlsys_seeds_ablations.yml`:
+
+| stage | level `seeds:` | ran |
+|---|---|---|
+| `SA_SEED_123_1M_SPEC` | `[123]` | **42** |
+| `SA_SEED_456_1M_SPEC` | `[456]` | **42** |
+
+Everything downstream of those rows was wrong in the same direction:
+
+| number | was | corrected |
+|---|---|---|
+| 1M spec speedup, matched (seed, book) | 4.033x | **4.375x** |
+| 1M acceptance, candidate vs old | -10.4% | **-0.1% (unchanged)** |
+| "old engine's 1M acceptance identical across seeds" | a finding | **the bug** |
+| "the first real 1M seed replicates this campaign has" | a finding | **withdrawn** — a fixed run existed |
+
+The corrected baseline takes seed 42 from `sampling_session/session_a_SAMP_1M_SPEC.csv` and
+seeds 123/456 from the fixed run `fp4_seeds/session_a_FP4_SEED_1M_SPEC.csv`, whose
+`seeds: [123, 456]` sits in the defaults and so was never affected. The bugged files, and the
+two Llama-2 multi-seed files that carry the same seed labels for a different target family, are
+excluded explicitly in RESULTS_OCT 10.3, and `scripts/mlsys_seed_baseline_audit.py` reproduces
+the whole table.
+
+**No per-context speedup other than 1M spec is affected**: every other old-engine pool used by
+section F and by `RESULTS_OCT` 10 was audited row by row (10.3.1) and none of them came from a
+stage with a per-level `seeds:` key. The direction of every result is unchanged; the headline
+grows slightly (4.03x -> 4.375x at 1M spec) and the acceptance story becomes simpler.

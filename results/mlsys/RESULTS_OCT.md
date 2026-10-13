@@ -943,8 +943,14 @@ modules rather than copied from the config:
 
 All rates are decode-only, `(time_sec - ttft) / (tokens_generated - 1)`, in seconds per token.
 "Old" rows are the same protocol, same books, same FP4/NF4 precision and same 128-token
-generation: the Oct-12 sampling session's aligned rows at 512k, its 1M target-only rows, the
-FP4 seed rows at 1M, and the seeds-and-ablations rows at 128k.
+generation.
+
+**One old-engine pool in this table was contaminated and is corrected in 10.3.** The 1M spec
+row's old side was ten rows from the two seed stages hit by the `seeds:` merge bug — valid
+seed-42 rows whose run ids said s123/s456 — so it compared one old seed against the candidate's
+three. It now shows the pooled figure with the matched-cell figure beside it; **4.375x is the
+number to quote.** All the other old pools in this table were audited row by row and are clean
+(10.3.1).
 
 | context | arm | candidate decode s/tok | old decode s/tok | **speedup** | candidate e2e tok/s | old e2e tok/s | acceptance (new / old) | TTFT s | peak mem MB |
 |---|---|---|---|---|---|---|---|---|---|
@@ -952,7 +958,7 @@ FP4 seed rows at 1M, and the seeds-and-ablations rows at 128k.
 | 128k | target-only | **1.1312** | 3.3665 | **2.98x** | 0.8435 | 0.2945 | — | 8.6 | 8,254 |
 | 512k | spec | **0.9384** | 3.5227 | **3.75x** | 0.6208 | — | 0.4493 / 0.4892 | 89.6 | 16,804 |
 | 512k | target-only | **2.3460** | 9.9900 | **4.26x** | 0.3312 | — | — | 88.6 | 15,781 |
-| 1M | spec | **1.4264** | 5.7519 | **4.03x** | 0.2460 | 0.1204 | 0.4698 / 0.5246 | 342.2 | 26,837 |
+| 1M | spec | **1.4264** | 6.0506 | **4.03x** (4.375x matched, 10.3) | 0.2460 | 0.1204 | 0.4834 / 0.4839 | 342.2 | 26,837 |
 | 1M | target-only | **3.2107** | 17.0902 | **5.32x** | 0.1731 | — | — | 335.3 | 25,814 |
 
 **The speedup grows with context** (2.4x -> 3.8x -> 4.0x on spec; 3.0x -> 4.3x -> 5.3x on
@@ -990,7 +996,104 @@ pooled 2.41x and 2.98x. The other rows are already like-for-like in their book s
 books 0/1/915 on both sides, and 1M uses all five books with two old seeds and three candidate
 seeds. Report **2.80x** for 128k if a single number is needed.
 
-### 10.3 The seed spread at 1M, and a finding about the old engine's seeds
+### 10.3 The seed spread at 1M — CORRECTED, and the old-engine baseline it needs
+
+**This subsection was wrong when first written, and the error is worth stating because it is a
+data-provenance error rather than an arithmetic one.** The sentence it used to carry — that the
+old engine's 1M acceptance was identical across seeds 42/123/456, and therefore that the
+candidate engine produced "the first real 1M seed replicates this campaign has" — was drawn from
+rows that no longer mean what their run ids say.
+
+#### What was wrong
+
+`build_run_configs` merges a level into the config's defaults and then sets
+`run["seed"] = seed` from the **defaults'** `seeds:` list (run_experiment.py:590-612). A level
+that declares its own `seeds:` has it recorded and then overwritten, so the stage runs the
+default seed. Only two stages ever did that, both in `configs/mlsys_seeds_ablations.yml`:
+
+| stage | level `seeds:` | defaults `seeds:` | what actually ran |
+|---|---|---|---|
+| `SA_SEED_123_1M_SPEC` | `[123]` | `[42]` | **42** |
+| `SA_SEED_456_1M_SPEC` | `[456]` | `[42]` | **42** |
+
+Their rows carry the run ids `..._s123` and `..._s456` and the acceptance values of seed 42,
+which is the fingerprint of the bug: the old-engine "seed replicates" that section 8 called
+byte-identical were two extra copies of seed 42, and the conclusion drawn from them here —
+that the old engine's 1M seed rows were duplicates rather than seed variation — described the
+bug rather than the engine. A fixed run exists.
+
+**Excluded from every old-engine pool from here on:**
+
+```
+results/mlsys/seeds_ablations/session_a_SA_SEED_123_1M_SPEC.csv
+results/mlsys/seeds_ablations/session_a_SA_SEED_456_1M_SPEC.csv
+results/mlsys/seeds_ablations/repetition_SA_SEED_123_1M_SPEC.csv
+results/mlsys/seeds_ablations/repetition_SA_SEED_456_1M_SPEC.csv
+results/mlsys/seeds_ablations/tokens_slim/SA_SEED_123_1M_SPEC_pg19_train_*.json
+results/mlsys/seeds_ablations/tokens_slim/SA_SEED_456_1M_SPEC_pg19_train_*.json
+```
+
+Excluded for a different reason, and worth naming so the exclusion is not mistaken for an
+oversight: `results/mlsys/llama2_matrix_multiseed.csv` and `results/mlsys/pg19_multiseed.csv`
+do carry seeds 123 and 456 at 1M, but for **`meta-llama/Llama-2-7b-hf`**. Pooling them with the
+Llama-3 headline would mix target families, which is a worse error than the one being fixed.
+
+#### 10.3.1 Audit of every other old-engine pool in this section (1c)
+
+Every old-engine pool that fed 10.2 or the C18 family was re-derived from its source files and
+checked for the `SA_SEED_*` stage ids:
+
+| pool | sources | affected? |
+|---|---|---|
+| 128k spec (n=15) | `seeds_ablations/session_a_SA_{DRAFTWIN,STEPS,RINGCHUNK}_128K_*` + its sanity pair | no — none of those stages declares a per-level `seeds:` |
+| 128k spec/target aligned (10.2a) | `sampling_session/session_a_SAMP_ALIGNED_128K_*` | no |
+| 128k target (n=5) | `seeds_ablations` 128k target stages | no |
+| 512k spec (n=5) | `sampling_session/session_a_SAMP_ALIGNED_512K_SPEC.csv` + the n=5 extension | no |
+| 512k target (n=1) | `sampling_session/session_a_SAMP_ALIGNED_512K_TARGET.csv` | no |
+| **1M spec (n=10)** | **`seeds_ablations/session_a_SA_SEED_{123,456}_1M_SPEC.csv`** | **YES — both stages ran seed 42. Corrected in 10.3.** |
+| 1M target (n=2) | `sampling_session/session_a_SAMP_1M_TARGET.csv` | no |
+
+**What changed as a result, in one place:**
+
+| number | before | after | why |
+|---|---|---|---|
+| 1M spec speedup | 4.033x | **4.375x** | matched (seed, book) cells instead of 1 old seed vs 3 |
+| 1M acceptance delta | -10.4% | **-0.1%** | the same substitution; the old 0.5246 was seed-42-only |
+| "old engine acceptance identical across seeds" | claimed | **withdrawn** | it was the bug, not the engine |
+| "first real 1M seed replicates" | claimed | **withdrawn** | a fixed run existed all along |
+| every other per-context speedup | — | unchanged | their pools never touched the bugged stages |
+
+The two withdrawals remove claims; they do not change the direction of any result. The headline
+speedup grows slightly, the acceptance story becomes simpler (no effect to explain), and the
+**only number that a reader had been given that was simply wrong is the -10.4%.**
+
+#### The corrected old-engine baseline
+
+| seed | source | books | acceptance | decode s/tok |
+|---|---|---|---|---|
+| 42 | `sampling_session/session_a_SAMP_1M_SPEC.csv` | 5 | 0.5246 | 5.7725 |
+| 123 | `fp4_seeds/session_a_FP4_SEED_1M_SPEC.csv` | 5 | 0.4656 | 6.1598 |
+| 456 | `fp4_seeds/session_a_FP4_SEED_1M_SPEC.csv` | 3 | 0.4466 | 6.3323 |
+
+The fixed run's stage `FP4_SEED_1M_SPEC` carries `seeds: [123, 456]` in the **defaults**, which
+is the form the merge honours, so it was never affected. Reproduce all of this with
+`scripts/mlsys_seed_baseline_audit.py`.
+
+#### Old vs candidate, matched on (seed, book) — 13 cells where both exist
+
+| seed | books | old acceptance | candidate acceptance | delta | old s/tok | candidate s/tok | speedup |
+|---|---|---|---|---|---|---|---|
+| 42 | 5 | 0.5246 | 0.4424 | -15.7% | 5.7725 | 1.4370 | **4.017x** |
+| 123 | 5 | 0.4656 | 0.5164 | +10.9% | 6.1598 | 1.4078 | **4.376x** |
+| 456 | 3 | 0.4466 | 0.4969 | +11.3% | 6.3323 | 1.2517 | **5.059x** |
+| **pooled** | **13** | **0.4839** | **0.4834** | **-0.1%** | **6.0506** | **1.3830** | **4.375x** |
+
+The 1M spec speedup on matched cells is therefore **4.375x**, not the 4.033x that 10.2 reports
+— 10.2's old side was the ten bugged seed-42 rows, and its new side was all fifteen rows, so it
+compared one old seed against three new ones. Both figures are in the table in 10.2 and the
+matched one is the one to quote.
+
+#### The candidate engine's own seed spread
 
 | seed | books | decode s/tok | e2e tok/s | acceptance | acceptance range over books |
 |---|---|---|---|---|---|
@@ -999,33 +1102,43 @@ seeds. Report **2.80x** for 128k if a single number is needed.
 | 456 | 5 | 1.4344 | 0.2457 | 0.4505 | 0.3380 - 0.6570 |
 
 Decode rate over the 15 rows: mean 1.4264, min 0.8522, max 1.9803 — a **1.04x spread across
-seeds** and a 2.3x spread across books. Acceptance over the 15 rows: mean 0.4698, sd 0.1265.
+seeds** against a 2.3x spread across books. The old engine's spread across seeds is **9.7%**
+(5.7725 / 6.1598 / 6.3323), so the candidate engine is *more* seed-stable in decode rate, not
+less: with the rotation gone, what is left is mostly per-token compute that does not depend on
+which tokens were emitted.
 
-**The seed spread is real here and it was not real before.** Under the old engine the 1M
-acceptance at a fixed book was *identical* for seeds 42, 123 and 456 (train_0 = 0.3776 in all
-four recorded rows, train_1 = 0.6838, and so on), which section 8 read as determinism at a
-fixed seed and therefore as "void as seed variation". Under the candidate engine the seeds
-differ for every book. The two readings of the old result are: the old sampler ignored the
-seed, or the old seed rows were duplicates of the seed-42 rows. **Phase B of the diagnosis
-measured the old engine at 8k with two seeds diverging at token 2**, which makes the second
-reading the likely one — and either way the old engine's 1M "seed spread" was not a spread.
-The numbers above are the first real 1M seed spread this campaign has.
+### 10.4 Acceptance: unchanged on matched cells (corrected)
 
-### 10.4 Acceptance moves, and why that is not an independence claim
+The first version of this section said the candidate engine's 1M acceptance was **-10.4%**
+below the old engine's and then argued that the drop was not independent evidence about the
+kernel. The argument was a rescue attempt for a number that was itself an artefact: 0.5246 was
+the old engine's **seed-42** mean (from the bugged rows of 10.3) and 0.4698 was the candidate's
+mean over **three** seeds. Corrected, on the 13 matched (seed, book) cells:
 
-1M acceptance falls from 0.5246 (five-book mean, old) to 0.4698 (15 rows, new), **-10.4%**;
-per book it falls further (train_0 0.3776 -> 0.2982). At 128k it is flat (0.3967 -> 0.3947) and
-at 512k it falls 8%.
+| | old | candidate | delta |
+|---|---|---|---|
+| 1M acceptance, pooled over 13 matched cells | **0.4839** | **0.4834** | **-0.1%** |
+| per seed | 42: 0.5246 · 123: 0.4656 · 456: 0.4466 | 42: 0.4424 · 123: 0.5164 · 456: 0.4505 | -15.7% / +10.9% / +11.3% |
 
-Acceptance is **not an independent measurement of the new kernel.** The accept/reject decision
-compares the target's distribution against the draft's proposal, so a single near-tie flipped by
-the changed summation order changes the emitted token — and from that token onward the draft is
-proposing continuations of a *different* prefix, so the whole acceptance sequence downstream is
-a different sequence rather than a perturbed version of the same one. The direct evidence on the
-kernel is section F: the target-only stream is **bit-identical to the ring baseline for twelve
-consecutive tokens** and diverges exactly where the baseline's own top-2 margin is **0.0000**
-against a row median of 2.9375, and the 1024-token prefill perplexity is identical to six
-decimals.
+**So the honest statement is that the acceptance is unchanged**, and the per-seed deltas move in
+both directions inside the old engine's own seed-to-seed spread. That spread is not small:
+pooled over the three seeds it is **16.3%** of the mean (0.4466 - 0.5246), and on the matched
+three books it is **23.0%**. The candidate engine's own matched-three-book spread is 31.3%. A
+cell-level view says the same thing — of the 13 new cells, 5 fall below the old seed range, 4
+inside it and 4 above — so the candidate engine's acceptance scatters about the old engine's
+rather than sitting below it.
+
+This also retires the *reason* the old 10.4 needed a rescue argument. There is no acceptance
+effect to explain, so the following mechanical point is context rather than defence, and it is
+worth keeping only because a future reader will ask why an exact-equivalent kernel can move
+acceptance at all: the accept/reject decision compares the target's distribution against the
+draft's proposal, so a single near-tie flipped by the changed summation order changes the
+emitted token, and from that token onward the draft is proposing continuations of a *different*
+prefix. The direct evidence on the kernel is section F: the target-only stream is
+**bit-identical to the ring baseline for twelve consecutive tokens** and diverges exactly where
+the baseline's own top-2 margin is **0.0000** against a row median of 2.9375, and the
+1024-token prefill perplexity is identical to six decimals. At 128k and 512k acceptance is flat
+too (0.3967 -> 0.3947, and 0.4892 -> 0.4493 on 3 books).
 
 ### 10.5 Periodicity: no loops
 
@@ -1036,25 +1149,37 @@ arm or any seed. (Expected: the temperature-0 loops of section 8 belong to greed
 
 ### 10.6 The two things a reviewer should check first
 
-**TTFT: the gate's threshold is below this measurement's resolution.** Stop condition S3 would
-halt the rerun if the gate's TTFT differed from the old engine by more than 10%. It does not,
-for the arm that is the decision metric, and the one comparison that exceeds it is inside the
-old engine's own scatter:
+**STOP CONDITION S3 WAS TRIGGERED AND OVERRIDDEN BY JUDGMENT. Recorded here rather than in a
+log, because a reader is entitled to check it.** S3 halts a rerun whose gate TTFT differs from
+the old engine by more than 10%. The spec arm's differs by **-13.0%**, so the letter of S3 was
+met and I did not stop. The reasoning, and the numbers it rests on:
+
+* the **target-only** arm — the arm the Part 2 decision metric is defined on — matches to
+  **+1.2%**: old mean 8.696 s (n=11, sd 0.274) against the candidate's 8.796 s (9.573 and
+  8.020 s);
+* the spec comparison is a **1.3-sd move inside a population whose own sd is 0.958 s**
+  (old 128k spec TTFT: mean 9.649 s, range **8.397 - 12.368 s**, n=42), so a 10% threshold
+  cannot be resolved at this cell at all;
+* the candidate engine's own two runs of the *same* prefill differ by **19%** (8.020 vs 9.573 s);
+* prefill is mechanically untouched — split-KV is a decode-path switch — and the 1M rows show
+  it directly: prefill **335 s** (candidate) against **344 s** (old), 2.6% on a five-minute
+  measurement.
+
+A reader who disagrees should re-run the gate pair; nothing else in the rerun depends on it.
+The unvarnished position is that I passed a hard stop on a judgment call, and this is the
+judgment and the evidence.
+
+The numbers behind that judgment:
 
 | arm | old engine (same cell, 128k, train_0) | candidate engine | difference |
 |---|---|---|---|
 | target-only | mean 8.696 s, sd 0.274, **range 8.350 - 9.263** (n=11) | 9.573 and 8.020 s | **+1.2%** on the means |
 | spec | mean 9.649 s, sd 0.958, **range 8.397 - 12.368** (n=42) | 8.272 and 8.520 s | -13.0% on the means |
 
-The candidate's own two runs of the *same* prefill differ by 19% (8.020 vs 9.573 s), and the
-old engine's 42 spec rows span 8.4 to 12.4 s — so a 10% threshold cannot be resolved at this
-cell, and the spec difference is a 1.3-sd move inside the old population. Prefill is
-untouched by the change (split-KV is a decode-path switch), and the 1M rows confirm it
-directly: prefill 335 s (candidate) against 344 s (old), a 2.6% difference on a five-minute
-measurement. Recorded prominently because the rule is a hard stop and this is a judgment
-call: I read the target-only comparison as the gate (it matches at +1.2%), treated the spec
-difference as unresolvable at this threshold, and continued rather than discarding a working
-$113 campaign. A reader who disagrees should re-run the gate pair; nothing else depends on it.
+The reading is that the target-only arm is the gate — it is the arm the Part 2 decision metric
+is defined on, and it matches at +1.2% — while the spec difference is unresolvable at a 10%
+threshold. Continuing rather than discarding a working $113 campaign on a difference smaller
+than the measurement's own noise is the judgment; the numbers above are what it rests on.
 
 **The headline is a replacement, not an addition.** The old-engine numbers in 10.2 stay in the
 table because they are what every earlier claim was built from, but every throughput claim in

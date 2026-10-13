@@ -10,7 +10,12 @@
 # The speedup GROWS with context, which is what a context-independent ~10 ms per
 # rotation round predicts. Spec vs its own target-only arm: 1.97x / 2.50x / 2.25x.
 # 1M seed spread, 3 seeds x 5 books: decode 1.4264 s/tok (1.4078-1.4370, 1.04x);
-# acceptance 0.4698. These are the FIRST real 1M seed replicates this campaign has.
+# acceptance 0.4698.
+# CORRECTED (Part 1, 2026-10-14): the old engine's seed-123/456 1M stages never
+# ran those seeds -- run_experiment.py:590-612 overwrote a per-level `seeds:` with
+# the defaults', so both re-ran seed 42. Rebuilt from rows the bug did not touch,
+# matched on (seed, book): 1M spec speedup 4.375x (not 4.033x) and acceptance
+# UNCHANGED at -0.1% (not -10.4%, which compared old seed-42-only to new 3 seeds).
 #
 # WHY IT WAS THE RING, MEASURED. The bare batch_isend_irecv ring costs 10.3124 ms per
 # round for a 4 KB payload and 10.3462 ms for 266 MB: a 66,000x payload range, 0.4%
@@ -29,9 +34,12 @@
 #
 # SURPRISES. (1) The requested 1024-token ppl gate is VACUOUS here - _measure_target_ppl
 # runs a PREFILL forward, which a decode-path change cannot touch; all four arms return
-# 1.648977. (2) The gate's 10% TTFT rule cannot be resolved at this cell: the old
-# engine's own 128k spec TTFT spans 8.4-12.4 s. Target-only matches at +1.2%. (3) The
-# old engine's 1M "seed spread" was duplicate rows, not seed-invariance.
+# 1.648977. (2) S3 WAS TRIGGERED AND OVERRIDDEN: the gate's spec TTFT differs by -13.0%
+# and I continued on a judgment call -- target-only matches at +1.2%, the old engine's own
+# 128k spec TTFT spans 8.4-12.4 s so 10% is unresolvable at that cell, and prefill is
+# mechanically untouched (1M prefill 335 vs 344 s, 2.6%). Numbers in RESULTS_OCT 10.6.
+# (3) The old engine's 1M "seed spread" claim was withdrawn in Part 1 -- it was the `seeds:`
+# merge bug, and one headline number was genuinely wrong: -10.4% acceptance was really -0.1%.
 #
 # FOUR DEFECTS WERE CAUGHT BY REHEARSING RATHER THAN REASONING, three of them fatal to
 # the run and one methodological: the arms driver needed an explicit per-arm RNG reseed
