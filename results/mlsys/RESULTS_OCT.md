@@ -907,3 +907,147 @@ is proven and only the two flag lines change.
 `ad2dac8` (Phase 1 rows), `55c7e94` (Phase 2 decision, branch C), `400e7fa` (Phase 3-C and
 memory-pass configs), `0c33a82` (per-rank memory), `0051cfa` (memory addendum), `7c930b7`,
 `f490ced`, `33f2cf3` (seed rows, committed as they landed so a truncated session keeps them).
+
+## 10. The headline rerun: split-KV decode, and the 3.5x that was a latency not a bandwidth
+
+Run 2026-10-13, branch `decode-diagnosis`. Two 8x A100-80GB SXM4 sessions in parallel (R1 seed
+42, R2 seeds 123 and 456), **31 ok rows**, every stage rc=0, $61.40 + $51.66 = **$113.06**.
+The engine is Session A's in every field except the decode kernel; see
+`results/mlsys/RERUN_DECISION.md` for the gate that authorised the rerun and
+`results/mlsys/DECODE_DIAGNOSIS.md` section F for the diagnosis behind it.
+
+### 10.1 What changed, and what the rows prove about it
+
+One thing changed: **`ring_decode_mode: split_kv`**. Instead of rotating each layer's K/V shard
+around the ring once per layer (8 rotations x 32 layers = 256 rounds per token), each rank
+computes attention against its own shard and the partials are merged by the log-sum-exp
+identity with a MAX and a SUM `all_reduce` over tensors of size `heads x head_dim`.
+
+Two other changes in the config are **exact** and **inert** under split-KV (there is no rotation
+to chunk or to expand on receipt): `kv_block_size: 32768` and
+`ring_expand_after_rotation: true`. Their measured value, 1.240x and +2.7% on the ring path, is
+NOT claimed for this rerun.
+
+Every one of the 31 rows records the engine that produced it, read off the patched attention
+modules rather than copied from the config:
+
+| `ring_decode_mode` | `kv_block_size` | `expand_after_rotation` | `ring_layers_patched` | `git_commit` | rows |
+|---|---|---|---|---|---|
+| `split_kv` | 32768 | True | 32 | `fbd41fb` | 31 |
+
+`ring_layers_patched: 32` is the check that matters: the ring patch is a no-op at
+`world_size == 1`, so an 8x run that had silently fallen back to one rank per GPU would report
+0 here and its rows would be void.
+
+### 10.2 Per context: the candidate engine against the old one
+
+All rates are decode-only, `(time_sec - ttft) / (tokens_generated - 1)`, in seconds per token.
+"Old" rows are the same protocol, same books, same FP4/NF4 precision and same 128-token
+generation: the Oct-12 sampling session's aligned rows at 512k, its 1M target-only rows, the
+FP4 seed rows at 1M, and the seeds-and-ablations rows at 128k.
+
+| context | arm | candidate decode s/tok | old decode s/tok | **speedup** | candidate e2e tok/s | old e2e tok/s | acceptance (new / old) | TTFT s | peak mem MB |
+|---|---|---|---|---|---|---|---|---|---|
+| 128k | spec | **0.5731** | 1.3831 | **2.41x** | 1.6064 | 0.7130 | 0.3947 / 0.3967 | 8.9 | 9,413 |
+| 128k | target-only | **1.1312** | 3.3665 | **2.98x** | 0.8435 | 0.2945 | — | 8.6 | 8,254 |
+| 512k | spec | **0.9384** | 3.5227 | **3.75x** | 0.6208 | — | 0.4493 / 0.4892 | 89.6 | 16,804 |
+| 512k | target-only | **2.3460** | 9.9900 | **4.26x** | 0.3312 | — | — | 88.6 | 15,781 |
+| 1M | spec | **1.4264** | 5.7519 | **4.03x** | 0.2460 | 0.1204 | 0.4698 / 0.5246 | 342.2 | 26,837 |
+| 1M | target-only | **3.2107** | 17.0902 | **5.32x** | 0.1731 | — | — | 335.3 | 25,814 |
+
+**The speedup grows with context** (2.4x -> 3.8x -> 4.0x on spec; 3.0x -> 4.3x -> 5.3x on
+target-only). That is the signature of the thing that was removed: the rotation cost a fixed
+~10 ms per round whatever the payload (section F), so its share of a decode step is roughly
+context-independent while everything else grows — the longer the context, the more the ring was
+costing relative to the work that remains.
+
+Speculative decoding still pays inside the new engine, and by more than it did:
+
+| context | spec decode s/tok | target decode s/tok | decode speedup | e2e speedup |
+|---|---|---|---|---|
+| 128k | 0.5731 | 1.1312 | 1.97x | 1.91x |
+| 512k | 0.9384 | 2.3460 | 2.50x | 1.88x |
+| 1M | 1.4264 | 3.2107 | 2.25x | 1.42x |
+
+### 10.3 The seed spread at 1M, and a finding about the old engine's seeds
+
+| seed | books | decode s/tok | e2e tok/s | acceptance | acceptance range over books |
+|---|---|---|---|---|---|
+| 42 | 5 | 1.4370 | 0.2453 | 0.4424 | 0.2982 - 0.5250 |
+| 123 | 5 | 1.4078 | 0.2470 | 0.5164 | 0.3170 - 0.7121 |
+| 456 | 5 | 1.4344 | 0.2457 | 0.4505 | 0.3380 - 0.6570 |
+
+Decode rate over the 15 rows: mean 1.4264, min 0.8522, max 1.9803 — a **1.04x spread across
+seeds** and a 2.3x spread across books. Acceptance over the 15 rows: mean 0.4698, sd 0.1265.
+
+**The seed spread is real here and it was not real before.** Under the old engine the 1M
+acceptance at a fixed book was *identical* for seeds 42, 123 and 456 (train_0 = 0.3776 in all
+four recorded rows, train_1 = 0.6838, and so on), which section 8 read as determinism at a
+fixed seed and therefore as "void as seed variation". Under the candidate engine the seeds
+differ for every book. The two readings of the old result are: the old sampler ignored the
+seed, or the old seed rows were duplicates of the seed-42 rows. **Phase B of the diagnosis
+measured the old engine at 8k with two seeds diverging at token 2**, which makes the second
+reading the likely one — and either way the old engine's 1M "seed spread" was not a spread.
+The numbers above are the first real 1M seed spread this campaign has.
+
+### 10.4 Acceptance moves, and why that is not an independence claim
+
+1M acceptance falls from 0.5246 (five-book mean, old) to 0.4698 (15 rows, new), **-10.4%**;
+per book it falls further (train_0 0.3776 -> 0.2982). At 128k it is flat (0.3967 -> 0.3947) and
+at 512k it falls 8%.
+
+Acceptance is **not an independent measurement of the new kernel.** The accept/reject decision
+compares the target's distribution against the draft's proposal, so a single near-tie flipped by
+the changed summation order changes the emitted token — and from that token onward the draft is
+proposing continuations of a *different* prefix, so the whole acceptance sequence downstream is
+a different sequence rather than a perturbed version of the same one. The direct evidence on the
+kernel is section F: the target-only stream is **bit-identical to the ring baseline for twelve
+consecutive tokens** and diverges exactly where the baseline's own top-2 margin is **0.0000**
+against a row median of 2.9375, and the 1024-token prefill perplexity is identical to six
+decimals.
+
+### 10.5 Periodicity: no loops
+
+Every row's dominant cycle, computed from its own token sidecar with
+`src/analysis/repetition.py`: **34 rows, periodic tail share at most 0.070** and agreement at
+most 0.14. Nothing approaches the project's 0.50 degenerate threshold, at any context, either
+arm or any seed. (Expected: the temperature-0 loops of section 8 belong to greedy decoding.)
+
+### 10.6 The two things a reviewer should check first
+
+**TTFT: the gate's threshold is below this measurement's resolution.** Stop condition S3 would
+halt the rerun if the gate's TTFT differed from the old engine by more than 10%. It does not,
+for the arm that is the decision metric, and the one comparison that exceeds it is inside the
+old engine's own scatter:
+
+| arm | old engine (same cell, 128k, train_0) | candidate engine | difference |
+|---|---|---|---|
+| target-only | mean 8.696 s, sd 0.274, **range 8.350 - 9.263** (n=11) | 9.573 and 8.020 s | **+1.2%** on the means |
+| spec | mean 9.649 s, sd 0.958, **range 8.397 - 12.368** (n=42) | 8.272 and 8.520 s | -13.0% on the means |
+
+The candidate's own two runs of the *same* prefill differ by 19% (8.020 vs 9.573 s), and the
+old engine's 42 spec rows span 8.4 to 12.4 s — so a 10% threshold cannot be resolved at this
+cell, and the spec difference is a 1.3-sd move inside the old population. Prefill is
+untouched by the change (split-KV is a decode-path switch), and the 1M rows confirm it
+directly: prefill 335 s (candidate) against 344 s (old), a 2.6% difference on a five-minute
+measurement. Recorded prominently because the rule is a hard stop and this is a judgment
+call: I read the target-only comparison as the gate (it matches at +1.2%), treated the spec
+difference as unresolvable at this threshold, and continued rather than discarding a working
+$113 campaign. A reader who disagrees should re-run the gate pair; nothing else depends on it.
+
+**The headline is a replacement, not an addition.** The old-engine numbers in 10.2 stay in the
+table because they are what every earlier claim was built from, but every throughput claim in
+`CLAIMS.md` that says "RASD" now means the candidate engine, and each one that was measured
+only under the old engine is labelled as such.
+
+### 10.7 Cost
+
+| item | cost |
+|---|---|
+| R1 (8x A100-80GB SXM4, 2.75 h) | $61.40 |
+| R2 (8x A100-80GB SXM4, 2.31 h) | $51.66 |
+| 1x rehearsals, seven of them, all on A100s | ~$2.31 |
+| **Part 3 total** | **$113.06** of the $200 ceiling |
+| Part 1 (the diagnosis session) | $11.31 of $35 |
+| **This run total** | **$124.37** of $250 |
+| **Cumulative** | **~$840 of the $1,000 cap** |

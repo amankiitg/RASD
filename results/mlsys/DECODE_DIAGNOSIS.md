@@ -753,3 +753,85 @@ arm carry warm-up (allocator growth, NCCL channel setup) and the published 128-t
 amortise it. The published 128k baseline decodes at 3.58 s/token over 128 tokens; this
 session's 16-token baseline is 3.56 s/token, i.e. the arms are comparable to each other and
 the ratios between them are if anything conservative.
+
+---
+
+## G. The decision and the rerun
+
+### G.1 The decision (Part 2), committed before anything was launched
+
+`results/mlsys/RERUN_DECISION.md`, commit `bff25d6`.
+
+| quantity | value |
+|---|---|
+| baseline `ring2048` target-only decode s/tok at 128k | 3.5637 |
+| candidate `splitkv` target-only decode s/tok at 128k | 1.0011 |
+| **speedup = baseline / candidate** | **3.560x** |
+| gate | >= 1.50x — **PASS**, so Part 3 ran |
+
+The candidate engine config, exactly: `ring_decode_mode: split_kv`, `kv_block_size: 32768`,
+`ring_expand_after_rotation: true`, nothing else changed from Session A. The last two are
+**inert** under split-KV — there is no rotation to chunk or to expand on receipt — and their
+measured 1.240x and +2.7% belong to the ring path, which the candidate does not use. They are
+kept because they are exact and free, and because the fallback if split-KV is ever withdrawn is
+then a better engine than Session A's.
+
+The `split_kv` correctness gate, all three conditions: the 6 unit tests pass; the 128k
+divergence is at a **near-tie** (target-only and greedy both reproduce the ring bit-for-bit for
+twelve tokens, then diverge where the baseline's own top-2 margin is **0.0000** against a row
+median of 2.9375; spec diverges at index 1 with a margin of 0.875 against a median of 0.9375);
+and the requested 1024-token perplexity is within 1% — **vacuously so**, because
+`_measure_target_ppl` runs a prefill forward that a decode-path change cannot reach. All four
+arms return **1.648977**. That caveat was recorded in the decision document before the rerun,
+and is repeated in F.4, so the ppl number is not read as stronger than it is.
+
+### G.2 The rerun (Part 3)
+
+Two 8x A100-80GB SXM4 sessions in parallel, **31 ok rows**, all stages rc=0, **$113.06**. R1
+(seed 42) ran the gate pair at 128k, then 1M spec on five books, 1M target-only on two, 512k
+aligned (spec 3 / target 1) and 128k aligned (spec 3 / target 1). R2 (seeds 123 and 456) ran 1M
+spec on five books for each seed. Every row records `split_kv` / 32768 / expand=true /
+`ring_layers_patched: 32` / its commit.
+
+| context | arm | candidate | old | speedup |
+|---|---|---|---|---|
+| 128k | spec | 0.5731 | 1.3831 | **2.41x** |
+| 128k | target-only | 1.1312 | 3.3665 | **2.98x** |
+| 512k | spec | 0.9384 | 3.5227 | **3.75x** |
+| 512k | target-only | 2.3460 | 9.9900 | **4.26x** |
+| 1M | spec | 1.4264 | 5.7519 | **4.03x** |
+| 1M | target-only | 3.2107 | 17.0902 | **5.32x** |
+
+**The speedup grows with context**, which is the prediction F.3 makes and did not test: the
+rotation cost a fixed ~10 ms per round, so its share of a step shrinks with context while the
+work that remains grows — the longer the context, the more the ring was costing relative to
+what is left. The figures, the acceptance discussion, the seed-spread finding, the periodicity
+check and the TTFT caveat are in `RESULTS_OCT.md` section 10.
+
+### G.3 What this run cost, and what it leaves open
+
+Part 1 $11.31 of $35, Part 3 $113.06 of $200, ~$2.31 of 1x rehearsals: **$126.68 of the $250
+ceiling**, cumulative ~$840 of the $1,000 cap. 0 instances, no timers, both instances
+terminated in the API.
+
+Four defects were caught by rehearsing rather than by reasoning, and three of them would have
+cost the run (F.1 and F.2, plus the pod-side `git_commit`): the arms driver needed an explicit
+per-arm RNG reseed, `nohup VAR=val` is not a command line, the parameter contract was
+unverifiable in both directions at once, and the pod has no `.git`. The general lesson worth
+keeping is defect 4's: **any in-process A/B of this engine through a sampling path needs an
+explicit reseed**, because `torch.manual_seed` runs once per engine and a comparison that skips
+it has arm order confounded with the treatment.
+
+Left open, in the order I would take them:
+
+1. **The 512k and 1M target-only denominators are thin** (1 and 2 rows). The spec arms have 3
+   and 15. A reviewer who wants the 5.32x at 1M on five books needs more target-only rows.
+2. **Acceptance behaviour under the new kernel is not characterised.** It falls 10.4% at 1M and
+   is flat at 128k. The explanation offered (a flipped near-tie cascading through the draft's
+   proposals) is consistent with every measurement here but was not tested directly — the test
+   would be to hold the emitted prefix fixed and re-measure the acceptance decision.
+3. **The 19.3% elementwise term from section C is now the largest remaining non-attention
+   cost**, and it was never attributed. With the rotation gone it is a much bigger share of
+   what is left.
+4. **The 1M prefill (335 s) now dominates a 1M row** — 570 s total of which 335 s is prefill.
+   The decode work that this run optimised is no longer the long pole at 1M.

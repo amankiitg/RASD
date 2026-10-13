@@ -1,3 +1,50 @@
+################################################################################
+# *** THE FIX SHIPS: SPLIT-KV DECODE, 2.4-5.3x, AND THE SPEEDUP GROWS WITH CONTEXT. ***
+# 2026-10-13T21:05Z. Branch decode-diagnosis. Two 8x A100 sessions, 31 rows, $113.06.
+################################################################################
+# The decode step was the ring's per-token rotation. Removing it (ring_decode_mode:
+# split_kv: no rotation, each rank attends to its own shard, partials merged with a MAX
+# and a SUM all_reduce) is worth, decode-only and against the same protocol:
+#      spec  2.41x (128k)   3.75x (512k)   4.03x (1M)
+#      target-only 2.98x    4.26x          5.32x
+# The speedup GROWS with context, which is what a context-independent ~10 ms per
+# rotation round predicts. Spec vs its own target-only arm: 1.97x / 2.50x / 2.25x.
+# 1M seed spread, 3 seeds x 5 books: decode 1.4264 s/tok (1.4078-1.4370, 1.04x);
+# acceptance 0.4698. These are the FIRST real 1M seed replicates this campaign has.
+#
+# WHY IT WAS THE RING, MEASURED. The bare batch_isend_irecv ring costs 10.3124 ms per
+# round for a 4 KB payload and 10.3462 ms for 266 MB: a 66,000x payload range, 0.4%
+# variation, worst rank spread 0.056 ms over eight ranks. So the round is LATENCY, not
+# bandwidth, and the ~25 GB/s it implies is not a bandwidth limit at all. NCCL's own
+# log says P2P/CUMEM/read on a full NV12 NVLink mesh, all 56 channels: no env fix exists.
+# Consequence: repeat_kv-after-rotation, which cuts the wire payload 4x, is worth +2.7%.
+# Only REMOVING ROUNDS pays, which is what split-KV does.
+#
+# CORRECTNESS. The split-KV target-only stream is BIT-IDENTICAL to the ring baseline for
+# twelve consecutive tokens and diverges where the baseline's own top-2 margin is 0.0000
+# (row median 2.9375); greedy likewise; prefill ppl identical to six decimals; 6 unit
+# tests plus a two-rank faithful emulation of the collectives. The 1M acceptance is
+# 10.4% lower, which is NOT independent evidence: one flipped near-tie changes the
+# emitted prefix and every later draft proposal with it.
+#
+# SURPRISES. (1) The requested 1024-token ppl gate is VACUOUS here - _measure_target_ppl
+# runs a PREFILL forward, which a decode-path change cannot touch; all four arms return
+# 1.648977. (2) The gate's 10% TTFT rule cannot be resolved at this cell: the old
+# engine's own 128k spec TTFT spans 8.4-12.4 s. Target-only matches at +1.2%. (3) The
+# old engine's 1M "seed spread" was duplicate rows, not seed-invariance.
+#
+# FOUR DEFECTS WERE CAUGHT BY REHEARSING RATHER THAN REASONING, three of them fatal to
+# the run and one methodological: the arms driver needed an explicit per-arm RNG reseed
+# (torch.manual_seed runs once per engine, so one-load A/B confounds ARM ORDER with the
+# treatment); `nohup VAR=val` is not a command; the parameter contract was unverifiable
+# in both directions at once; and the pod has no .git, so 31 rows would have recorded
+# git_commit: unknown and the rerun would have been void at $80.
+#
+# COST: Part 1 $11.31 (of $35) + Part 3 $113.06 (of $200) + ~$2.31 of 1x rehearsals =
+# $126.68 this run. Cumulative ~$840 of the $1,000 cap. 0 instances, no timers.
+#
+################################################################################
+
 MLSys CAMPAIGN — MORNING REPORT
 
 ################################################################################
@@ -5039,3 +5086,75 @@ states what the redo must show: 1M vs 128k perplexity per document over the SAME
 #   ### progress 2026-10-13T04:45:55Z
 #   - sanity: rows=2 ok=2 median_row_s=232.1 max_row_s=232.1 tps=0.445 accept=0.1900
 #   - measured row time total 337.3s = 0.09h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T14:09:34Z
+#   ### progress 2026-10-13T14:07:18Z
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 235.9s = 0.07h over 2 rows
+#   ### progress 2026-10-13T14:07:18Z
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 235.9s = 0.07h over 2 rows
+#   ### progress 2026-10-13T14:09:25Z
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 325.2s = 0.09h over 3 rows
+#   ### progress 2026-10-13T14:09:25Z
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 325.2s = 0.09h over 3 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T14:13:35Z
+#   ### progress 2026-10-13T14:09:25Z
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 325.2s = 0.09h over 3 rows
+#   ### progress 2026-10-13T14:12:46Z
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - RR_GATE_128K_TARGET: rows=1 ok=1 median_row_s=166.4 max_row_s=166.4 tps=0.770 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 491.7s = 0.14h over 4 rows
+#   ### progress 2026-10-13T14:12:46Z
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - RR_GATE_128K_TARGET: rows=1 ok=1 median_row_s=166.4 max_row_s=166.4 tps=0.770 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 491.7s = 0.14h over 4 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T14:37:23Z
+#   ### progress 2026-10-13T14:35:01Z
+#   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
+#   - measured row time total 236.1s = 0.07h over 2 rows
+#   ### progress 2026-10-13T14:35:01Z
+#   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
+#   - measured row time total 236.1s = 0.07h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T15:45:01Z
+#   - RR_1M_TARGET: rows=2 ok=2 median_row_s=796.0 max_row_s=796.0 tps=0.175 accept=0.0000
+#   - RR_512K_SPEC: rows=3 ok=3 median_row_s=197.6 max_row_s=242.1 tps=0.623 accept=0.4493
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - RR_GATE_128K_TARGET: rows=1 ok=1 median_row_s=166.4 max_row_s=166.4 tps=0.770 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 5224.2s = 1.45h over 14 rows
+#   ### progress 2026-10-13T15:42:18Z
+#   - RR_1M_SPEC: rows=5 ok=5 median_row_s=518.7 max_row_s=570.0 tps=0.244 accept=0.4424
+#   - RR_1M_TARGET: rows=2 ok=2 median_row_s=796.0 max_row_s=796.0 tps=0.175 accept=0.0000
+#   - RR_512K_SPEC: rows=3 ok=3 median_row_s=197.6 max_row_s=242.1 tps=0.623 accept=0.4493
+#   - RR_GATE_128K_SPEC: rows=1 ok=1 median_row_s=89.3 max_row_s=89.3 tps=1.430 accept=0.2931
+#   - RR_GATE_128K_TARGET: rows=1 ok=1 median_row_s=166.4 max_row_s=166.4 tps=0.770 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=144.7 max_row_s=144.7 tps=1.140 accept=0.1466
+#   - measured row time total 5224.2s = 1.45h over 14 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T16:26:40Z
+#   ### progress 2026-10-13T14:35:01Z
+#   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
+#   - measured row time total 236.1s = 0.07h over 2 rows
+#   ### progress 2026-10-13T14:35:01Z
+#   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
+#   - measured row time total 236.1s = 0.07h over 2 rows
+#   ### progress 2026-10-13T16:13:43Z
+#   - RR_SEEDS_1M_SPEC: rows=10 ok=10 median_row_s=528.7 max_row_s=592.4 tps=0.246 accept=0.4835
+#   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
+#   - measured row time total 5466.1s = 1.52h over 12 rows
+#   ### progress 2026-10-13T16:13:44Z
+#   - RR_SEEDS_1M_SPEC: rows=10 ok=10 median_row_s=528.7 max_row_s=592.4 tps=0.246 accept=0.4835
+#   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
+#   - measured row time total 5466.1s = 1.52h over 12 rows
