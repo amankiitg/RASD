@@ -1,6 +1,60 @@
 MLSys CAMPAIGN — MORNING REPORT
 
 ################################################################################
+# *** QUANT ABLATION -> BRANCH C -> SEED SPREAD. 2026-10-13T02:20Z. ***
+# 0 INSTANCES, no driver, no poller, no timer (API + ps, after the last terminate).
+#
+# 1. QUANTIZATION IS NOT THE DECODE BOTTLENECK AT 128k. One session, one book, one
+#    setting apart, 8/8 rows ok. Target-only decode: CONTROL (fp4/nf4) 3.6684 s/tok;
+#    W_OFF 1.017x; KV_OFF 1.103x; BOTH_OFF 1.113x. So turning BOTH quantizations off
+#    buys 11.3% of a decode token, and the FP4 weights alone 1.7% -- against the
+#    87-98% of a decode step that stage b attributed to local compute. The per-step
+#    cost is attention + Python + launches, NOT the FP4/NF4 round-trip, which is the
+#    opposite of what the ablation was launched to find.
+#    Every row's precision was verified from its sidecar (read off the loaded model):
+#    fp4/nf4, bf16/nf4, fp4/bf16, bf16/bf16 -- exactly what each arm asked for.
+#    Spec arms INVERT the target ordering on this book: KV_OFF best (acc 0.4096,
+#    1.420x), BOTH_OFF worst (acc 0.2422, 1.030x). n=1 book: recorded, not generalized.
+#
+# 2. DECISION = BRANCH C (QUANT_DECISION.md, committed before anything was launched).
+#    BOTH_OFF was BEST at 1.113x, below the 1.5x threshold, so the bf16 campaign was
+#    NOT run. The 1M memory gate would have passed (~37-41 GB projected per rank).
+#    Consequence stated up front: no bf16 row exists, so the vLLM column stays
+#    bf16-vs-FP4 and is NOT precision-matched anywhere in this document.
+#
+# 3. THE SEED SPREAD AT 1M, the campaign's first genuine replicates (the seeds stage
+#    had proved the per-level seed never reached the sampler):
+#      seed 42  n=5  acc 0.5246  dec 5.7725 s/tok  2.37x
+#      seed 123 n=5  acc 0.4656  dec 6.1598 s/tok  2.26x
+#      seed 456 n=3  acc 0.4466  dec 6.3323 s/tok  2.22x
+#    Matched on the three shared books: 0.5621 / 0.4960 / 0.4466, a range of 0.1155
+#    = 23.0% of the three-seed mean. Seed 123 leads on ONE of the three books, so this
+#    is per-row sampling variance, not a seed constant. 1M peak 26837 MB rank 0.
+#
+# 4. PER-RANK MEMORY at 128k: CONTROL has all eight ranks, allocated AND reserved
+#    (rank0 8256/8642, ranks1-7 8503/9012 MB), and its rank-0 traced peak equals the
+#    CSV column exactly. The bf16 arms have rank-0 allocated only (W_OFF 17824/19681,
+#    KV_OFF 13159/17633, BOTH_OFF 22727/27207): the memory pass's timer was sized to
+#    the work instead of work+15 min and Phase 1's ceiling then had $4 left, so rule
+#    "drop lower-priority stages" applied. The killed BOTH_OFF trace is quarantined as
+#    a prefill-only lower bound.
+#
+# 5. NOT RUN, with reasons: the bf16 campaign (branch C); seed 456 books 2204/2768
+#    (the 201-min ceiling-capped timer fired mid-row-4; 8 of 10 planned rows exist);
+#    per-rank memory for the three bf16/both arms. The bf16 PATH is nevertheless
+#    proven: the rehearsal loaded bf16 weights + bf16 KV and 12/12 rows recorded it.
+#
+# SPEND, this run: Phase 0 rehearsals $1.25 (2 attempts that never got a card cost
+#   $0.00, and the misconfigured nproc-8 launch $0.00 -- its VM never booted);
+#   Phase 1 $26.23 + memory addendum $12.29 = $38.52 of $45; Phase 3-C $69.82 of $75.
+#   RUN TOTAL $109.59. CUMULATIVE ~$647 of the $850 cap raised for this run.
+#
+# ARTIFACTS: RESULTS_OCT.md 9 (ablation, memory, seeds, what did not run);
+#   QUANT_DECISION.md (Phase 0 pass, Phase 1 numbers, the branch, the memory gap);
+#   evidence trees committed: quant_ablation/, quant_memory/ (+killed_run/), fp4_seeds/.
+################################################################################
+
+################################################################################
 # *** SEEDS + ABLATIONS SUMMARY — 2026-10-12T21:10Z. NO DRIVER IS RUNNING. ***
 # 0 INSTANCES, no driver, no poller, no timer (ps + the API at 21:05Z).
 #
@@ -4646,3 +4700,139 @@ states what the redo must show: 1M vs 128k perplexity per document over the SAME
 #   - SA_TEMP_1_0_128K_SPEC: rows=5 ok=5 median_row_s=133.4 max_row_s=143.2 tps=0.974 accept=0.7369
 #   - sanity: rows=2 ok=2 median_row_s=244.1 max_row_s=244.1 tps=0.430 accept=0.1900
 #   - measured row time total 16924.6s = 4.70h over 43 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T21:37:23Z
+#   ### progress 2026-10-12T21:37:14Z
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.245 accept=0.0625
+#   - measured row time total 3.8s = 0.00h over 2 rows
+#   ### progress 2026-10-12T21:37:14Z
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.245 accept=0.0625
+#   - measured row time total 3.8s = 0.00h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T21:39:28Z
+#   ### progress 2026-10-12T21:38:07Z
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=8.5 max_row_s=8.5 tps=5.855 accept=0.1009
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.245 accept=0.0625
+#   - measured row time total 20.2s = 0.01h over 4 rows
+#   ### progress 2026-10-12T21:38:49Z
+#   - SAQ_BOTH_OFF: rows=2 ok=2 median_row_s=5.4 max_row_s=5.4 tps=13.380 accept=0.0914
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=8.5 max_row_s=8.5 tps=5.855 accept=0.1009
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.245 accept=0.0625
+#   - measured row time total 28.3s = 0.01h over 6 rows
+#   ### progress 2026-10-12T21:38:49Z
+#   - SAQ_BOTH_OFF: rows=2 ok=2 median_row_s=5.4 max_row_s=5.4 tps=13.380 accept=0.0914
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=8.5 max_row_s=8.5 tps=5.855 accept=0.1009
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.245 accept=0.0625
+#   - measured row time total 28.3s = 0.01h over 6 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T21:57:09Z
+#   ### progress 2026-10-12T21:56:43Z
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.295 accept=0.0625
+#   - measured row time total 3.7s = 0.00h over 2 rows
+#   ### progress 2026-10-12T21:56:43Z
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.295 accept=0.0625
+#   - measured row time total 3.7s = 0.00h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T21:59:13Z
+#   - BF16_512K_TARGET: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=17.950 accept=0.0000
+#   - BF16_GATE_128K_SPEC: rows=1 ok=1 median_row_s=5.3 max_row_s=5.3 tps=8.970 accept=0.1827
+#   - BF16_GATE_128K_TARGET: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=17.970 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.295 accept=0.0625
+#   - measured row time total 28.0s = 0.01h over 8 rows
+#   ### progress 2026-10-12T21:58:52Z
+#   - BF16_1M_SPEC: rows=1 ok=1 median_row_s=5.4 max_row_s=5.4 tps=8.830 accept=0.1827
+#   - BF16_1M_TARGET: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=17.770 accept=0.0000
+#   - BF16_512K_SPEC: rows=1 ok=1 median_row_s=5.4 max_row_s=5.4 tps=8.900 accept=0.1827
+#   - BF16_512K_TARGET: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=17.950 accept=0.0000
+#   - BF16_GATE_128K_SPEC: rows=1 ok=1 median_row_s=5.3 max_row_s=5.3 tps=8.970 accept=0.1827
+#   - BF16_GATE_128K_TARGET: rows=1 ok=1 median_row_s=2.7 max_row_s=2.7 tps=17.970 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=1.9 max_row_s=1.9 tps=4.295 accept=0.0625
+#   - measured row time total 28.0s = 0.01h over 8 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T22:05:12Z
+#   ### progress 2026-10-12T22:02:51Z
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 351.3s = 0.10h over 2 rows
+#   ### progress 2026-10-12T22:02:51Z
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 351.3s = 0.10h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T22:20:16Z
+#   ### progress 2026-10-12T22:02:51Z
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 351.3s = 0.10h over 2 rows
+#   ### progress 2026-10-12T22:02:51Z
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 351.3s = 0.10h over 2 rows
+#   ### progress 2026-10-12T22:16:09Z
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 1077.3s = 0.30h over 4 rows
+#   ### progress 2026-10-12T22:16:09Z
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 1077.3s = 0.30h over 4 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T22:30:18Z
+#   ### progress 2026-10-12T22:16:09Z
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 1077.3s = 0.30h over 4 rows
+#   ### progress 2026-10-12T22:28:30Z
+#   - SAQ_BOTH_OFF: rows=2 ok=2 median_row_s=427.1 max_row_s=427.1 tps=0.410 accept=0.1211
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 1751.1s = 0.49h over 6 rows
+#   ### progress 2026-10-12T22:28:30Z
+#   - SAQ_BOTH_OFF: rows=2 ok=2 median_row_s=427.1 max_row_s=427.1 tps=0.410 accept=0.1211
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 1751.1s = 0.49h over 6 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T22:45:21Z
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 1751.1s = 0.49h over 6 rows
+#   ### progress 2026-10-12T22:41:17Z
+#   - SAQ_BOTH_OFF: rows=2 ok=2 median_row_s=427.1 max_row_s=427.1 tps=0.410 accept=0.1211
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - SAQ_W_OFF: rows=2 ok=2 median_row_s=468.5 max_row_s=468.5 tps=0.410 accept=0.1585
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 2453.6s = 0.68h over 8 rows
+#   ### progress 2026-10-12T22:41:17Z
+#   - SAQ_BOTH_OFF: rows=2 ok=2 median_row_s=427.1 max_row_s=427.1 tps=0.410 accept=0.1211
+#   - SAQ_CONTROL: rows=2 ok=2 median_row_s=474.5 max_row_s=474.5 tps=0.390 accept=0.1356
+#   - SAQ_W_OFF: rows=2 ok=2 median_row_s=468.5 max_row_s=468.5 tps=0.410 accept=0.1585
+#   - sanity: rows=2 ok=2 median_row_s=243.9 max_row_s=243.9 tps=0.430 accept=0.1900
+#   - measured row time total 2453.6s = 0.68h over 8 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T23:15:03Z
+#   ### progress 2026-10-12T23:13:30Z
+#   - sanity: rows=2 ok=2 median_row_s=233.7 max_row_s=233.7 tps=0.430 accept=0.1900
+#   - measured row time total 342.7s = 0.10h over 2 rows
+#   ### progress 2026-10-12T23:13:30Z
+#   - sanity: rows=2 ok=2 median_row_s=233.7 max_row_s=233.7 tps=0.430 accept=0.1900
+#   - measured row time total 342.7s = 0.10h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T23:16:11Z
+#   ### progress 2026-10-12T23:13:39Z
+#   - sanity: rows=2 ok=2 median_row_s=247.3 max_row_s=247.3 tps=0.445 accept=0.1900
+#   - measured row time total 348.8s = 0.10h over 2 rows
+#   ### progress 2026-10-12T23:13:39Z
+#   - sanity: rows=2 ok=2 median_row_s=247.3 max_row_s=247.3 tps=0.445 accept=0.1900
+#   - measured row time total 348.8s = 0.10h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-12T23:24:05Z
+#   ### progress 2026-10-12T23:13:30Z
+#   - sanity: rows=2 ok=2 median_row_s=233.7 max_row_s=233.7 tps=0.430 accept=0.1900
+#   - measured row time total 342.7s = 0.10h over 2 rows
+#   ### progress 2026-10-12T23:13:30Z
+#   - sanity: rows=2 ok=2 median_row_s=233.7 max_row_s=233.7 tps=0.430 accept=0.1900
+#   - measured row time total 342.7s = 0.10h over 2 rows
+#   ### progress 2026-10-12T23:22:10Z
+#   - SAQ_CONTROL: rows=1 ok=1 median_row_s=486.2 max_row_s=486.2 tps=0.260 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=233.7 max_row_s=233.7 tps=0.430 accept=0.1900
+#   - measured row time total 828.9s = 0.23h over 3 rows
+#   ### progress 2026-10-12T23:22:10Z
+#   - SAQ_CONTROL: rows=1 ok=1 median_row_s=486.2 max_row_s=486.2 tps=0.260 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=233.7 max_row_s=233.7 tps=0.430 accept=0.1900
+#   - measured row time total 828.9s = 0.23h over 3 rows
