@@ -795,8 +795,8 @@ spec on five books for each seed. Every row records `split_kv` / 32768 / expand=
 
 | context | arm | candidate | old | speedup |
 |---|---|---|---|---|
-| 128k | spec | 0.5731 | 1.3831 | **2.41x** |
-| 128k | target-only | 1.1312 | 3.3665 | **2.98x** |
+| 128k | spec | 0.5731 | 1.3831 | **2.41x** (2.80x like-for-like, section 10.2a) |
+| 128k | target-only | 1.1312 | 3.3665 | **2.98x** (3.30x like-for-like) |
 | 512k | spec | 0.9384 | 3.5227 | **3.75x** |
 | 512k | target-only | 2.3460 | 9.9900 | **4.26x** |
 | 1M | spec | 1.4264 | 5.7519 | **4.03x** |

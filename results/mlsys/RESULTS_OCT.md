@@ -969,6 +969,27 @@ Speculative decoding still pays inside the new engine, and by more than it did:
 | 512k | 0.9384 | 2.3460 | 2.50x | 1.88x |
 | 1M | 1.4264 | 3.2107 | 2.25x | 1.42x |
 
+### 10.2a The 128k row, like-for-like
+
+The 128k row above pools **different book mixes on the two sides**: the candidate's six rows
+are four runs on `pg19_train_0` (the gate pair and the sanity pair) plus one each on
+`train_1` and `915`, while the old engine's thirteen spread over five books. `train_0` is the
+slowest book at 128k, so the pooled comparison is weighted against the candidate and
+**understates** it. Restricted to the same three books on both sides, on the aligned 128k pool
+(`SAMP_ALIGNED_128K_*` on the old side, `RR_128K_*` on the new):
+
+| book | old spec | candidate spec | speedup | old target-only | candidate target-only | speedup |
+|---|---|---|---|---|---|---|
+| pg19_train_0 | 1.8320 | 0.6861 | **2.67x** | 3.4925 | 1.0596 | **3.30x** |
+| pg19_train_1 | 1.4573 | 0.4959 | **2.94x** | — | — | — |
+| pg19_train_915 | 1.1443 | 0.4004 | **2.86x** | — | — | — |
+| **mean** | 1.4779 | 0.5275 | **2.80x** | 3.4925 | 1.0596 | **3.30x** |
+
+So the aligned 128k figures are **2.80x (spec)** and **3.30x (target-only)**, against the
+pooled 2.41x and 2.98x. The other rows are already like-for-like in their book sets: 512k uses
+books 0/1/915 on both sides, and 1M uses all five books with two old seeds and three candidate
+seeds. Report **2.80x** for 128k if a single number is needed.
+
 ### 10.3 The seed spread at 1M, and a finding about the old engine's seeds
 
 | seed | books | decode s/tok | e2e tok/s | acceptance | acceptance range over books |
