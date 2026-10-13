@@ -56,6 +56,24 @@ case "$MODE" in
     NPROC=8
     TIMER_MIN=170
     ;;
+  topup)
+    # PART 2. The three stages of configs/mlsys_rerun_topup.yml, in priority order: the
+    # provenance gate at 128k, then the three missing 1M target-only books, then the two
+    # missing 512k aligned ones. Projected from the rerun's measured rates:
+    #   gate + sanity pair ~4 min, 1M 3 x 12.4 min, 512k 2 x 6.5 min = ~54 min of GPU work
+    # behind ~10 min of boot and provisioning, so 110 min = work x 1.5 and $41 of the $50
+    # ceiling stated in the brief.
+    SESSION_TYPE=gpu_8x_a100_80gb_sxm4
+    SESSION_OUT=results/mlsys/rerun_topup
+    SESSION_TAG=rerun_topup
+    SESSION_CFG=configs/mlsys_rerun_topup.yml
+    SESSION_SANITY_CFG=configs/mlsys_rerun_sanity.yml
+    SESSION_CHECK_STAGE=TP_GATE_128K_TARGET
+    SESSION_RATE=22.32
+    SESSION_CAP=60
+    NPROC=8
+    TIMER_MIN=110
+    ;;
   rehearse)
     # PLUMBING ONLY, on one card, at 8k. This exists to prove that the new engine provenance
     # columns (ring_decode_mode / ring_chunk_size / ring_expand_after_rotation /
@@ -73,7 +91,7 @@ case "$MODE" in
     TIMER_MIN=60
     ;;
   *)
-    echo "usage: $0 {r1|r2|rehearse}" >&2; exit 2;;
+    echo "usage: $0 {r1|r2|topup|rehearse}" >&2; exit 2;;
 esac
 export SESSION_TYPE SESSION_OUT SESSION_TAG SESSION_CFG SESSION_SANITY_CFG
 export SESSION_CHECK_STAGE SESSION_RATE SESSION_CAP NPROC TIMER_MIN
