@@ -1,0 +1,161 @@
+# PHASE D, SECOND ATTEMPT, WITH THE SAFE ARMS FIRST.
+#
+# WHY THE ORDER CHANGED. The first Phase D session stopped after PD_SPLIT_TARGET hit
+# "CUDA error: an illegal memory access" on the pod: the remote script's chain-stop skipped
+# every stage after the failure, so the CONFIG-ONLY single-chunk arm -- which cannot fault and
+# is the user's priority 2 -- was never measured. The risky arm now runs LAST, after the safe
+# ones are already on disk, and a short 8k smoke row runs before the 128k split row so a repeat
+# fault costs one minute instead of one stage.
+#
+# THE FIX UNDER TEST. The split-KV combine used `all_gather` into a list of freshly allocated
+# buffers; it now uses two list-free collectives (a MAX reduce for the numerical offset, a SUM
+# reduce over the packed numerator and denominator) on contiguous tensors. Same arithmetic --
+# the pure merge function is unchanged and still unit-tested -- with fewer ways to be wrong
+# inside a model forward.
+#
+# WHY ONE SESSION. A counterfactual measured in a different session is a counterfactual plus
+# a host difference; the two Phase 1 arms of this campaign that were compared across sessions
+# carry exactly that caveat. So the ring baseline runs FIRST in this same session, on the same
+# box, same book, same seed, same protocol, and every ratio below is against it.
+#
+# PRIORITY ORDER = RUN ORDER, and the order is the user's: the split-KV decode counterfactual
+# (priority 1) comes before the single-chunk transmission knob (priority 2), so a session cut
+# short still answers the question it was launched for.
+#
+# ROWS ARE UNPROFILED ON PURPOSE (R11). The profiled rows in the Phase C session carry
+# torch.profiler on two ranks; their absolute s/tok is a proportion source, not a measurement.
+# These rows are the measurement.
+#
+# WHAT EACH ARM CHANGES, one thing each:
+#   PD_BASE_*   ring rotation, kv_block_size 2048 -- the published configuration
+#   PD_SPLIT_*  ring_decode_mode: split_kv -- no rotation; each rank attends to its own shard
+#               and the partials merge with one all_gather (see the kernel's docstring)
+#   PD_CHUNK_*  kv_block_size 32768 >= S_local, so the rotation is a SINGLE chunk and the
+#               per-chunk send-slice copies and the recv assembly disappear (the 8192 arm
+#               already showed +7.3% at 2 chunks; this is the endpoint with no chunking)
+#
+# CORRECTNESS EXPECTATION, STATED BEFORE THE RUN. The split-KV arm is NOT bit-identical: the
+# ring combines partials in a different order (online-softmax over 8 rotations) than the
+# all_gather merge does, so bf16 rounding differs. A divergence is therefore not evidence of a
+# bug, and what is reported is the first divergent position and the top-2 logit gap recorded
+# there (`token_gaps` in the token sidecar). The chunk arm changes only transmission
+# granularity, so it MUST be bit-identical, and a divergence there is a real finding.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+  ring_decode_mode: "ring"
+
+PD2_BASE_TARGET:
+  name: pd2_base_target
+  factor: context_length
+  levels:
+  - id: PD2_BASE_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    notes: 'P0 denominator: ring, target-only, 128k, unprofiled'
+
+PD2_BASE_SPEC:
+  name: pd2_base_spec
+  factor: context_length
+  levels:
+  - id: PD2_BASE_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    notes: 'P0 denominator: ring, spec, 128k -- session check stage'
+
+PD2_CHUNK_TARGET:
+  name: pd2_chunk_target
+  factor: context_length
+  levels:
+  - id: PD2_CHUNK_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    kv_block_size: 32768
+    notes: 'priority 2: single chunk (kv_block_size >= S_local); must be bit-identical to PD2_BASE_TARGET'
+
+PD2_CHUNK_SPEC:
+  name: pd2_chunk_spec
+  factor: context_length
+  levels:
+  - id: PD2_CHUNK_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    kv_block_size: 32768
+    notes: 'priority 2, spec arm; must be bit-identical to PD2_BASE_SPEC'
+
+PD2_SPLIT_8K_TARGET:
+  name: pd2_split_8k
+  factor: context_length
+  levels:
+  - id: PD2_SPLIT_8K_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    ring_decode_mode: "split_kv"
+    notes: 'smoke: fixed split-KV path at 8k, one minute, so a repeat fault is cheap and attributable'
+
+PD2_SPLIT_TARGET:
+  name: pd2_split_target
+  factor: context_length
+  levels:
+  - id: PD2_SPLIT_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    ring_decode_mode: "split_kv"
+    notes: 'priority 1: split-KV, no rotation, target-only, 128k'
+
+PD2_SPLIT_SPEC:
+  name: pd2_split_spec
+  factor: context_length
+  levels:
+  - id: PD2_SPLIT_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    ring_decode_mode: "split_kv"
+    notes: 'priority 1: split-KV, spec arm'

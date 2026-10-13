@@ -538,17 +538,24 @@ def ring_attention_decode_split_kv(
 
     if world_size > 1:
         assert dist.is_initialized(), "split-KV decode needs torch.distributed"
-        # ONE all_gather of the packed (out, lse) pair. Both are tiny when S_q = 1, so the
-        # collective moves bytes proportional to heads x head_dim rather than to context.
-        # Assumption: every rank's shard is the same size, which the ring layout guarantees
-        # for the prefill part (S_local = N / world_size).
-        packed = torch.cat([out_r.to(torch.float32),
-                            lse_r.to(torch.float32).unsqueeze(-1)], dim=-1)
-        gathered = [torch.empty_like(packed) for _ in range(world_size)]
-        dist.all_gather(gathered, packed, group=process_group)
-        outs = [g[..., :D] for g in gathered]
-        lses = [g[..., D].squeeze(-1) for g in gathered]
-        out_prefill, lse_prefill = merge_split_kv_partials(outs, lses, out_r.dtype)
+        # WHY all_reduce AND NOT all_gather (2026-10-13). The first version gathered the
+        # ranks' packed (out, lse) into a list of freshly allocated buffers, and on the pod
+        # it died with "CUDA error: an illegal memory access" on the first decode step --
+        # a fault the CPU tests cannot see, because the failure mode needs NCCL. A
+        # collective inside the model forward is order- and shape-sensitive in ways a P2P
+        # ring is not, so this uses the two primitives that have no list argument and no
+        # output allocation: a MAX reduce for the numerical offset and a SUM reduce for the
+        # packed numerator and denominator. Same arithmetic, fewer ways to be wrong.
+        m = lse_f.amax(dim=-1, keepdim=True).contiguous()
+        dist.all_reduce(m, op=dist.ReduceOp.MAX, group=process_group)
+        w = torch.exp(lse_f - m)                                  # (B, H, S_q)
+        num = (out_f * w.unsqueeze(-1)).contiguous()
+        packed = torch.cat([num, w.unsqueeze(-1)], dim=-1).contiguous()
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM, group=process_group)
+        num_r, den_r = packed[..., :D].contiguous(), packed[..., D:].contiguous()
+        out_prefill = (num_r / den_r).to(out_r.dtype)
+        den_sq = den_r.squeeze(-1)
+        lse_prefill = (m.squeeze(-1) + torch.log(den_sq))
     else:
         out_prefill, lse_prefill = merge_split_kv_partials([out_r], [lse_r], out_r.dtype)
 
