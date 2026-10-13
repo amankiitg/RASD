@@ -83,6 +83,23 @@ SESSION_CAP=${SESSION_CAP:-500}       # safety net, never used to shorten a step
 SESSION_CFG=${SESSION_CFG:-configs/mlsys_sunday_1m.yml}
 SESSION_SANITY_CFG=${SESSION_SANITY_CFG:-configs/mlsys_sunday_sanity.yml}
 NPROC=${NPROC:-8}
+# Which pod-side script this session runs. Defaulted, so every pre-existing launch is
+# unchanged; the decode diagnosis sets it to scripts/mlsys_ops_remote.sh.
+REMOTE_SCRIPT=${REMOTE_SCRIPT:-scripts/mlsys_session_a_remote.sh}
+[ -f "$REMOTE_SCRIPT" ] || { echo "FATAL: REMOTE_SCRIPT='$REMOTE_SCRIPT' does not exist" >&2; exit 2; }
+# A CUSTOM POD-SIDE SCRIPT MUST BE TOLD WHAT TO DO, EXPLICITLY. The ops profiler is
+# env-driven, and its vars have in-script defaults -- exactly the silent fallback this
+# project has been bitten by. When a custom script is selected they are therefore
+# REQUIRED here: unset means the launch stops before an instance exists, rather than a
+# profile quietly running at the wrong context or on the wrong book.
+OPS_ENV=""
+if [ "$REMOTE_SCRIPT" != "scripts/mlsys_session_a_remote.sh" ]; then
+  for v in PROFILE_OUT OPS_CTX OPS_TOKENS OPS_BOOK OPS_QUANT OPS_TOP OPS_RANKS; do
+    eval "[ -n "\${$v:-}" ]" || {
+      echo "FATAL: $v must be set when REMOTE_SCRIPT=$REMOTE_SCRIPT" >&2; exit 2; }
+  done
+  OPS_ENV="PROFILE_OUT='$PROFILE_OUT' OPS_CTX='$OPS_CTX' OPS_TOKENS='$OPS_TOKENS' OPS_BOOK='$OPS_BOOK' OPS_QUANT='$OPS_QUANT' OPS_TOP='$OPS_TOP' OPS_RANKS='${OPS_RANKS:-0,4}'"
+fi
 # The rope gate's inputs. The candidates file differs between the real run and the
 # rehearsal (131072 vs 4096) but the POOL does not: both pass --pg19-meta the same
 # way, through this variable, so the rehearsal exercises the same argument path.
@@ -361,8 +378,16 @@ if [ "$prov" != "0" ]; then
 fi
 
 say "--- staging ---"
+# THE POD-SIDE SCRIPT IS SELECTABLE, and it used to be hardcoded. The decode diagnosis
+# needs a DIFFERENT pod-side payload (scripts/mlsys_ops_remote.sh, which runs its own
+# torch.profiler around generate_text() to get per-op self time) and the only alternatives
+# were to edit the session script -- which would have changed the payload of every session
+# that uses it -- or to ssh in by hand, which loses the timer, the DONE marker and the
+# pull. One variable, defaulted to the session script, keeps every existing launch
+# byte-identical while letting a diagnosis session bring its own payload.
+say "pod-side script: $REMOTE_SCRIPT"
 timeout 600 rsync -az --no-perms --no-owner --no-group -e "ssh $SSH_OPTS" \
-  scripts/mlsys_session_a_remote.sh "$SSH_USER@$IP:~/RASD/scripts/mlsys_session_a_remote.sh" >>"$LOG" 2>&1
+  "$REMOTE_SCRIPT" "$SSH_USER@$IP:~/RASD/$REMOTE_SCRIPT" >>"$LOG" 2>&1
 # The session's OWN configs are staged by variable, not by name. The list used to be the
 # four Sunday files hardcoded, so a follow-up session would have started against configs
 # that were never on the pod -- found before the 8x launch rather than during it. The
@@ -465,7 +490,7 @@ fi
 say "intended stages: $STAGES_INTENDED"
 REMOTE_EXPECT="SESSION_OUT=$SESSION_OUT;SESSION_CFG=$SESSION_CFG;SESSION_SANITY_CFG=$SESSION_SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STAGES_INTENDED"
 
-START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash scripts/mlsys_session_a_remote.sh >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup $OPS_ENV env SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash '$REMOTE_SCRIPT' >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; now polling for the DONE marker, not for this shell"
 
@@ -479,7 +504,7 @@ while :; do
   fi
   POLL_OUT=$(timeout 90 ssh $SSH_OPTS -o ConnectTimeout=20 "$SSH_USER@$IP" \
     "if [ -s $PODOUT/DONE ]; then echo MARKER \$(cat $PODOUT/DONE | tr '\n' ' '); \
-     elif pgrep -f mlsys_session_a_remote.sh >/dev/null; then echo RUNNING; \
+     elif pgrep -f "$(basename "$REMOTE_SCRIPT")" >/dev/null; then echo RUNNING; \
      elif [ -s $PODOUT/remote_stdout.log ]; then echo DIED; else echo NOPROC; fi" 2>/dev/null)
   PRC=$?
   case "$POLL_OUT" in

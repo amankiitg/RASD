@@ -1,0 +1,107 @@
+# PHASE C PROBE: what one target-only decode step costs, and how it scales with context.
+#
+# WHY THIS CONFIG EXISTS. At 128k a target-only decode token costs 3.296 s (bf16 weights,
+# bf16 KV) to 3.668 s (the headline FP4/NF4), against a ~10 ms physical floor per GPU and a
+# full 128k prefill of 8.6 s. Three explanations are already excluded by measurement -- ring
+# transfer (1.8% of recorded ops), chunk-loop count (4x fewer chunks bought 7.3%), and
+# quantization (turning both off bought 1.113x). This session supplies the two things the
+# code cannot: the engine's own profiled breakdown AT nproc 8 (so the ring patch is live, per
+# R4) and the context scaling of decode s/tok, which separates a fixed per-step overhead
+# (large intercept) from per-step work that grows with context (steep slope).
+#
+# PRECISION IS THE HEADLINE: FP4 weights and NF4 KV, i.e. the configuration every published
+# number uses, so the absolute numbers here are comparable with the ablation's CONTROL row
+# (3.6684 s/tok) and with the 1M headline rows.
+#
+# TEMPERATURE 0.7, not 0.0. The ablation's CONTROL target-only row -- the number this session
+# is trying to explain -- was measured at T=0.7, so the probe matches it. (Whether target-only
+# at T>0 samples or silently emits argmax is a separate question, Phase B, and it does not
+# change what a step costs.)
+#
+# PROFILE ROWS: the engine's `profile: true` sidecar bins events into compute/comm/idle/other
+# per rank and writes it per rank, which is what proves the ring path actually ran (R4):
+# at nproc 1 that bucket is exactly 0.0, at nproc 8 it is not. The warm row runs first so the
+# measured row does not pay first-touch costs; the runner wraps the whole generate() call, so
+# "warm" is at row granularity and is stated rather than hidden.
+#
+# SCALING ROWS: 16 tokens each at 32k/64k/128k/256k, unprofiled. R11 -- absolute s/tok is
+# quoted from these, not from the profiled rows. They ascend, so a truncated session still
+# has three rungs and therefore a fittable line.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 0
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+
+PROBE_PROFILE_128K:
+  name: probe_profile_128k
+  factor: context_length
+  levels:
+  - id: PROBE_WARM_128K
+    context_length: 131072
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    checkpoint_every: 0
+    temperature: 0.7
+    profile: true
+    notes: 'warm-up at nproc 8: warms CUDA context, allocator and kernels; sidecar not quoted as a measurement'
+  - id: PROBE_MAIN_128K
+    context_length: 131072
+    documents: [pg19_train_0]
+    max_new_tokens: 24
+    checkpoint_every: 0
+    temperature: 0.7
+    profile: true
+    notes: 'the profiled decode row: bins per rank, proves the ring path ran'
+
+PROBE_SCALING:
+  name: probe_scaling
+  factor: context_length
+  levels:
+  - id: SCALE_32K_TARGET
+    context_length: 32768
+    documents: [pg19_train_0]
+    max_new_tokens: 16
+    checkpoint_every: 0
+    temperature: 0.7
+    notes: 'C7 scaling rung 1/4, unprofiled, 16 decode tokens'
+  - id: SCALE_64K_TARGET
+    context_length: 65536
+    documents: [pg19_train_0]
+    max_new_tokens: 16
+    checkpoint_every: 0
+    temperature: 0.7
+    notes: 'C7 scaling rung 2/4, unprofiled, 16 decode tokens'
+  - id: SCALE_128K_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    max_new_tokens: 16
+    checkpoint_every: 0
+    temperature: 0.7
+    notes: 'C7 scaling rung 3/4, unprofiled, 16 decode tokens'
+  - id: SCALE_256K_TARGET
+    context_length: 262144
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    max_new_tokens: 16
+    checkpoint_every: 0
+    temperature: 0.7
+    notes: 'C7 scaling rung 4/4 at 256k, from the 512k pool, unprofiled, 16 decode tokens'
