@@ -868,6 +868,11 @@ what makes it a sampling effect rather than a per-seed bias:
 be read as per-row sampling variance at n=5 books, not as a seed-level constant offset. In
 throughput terms the three seeds span **2.22-2.37x**.
 
+**No row is degenerate, checked rather than assumed.** The repetition detector run over all
+eight rows reports **0/8 degenerate** (longest periodic tail 46.9% against the 50% ceiling, all
+other tails 0.0%), so the stop condition for a new T=0.7 stage producing looping rows is not met
+and no acceptance here is inflated by a cycle. Report: [results/mlsys/fp4_seeds/repetition_FP4_SEED_1M_SPEC.csv](./results/mlsys/fp4_seeds/repetition_FP4_SEED_1M_SPEC.csv).
+
 **This is the first evidence in the campaign that the seed reaches the sampler.** The
 seeds/ablations session's two seed stages (SA_SEED_123/456) recorded `seed=42` and reproduced
 seed 42's token digests byte-for-byte (§8.3); the cause is `run_experiment.py` popping `seeds`
