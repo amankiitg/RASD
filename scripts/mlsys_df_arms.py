@@ -88,6 +88,12 @@ def _args(argv=None):
     p.add_argument("--single-rank-ok", action="store_true",
                    help="plumbing rehearsal at world_size==1: do not refuse when the ring "
                         "patch is absent; rows record world_size so they read as void")
+    p.add_argument("--greedy-check", action="store_true",
+                   help="also run a target-only GREEDY (T=0) row per arm. This is the "
+                        "decode-path correctness gate: greedy removes sampling, so two "
+                        "correct engines must agree token-for-token and a divergence is "
+                        "structural. The ppl check cannot serve this purpose -- it runs "
+                        "model.model() with use_cache=False, i.e. the PREFILL path.")
     return p.parse_args(argv)
 
 
@@ -118,7 +124,8 @@ def _reseed(seed: int) -> None:
     preceding generations consumed.
     """
     import random
-    torch.manual_seed(int(seed))
+    import torch as _torch   # imported here because `torch` is a local import in main()
+    _torch.manual_seed(int(seed))
     random.seed(int(seed))
     try:
         import numpy as _np
@@ -288,8 +295,9 @@ def main(argv=None):
     def run_one(arm, mode):
         """One generation. Returns the row dict (rank 0) or None."""
         spec, n_patched = set_arm(engine, arm, args.single_rank_ok)
-        engine.cfg.spec_steps = 0 if mode == "target" else args.spec_steps
-        engine.cfg.max_new_tokens = (args.target_tokens if mode == "target"
+        engine.cfg.spec_steps = 0 if mode in ("target", "greedy") else args.spec_steps
+        engine.cfg.temperature = 0.0 if mode == "greedy" else args.temperature
+        engine.cfg.max_new_tokens = (args.target_tokens if mode in ("target", "greedy")
                                      else args.spec_tokens)
         run_id = f"DF_{arm}_{mode}_{args.book}_ctx{args.ctx}_s{args.seed}"
         # Restore the per-process RNG state, so this arm sees what a fresh process would.
@@ -367,6 +375,8 @@ def main(argv=None):
     # ------------------------------------------------------------------ modes
     if args.mode in ("smoke", "arms"):
         modes = ["target"] if args.mode == "smoke" else ["target", "spec"]
+        if args.mode == "arms" and args.greedy_check:
+            modes.append("greedy")
         for arm in arm_names:
             for mode in modes:
                 row = run_one(arm, mode)

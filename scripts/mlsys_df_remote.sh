@@ -51,6 +51,12 @@ NPROC=${NPROC:-8}
 SINGLE_RANK_OK=${DF_SINGLE_RANK_OK:-0}
 SR_FLAG=""
 [ "$SINGLE_RANK_OK" = "1" ] && SR_FLAG="--single-rank-ok"
+# The greedy pair is the decode-path correctness gate for a non-bit-identical arm: with T=0
+# there is no sampling, so two correct engines must agree token-for-token and a divergence
+# is structural rather than a near-tie. On by default for the measured run; the rehearsal
+# sets it off to keep its own runtime down.
+GREEDY_FLAG="--greedy-check"
+[ "${DF_GREEDY_CHECK:-1}" = "0" ] && GREEDY_FLAG=""
 mkdir -p "$OUT" "$OUT/ring_bench"
 PODDONE="$OUT/DONE"
 
@@ -182,7 +188,7 @@ log "### stage3 arms @ $CTX_ARMS: $ARM_ARMS"
   scripts/mlsys_df_arms.py --mode arms --ctx "$CTX_ARMS" \
   --arms "$ARM_ARMS" --book "$BOOK" --seed "$SEED" \
   --target-tokens "$TARGET_TOKENS" --spec-tokens "$SPEC_TOKENS" --out "$OUT/arms" \
-  $SR_FLAG >> "$OUT/arms.log" 2>&1
+  $SR_FLAG $GREEDY_FLAG >> "$OUT/arms.log" 2>&1
 arms_rc=$?
 log "### stage3 arms rc=$arms_rc"
 grep -h "^\[df\]" "$OUT/arms.log" 2>/dev/null | tee -a "$OUT/df.log" || true
