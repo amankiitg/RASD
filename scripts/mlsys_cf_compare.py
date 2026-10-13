@@ -60,11 +60,20 @@ def main() -> int:
     for label, g in (("A", ga), ("B", gb)):
         window = g[max(0, first - 1): first + 2]
         print(f"   {label} token_gaps around the divergence (idx {max(0, first-1)}..{first+1}): {window}")
-    if ga and gb:
-        hi = max(abs(ga[i]) if i < len(ga) else 0 for i in range(max(0, first - 1), min(first + 1, len(ga))))
-        print("   reading: a gap of order 1e-3 or smaller at the divergent position means the two "
-              "arms disagreed on a near-tie; a large gap means the arm changed the distribution "
-              "at that position.")
+    for label, g in (("A", ga), ("B", gb)):
+        vals = sorted(abs(float(x)) for x in g if isinstance(x, (int, float)))
+        if not vals:
+            continue
+        gd = abs(float(g[first])) if first < len(g) and isinstance(g[first], (int, float)) else None
+        med = vals[len(vals) // 2]
+        pct = (100.0 * sum(1 for v in vals if v <= (gd if gd is not None else -1)) / len(vals)
+               if gd is not None else float("nan"))
+        print(f"   {label} row's own gap distribution: median {med:.3f}, min {vals[0]:.3f}, "
+              f"max {vals[-1]:.3f}; the divergent position sits at {pct:.0f}th percentile")
+    print("   reading: the unit of token_gaps is the engine's recorded top-2 margin and is NOT "
+          "calibrated here, so the check is RELATIVE -- a divergence at a gap far below that "
+          "row's own median is a near-tie being broken; a divergence at a typical or large gap "
+          "means the arm moved the distribution, not just the rounding.")
     return 0
 
 
