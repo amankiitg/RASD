@@ -189,3 +189,63 @@ def test_the_distributed_branch_runs_and_merges_correctly(monkeypatch):
             f"{label} differs from full attention by {(got - ref).abs().max():.3e}"
     assert torch.allclose(outs[0], outs[1], atol=1e-6), \
         "every rank must end with the same merged output"
+
+
+def test_the_distributed_branch_with_a_tail_keeps_the_lse_shape(monkeypatch):
+    """world_size > 1 AND tail_count > 0 -- the combination that crashed on the pod.
+
+    WHY THIS TEST EXISTS AND THE ONE ABOVE DID NOT CATCH IT. The emulation above passes
+    `tail_count=0`, so it returns from `ring_attention_decode_split_kv` BEFORE the tail
+    combine; and the single-rank test takes the `world_size == 1` branch, which never
+    touches the collectives. The pod ran the one combination neither covered -- eight ranks
+    with a replicated tail -- and died on the first target-only decode step.
+
+    The defect was a shape, not an algorithm: `m` is (B, H, 1) whatever S_q is (an amax
+    with keepdim=True), and `m.squeeze(-1)` turns it into (B, H), which broadcasts against
+    (B, H, S_q) into (B, H, H) -- a silent 32x blow-up of the attention output when S_q==1,
+    and a size mismatch when S_q>1. So this asserts the SHAPE as well as the values: an
+    output of (B, H, S_q, D) is the property that was violated, and it is visible on CPU.
+    """
+    torch.manual_seed(4)
+    B, H, S_q, D = 1, 2, 1, 8
+    S_local, tail = 12, 5
+    q = torch.randn(B, H, S_q, D, dtype=torch.float32)
+    k_pre = torch.randn(B, H, 2 * S_local, D, dtype=torch.float32)
+    v_pre = torch.randn(B, H, 2 * S_local, D, dtype=torch.float32)
+    k_tail = torch.randn(B, H, tail, D, dtype=torch.float32)
+    v_tail = torch.randn(B, H, tail, D, dtype=torch.float32)
+    k_all = torch.cat([k_pre, k_tail], dim=2)
+    v_all = torch.cat([v_pre, v_tail], dim=2)
+    scale = 1.0 / math.sqrt(D)
+    ref, _ = _attn_step(q, k_all, v_all, scale=scale, dropout_p=0.0, causal=False)
+
+    # Each rank's prefill shard; the tail is replicated on both.
+    shards = [(torch.cat([k_pre[:, :, r * S_local:(r + 1) * S_local, :], k_tail], dim=2),
+               torch.cat([v_pre[:, :, r * S_local:(r + 1) * S_local, :], v_tail], dim=2))
+              for r in range(2)]
+    parts = [_attn_step(q, ks[:, :, :S_local, :], vs[:, :, :S_local, :],
+                        scale=scale, dropout_p=0.0, causal=False) for ks, vs in shards]
+
+    lse_f = [p[1].to(torch.float32) for p in parts]
+    out_f = [p[0].to(torch.float32) for p in parts]
+    m_global = torch.maximum(lse_f[0].amax(dim=-1, keepdim=True),
+                             lse_f[1].amax(dim=-1, keepdim=True))
+    w = [torch.exp(l - m_global) for l in lse_f]
+    packed_total = sum(torch.cat([o * wi.unsqueeze(-1), wi.unsqueeze(-1)], dim=-1)
+                       for o, wi in zip(out_f, w))
+
+    fake = _FakeDist(max_result=m_global, sum_result=packed_total)
+    monkeypatch.setattr("torch.distributed.all_reduce", fake.all_reduce, raising=False)
+    monkeypatch.setattr("torch.distributed.is_initialized", fake.is_initialized, raising=False)
+    monkeypatch.setattr("torch.distributed.ReduceOp", fake.ReduceOp, raising=False)
+
+    outs = [ring_attention_decode_split_kv(q, ks, vs, rank=r, world_size=2, tail_count=tail,
+                                           scale=scale, dropout_p=0.0, process_group=None)
+            for r, (ks, vs) in enumerate(shards)]
+
+    for label, got in (("rank0", outs[0]), ("rank1", outs[1])):
+        assert tuple(got.shape) == (B, H, S_q, D), \
+            f"{label}: the tail combine changed the output shape to {tuple(got.shape)}; " \
+            f"the lse merged at the wrong rank, which is the pod's CUDA fault"
+        assert torch.allclose(got, ref, atol=1e-5, rtol=1e-4), \
+            f"{label} differs from full attention by {(got - ref).abs().max():.3e}"

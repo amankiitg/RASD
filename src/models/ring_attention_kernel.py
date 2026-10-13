@@ -581,8 +581,14 @@ def ring_attention_decode_split_kv(
         dist.all_reduce(packed, op=dist.ReduceOp.SUM, group=process_group)
         num_r, den_r = packed[..., :D].contiguous(), packed[..., D:].contiguous()
         out_prefill = (num_r / den_r).to(out_r.dtype)
-        den_sq = den_r.squeeze(-1)
-        lse_prefill = (m.squeeze(-1) + torch.log(den_sq))
+        den_sq = den_r.squeeze(-1)                            # (B, H, S_q)
+        # KEEP THE KEEPDIM ON `m`. `m` is (B, H, 1) whatever S_q is (it is an amax over the
+        # last dim with keepdim=True); squeezing it gives (B, H), which broadcasts against
+        # (B, H, S_q) into (B, H, H) -- not an error, a SILENT 32x shape blow-up -- and it
+        # fires exactly when S_q == 1, i.e. on the target-only decode path, which is the
+        # path the 8k smoke ran. For S_q > 1 the squeeze instead raises a size mismatch, so
+        # the same line failed two different ways depending on the arm.
+        lse_prefill = (m + torch.log(den_sq))
     else:
         out_prefill, lse_prefill = merge_split_kv_partials([out_r], [lse_r], out_r.dtype)
 
