@@ -850,8 +850,14 @@ the seed moving. Rows: [results/mlsys/fp4_seeds](./results/mlsys/fp4_seeds).
 | **123** | 5 | **0.4656** | **0.11512** | 6.1598 | **2.26x** | 26837 |
 | **456** | 3 | **0.4466** | **0.11348** | 6.3323 | **2.22x** | 26837 |
 
-The speedups reuse Session A's 1M target-only rate (0.05103 tok/s), which a seed cannot move:
-a target-only row emits the argmax per step and carries no sampling.
+The speedups reuse Session A's 1M target-only rate (0.05103 tok/s). **CORRECTED 2026-10-13:**
+the reason first given here -- "a target-only row emits the argmax per step and carries no
+sampling" -- is **false**. Target-only calls the same sampler (`rasd_inference.py:1725` →
+`_sample` at `:327-338`, which returns argmax only at T=0.0 and otherwise draws with
+`torch.multinomial`), and a two-seed check at T=0.7 produced different token streams on the
+first three tokens while a T=0.0 pair reproduced byte-identically. The reuse is still sound, for
+a weaker reason: `ignore_eos` pins the token count and the per-step cost does not depend on
+which token was drawn. See `DECODE_DIAGNOSIS.md` §B.
 
 **Matched on the three books every seed has**, per book — the ordering is not uniform, which is
 what makes it a sampling effect rather than a per-seed bias:

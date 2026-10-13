@@ -127,3 +127,72 @@ its failure, and Phase C is required to choose between them.**
 should be dominated by memory-bound copy/cat kernels and FA-2 kernel time that scales with the
 number of rotations × layers, with the GPU busy (not idle) — i.e. C2's busy share should be
 high and C1's top ops should be attention + copy kernels, not Python frames.
+
+---
+
+## B. Does target-only actually sample at T=0.7? No — wait, yes it does.
+
+**Verdict: the target-only path SAMPLES at T>0, and the campaign has been asserting the
+opposite.**
+
+### B1. Code, with line evidence
+
+| step | file:line | what it does |
+|---|---|---|
+| the target-only loop seeds its first token through the sampler | `src/models/rasd_inference.py:1725` | `cur_token = _sample(next_token_logit, cfg.temperature, cfg.top_p)` — this line is on the shared path, after the draft-prefill branch that target-only skips |
+| `_sample` branches on temperature | `:327-338` | `if temperature == 0.0: return logits.argmax(dim=-1)`; otherwise `/temperature`, optional top-p truncation, `F.softmax`, `torch.multinomial(probs, num_samples=1)` |
+| the same call is used for every later step | `:1725` (loop body), and the spec path's own calls at `:1967`, `:2053`, `:2176` | one sampler, used by both arms |
+
+So the claim "target-only emits the argmax per step and carries no sampling" is **false for
+T>0**, and it was repeated in `RESULTS_OCT.md` §9.3 and in the Phase 3-C config note.
+
+### B2. Measurement (one 1x A100, `mlsys_pbt_temperature.yml`, 8k, 32 tokens, 4 rows all ok)
+
+| comparison | result | reading |
+|---|---|---|
+| T=0.7 seed 42 vs T=0.7 seed 123 | **different** streams, first divergence at position **2** | the seed reaches the sampler |
+| T=0.7 seed 42 vs T=0.0 seed 42 | **different** streams | T=0.7 is not argmax |
+| T=0.0 seed 42 vs T=0.0 seed 123 (positive control) | **byte-identical** (`e825e46bacd3b502…`) | greedy ignores the seed — so the method detects "no sampling" when it is there |
+
+The positive control matters: without it, "the two streams differ" could have been noise from a
+non-deterministic engine. It is not — the engine reproduces exactly when the code path is
+deterministic, and diverges only where the sampler is involved.
+
+### B3. Census of committed target-only rows
+
+83 rows with `spec_steps = 0` and `status = ok` in the committed tree, by recorded temperature:
+**0.0: 37**, **0.7: 18**, **1.0: 1**, and **27 rows predating the temperature column** (empty).
+The rows the published speedups divide by all record 0.7: `SAMP_1M_TARGET_*`,
+`SAMP_ALIGNED_{128K,512K}_TARGET_*`, `SA_RINGCHUNK_8192_TARGET_*`, `SAQ_*_TARGET`.
+
+Repetition detector over the **17** target-only rows that have a committed token sidecar (the
+other 66 cannot be checked, having no committed sidecar): **0 degenerate**. Looping would not
+have changed tok/s, but it is reported rather than assumed.
+
+### B4. Impact, and the wording change recommended instead of a headline edit
+
+**(a) The speedups are unaffected, but one justification for them was wrong.** The 1M
+denominator reuses one target-only rate across seeds on the argument that target-only "carries
+no sampling". That argument is dead. The *conclusion* survives on a different and weaker ground:
+the rate is `tokens / (ttft + Σ per-step cost)`, `ignore_eos` fixes the token count, and the
+per-step cost depends on the context length and the number of steps, not on which token the
+sampler drew. So the denominator is insensitive to the seed **because the length is pinned and
+the step cost is token-independent** — not because no sampling happens. No number changes; no
+row needs re-running.
+
+**(b) The losslessness claim is untouched.** The T>0 equivalence argument rests on the
+`min(1, p_target/p_draft)` rejection with a residual resample (`:2169-2179`), which is a
+distributional statement and never depended on target-only being greedy. What must stop is any
+claim of *token identity* between a target-only row and a spec row at T>0, and any description
+of a target-only row as a deterministic argmax continuation.
+
+**Recommended wording (not applied to any headline):**
+
+* `RESULTS_OCT.md` §9.3, and the same sentence in `configs/mlsys_fp4_seeds_123_456_1m.yml`:
+  replace *"a target-only row emits the argmax per step and carries no sampling, so a seed
+  cannot change the denominator"* with *"a target-only row is sampled at T=0.7 like everything
+  else, but `ignore_eos` pins the token count and the per-step cost does not depend on which
+  token was drawn, so the rate a seed can move is below the book-to-book spread already
+  measured (under 2%)."*
+* `CLAIMS.md`: add a negative claim that target-only at T>0 is **not** greedy, and that its
+  token stream therefore cannot be compared for identity with any other row's.

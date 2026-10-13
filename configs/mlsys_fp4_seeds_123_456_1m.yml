@@ -14,10 +14,12 @@
 # Only the seed moves. FP4 weights + NF4 KV, i.e. the headline precision, because branch C
 # keeps the campaign where it is.
 #
-# SPEEDUPS REUSE THE 1M TARGET-ONLY RATE, and that is a measurement argument, not a shortcut:
-# a target-only row emits the argmax per step and carries no sampling at all, so a seed cannot
-# change its output (measured book-to-book variation under 2%). Re-running the denominator once
-# per seed would spend ~15 minutes per seed to re-measure a rate the seed provably cannot move.
+# SPEEDUPS REUSE THE 1M TARGET-ONLY RATE. CORRECTED 2026-10-13: the original argument here --
+# that a target-only row emits the argmax and carries no sampling -- was WRONG. Target-only
+# samples at T>0 (rasd_inference.py:1725 -> _sample at :327-338, torch.multinomial for T != 0),
+# and two seeds gave different streams. The reuse still holds, for a weaker reason: ignore_eos
+# pins the token count and the per-step cost does not depend on which token was drawn, so a seed
+# moves the rate by less than the book-to-book spread already measured (under 2%).
 #
 # ORDER IS RUN ORDER: seed 123 first, then 456, so a timer-truncated session still has one
 # complete replicate. The rows are pulled and committed as each stage finishes.
