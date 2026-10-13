@@ -321,3 +321,37 @@
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2020}
 }
+
+% =========================================================================
+% Decode-side context parallelism (prior work for the split-KV technique).
+% The technique is prior work and is cited, never claimed. Fields we could
+% not verify from a source we opened are marked TODO VERIFY rather than
+% guessed.
+% =========================================================================
+
+@misc{meta2024contextparallelism,
+  title        = {Context Parallelism for Scalable Million-Token Inference},
+  author       = {Liu, Hao and Wang, Xiaodong and others},
+  howpublished = {Technical report, Meta},
+  year         = {2024},
+  note         = {Pass-KV / pass-Q ring-context parallelism; % TODO VERIFY author list,
+                  venue, date, URL, and whether an arXiv identifier exists}
+}
+
+@misc{vllm2026dcp,
+  title        = {Decode Context Parallelism},
+  author       = {{vLLM Team}},
+  howpublished = {Engineering blog},
+  month        = aug,
+  year         = {2026},
+  note         = {% TODO VERIFY exact title, URL, publication date, and author list;
+                  do not cite a venue for a blog post}
+}
+
+@misc{nvidia2026codesign,
+  title        = {Co-Designing {AI} Model Attention for Fast, Interactive Long-Context Inference},
+  author       = {{NVIDIA}},
+  howpublished = {Technical report / blog},
+  year         = {2026},
+  note         = {% TODO VERIFY author list, date, URL; venue must not be invented}
+}

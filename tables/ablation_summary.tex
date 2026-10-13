@@ -1,10 +1,10 @@
 \begin{table}[h]
 \centering
-\caption{M3 ablation results (64k context, 8$\times$A100-SXM4-40GB). Mean and 95\% bootstrap CI per level over 3 seeds; horizontal rules separate the five sweep axes. Deterministic early-EOS rows with tokens\_generated $<$ 20 are excluded; see \S Error Analysis.}
+\caption{M3 ablation results (64\,k context, 8$\times$A100-SXM4-40\,GB). Mean and range over 3 seeds --- \textbf{three seeds on one synthetic prompt}, not three independent samples, so the bracketed intervals are ranges rather than confidence intervals (AUDIT E11, E12); horizontal rules separate the five sweep axes. Deterministic early-EOS rows with tokens\_generated $<$ 20 are excluded; see \S Error Analysis.}
 \label{tab:m3-ablation}
-\begin{tabular}{llrrr}
+\small\begin{tabular}{llrrr}
 \toprule
-Axis & Level & Throughput (tok/s) [95\% CI] & Acceptance [95\% CI] & n \\
+Axis & Level & Throughput (tok/s) [range] & Accept.\ [range] & $n$ \\
 \midrule
 A1: Draft model & TinyLlama-1.1B & 0.84 [0.82, 0.85] & 0.235 [0.226, 0.252] & 3 \\
  & Sheared-1.3B & 0.87 [0.84, 0.90] & 0.253 [0.231, 0.277] & 3 \\
