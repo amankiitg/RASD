@@ -469,3 +469,80 @@ and the elementwise arithmetic around the rotation at 19.3%, so a decoding path 
 rotation has a floor of roughly **0.2-0.5 s per token at 128k** against today's 3.3-3.7 s — a
 prize of **7-15x**, which is why this is worth one more attempt and worth reporting even if the
 attempt fails.
+
+---
+
+## E. Verdict, hypothesis table, and what remains unknown
+
+### E.1 Verdict, in three sentences
+
+**What consumes the decode step:** the ring's K/V rotation. Inside the decode window alone,
+**73.4% of kernel time is `ncclDevKernel_SendRecv`** (4,797 calls over 24 steps ≈ the code's 8
+rotations × 32 layers), **19.3% is the elementwise arithmetic around it**, and **1.7% is
+attention**. **How sure:** high on the attribution — it is op-level, it agrees across two ranks,
+and its call counts reproduce the code's loop structure exactly — and lower on the mechanism:
+the context-scaling fit is intercept-dominated (`2.384 s + 12.8 µs/k-token`, i.e. two thirds of
+a 128k step is context-*independent*), which points at per-round latency/serialization rather
+than at the 68 GB/step of bytes, and the single-chunk counterfactual's 15% win from removing
+*copies* rather than bytes says the same thing. **What a fix buys:** removing the 256 serialized
+rotations per step leaves the local attention (38 ms/token, measured) plus one tiny collective,
+so the floor is roughly **0.2-0.5 s/token at 128k against today's 3.3-3.7 s — a prize of 7-15x**;
+the smaller, already-realized prize is the **1.18x** from `kv_block_size` 32768, which is
+bit-identical and deployable today.
+
+### E.2 Hypothesis table, final status
+
+| # | hypothesis | code verdict | profile evidence | counterfactual | status |
+|---|---|---|---|---|---|
+| H1 | cache bypass / recompute of K/V over the context | **refuted**: the dual-cache layout (`ring_llama_attention.py:28-32`) holds `[sharded prefill \| replicated tail]` and decode appends only the new positions; no path rebuilds K/V from growing `input_ids` | a 128k prefill costs 8.6 s and a decode step ~3.5 s, which is what invited this hypothesis; the profile shows no kernel consistent with a re-prefill | — | **REFUTED** |
+| H2 | host sync / Python overhead | real: 8 blocking `r.wait()` per layer-step (`:389-390`) = 256 syncs/token | **refuted as primary**: self device time (212.7 s) *exceeds* profiler wall (202.9 s), so the GPU is not idle waiting for the host | — | **REFUTED as primary** |
+| H3 | O(S) memory traffic per step | **confirmed**: 3 full-shard copies per rotation (send-slice `:300-301`, reassembly `:308-311`, attention permute `:135-136`) plus a 4x `repeat_kv` expansion, 8 rotations × 32 layers | `aten::copy_` 5.5% + elementwise casts 5.2%; the rest of the traffic is inside the 73.4% NCCL | single chunk (32768) removes the copy and assembly terms → **1.181x target, 1.142x spec, bit-identical** | **CONFIRMED** (copy term worth 15%; the transfer term is the remaining ~70%) |
+| H4 | attention kernel for q_len 1 | open in section A | **FA-2 runs**: `_flash_attn_forward` 6,656 calls, `flash_fwd_splitkv_kernel` 5,888, no SDPA-math fallback; 1.7% of the decode window = 38 ms/token | — | **REFUTED** (the attention is not the problem) |
+| H5 | other collectives besides the ring | refuted: no all_reduce/broadcast/barrier on the decode path in the kernel or the patch | 73.4% is `SendRecv`, i.e. the ring's own P2P — so "collectives are the cost" is true of the *ring*, and false of anything else | — | **CONFIRMED for the ring's P2P** |
+| H6 | allocator churn | confirmed: 2 `torch.empty_like` per chunk per rotation (`:302`) = ~4,096 allocations per token, no `empty_cache` on this path | not separable from the transfer time in this profile | the single-chunk arm removes 16 allocations per rotation and is part of the 1.18x | **PARTIAL** |
+| H7 | anything else scaling with context | the elementwise arithmetic around the rotation — casts, NF4 dequant, online-softmax bookkeeping | **19.3% of the decode window** over 168,598 calls, the largest non-NCCL term, and un-attributed | not tested | **OPEN** |
+
+### E.6 Temperature verdict (Phase B, detailed in section B)
+
+The target-only path **samples** at T>0 — `rasd_inference.py:1725` → `_sample` (`:327-338`,
+`torch.multinomial`) — and the campaign's repeated statement that it emits the argmax is
+**wrong**. Measured: two seeds at T=0.7 diverge at the third token; T=0.7 differs from T=0.0;
+the T=0.0 pair is byte-identical (the positive control). The speedup denominator survives on the
+weaker ground that `ignore_eos` pins the length and the per-step cost does not depend on the
+drawn token, and the corrected wording is applied in `RESULTS_OCT.md` §9.3 and in the Phase 3-C
+config. Of 83 committed target-only rows, 37 record T=0.0, 18 record 0.7, 1 records 1.0 and 27
+predate the column; of the 17 with committed sidecars, **0 are degenerate**.
+
+### E.7 What remains unknown
+
+1. **Why the split-KV path faults.** Two distinct implementations (`all_gather`, then two
+   `all_reduce`s) both die with an asynchronous `CUDA error: an illegal memory access` on the
+   first decode step, at 8k and at 128k, with the arithmetic independently unit-verified and
+   both ranks agreeing under a faithful emulation. The prime suspect is issuing an NCCL
+   collective inside the model forward from the default stream while the engine's ring P2P and
+   the draft stream are in flight; that is a hypothesis, not a finding, and it is the first
+   thing to test next.
+2. **What the 19.3% elementwise term is.** Two hundred thousand small elementwise kernels per
+   24 tokens, un-attributed. Candidates: bf16 casts around every rotation, NF4 dequantization,
+   and the online-softmax bookkeeping.
+3. **Whether the mechanism is latency or bytes.** The two readings are both consistent with what
+   has been measured; the decisive experiment is the one that failed three times.
+4. **Whether the single-chunk win is available at 1M.** It is untested above 256k; a shard at 1M
+   is 16,256 tokens per rank, the same as at 128k, so the mechanism predicts yes, but that is a
+   prediction.
+5. **Nothing here was measured with the ring path absent at 8 ranks**, so no number in this
+   document separates "the ring costs this" from "this engine costs this".
+
+### E.8 Artifacts
+
+Branch **`decode-diagnosis`**, cut from `mlsys-experiments`. Commits: `63c5b28` (section A),
+`385fa1b` (op-level instrumentation), `b709a30` (selectable pod-side script + probe config),
+`c080f36` (Phase B), `4a1e1c1` + `bdd7401` (Phase C), `fed80ce` (split-KV), `eae6ec7` (Phase D
+attempt 1), `ad0b3a3` (NameError fix + faithful distributed test), `78149df` (section D),
+`3cffe5b`, `b3bb61f`, `2b9bbe8`.
+
+Op tables, the main row's CSV, the decode-window slice and every Phase D row are committed under
+`results/mlsys/decode_diagnosis/`, `results/mlsys/decode_cf/` and `results/mlsys/decode_cf2/`.
+The chrome traces are 165 MB each and are **not** in git; they are in the session workspace
+(`.../files/decode_probe_pull/profiler_traces/`) and are regenerated by the same session with
+`profile: true` plus `profile_ranks: [0, 4]`.
