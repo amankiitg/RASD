@@ -79,8 +79,30 @@ log "=== df remote: interpreter $PY nproc=$NPROC ctx_arms=$CTX_ARMS ctx_smoke=$C
 # ---- THE PARAMETER CONTRACT, BEFORE ANY HEAVY WORK --------------------------
 # shellcheck disable=SC1090
 . scripts/mlsys_remote_expect.sh
+# THE RECEIVED STRING MUST NAME EVERY KEY THE DRIVER'S MANIFEST NAMES. The first version of
+# this call listed only the DF_* settings, so the contract correctly refused to start over
+# six variables it had no report for -- the pod had received them, it just had not said so.
+# A contract that cannot see an arrival is as bad as a missing arrival: it stops a correct
+# run. The keys are the driver's variable names on both sides.
+#
+# STAGES is DERIVED here from the config with the same script the driver uses
+# (mlsys_stage_list.py), rather than passed: two derivations of "which stages" is how a
+# campaign starts disagreeing with itself about what it ran.
+STEPS_ONELINE=""
+if [ -n "${SESSION_CFG:-}" ] && [ -f "${SESSION_CFG:-}" ]; then
+  STEPS_ONELINE=$("$PY" scripts/mlsys_stage_list.py "$SESSION_CFG" --space 2>/dev/null \
+                  | sed -E 's/ +$//')
+fi
+log "stages from $SESSION_CFG: $STEPS_ONELINE"
 mlsys_expect "df-remote" "${REMOTE_EXPECT:-}" \
-  "DF_OUT=${DF_OUT-<absent>};DF_CTX_ARMS=${DF_CTX_ARMS-<absent>};DF_CTX_SMOKE=${DF_CTX_SMOKE-<absent>};DF_BOOK=${DF_BOOK-<absent>};DF_ARMS=${DF_ARMS-<absent>};DF_SEED=${DF_SEED-<absent>};DF_BENCH_ROUNDS=${DF_BENCH_ROUNDS-<absent>};DF_TARGET_TOKENS=${DF_TARGET_TOKENS-<absent>};DF_SPEC_TOKENS=${DF_SPEC_TOKENS-<absent>};DF_SINGLE_RANK_OK=${DF_SINGLE_RANK_OK-<absent>}" || exit 2
+  "SESSION_OUT=${SESSION_OUT-<absent>};SESSION_CFG=${SESSION_CFG-<absent>};SESSION_SANITY_CFG=${SESSION_SANITY_CFG-<absent>};NPROC=${NPROC-<absent>};SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES-};STAGES=$STEPS_ONELINE;DF_OUT=${DF_OUT-<absent>};DF_CTX_ARMS=${DF_CTX_ARMS-<absent>};DF_CTX_SMOKE=${DF_CTX_SMOKE-<absent>};DF_BOOK=${DF_BOOK-<absent>};DF_ARMS=${DF_ARMS-<absent>};DF_SEED=${DF_SEED-<absent>};DF_BENCH_ROUNDS=${DF_BENCH_ROUNDS-<absent>};DF_TARGET_TOKENS=${DF_TARGET_TOKENS-<absent>};DF_SPEC_TOKENS=${DF_SPEC_TOKENS-<absent>};DF_SINGLE_RANK_OK=${DF_SINGLE_RANK_OK-<absent>}" || exit 2
+
+# DF_OUT must be the session directory: the driver pulls ~/RASD/$SESSION_OUT, so anything
+# written outside it is lost to the pull (2026-10-12: an entire rehearsal's evidence).
+if [ "${DF_OUT:-}" != "${SESSION_OUT:-}" ]; then
+  log "FATAL: DF_OUT='${DF_OUT:-<unset>}' but SESSION_OUT='${SESSION_OUT:-<unset>}'. The driver pulls ~/RASD/\$SESSION_OUT, so evidence written elsewhere never leaves the pod."
+  exit 2
+fi
 
 "$PY" -c 'import torch;print("torch",torch.__version__,"cuda",torch.cuda.device_count(),
                                 torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu")' \
