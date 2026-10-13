@@ -403,3 +403,69 @@ window the attention kernels total 0.902 s for ~24 tokens = **38 ms per token**,
 1.7% — so the attention is not reading 68 GB in any sense that costs time; the transfers are
 what cost time, and C7's intercept-dominated curve says their cost is per-round serialization
 rather than volume.
+
+---
+
+## D. Counterfactuals, each one change, against in-session baselines
+
+All rows unprofiled, 128k, `pg19_train_0`, T=0.7, 128 tokens, same session as their baseline
+(R11: absolute s/tok comes from unprofiled rows only).
+
+### D.1 Priority 2 — `kv_block_size` 32768 (single chunk): **CONFIRMED, 1.18x, bit-identical**
+
+`kv_block_size` 2048 splits the local shard (16,256 tokens) into **8 chunks per rotation**,
+each chunk copied into a fresh buffer on send and reassembled on receive
+(`ring_attention_kernel.py:298-311`). At 32768 ≥ S_local the rotation is a single transfer and
+both the send-slice copies and the reassembly disappear. Nothing about the arithmetic changes,
+so the token streams must be identical — and they are.
+
+| arm | decode s/tok | vs baseline | acceptance | token stream |
+|---|---|---|---|---|
+| `PD2_BASE_TARGET` (chunked, 2048) | 3.5392 | 1.000x | — | — |
+| `PD2_CHUNK_TARGET` (**single chunk**) | **2.9969** | **1.181x** | — | **bit-identical** |
+| `PD2_BASE_SPEC` (chunked, 2048) | 1.8053 | 1.000x | 0.2712 | — |
+| `PD2_CHUNK_SPEC` (**single chunk**) | **1.5801** | **1.142x** | 0.2712 | **bit-identical** |
+
+**15.3% off target-only decode and 12.5% off spec, with byte-identical output on both arms**
+(verified with `scripts/mlsys_cf_compare.py`, 128 tokens each). This is a config-only change,
+it is not a rounding gamble, and it composes with the earlier 8192 arm (which bought 7.3% by
+halving the chunk count; this is the endpoint with no chunking at all).
+
+It is also evidence about the mechanism: chunking changes only *how many* transfers carry the
+same bytes, never how many bytes or how many serialized rotations. A 15% win from op count and
+copies, in a step that C8 says is 73% NCCL, means the transfer volume is a minority of the
+NCCL time — consistent with C7's intercept-dominated curve and against the pure-bandwidth
+reading.
+
+### D.2 Priority 1 — split-KV (no rotation): **two attempts, two failures, then fixed**
+
+The counterfactual removes the rotation entirely: each rank attends to its own shard and the
+partials merge via two list-free collectives. Implemented as `ring_attention_decode_split_kv`
+(65 lines) plus `merge_split_kv_partials` (35 lines), behind `ring_decode_mode: split_kv`, so
+baseline and counterfactual run in one session.
+
+| attempt | change | outcome on the pod |
+|---|---|---|
+| 1 | `all_gather` into fresh buffers | **`RuntimeError: CUDA error: an illegal memory access`** on the first decode step at 128k |
+| 2 | two `all_reduce`s (MAX then SUM), list-free | **`NameError: name 'lse_f' is not defined`** — the refactor dropped the local definition, so the arm never ran; the same error would have been invisible in a local test that only takes the `world_size == 1` path |
+| 3 | NameError fixed, plus a test that enters the distributed branch | (running; reported below) |
+
+**The lesson is recorded because it cost two stages:** the first attempt's CUDA fault is a
+genuine GPU-side failure, and the second attempt's NameError means that between 03:21Z and
+04:22Z the counterfactual was broken in a way no local test could see, because every test took
+the single-rank path. The fix was to make the collective emulation *faithful* — `all_reduce`
+is blocking, so no rank may compute anything from the reduced value until all have arrived,
+and every participant ends holding the same reduced tensor — and then assert that both ranks
+end with the same output, equal to one attention over the concatenated shards. Two earlier
+versions of that emulation were unfaithful and made the kernel look wrong when it was not; that
+saga is in the test's docstring, because the next person to touch this will suspect the kernel
+first, as I did.
+
+**The prize, quantified from Phase C, for the case where attempt 3 also fails.** If the
+rotation is removed, the per-step cost loses the term C7 measures as context-independent:
+`2.384 s + 12.8 µs/k-token` becomes, at most, the local attention plus one tiny collective.
+Phase C puts attention at **1.7% of the decode window** (0.902 s over ~24 tokens = 38 ms/token)
+and the elementwise arithmetic around the rotation at 19.3%, so a decoding path with no
+rotation has a floor of roughly **0.2-0.5 s per token at 128k** against today's 3.3-3.7 s — a
+prize of **7-15x**, which is why this is worth one more attempt and worth reporting even if the
+attempt fails.
