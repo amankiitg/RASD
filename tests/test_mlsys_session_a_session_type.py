@@ -57,7 +57,8 @@ def _allowed_types() -> list[str]:
 def _sandbox(tmp_path: Path, session_type: str | None) -> tuple[Path, dict]:
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
-    for name in ("mlsys_session_a.sh", "mlsys_detach.py", "mlsys_deadman.sh"):
+    for name in ("mlsys_session_a.sh", "mlsys_detach.py", "mlsys_deadman.sh",
+                 "mlsys_session_a_remote.sh"):
         shutil.copy(REPO / "scripts" / name, repo / "scripts" / name)
     (repo / "runpod_creds.md").write_text(
         "LAMBDA_API_KEY = `fake-key-gate-test`\n"

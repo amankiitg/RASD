@@ -216,8 +216,12 @@ class TestProfileFlag:
         assert "from src.analysis.profiler import RoundProfiler" in RUN_EXP_SRC, (
             "C7 regression: RoundProfiler not imported in worker"
         )
+        # The wrapper gained per-rank selection and op-table output (decode diagnosis,
+        # 2026-10-13), so the constructor is now multi-line and `enabled=True` is one
+        # keyword among several. The property under test is unchanged: RoundProfiler
+        # wraps the generate_text call.
         assert re.search(
-            r"with RoundProfiler\(enabled=True\)[\s\S]{0,200}engine\.generate_text",
+            r"with RoundProfiler\([\s\S]{0,400}?enabled=True[\s\S]{0,400}?engine\.generate_text",
             RUN_EXP_SRC,
         ), (
             "C7 regression: RoundProfiler not wrapping generate_text call"

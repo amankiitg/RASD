@@ -51,6 +51,10 @@ def _sandbox(tmp_path: Path) -> tuple[Path, dict]:
                 repo / "scripts" / "mlsys_detach.py")
     shutil.copy(REPO / "scripts" / "mlsys_deadman.sh",
                 repo / "scripts" / "mlsys_deadman.sh")
+    # The driver checks REMOTE_SCRIPT exists before it rents anything (fail fast rather than
+    # rsync a missing path), so the sandbox must contain the pod-side script it defaults to.
+    shutil.copy(REPO / "scripts" / "mlsys_session_a_remote.sh",
+                repo / "scripts" / "mlsys_session_a_remote.sh")
     (repo / "runpod_creds.md").write_text(
         "LAMBDA_API_KEY = `fake-key-preflight-only`\n"
         "HF_TOKEN = `fake-token-preflight-only`\n")

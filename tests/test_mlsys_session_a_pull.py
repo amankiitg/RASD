@@ -69,6 +69,8 @@ def _sandbox(tmp_path: Path) -> tuple[Path, dict, Path]:
     probe.write_text("#!/usr/bin/env bash\nexit 0\n")
     probe.chmod(probe.stat().st_mode | stat.S_IEXEC)
     (repo / "scripts" / "mlsys_deadman.sh").write_text("#!/bin/sh\nexit 0\n")
+    # Existence-checked by the driver before any instance is created.
+    (repo / "scripts" / "mlsys_session_a_remote.sh").write_text("#!/bin/sh\nexit 0\n")
     (repo / "scripts" / "mlsys_detach.py").write_text(
         'import sys\np = sys.argv[sys.argv.index("--pidfile") + 1]\n'
         'open(p, "w").write("1")\n')
