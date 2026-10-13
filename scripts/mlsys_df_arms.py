@@ -134,6 +134,21 @@ def _reseed(seed: int) -> None:
         pass
 
 
+def _single_rank_selftest(dig: dict) -> list:
+    """Group the digests by mode and count distinct streams per mode.
+
+    The keys are "<arm>|<mode>" strings (they are written to JSON, where a tuple key would
+    not survive), so they are split rather than unpacked -- unpacking a string is how the
+    first version of this check died with "too many values to unpack (expected 2)" AFTER all
+    twelve rows had already been written correctly.
+    """
+    by = {}
+    for key, d in dig.items():
+        arm, mode = key.split("|")
+        by.setdefault(mode, {})[arm] = d
+    return [(mode, len(set(vals.values())), len(vals)) for mode, vals in sorted(by.items())]
+
+
 def set_arm(engine, arm_name: str, single_rank_ok: bool = False) -> tuple:
     """Point every patched attention module at one arm's knobs. Returns (settings, n_patched).
 
@@ -419,14 +434,12 @@ def main(argv=None):
             # session exists to make would be meaningless -- so say so loudly rather than
             # report a divergence as an engine result.
             if world == 1:
-                for mode in ("target", "spec"):
-                    vals = {a: d for (a, m), d in dig.items() if m == mode}
-                    distinct = set(vals.values())
-                    verdict = "PASS" if len(distinct) <= 1 else "FAIL"
+                for mode, n_distinct, n_arms in _single_rank_selftest(dig):
+                    verdict = "PASS" if n_distinct <= 1 else "FAIL"
                     log(f"single-rank self-test [{mode}]: {verdict} "
-                        f"({len(distinct)} distinct stream(s) over {len(vals)} arms; "
+                        f"({n_distinct} distinct stream(s) over {n_arms} arms; "
                         f"expected 1 because no ring knob is installed at world_size==1)")
-                    if len(distinct) > 1:
+                    if n_distinct > 1:
                         log("  -> the arms are coupled, most likely through the global RNG "
                             "(torch.manual_seed runs once per engine, not per generation). "
                             "Check that _reseed() runs before every arm.")

@@ -62,3 +62,42 @@ def test_the_arm_table_names_only_known_arms():
                             "ring_expand_after_rotation"}, name
     assert df_arms.ARMS["ring32768x"]["ring_expand_after_rotation"] is True
     assert df_arms.ARMS["ring2048"]["ring_expand_after_rotation"] is False
+
+
+# THE DIGESTS FROM THE THIRD 1x REHEARSAL (2026-10-13), verbatim. At world_size==1 no ring
+# knob is installed, so all four arms are the same code and must produce identical streams --
+# and after the reseed fix they do. Before it, `splitkv`'s two streams were exactly exchanged.
+_REHEARSAL_DIGESTS_AFTER_FIX = {
+    "ring2048|target": "1c4dbd04a4f04c4c", "ring2048|spec": "c57d95008d435eb2",
+    "ring2048|greedy": "1c4dbd04a4f04c4c",
+    "ring32768|target": "1c4dbd04a4f04c4c", "ring32768|spec": "c57d95008d435eb2",
+    "ring32768|greedy": "1c4dbd04a4f04c4c",
+    "ring32768x|target": "1c4dbd04a4f04c4c", "ring32768x|spec": "c57d95008d435eb2",
+    "ring32768x|greedy": "1c4dbd04a4f04c4c",
+    "splitkv|target": "1c4dbd04a4f04c4c", "splitkv|spec": "c57d95008d435eb2",
+    "splitkv|greedy": "1c4dbd04a4f04c4c",
+}
+
+_REHEARSAL_DIGESTS_BEFORE_FIX = {
+    "ring2048|target": "1c4dbd04a4f04c4c", "ring2048|spec": "c57d95008d435eb2",
+    "ring32768|target": "1c4dbd04a4f04c4c", "ring32768|spec": "c57d95008d435eb2",
+    "ring32768x|target": "1c4dbd04a4f04c4c", "ring32768x|spec": "c57d95008d435eb2",
+    "splitkv|target": "c57d95008d435eb2", "splitkv|spec": "1c4dbd04a4f04c4c",
+}
+
+
+def test_the_self_test_accepts_the_arms_after_the_reseed_fix():
+    got = dict((m, (n, k)) for m, n, k in df_arms._single_rank_selftest(_REHEARSAL_DIGESTS_AFTER_FIX))
+    assert got == {"greedy": (1, 4), "spec": (1, 4), "target": (1, 4)}, got
+
+
+def test_the_self_test_rejects_the_arms_before_the_reseed_fix():
+    """The check has to FAIL on the state the rehearsal actually caught, or it proves nothing."""
+    got = dict((m, (n, k)) for m, n, k in df_arms._single_rank_selftest(_REHEARSAL_DIGESTS_BEFORE_FIX))
+    assert got["spec"] == (2, 4), got
+    assert got["target"] == (2, 4), got
+
+
+def test_the_self_test_does_not_unpack_string_keys():
+    """The regression: keys are "<arm>|<mode>" strings, not tuples."""
+    df_arms._single_rank_selftest({"a|target": "x", "b|target": "y"})   # must not raise
