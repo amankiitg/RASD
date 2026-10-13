@@ -62,32 +62,45 @@ groups = opt.get("groups")
 mode = os.environ
 
 def rows_for(name):
-    """(status, acceptance) per stage. `ok` rows carry ',ok,' in the raw line."""
+    """(status, acceptance, spec_steps) per stage. `ok` rows carry ',ok,' in the raw line."""
     if name == "CANARY":
-        return [("ok", 0.40)] * 2
+        return [("ok", 0.40, 4)] * 2
     if name == "PRECHECK":
-        return [] if mode.get("FAKE_PRECHECK") == "fail" else [("ok", 0.40)]
+        return [] if mode.get("FAKE_PRECHECK") == "fail" else [("ok", 0.40, 4)]
     if name == "CHECK":
         m = mode.get("FAKE_CHECK", "ok")
         if m == "empty":
-            return [("error", 0.0)]
+            return [("error", 0.0, 4)]
         if m == "badvalue":
-            return [("ok", 1.7)]
-        return [("ok", 0.40)]
-    return [("ok", 0.40)]
+            return [("ok", 1.7, 4)]
+        if m == "targetonly":
+            # A target-only arm: acceptance is 0.0 by construction and there are no
+            # spec steps. The gate must ACCEPT this, not fail it (2026-10-14).
+            return [("ok", 0.0, 0)]
+        return [("ok", 0.40, 4)]
+    return [("ok", 0.40, 4)]
+
+prov = mode.get("FAKE_PROV", "")
+if prov:
+    CSV_HEADER = CSV_HEADER + ",ring_decode_mode,ring_layers_patched,git_commit"
 
 if groups is None:                     # step (a): the sanity pair, separate config
-    data = [("ok", 0.40)] * 2
+    data = [("ok", 0.40, 4)] * 2
 else:
     data = rows_for(groups)
 
 with open(out, "w", newline="") as fh:
     fh.write(CSV_HEADER + "\\n")
-    for n, (status, accept) in enumerate(data):
-        fh.write(",".join([
+    for n, (status, accept, spec) in enumerate(data):
+        row = ",".join([
             f"{status}_{n}", "1048576", status, "100.0", "0.01",
-            f"{accept}", "4", "128",
-        ]) + "\\n")
+            f"{accept}", f"{spec}", "128",
+        ])
+        if prov == "set":
+            row += ",split_kv,32,deadbeef"
+        elif prov == "empty":
+            row += ",,,"
+        fh.write(row + "\\n")
 sys.exit(0)
 '''
 
@@ -154,7 +167,7 @@ def _sandbox(tmp_path: Path, stage_order: list[str]) -> tuple[Path, dict]:
 
 
 def _run(tmp_path: Path, stage_order: list[str], check: str,
-         precheck: str = "ok", expect: str | None = None
+         precheck: str = "ok", expect: str | None = None, prov: str = ""
          ) -> tuple[int, str, Path, str]:
     """Run the real script; return (DONE rc, session log, output dir, stdout).
 
@@ -164,6 +177,7 @@ def _run(tmp_path: Path, stage_order: list[str], check: str,
     home, env = _sandbox(tmp_path, stage_order)
     env["FAKE_CHECK"] = check
     env["FAKE_PRECHECK"] = precheck
+    env["FAKE_PROV"] = prov
     if expect is not None:
         env["REMOTE_EXPECT"] = expect
     proc = subprocess.run(
@@ -298,3 +312,28 @@ def test_the_contract_is_checked_before_the_sanity_pair(tmp_path):
     # and the sanity file exists on the happy path, so the assertion above is a real
     # difference and not an artifact of the stub never writing it
     assert (out / "session_a_sanity.csv").exists()
+
+
+def test_a_target_only_check_row_passes_the_gate(tmp_path):
+    """THE 2026-10-14 regression. A target-only gate row has acceptance 0.0 and
+    spec_steps 0 by construction, and the gate used to require acceptance in (0,1] and
+    spec_steps >= 1, so it failed a perfectly good row and stopped the chain. That is
+    exactly what happened on the rerun_topup session: $9 spent, one good gate row
+    pulled, and none of the 1M or 512k rows the session existed to produce. The check is
+    now arm-aware, and the provenance columns, when present, must be recorded.
+    """
+    rc, log, out, stdout = _run(tmp_path, STAGES, check="targetonly", prov="set")
+    assert rc == 0, f"a target-only gate row must pass, got {rc}\n{log[-2000:]}"
+    assert "STEP c check PASSED" in log
+    for later in ("LATER1", "LATER2"):
+        assert (out / f"session_a_{later}.csv").exists(), \
+            f"{later} did not run after a passing target-only gate"
+    assert "arm-appropriate acceptance" in stdout
+
+
+def test_a_row_with_empty_provenance_exits_five(tmp_path):
+    """Stop condition S2: a row that cannot prove which engine produced it is void, so
+    the chain must stop rather than fill a session with unverifiable rows."""
+    rc, log, _, stdout = _run(tmp_path, STAGES, check="ok", prov="empty")
+    assert rc == 5, f"empty provenance must exit 5, got {rc}\n{log[-2000:]}"
+    assert "provenance column" in stdout

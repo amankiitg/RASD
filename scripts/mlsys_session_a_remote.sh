@@ -229,16 +229,30 @@ if not os.path.exists(sys.argv[1]):
 rows = [r for r in csv.DictReader(open(sys.argv[1])) if r.get('status') == 'ok']
 if not rows:
     print("no ok rows"); sys.exit(1)
+# WHAT THE CHECK ASSERTS DEPENDS ON THE ARM (fixed 2026-10-14). The gate used to demand
+# acceptance in (0,1] and spec_steps >= 1, which is right for the spec arms it was written
+# for and WRONG for a target-only gate: acceptance is 0.0 by construction there, so the
+# check failed a perfectly good row and stopped the chain (it did exactly that on the
+# rerun_topup session, costing $9 and no rows). A spec row and a target-only row are
+# therefore checked against their own definitions, and every row -- either arm -- is
+# checked for the ENGINE PROVENANCE that stop condition S2 requires, but only when the
+# CSV carries those columns, so older configs that never recorded them are not failed for
+# a column they do not have.
 bad = []
 for r in rows:
     a = float(r.get('acceptance_rate') or 0)
-    if not (0.0 < a <= 1.0):
-        bad.append(f"{r['run_id']}: acceptance {a} outside (0,1]")
-    if int(r.get('spec_steps') or 0) < 1:
-        bad.append(f"{r['run_id']}: spec_steps 0, this is not a spec row")
+    if int(r.get('spec_steps') or 0) >= 1:
+        if not (0.0 < a <= 1.0):
+            bad.append(f"{r['run_id']}: spec row with acceptance {a} outside (0,1]")
+    elif a != 0.0:
+        bad.append(f"{r['run_id']}: target-only row with acceptance {a}, expected 0")
     if int(r.get('tokens_generated') or 0) < 1:
         bad.append(f"{r['run_id']}: no tokens generated")
-print(f"{len(rows)} ok row(s); " + ("acceptance sane, spec steps set, tokens present"
+    for col in ('ring_decode_mode', 'ring_layers_patched', 'git_commit'):
+        if col in r and not str(r.get(col) or '').strip():
+            bad.append(f"{r['run_id']}: provenance column {col} is empty")
+print(f"{len(rows)} ok row(s); " + ("arm-appropriate acceptance, tokens present, "
+                                    "provenance recorded"
                                     if not bad else "; ".join(bad)))
 sys.exit(1 if bad else 0)
 PYCHK
@@ -246,9 +260,9 @@ PYCHK
       # NAMES THE STAGE, not "the 1M path": SESSION_CHECK_STAGE can be any spec stage
       # (the seeds/ablations session gates on a 128k one), and a message that names the
       # wrong one is how a reader concludes the wrong thing was checked.
-      log "### STEP c check PASSED: $name is sane (acceptance inside (0,1], spec steps set, tokens present); continuing"
+      log "### STEP c check PASSED: $name is sane (acceptance matches the arm, tokens present, engine provenance recorded); continuing"
     else
-      log "### STEP c check FAILED: STOPPING. Nothing else runs at T>0; the quality rows that already landed are kept."
+      log "### STEP c check FAILED: STOPPING. Nothing else in the chain runs; the rows that already landed are kept."
       exit 5
     fi
   fi
