@@ -101,7 +101,7 @@ if [ -n "${SESSION_CFG:-}" ] && [ -f "${SESSION_CFG:-}" ]; then
 fi
 log "stages from $SESSION_CFG: $STEPS_ONELINE"
 mlsys_expect "df-remote" "${REMOTE_EXPECT:-}" \
-  "SESSION_OUT=${SESSION_OUT-<absent>};SESSION_CFG=${SESSION_CFG-<absent>};SESSION_SANITY_CFG=${SESSION_SANITY_CFG-<absent>};NPROC=${NPROC-<absent>};SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES-};STAGES=$STEPS_ONELINE;DF_COMMIT=${DF_COMMIT-<absent>};DF_OUT=${DF_OUT-<absent>};DF_CTX_ARMS=${DF_CTX_ARMS-<absent>};DF_CTX_SMOKE=${DF_CTX_SMOKE-<absent>};DF_BOOK=${DF_BOOK-<absent>};DF_ARMS=${DF_ARMS-<absent>};DF_SEED=${DF_SEED-<absent>};DF_BENCH_ROUNDS=${DF_BENCH_ROUNDS-<absent>};DF_TARGET_TOKENS=${DF_TARGET_TOKENS-<absent>};DF_SPEC_TOKENS=${DF_SPEC_TOKENS-<absent>};DF_SINGLE_RANK_OK=${DF_SINGLE_RANK_OK-<absent>}" || exit 2
+  "SESSION_OUT=${SESSION_OUT-<absent>};SESSION_CFG=${SESSION_CFG-<absent>};SESSION_SANITY_CFG=${SESSION_SANITY_CFG-<absent>};NPROC=${NPROC-<absent>};SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES-};STAGES=$STEPS_ONELINE;CODE_COMMIT=${CODE_COMMIT-<absent>};DF_OUT=${DF_OUT-<absent>};DF_CTX_ARMS=${DF_CTX_ARMS-<absent>};DF_CTX_SMOKE=${DF_CTX_SMOKE-<absent>};DF_BOOK=${DF_BOOK-<absent>};DF_ARMS=${DF_ARMS-<absent>};DF_SEED=${DF_SEED-<absent>};DF_BENCH_ROUNDS=${DF_BENCH_ROUNDS-<absent>};DF_TARGET_TOKENS=${DF_TARGET_TOKENS-<absent>};DF_SPEC_TOKENS=${DF_SPEC_TOKENS-<absent>};DF_SINGLE_RANK_OK=${DF_SINGLE_RANK_OK-<absent>}" || exit 2
 
 # DF_OUT must be the session directory: the driver pulls ~/RASD/$SESSION_OUT, so anything
 # written outside it is lost to the pull (2026-10-12: an entire rehearsal's evidence).
@@ -112,7 +112,7 @@ fi
 # The commit the staged tree came from. The pod has no .git (its ~/RASD is an rsync of the
 # working tree), so without this every row records "unknown" for the engine provenance --
 # which is what the Part 1 rows did until this line existed.
-log "DF_COMMIT=$DF_COMMIT (the tree this pod is running)"
+log "CODE_COMMIT=$CODE_COMMIT (the tree this pod is running)"
 
 "$PY" -c 'import torch;print("torch",torch.__version__,"cuda",torch.cuda.device_count(),
                                 torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu")' \

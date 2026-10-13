@@ -130,3 +130,32 @@ def test_nccl_env_report_lists_only_what_is_set(monkeypatch):
     got = run_experiment._nccl_env_report()
     assert "NCCL_P2P_LEVEL=NVL" in got and "NCCL_DEBUG=INFO" in got
     assert "NCCL_SHM_DISABLE" not in got, "unset knobs must not appear"
+
+
+def test_code_commit_wins_over_a_pod_side_rev_parse(monkeypatch):
+    """The pod has no .git, so `git rev-parse HEAD` there returns nothing and every row
+    recorded `git_commit: unknown` -- which voids a rerun whose whole purpose is to compare two
+    engines (stop condition S2). The DRIVER stages the tree, so the driver names the commit,
+    and the runner must prefer it."""
+    import run_experiment as R
+    monkeypatch.setattr(R, "_GIT_COMMIT_CACHE", None)
+    monkeypatch.setenv("CODE_COMMIT", "deadbeefcafe1234")
+    assert R._git_commit() == "deadbeefcafe1234"
+    # ... and it is cached, so a per-row call does not shell out 40 times.
+    monkeypatch.delenv("CODE_COMMIT", raising=False)
+    assert R._git_commit() == "deadbeefcafe1234"
+
+
+def test_git_commit_falls_back_when_the_variable_is_absent(monkeypatch):
+    import run_experiment as R
+    monkeypatch.setattr(R, "_GIT_COMMIT_CACHE", None)
+    monkeypatch.delenv("CODE_COMMIT", raising=False)
+    got = R._git_commit()
+    assert got and got != "unknown", "in the repo the local rev-parse must still work"
+
+
+def test_an_empty_code_commit_does_not_shadow_the_fallback(monkeypatch):
+    import run_experiment as R
+    monkeypatch.setattr(R, "_GIT_COMMIT_CACHE", None)
+    monkeypatch.setenv("CODE_COMMIT", "   ")
+    assert R._git_commit() != "   "

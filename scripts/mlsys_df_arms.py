@@ -100,13 +100,13 @@ def _args(argv=None):
 def _git_commit() -> str:
     """The commit the ROW was produced from.
 
-    DF_COMMIT FIRST. The pod's ~/RASD is an rsync of the working tree and carries no
+    CODE_COMMIT FIRST. The pod's ~/RASD is an rsync of the working tree and carries no
     `.git`, so `git rev-parse HEAD` there returns nothing and every row recorded
     `git_commit: unknown`. The driver therefore sends the commit it is staging, in its own
     variable, and the parameter contract proves it arrived -- the same rule as every other
     setting: a value that cannot be shown to have travelled is not recorded.
     """
-    env = os.environ.get("DF_COMMIT")
+    env = os.environ.get("CODE_COMMIT") or os.environ.get("DF_COMMIT")
     if env and env.strip():
         return env.strip()
     try:

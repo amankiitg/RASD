@@ -200,6 +200,13 @@ def _git_commit() -> str:
     """The commit the ROW was produced from. Cached: this is called per row."""
     global _GIT_COMMIT_CACHE
     if _GIT_COMMIT_CACHE is None:
+        # CODE_COMMIT first: the driver stages the tree and names the commit, and the pod has
+        # no .git (its ~/RASD is an rsync), so a pod-side rev-parse returns nothing and every
+        # row would record "unknown" -- which voids a rerun that compares two engines.
+        env = (os.environ.get("CODE_COMMIT") or "").strip()
+        if env:
+            _GIT_COMMIT_CACHE = env
+            return _GIT_COMMIT_CACHE
         try:
             _GIT_COMMIT_CACHE = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,

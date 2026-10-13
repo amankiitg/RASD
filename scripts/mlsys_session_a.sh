@@ -48,6 +48,16 @@ SSH_KEY=${MLSYS_SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25 -o ServerAliveInterval=30 -i $SSH_KEY"
 PY=python3
 RATE_80GB=22.32
+# THE COMMIT THE POD RUNS (2026-10-13). The pod's ~/RASD is an rsync of the working tree and
+# carries no `.git`, so a pod-side `git rev-parse HEAD` returns nothing and every row recorded
+# `git_commit: unknown` -- which voids a rerun whose whole point is to compare two ENGINES
+# (stop condition S2). The DRIVER is the authority here, because the driver is what stages the
+# tree, so it names the commit for every remote script rather than leaving each one to guess.
+# `run_experiment.py` and the df arms driver both prefer this variable; the parameter contract
+# asserts it arrived.
+CODE_COMMIT=${CODE_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}
+export CODE_COMMIT
+echo "CODE_COMMIT=$CODE_COMMIT"
 # ONE instance type, and it is REQUIRED -- there is deliberately no default.
 #
 # WHY NO DEFAULT. A default is a silent fallback: on 2026-10-12 the 1x rehearsal
@@ -506,14 +516,14 @@ if [ -z "$STAGES_INTENDED" ]; then
   exit 2
 fi
 say "intended stages: $STAGES_INTENDED"
-REMOTE_EXPECT="SESSION_OUT=$SESSION_OUT;SESSION_CFG=$SESSION_CFG;SESSION_SANITY_CFG=$SESSION_SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STAGES_INTENDED"
+REMOTE_EXPECT="SESSION_OUT=$SESSION_OUT;SESSION_CFG=$SESSION_CFG;SESSION_SANITY_CFG=$SESSION_SANITY_CFG;NPROC=$NPROC;SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE:-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES:-};STAGES=$STAGES_INTENDED;CODE_COMMIT=$CODE_COMMIT"
 # A custom pod-side script's own manifest is appended, so its parameter contract (R9) is
 # asserted in the SAME variable and with the same comparison as the built-in one.
 if [ -n "${REMOTE_EXPECT_EXTRA:-}" ]; then
   REMOTE_EXPECT="$REMOTE_EXPECT;$REMOTE_EXPECT_EXTRA"
 fi
 
-START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env $OPS_ENV$EXTRA_ENV SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash '$REMOTE_SCRIPT' >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
+START_CMD="mkdir -p ~/RASD/$SESSION_OUT && cd ~/RASD && rm -f $SESSION_OUT/DONE && setsid nohup env $OPS_ENV$EXTRA_ENV CODE_COMMIT='$CODE_COMMIT' SESSION_OUT='$SESSION_OUT' SESSION_CFG='$SESSION_CFG' SESSION_SANITY_CFG='$SESSION_SANITY_CFG' NPROC='$NPROC' SESSION_GATE_CANDIDATES='$SESSION_GATE_CANDIDATES' SESSION_GATE_PG19_META='$SESSION_GATE_PG19_META' SESSION_CHECK_STAGE='$SESSION_CHECK_STAGE' REMOTE_EXPECT='$REMOTE_EXPECT' bash '$REMOTE_SCRIPT' >> $SESSION_OUT/remote_stdout.log 2>&1 < /dev/null & echo STARTED:\$!"
 timeout 300 ssh $SSH_OPTS "$SSH_USER@$IP" "$START_CMD" 2>&1 | tee -a "$LOG"
 say "remote launched; now polling for the DONE marker, not for this shell"
 
