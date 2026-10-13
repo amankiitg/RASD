@@ -640,3 +640,116 @@ new one.
 
 The prize this unblocks is the one Phase D quantified: 7-15x, i.e. a floor of ~0.2-0.5 s per
 token at 128k against today's 3.3-3.7 s.
+
+### F.3 The transport is fine, and the bytes are irrelevant
+
+One 8x A100-80GB SXM4 session (`gpu_8x_a100_80gb_sxm4`, us-east-1), five stages, all rc=0,
+**$11.31 of the $35 ceiling**, 0 instances left and the dead-man timer cancelled.
+
+**Topology and transport.** `nvidia-smi topo -m` shows a full **NV12** mesh — every pair of the
+eight GPUs on 12 NVLink bonds — with the NIC on PCIe. NCCL's own decision log, with
+`NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,P2P` on the process that built the process group,
+reports **56 channel lines, every one of them `via P2P/CUMEM/read`**, and a ring
+`0 1 2 3 4 5 6 7`. There is no SHM line, no NET line and no `libnccl-net.so` plugin. **The
+transport is the fast path. There is no env-var fix to make**, which retires the first of the
+two readings.
+
+**The bare ring decides the second reading.** `scripts/mlsys_ring_microbench.py` runs the same
+`dist.batch_isend_irecv` ring `_issue_rotation` issues — 4 P2POps, K sent, V sent, K received,
+V received — 256 rounds (one decode token's worth) at five payloads, no model:
+
+| payload | K+V MB | seq | heads | ms/round | p90 | GB/s | ms / 256 rounds |
+|---|---|---|---|---|---|---|---|
+| latency floor | 0.004 | 1 | 8 | **10.3124** | 10.4038 | 0.00 | 2640.0 |
+| 33 MB | 33.29 | 2032 | 32 | **10.3437** | 10.4154 | 3.22 | 2648.0 |
+| 133 MB | 133.17 | 8128 | 32 | **10.3557** | 10.4230 | 12.86 | 2651.1 |
+| **266 MB (the engine's payload)** | 266.34 | 16256 | 32 | **10.3462** | 10.4314 | 25.74 | 2648.6 |
+| 66 MB (post-`repeat_kv` payload) | 66.58 | 16256 | 8 | **10.3389** | 10.4175 | 6.44 | 2646.8 |
+
+Payload varies by a factor of **66,000**; the per-round cost varies by **0.4%**. Rank skew is
+negligible (worst spread 0.056 ms over eight ranks, i.e. 0.5%, so there is no straggler to
+blame for the rank-0 vs rank-4 asymmetry the Phase C profile showed).
+
+**Verdict: the round is latency, not bandwidth.** The bench's 10.3 ms/round reproduces the
+Phase C fit's context-independent term (9.31 ms/round) to within 11%, from an independent
+harness with no model in it. The ~25.7 GB/s that 266 MB over 10.35 ms implies is therefore
+**not a bandwidth limit at all** — it is what a fixed ~10 ms per round looks like when you
+divide a large payload by it. The `29 GB/s` figure in section C.4 and in E was arithmetically
+right and causally wrong, and this section supersedes it.
+
+Two consequences, both negative for the other candidate fix:
+
+* **Renewing `repeat_kv` after the rotation wins almost nothing.** Shipping 8 heads instead of
+  32 cuts the wire payload 4x — from 266 MB to 66 MB per round — and the payload does not
+  matter. Measured on the engine: **1.273x** (target-only) against **1.240x** for the
+  single-chunk change alone, i.e. **+2.7%**. It is still worth keeping, because it is
+  bit-identical and free (see F.4), but it is not a fix and its justification is now "less
+  local copy work", not "fewer bytes on the wire".
+* **Removing rounds is the whole prize.** 256 rounds x ~10 ms = 2.6 s of a 3.3-3.7 s step,
+  which is where the decode time actually lives.
+
+### F.4 The engine arms: one model load, four configurations, three of them bit-identical
+
+`scripts/mlsys_df_arms.py` loads the 8B target and the 1B draft **once** and flips the ring
+knobs between generations, so every arm is measured against an in-session baseline on the same
+box, same book, same seed. Twelve rows, all `ok`, at 128k (`pg19_train_0`, seed 42, FP4 weights
++ NF4 KV, the branch-C precision):
+
+| arm | what it changes | target-only decode s/tok | spec decode s/tok | greedy decode s/tok | target speedup |
+|---|---|---|---|---|---|
+| `ring2048` | the published config (baseline) | 3.5637 | 2.7910 | 3.5913 | 1.000x |
+| `ring32768` | `kv_block_size` 32768 — one chunk per rotation | 2.8749 | 2.3074 | 2.7937 | **1.240x** |
+| `ring32768x` | the above + `repeat_kv` after the rotation | 2.7985 | 2.2004 | 2.9077 | **1.273x** |
+| `splitkv` | `ring_decode_mode: split_kv` — no rotation at all | **1.0011** | **0.8254** | **1.0026** | **3.560x** |
+
+Peak reserved memory is flat across the arms — 11,792 MB for the three ring arms and
+11,939 MB for split-KV, worst rank over all eight — so the 3.56x costs no memory.
+
+**Bit-identity, checked rather than assumed.** The token streams are compared by sha256 of the
+generated ids, per mode:
+
+* `ring32768` vs `ring2048`: **IDENTICAL** in target, spec and greedy.
+* `ring32768x` vs `ring2048`: **IDENTICAL** in target, spec and greedy.
+
+So both changes that were supposed to be exact are exact at 128k on eight ranks, in all three
+decoding modes. (This is also the property the `_reseed` fix in F.1 makes meaningful: without
+it, an identity here could have been an artefact of arm order.)
+
+**split-KV diverges, and the divergence is a near-tie.** The engine records its own top-2
+logit margin per emitted token (`metrics.token_gaps`), which is what makes the divergence
+readable rather than merely present:
+
+| mode | first divergence | baseline's gap there | that row's gap distribution | reading |
+|---|---|---|---|---|
+| target | index 12 of 16, after 12 identical | **0.0000** | median 2.9375, min 0.0000 | exact tie broken the other way |
+| greedy | index 12 of 16, after 12 identical | **0.0000** | median 2.9375, min 0.0000 | same, with no sampling in the way |
+| spec | index 1 of 32, after 1 identical | 0.8750 | median 0.9375, min 0.0000 | below the row's own median |
+
+A merge that was structurally wrong would diverge at the first token; this one reproduces the
+ring baseline **bit-for-bit for twelve consecutive tokens** and then diverges exactly where the
+baseline's own margin is zero. That is the signature of reordered floating-point summation, and
+it is what the unit tests assert independently against a single attention over the concatenated
+shards.
+
+**The requested perplexity gate cannot see this change, and says so.** The brief asks for a
+1024-token ppl within 1% of the ring path. All four arms return **1.648977** — identical to six
+decimal places. That is not strong evidence of correctness, it is *no* evidence:
+`_measure_target_ppl` calls `model.model(...)` with `use_cache=False`, i.e. a **prefill**
+forward, and a decode-path change cannot affect it. The number is reported because it was
+asked for; the evidence that carries the gate is the divergence table above plus the unit
+tests. The same caveat is recorded in `configs/mlsys_df_followup.yml` and in the pod-side log.
+
+### F.5 What the arms say about the two remaining candidate fixes
+
+| candidate | correctness | speed at 128k | keep? |
+|---|---|---|---|
+| `kv_block_size` 32768 (one chunk) | bit-identical, all modes | 1.240x target | **yes** — config-only, exact |
+| `repeat_kv` after the rotation | bit-identical, all modes | +2.7% on top | **yes** — exact, free, but not a fix |
+| NCCL env change | n/a — the transport is already `P2P/CUMEM` over NV12 | none available | **no such change exists** |
+| **split-KV (no rotation)** | near-tie divergence, unit-tested, ppl n/a by construction | **3.560x target, 3.382x spec** | **yes — this is the fix** |
+
+The 3.56x is measured with 16 decode tokens, which **understates** it: the first steps of any
+arm carry warm-up (allocator growth, NCCL channel setup) and the published 128-token rows
+amortise it. The published 128k baseline decodes at 3.58 s/token over 128 tokens; this
+session's 16-token baseline is 3.56 s/token, i.e. the arms are comparable to each other and
+the ratios between them are if anything conservative.

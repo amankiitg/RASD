@@ -1,0 +1,667 @@
+{
+ "run_id": "DF_splitkv_spec_pg19_train_0_ctx131072_s42",
+ "arm": "splitkv",
+ "mode": "spec",
+ "context_length": 131072,
+ "book": "pg19_train_0",
+ "seed": 42,
+ "engine": {
+  "kv_block_size": 32768,
+  "ring_decode_mode": "split_kv",
+  "ring_expand_after_rotation": false
+ },
+ "spec_steps": 4,
+ "quantize_target": true,
+ "kv_quant": true,
+ "git_commit": "unknown",
+ "world_size": 8,
+ "ring_layers_patched": 32,
+ "rng_reseeded": true,
+ "generated_token_ids": [
+  1544,
+  1628,
+  39022,
+  11,
+  430,
+  814,
+  902,
+  1511,
+  279,
+  3278,
+  11,
+  1550,
+  198,
+  17206,
+  5379,
+  1023,
+  26000,
+  398,
+  40444,
+  25,
+  220,
+  16,
+  25,
+  1682,
+  1789,
+  420,
+  5353,
+  4359,
+  596,
+  836,
+  374,
+  198
+ ],
+ "per_token_trace": [
+  {
+   "round_idx": 0,
+   "global_pos_start": 130048,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    1628,
+    279,
+    2383,
+    574
+   ],
+   "accepted": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16256,
+   "kv_len_after": 16258,
+   "emitted_gaps": [
+    0.625,
+    4.125
+   ]
+  },
+  {
+   "round_idx": 1,
+   "global_pos_start": 130050,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    11,
+    279,
+    1633,
+    40317
+   ],
+   "accepted": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16258,
+   "kv_len_after": 16260,
+   "emitted_gaps": [
+    0.625,
+    1.125
+   ]
+  },
+  {
+   "round_idx": 2,
+   "global_pos_start": 130052,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    1890,
+    1938,
+    11,
+    323
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16260,
+   "kv_len_after": 16261,
+   "emitted_gaps": [
+    2.875
+   ]
+  },
+  {
+   "round_idx": 3,
+   "global_pos_start": 130053,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    1051,
+    539,
+    687,
+    336
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16261,
+   "kv_len_after": 16262,
+   "emitted_gaps": [
+    0.25
+   ]
+  },
+  {
+   "round_idx": 4,
+   "global_pos_start": 130054,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    527,
+    2103,
+    3026,
+    387
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16262,
+   "kv_len_after": 16263,
+   "emitted_gaps": [
+    1.8125
+   ]
+  },
+  {
+   "round_idx": 5,
+   "global_pos_start": 130055,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    311,
+    8854,
+    11,
+    323
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16263,
+   "kv_len_after": 16264,
+   "emitted_gaps": [
+    0.125
+   ]
+  },
+  {
+   "round_idx": 6,
+   "global_pos_start": 130056,
+   "spec_steps": 4,
+   "n_acc": 2,
+   "draft_tokens": [
+    3278,
+    11,
+    1051,
+    539
+   ],
+   "accepted": [
+    true,
+    true,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 2,
+   "round_truncated": false,
+   "n_committed": 3,
+   "kv_len_before": 16264,
+   "kv_len_after": 16267,
+   "emitted_gaps": [
+    3.6875,
+    1.625,
+    0.625
+   ]
+  },
+  {
+   "round_idx": 7,
+   "global_pos_start": 130059,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    539,
+    3041,
+    198,
+    275
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16267,
+   "kv_len_after": 16268,
+   "emitted_gaps": [
+    0.625
+   ]
+  },
+  {
+   "round_idx": 8,
+   "global_pos_start": 130060,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    359,
+    20069,
+    1570,
+    711
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16268,
+   "kv_len_after": 16269,
+   "emitted_gaps": [
+    2.0
+   ]
+  },
+  {
+   "round_idx": 9,
+   "global_pos_start": 130061,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    32918,
+    11,
+    449,
+    8884
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16269,
+   "kv_len_after": 16270,
+   "emitted_gaps": [
+    1.125
+   ]
+  },
+  {
+   "round_idx": 10,
+   "global_pos_start": 130062,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    96696,
+    449,
+    279,
+    7039
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16270,
+   "kv_len_after": 16271,
+   "emitted_gaps": [
+    0.0625
+   ]
+  },
+  {
+   "round_idx": 11,
+   "global_pos_start": 130063,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    6502,
+    919,
+    449,
+    1124
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16271,
+   "kv_len_after": 16272,
+   "emitted_gaps": [
+    0.5
+   ]
+  },
+  {
+   "round_idx": 12,
+   "global_pos_start": 130064,
+   "spec_steps": 4,
+   "n_acc": 4,
+   "draft_tokens": [
+    398,
+    40444,
+    25,
+    220
+   ],
+   "accepted": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 4,
+   "round_truncated": false,
+   "n_committed": 5,
+   "kv_len_before": 16272,
+   "kv_len_after": 16277,
+   "emitted_gaps": [
+    8.1875,
+    0.5,
+    0.875,
+    3.8125,
+    6.0
+   ]
+  },
+  {
+   "round_idx": 13,
+   "global_pos_start": 130069,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    25,
+    1591,
+    1628,
+    2085
+   ],
+   "accepted": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16277,
+   "kv_len_after": 16279,
+   "emitted_gaps": [
+    7.0,
+    8.625
+   ]
+  },
+  {
+   "round_idx": 14,
+   "global_pos_start": 130071,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    3011,
+    3771,
+    574,
+    12886
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16279,
+   "kv_len_after": 16280,
+   "emitted_gaps": [
+    0.125
+   ]
+  },
+  {
+   "round_idx": 15,
+   "global_pos_start": 130072,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    814,
+    690,
+    617,
+    3026
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16280,
+   "kv_len_after": 16281,
+   "emitted_gaps": [
+    4.375
+   ]
+  },
+  {
+   "round_idx": 16,
+   "global_pos_start": 130073,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    5353,
+    358,
+    690,
+    59227
+   ],
+   "accepted": [
+    true,
+    false,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16281,
+   "kv_len_after": 16283,
+   "emitted_gaps": [
+    3.0625,
+    2.0
+   ]
+  },
+  {
+   "round_idx": 17,
+   "global_pos_start": 130075,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    3041,
+    539,
+    198,
+    49818
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16283,
+   "kv_len_after": 16284,
+   "emitted_gaps": [
+    0.875
+   ]
+  },
+  {
+   "round_idx": 18,
+   "global_pos_start": 130076,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    2911,
+    198,
+    52898,
+    711
+   ],
+   "accepted": [
+    false,
+    true,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16284,
+   "kv_len_after": 16285,
+   "emitted_gaps": [
+    0.25
+   ]
+  },
+  {
+   "round_idx": 19,
+   "global_pos_start": 130077,
+   "spec_steps": 4,
+   "n_acc": 2,
+   "draft_tokens": [
+    374,
+    198,
+    16527,
+    2230
+   ],
+   "accepted": [
+    true,
+    true,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 2,
+   "round_truncated": true,
+   "n_committed": 2,
+   "kv_len_before": 16285,
+   "kv_len_after": 16287,
+   "emitted_gaps": [
+    1.625,
+    2.25
+   ]
+  }
+ ],
+ "text_head": " said unto him, Well done, good and faithful servant;\nthou hast been faithful over a few things, I will make thee ruler over\nmany things: enter thou into the joy of thy lord.\n\n25:24 Then he which had ",
+ "metrics": {
+  "tokens_generated": 32,
+  "sequence_tokens": 130080,
+  "time_sec": 32.81442992500001,
+  "throughput_tps": 0.9751807382647982,
+  "acceptance_rate": 0.13157894736842105,
+  "acceptance_rounds": 19,
+  "rounds_excluded_truncated": 1,
+  "mean_latency_ms": 1025.4509351562504,
+  "ttft_ms": 7228.261118000091,
+  "gpu_peak_mem_mb": 9340.2685546875,
+  "n_rounds": 20,
+  "spec_steps": 4,
+  "prefetch_depth": 1,
+  "kv_block_size": 2048,
+  "draft_model": "meta-llama/Llama-3.2-1B",
+  "target_model": "gradientai/Llama-3-8B-Instruct-Gradient-1048k",
+  "seed": 42,
+  "numerics": {
+   "weight_precision": "fp4",
+   "kv_dtype": "nf4"
+  },
+  "token_gaps": [
+   5.5,
+   0.625,
+   4.125,
+   0.625,
+   1.125,
+   2.875,
+   0.25,
+   1.8125,
+   0.125,
+   3.6875,
+   1.625,
+   0.625,
+   0.625,
+   2.0,
+   1.125,
+   0.0625,
+   0.5,
+   8.1875,
+   0.5,
+   0.875,
+   3.8125,
+   6.0,
+   7.0,
+   8.625,
+   0.125,
+   4.375,
+   3.0625,
+   2.0,
+   0.875,
+   0.25,
+   1.625,
+   2.25
+  ],
+  "engine_input_ids_n": 130048,
+  "engine_input_ids_note": "dropped from the committed sidecar: the full prompt id list, ~130048 ids, reproducible from the committed prompt pool and the pinned tokenizer revision"
+ }
+}

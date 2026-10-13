@@ -98,9 +98,20 @@ def _args(argv=None):
 
 
 def _git_commit() -> str:
+    """The commit the ROW was produced from.
+
+    DF_COMMIT FIRST. The pod's ~/RASD is an rsync of the working tree and carries no
+    `.git`, so `git rev-parse HEAD` there returns nothing and every row recorded
+    `git_commit: unknown`. The driver therefore sends the commit it is staging, in its own
+    variable, and the parameter contract proves it arrived -- the same rule as every other
+    setting: a value that cannot be shown to have travelled is not recorded.
+    """
+    env = os.environ.get("DF_COMMIT")
+    if env and env.strip():
+        return env.strip()
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True,
-                                       stderr=subprocess.DEVNULL).strip()
+                                       stderr=subprocess.DEVNULL).strip() or "unknown"
     except Exception:                                     # noqa: BLE001
         return "unknown"
 
@@ -374,6 +385,12 @@ def main(argv=None):
                 "kv_quant": engine.cfg.kv_quant, "git_commit": commit,
                 "world_size": world, "ring_layers_patched": n_patched,
                 "rng_reseeded": True,
+                # `token_gaps` at the TOP level as well as inside `metrics`: that is where
+                # `scripts/mlsys_cf_compare.py` looks for it (it reads the runner's sidecars),
+                # and a comparison tool that silently sees an empty list reports "no gaps
+                # around the divergence" rather than failing -- which is how the first version
+                # of this sidecar made a 0.0 near-tie look like missing evidence.
+                "token_gaps": metrics.get("token_gaps"),
                 "generated_token_ids": metrics.get("generated_token_ids"),
                 "per_token_trace": metrics.get("per_token_trace"),
                 "text_head": text[:200],

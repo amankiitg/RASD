@@ -68,7 +68,7 @@ def arms_section(d):
     for r in rows:
         if r.get("status") != "ok":
             tab.append([r.get("arm"), r.get("mode"), "-", "-", "-", "-", "-", "-", "-",
-                        f"{r.get('ring_decode_mode')}/{r.get('ring_chunk_size')}/"
+                        f"{r.get('ring_decode_mode')}/{r.get('kv_block_size')}/"
                         f"expand={r.get('expand_after_rotation')}",
                         (r.get("git_commit") or "")[:7], f"**{r.get('status')}**"])
             continue
@@ -78,7 +78,7 @@ def arms_section(d):
             f"{_f(r.get('decode_s_per_tok')):.4f}", f"{_f(r.get('e2e_tps')):.4f}",
             (f"{_f(r.get('acceptance_rate')):.4f}" if r.get("acceptance_rate") else "-"),
             f"{_f(r.get('peak_reserved_mb')):.0f}",
-            f"{r.get('ring_decode_mode')}/{r.get('ring_chunk_size')}/"
+            f"{r.get('ring_decode_mode')}/{r.get('kv_block_size')}/"
             f"expand={r.get('expand_after_rotation')}",
             (r.get("git_commit") or "")[:7], r.get("status"),
         ])
@@ -153,10 +153,22 @@ def _divergence_table(d, rows):
     for (arm, mode), blob in loaded.items():
         if arm != "ring2048":
             continue
-        gaps = []
-        for rec in (blob.get("per_token_trace") or []):
-            gaps.extend(rec.get("emitted_gaps") or [])
+        # `metrics.token_gaps` is the engine's own per-emitted-token top-2 margin and it IS
+        # recorded for target-only rows (the spec path's `per_token_trace.emitted_gaps` is
+        # the older source). Read the direct field first: a tool that silently sees an empty
+        # list reports "no gaps around the divergence" rather than failing, which is how a
+        # 0.0 near-tie can look like missing evidence.
+        gaps = list(blob.get("token_gaps") or [])
+        if not gaps:
+            for rec in (blob.get("per_token_trace") or []):
+                gaps.extend(rec.get("emitted_gaps") or [])
+        if not gaps:
+            for rec in ((blob.get("metrics") or {}).get("per_token_trace") or []):
+                gaps.extend(rec.get("emitted_gaps") or [])
         gaps = [g for g in gaps if isinstance(g, (int, float))]
+        if not gaps:
+            gaps = [g for g in ((blob.get("metrics") or {}).get("token_gaps") or [])
+                    if isinstance(g, (int, float))]
         if gaps:
             base_gaps[mode] = (statistics.median(gaps), min(gaps), max(gaps), len(gaps))
 
@@ -175,9 +187,18 @@ def _divergence_table(d, rows):
             div = "none" if len(a) == len(b) else f"length {len(a)} vs {len(b)}"
         med = base_gaps.get(mode)
         gap = (f"median {med[0]:.4f} (min {med[1]:.4f})" if med else "n/a")
-        tab.append([arm, mode, div, len(a), len(b), gap])
+        # THE NUMBER THAT DECIDES THE GATE: the baseline's own margin at the position where
+        # the arm diverged. Far below the row's median means a near-tie broke the other way.
+        at_div = "n/a"
+        if isinstance(div, int):
+            bg = list(ref.get("token_gaps") or []) or \
+                 list(((ref.get("metrics") or {}).get("token_gaps")) or [])
+            if div < len(bg) and med:
+                at_div = f"{bg[div]:.4f} ({'below' if bg[div] < med[0] else 'ABOVE'} median)"
+        tab.append([arm, mode, div, len(a), len(b), at_div, gap])
     out.append(_md_table(["arm", "mode", "first divergence idx", "arm tokens",
-                          "ring2048 tokens", "ring2048 emitted top-2 gap"], tab))
+                          "ring2048 tokens", "ring2048 gap AT the divergence",
+                          "ring2048 gap distribution"], tab))
     out.append("")
     return "\n".join(out)
 

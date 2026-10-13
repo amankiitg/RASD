@@ -1,0 +1,745 @@
+{
+ "run_id": "DF_ring32768x_spec_pg19_train_0_ctx131072_s42",
+ "arm": "ring32768x",
+ "mode": "spec",
+ "context_length": 131072,
+ "book": "pg19_train_0",
+ "seed": 42,
+ "engine": {
+  "kv_block_size": 32768,
+  "ring_decode_mode": "ring",
+  "ring_expand_after_rotation": true
+ },
+ "spec_steps": 4,
+ "quantize_target": true,
+ "kv_quant": true,
+ "git_commit": "unknown",
+ "world_size": 8,
+ "ring_layers_patched": 32,
+ "rng_reseeded": true,
+ "generated_token_ids": [
+  1544,
+  10699,
+  11,
+  994,
+  814,
+  617,
+  1047,
+  872,
+  1866,
+  5627,
+  11,
+  1550,
+  5371,
+  311,
+  198,
+  329,
+  2091,
+  11,
+  220,
+  16,
+  25,
+  1682,
+  1789,
+  433,
+  374,
+  539,
+  439,
+  3582,
+  4359,
+  1047,
+  539,
+  3288
+ ],
+ "per_token_trace": [
+  {
+   "round_idx": 0,
+   "global_pos_start": 130048,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    1628,
+    279,
+    2383,
+    574
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16256,
+   "kv_len_after": 16257,
+   "emitted_gaps": [
+    0.875
+   ]
+  },
+  {
+   "round_idx": 1,
+   "global_pos_start": 130049,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    11,
+    304,
+    1920,
+    315
+   ],
+   "accepted": [
+    true,
+    false,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16257,
+   "kv_len_after": 16259,
+   "emitted_gaps": [
+    2.375,
+    0.25
+   ]
+  },
+  {
+   "round_idx": 2,
+   "global_pos_start": 130051,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    814,
+    7020,
+    433,
+    311
+   ],
+   "accepted": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16259,
+   "kv_len_after": 16261,
+   "emitted_gaps": [
+    4.0,
+    2.5
+   ]
+  },
+  {
+   "round_idx": 3,
+   "global_pos_start": 130053,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    3967,
+    279,
+    48721,
+    315
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16261,
+   "kv_len_after": 16262,
+   "emitted_gaps": [
+    0.4375
+   ]
+  },
+  {
+   "round_idx": 4,
+   "global_pos_start": 130054,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    3403,
+    315,
+    420,
+    2324
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16262,
+   "kv_len_after": 16263,
+   "emitted_gaps": [
+    3.5
+   ]
+  },
+  {
+   "round_idx": 5,
+   "global_pos_start": 130055,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    13162,
+    11,
+    527,
+    539
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16263,
+   "kv_len_after": 16264,
+   "emitted_gaps": [
+    0.75
+   ]
+  },
+  {
+   "round_idx": 6,
+   "global_pos_start": 130056,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    13162,
+    11,
+    1051,
+    539
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16264,
+   "kv_len_after": 16265,
+   "emitted_gaps": [
+    0.5
+   ]
+  },
+  {
+   "round_idx": 7,
+   "global_pos_start": 130057,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    11,
+    2349,
+    279,
+    5933
+   ],
+   "accepted": [
+    true,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16265,
+   "kv_len_after": 16267,
+   "emitted_gaps": [
+    1.625,
+    0.5
+   ]
+  },
+  {
+   "round_idx": 8,
+   "global_pos_start": 130059,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    5387,
+    279,
+    198,
+    331
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16267,
+   "kv_len_after": 16268,
+   "emitted_gaps": [
+    2.375
+   ]
+  },
+  {
+   "round_idx": 9,
+   "global_pos_start": 130060,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    279,
+    198,
+    6133,
+    6722
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16268,
+   "kv_len_after": 16269,
+   "emitted_gaps": [
+    1.125
+   ]
+  },
+  {
+   "round_idx": 10,
+   "global_pos_start": 130061,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    198,
+    50828,
+    1866,
+    20663
+   ],
+   "accepted": [
+    true,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16269,
+   "kv_len_after": 16271,
+   "emitted_gaps": [
+    0.875,
+    0.375
+   ]
+  },
+  {
+   "round_idx": 11,
+   "global_pos_start": 130063,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    360,
+    466,
+    552,
+    11
+   ],
+   "accepted": [
+    false,
+    true,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16271,
+   "kv_len_after": 16272,
+   "emitted_gaps": [
+    0.5
+   ]
+  },
+  {
+   "round_idx": 12,
+   "global_pos_start": 130064,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    11,
+    279,
+    2574,
+    902
+   ],
+   "accepted": [
+    true,
+    false,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16272,
+   "kv_len_after": 16274,
+   "emitted_gaps": [
+    0.125,
+    0.875
+   ]
+  },
+  {
+   "round_idx": 13,
+   "global_pos_start": 130066,
+   "spec_steps": 4,
+   "n_acc": 2,
+   "draft_tokens": [
+    16,
+    25,
+    1591,
+    1556
+   ],
+   "accepted": [
+    true,
+    true,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 2,
+   "round_truncated": false,
+   "n_committed": 3,
+   "kv_len_before": 16274,
+   "kv_len_after": 16277,
+   "emitted_gaps": [
+    4.75,
+    6.375,
+    6.25
+   ]
+  },
+  {
+   "round_idx": 14,
+   "global_pos_start": 130069,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    3011,
+    3771,
+    574,
+    12886
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16277,
+   "kv_len_after": 16278,
+   "emitted_gaps": [
+    1.0
+   ]
+  },
+  {
+   "round_idx": 15,
+   "global_pos_start": 130070,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    814,
+    5614,
+    279,
+    27025
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16278,
+   "kv_len_after": 16279,
+   "emitted_gaps": [
+    1.375
+   ]
+  },
+  {
+   "round_idx": 16,
+   "global_pos_start": 130071,
+   "spec_steps": 4,
+   "n_acc": 1,
+   "draft_tokens": [
+    374,
+    1071,
+    11,
+    2435
+   ],
+   "accepted": [
+    true,
+    false,
+    true,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 1,
+   "round_truncated": false,
+   "n_committed": 2,
+   "kv_len_before": 16279,
+   "kv_len_after": 16281,
+   "emitted_gaps": [
+    1.5,
+    0.875
+   ]
+  },
+  {
+   "round_idx": 17,
+   "global_pos_start": 130073,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    459,
+    34662,
+    481,
+    3245
+   ],
+   "accepted": [
+    false,
+    true,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16281,
+   "kv_len_after": 16282,
+   "emitted_gaps": [
+    0.5625
+   ]
+  },
+  {
+   "round_idx": 18,
+   "global_pos_start": 130074,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    264,
+    4717,
+    11,
+    719
+   ],
+   "accepted": [
+    false,
+    true,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16282,
+   "kv_len_after": 16283,
+   "emitted_gaps": [
+    0.5
+   ]
+  },
+  {
+   "round_idx": 19,
+   "global_pos_start": 130075,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    279,
+    2911,
+    315,
+    279
+   ],
+   "accepted": [
+    false,
+    false,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16283,
+   "kv_len_after": 16284,
+   "emitted_gaps": [
+    1.0
+   ]
+  },
+  {
+   "round_idx": 20,
+   "global_pos_start": 130076,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    1071,
+    11,
+    6914,
+    1124
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16284,
+   "kv_len_after": 16285,
+   "emitted_gaps": [
+    0.0
+   ]
+  },
+  {
+   "round_idx": 21,
+   "global_pos_start": 130077,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    61937,
+    11,
+    323,
+    1550
+   ],
+   "accepted": [
+    false,
+    true,
+    true,
+    true
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16285,
+   "kv_len_after": 16286,
+   "emitted_gaps": [
+    1.75
+   ]
+  },
+  {
+   "round_idx": 22,
+   "global_pos_start": 130078,
+   "spec_steps": 4,
+   "n_acc": 0,
+   "draft_tokens": [
+    2884,
+    1124,
+    1695,
+    323
+   ],
+   "accepted": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "ended_on_eos": false,
+   "n_emitted": 0,
+   "round_truncated": false,
+   "n_committed": 1,
+   "kv_len_before": 16286,
+   "kv_len_after": 16287,
+   "emitted_gaps": [
+    0.9375
+   ]
+  }
+ ],
+ "text_head": " said unto him, Well done, good and faithful servant;\nthou hast been faithful over a few things, I will make thee ruler over\nmany things: enter thou into the joy of thy lord.\n\n25:24 Then he which had ",
+ "metrics": {
+  "tokens_generated": 32,
+  "sequence_tokens": 130080,
+  "time_sec": 75.44165153800009,
+  "throughput_tps": 0.42416886888911154,
+  "acceptance_rate": 0.08695652173913043,
+  "acceptance_rounds": 23,
+  "rounds_excluded_truncated": 0,
+  "mean_latency_ms": 2357.551610562503,
+  "ttft_ms": 7228.779279000037,
+  "gpu_peak_mem_mb": 9400.39453125,
+  "n_rounds": 23,
+  "spec_steps": 4,
+  "prefetch_depth": 1,
+  "kv_block_size": 2048,
+  "draft_model": "meta-llama/Llama-3.2-1B",
+  "target_model": "gradientai/Llama-3-8B-Instruct-Gradient-1048k",
+  "seed": 42,
+  "numerics": {
+   "weight_precision": "fp4",
+   "kv_dtype": "nf4"
+  },
+  "token_gaps": [
+   5.5,
+   0.875,
+   2.375,
+   0.25,
+   4.0,
+   2.5,
+   0.4375,
+   3.5,
+   0.75,
+   0.5,
+   1.625,
+   0.5,
+   2.375,
+   1.125,
+   0.875,
+   0.375,
+   0.5,
+   0.125,
+   0.875,
+   4.75,
+   6.375,
+   6.25,
+   1.0,
+   1.375,
+   1.5,
+   0.875,
+   0.5625,
+   0.5,
+   1.0,
+   0.0,
+   1.75,
+   0.9375
+  ],
+  "engine_input_ids_n": 130048,
+  "engine_input_ids_note": "dropped from the committed sidecar: the full prompt id list, ~130048 ids, reproducible from the committed prompt pool and the pinned tokenizer revision"
+ }
+}
