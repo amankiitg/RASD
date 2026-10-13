@@ -759,3 +759,140 @@ It reports 11 spec rows and 4 target-only rows plotted, 0 looping. Two defects i
 script were fixed for this: it had been drawing the rounded `throughput_tps` field, and
 with no token sidecar it treated a row as clean without testing it. It now computes
 `tokens_generated/time_sec` and excludes unmeasurable rows loudly.
+
+---
+
+## 9. The FP4 seed spread, and what the quantization ablation says (2026-10-13)
+
+This section is the campaign's Phase 3-**C** outcome. The planned Phase 3 was a bf16 campaign;
+the quantization ablation in §9.1 measured the thing that decision rested on, and the answer
+came back at **1.113x**, below the 1.5x threshold, so the bf16 campaign was **not run** and the
+deliverable became the seed replicates the campaign had been unable to produce since the seeds
+stage turned out to be void. The decision, its arithmetic and the branch are in
+[QUANT_DECISION.md](./QUANT_DECISION.md), written and committed **before** anything was launched
+on the strength of it.
+
+### 9.1 The quantization ablation, 128k, one setting apart, one session
+
+Eight rows, all `ok`, on one 8x A100 80GB SXM4 (`0a110718553b497cb8c799ffa3289252`,
+us-midwest-1), book `pg19_train_0`, T=0.7, 128 tokens, `spec_steps` 4, `draft_window_cap` 4096,
+`kv_block_size` 2048, seed 42. Each arm has its own target-only and spec row, so every column
+below is in-session. Rows: [results/mlsys/quant_ablation](./results/mlsys/quant_ablation)
+(`session_a_SAQ_*.csv`, plus `tokens_slim/` sidecars).
+
+| arm | `quantize_target` / `kv_quant` | target-only decode s/tok | **speedup** | spec decode s/tok | spec tok/s | spec speedup | spec accept | peak MB rank 0 (target / spec) |
+|---|---|---|---|---|---|---|---|---|
+| SAQ_CONTROL | true / true (fp4, nf4) | 3.6684 | 1.000x | 1.9086 | 0.50893 | 1.000x | 0.2712 | 8256 / 10114 |
+| SAQ_W_OFF | **false** / true | 3.6079 | **1.017x** | 1.7500 | 0.54679 | 1.091x | 0.3170 | 17824 / 19681 |
+| SAQ_KV_OFF | true / **false** | 3.3262 | **1.103x** | 1.3438 | 0.70896 | **1.420x** | 0.4096 | 13159 / 17633 |
+| SAQ_BOTH_OFF | **false** / **false** | 3.2959 | **1.113x** | 1.8530 | 0.51890 | 1.030x | 0.2422 | 22727 / 27207 |
+
+End-to-end tok/s (`tokens_generated/time_sec`) for completeness: CONTROL 0.26978 / 0.50893,
+W_OFF 0.27323 / 0.54679, KV_OFF 0.29729 / 0.70896, BOTH_OFF 0.29969 / 0.51890 (target / spec).
+TTFT was 8.1-10.3 s target-only and 9.1-11.8 s spec on every arm, i.e. the precision flags do
+not measurably move prefill.
+
+**Every row's precision was verified from the row, not from the config.** The CSV carries no
+`quantize_*` column, so the check is the token sidecar's `weight_precision` and `kv_dtype`,
+which `src/models/rasd_inference.py` reads off the **loaded model and cache** rather than
+echoing the config: CONTROL `fp4`/`nf4`, W_OFF `bfloat16`/`nf4`, KV_OFF `fp4`/`bfloat16`,
+BOTH_OFF `bfloat16`/`bfloat16`. Each arm recorded exactly what it asked for, so nothing here is
+a silent config fallback.
+
+**The headline of this section is what did NOT happen.** Turning both quantizations off, which
+removes the FP4 weight dequantization and the NF4 whole-cache round-trip, buys **11.3%** of a
+target-only decode token at 128k and **1.7%** comes from the weights alone. Read against §5a,
+where 87-98% of a decode step at 128k is local compute rather than ring transfer, the
+conclusion is that the local per-step cost is **not** the quantization round-trip: whatever the
+remaining ~88% is, it is attention over a 128k cache, the per-step Python work around the ring,
+and kernel launches, and quantizing differently will not recover it.
+
+**The spec arms invert the target-only ordering, on one book.** KV_OFF is by far the best spec
+arm (acceptance **0.4096**, 1.420x decode) while BOTH_OFF is the **worst** (acceptance
+**0.2422**, 1.030x) — worse than the control it improves on in the target arm. On this book,
+bf16 KV *raises* acceptance (0.4096 vs 0.2712) and bf16 weights *lower* it (0.2422 vs 0.2712).
+n=1 per arm, so this is recorded as a single-book observation and as the reason KV_OFF deserves
+its own replicate if precision work resumes — not as a trend, and not as a claim about the
+method.
+
+### 9.2 Per-rank memory at 128k, allocated and reserved
+
+The ablation's CSVs carry rank 0's *allocated* peak only. A second target-only pass
+([results/mlsys/quant_memory](./results/mlsys/quant_memory)) enabled the per-rank tracer, which
+writes `<run_id>.rank<r>.json` per rank. CONTROL (the precision branch C keeps) at 128k:
+
+| rank | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| max allocated MB | 8256 | 8378 | 8503 | 8503 | 8503 | 8503 | 8503 | 8503 |
+| max reserved MB | 8642 | 8892 | 9012 | 9012 | 9012 | 9012 | 9012 | 9012 |
+
+Rank 0's traced peak is identical to the CSV's column and the trace reaches an `end` snapshot
+(127 rounds), so for this arm those are the run's true high-water marks; ranks 1-7 sit ~250 MB
+above rank 0. **The other three arms have rank-0 allocated only** (W_OFF 17824/19681, KV_OFF
+13159/17633, BOTH_OFF 22727/27207 target/spec): the pass was cut short because its timer was
+sized to the work rather than to the work plus the driver's 15-minute reserve, and Phase 1's
+$45 ceiling then had $4 left, so its lower-priority arms were dropped by rule. The partial
+BOTH_OFF trace is quarantined under `quant_memory/killed_run/` with a note saying its values
+are a prefill-only **lower bound** (rank 0: 19208 MB traced against 22727 MB in the CSV), so
+nobody later reads 19.2 GB as that arm's footprint. At 1M the same session's memory is not
+available either; §9.3's rows carry rank-0 allocated at 1M.
+
+### 9.3 The seed spread at 1M — the first genuine replicates
+
+Session `d07754faecb54ec49eb974f6ee9a0f62` (8x A100 80GB SXM4, us-east-1, 3.13 h, $69.82 of a
+$75 ceiling). FP4 weights + NF4 KV, the headline protocol unchanged: T=0.7, 128 tokens,
+`spec_steps` 4, `draft_window_cap` 4096, `kv_block_size` 2048, the five known-good books, only
+the seed moving. Rows: [results/mlsys/fp4_seeds](./results/mlsys/fp4_seeds).
+
+| seed | books | accept mean | spec tok/s | decode s/tok | speedup vs 1M target-only | rank-0 peak MB |
+|---|---|---|---|---|---|---|
+| 42 (Session A) | 5 | 0.5246 | 0.12077 | 5.7725 | 2.37x | — |
+| **123** | 5 | **0.4656** | **0.11512** | 6.1598 | **2.26x** | 26837 |
+| **456** | 3 | **0.4466** | **0.11348** | 6.3323 | **2.22x** | 26837 |
+
+The speedups reuse Session A's 1M target-only rate (0.05103 tok/s), which a seed cannot move:
+a target-only row emits the argmax per step and carries no sampling.
+
+**Matched on the three books every seed has**, per book — the ordering is not uniform, which is
+what makes it a sampling effect rather than a per-seed bias:
+
+| book | seed 42 | seed 123 | seed 456 |
+|---|---|---|---|
+| `pg19_train_0` | **0.3776** | 0.3273 | 0.2888 |
+| `pg19_train_1` | **0.6838** | 0.5250 | 0.5061 |
+| `pg19_train_915` | 0.6250 | **0.6357** | 0.5449 |
+| **mean** | **0.5621** | 0.4960 | 0.4466 |
+
+**Spread across seeds on matched books: 0.4466 to 0.5621, a range of 0.1155 = 23.0% of the
+3-seed mean (0.5016).** Seed 123 wins on one of the three books, which is why the spread should
+be read as per-row sampling variance at n=5 books, not as a seed-level constant offset. In
+throughput terms the three seeds span **2.22-2.37x**.
+
+**This is the first evidence in the campaign that the seed reaches the sampler.** The
+seeds/ablations session's two seed stages (SA_SEED_123/456) recorded `seed=42` and reproduced
+seed 42's token digests byte-for-byte (§8.3); the cause is `run_experiment.py` popping `seeds`
+from `defaults`, merging the level over it, then setting `run["seed"]` from that list, so a
+per-level key is overwritten. Moving the seed into `defaults` — this session's whole config
+change — produces different tokens, as the digests and the acceptances here show.
+
+### 9.4 What did not run, and why
+
+| not run | reason |
+|---|---|
+| the **bf16 Phase 3 campaign** (P1-P9) | branch C: the measured quantization speedup is 1.113x, below the 1.5x threshold. The configs exist and are rehearsed (`configs/mlsys_bf16_campaign.yml`) |
+| **seed 456, books 2204 and 2768** | the session's timer is capped by its $75 ceiling at 201 min; seed 456's fourth row was in flight when the driver's poll deadline fired at 02:00:52Z. 8 of the 10 planned rows are in the CSV, and the stage has no completion line because it never completed |
+| **per-rank memory for W_OFF, KV_OFF, BOTH_OFF** | the memory pass's timer was sized to the work, not to work-plus-reserve, and Phase 1's ceiling then had $4 left (§9.2) |
+| any **bf16 rows at all** | consequence of branch C. The vLLM client in §3 therefore remains a **bf16-vs-FP4** comparison, and the phrase "precision-matched" does not apply to any row in this document |
+
+**The bf16 path is nevertheless known to work, and that is measured rather than assumed**: the
+Phase 3 rehearsal (`configs/mlsys_bf16_campaign_rehearsal.yml`, 12/12 stages, 12/12 rows ok,
+$0.67) loaded bf16 weights with a bf16 KV cache on a real GPU and every row recorded
+`bfloat16`/`bfloat16` from the loaded model. If the campaign ever moves precision, the plumbing
+is proven and only the two flag lines change.
+
+### 9.5 Commits
+
+`7fad0c0` (Phase 3 configs), `2b0fdfe` (memory-trace keys), `0b58f97` (Phase 0 pass),
+`ad2dac8` (Phase 1 rows), `55c7e94` (Phase 2 decision, branch C), `400e7fa` (Phase 3-C and
+memory-pass configs), `0c33a82` (per-rank memory), `0051cfa` (memory addendum), `7c930b7`,
+`f490ced`, `33f2cf3` (seed rows, committed as they landed so a truncated session keeps them).
