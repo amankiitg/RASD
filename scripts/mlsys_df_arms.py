@@ -163,6 +163,21 @@ def main(argv=None):
     import torch.distributed as dist
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
+    # THE PROCESS GROUP IS OURS TO INITIALISE. torchrun sets RANK/WORLD_SIZE/LOCAL_RANK but
+    # does not create the group; `run_experiment.py` calls init_process_group in its worker
+    # and this driver has to do the same. Without it `dist.is_initialized()` is False,
+    # `RASDInference` sees world_size 1, `install_ring_attention` patches NOTHING, and an
+    # 8-GPU box runs eight independent single-rank models that produce perfectly plausible
+    # rows. That is the failure the $5.47 manifest exists for, one layer down, so it is
+    # checked by EFFECT immediately after construction rather than assumed.
+    if world > 1 and torch.cuda.is_available() and not dist.is_initialized():
+        from datetime import timedelta
+        dist.init_process_group(backend="nccl",
+                                device_id=torch.device(f"cuda:{local_rank}"),
+                                timeout=timedelta(minutes=30))
+    if dist.is_initialized():
+        assert dist.get_world_size() == world, \
+            f"torchrun said world={world}, the group says {dist.get_world_size()}"
 
     sys.path.insert(0, os.getcwd())
     import run_experiment as R
@@ -203,6 +218,23 @@ def main(argv=None):
         log(f"engine built in {time.perf_counter() - t_load:.1f} s; "
             f"world_size seen by engine = "
             f"{getattr(engine, '_world_size', 'n/a')}")
+
+    # VERIFY BY EFFECT, before any row is written: at world > 1 the ring patch MUST be
+    # installed. A run that silently fell back to one rank per GPU would otherwise look
+    # exactly like a successful session.
+    _layers = getattr(getattr(engine.target_model, "model", None), "layers", None) or []
+    _patched = sum(1 for l in _layers
+                   if hasattr(getattr(l, "self_attn", None), "_ring_chunk_size"))
+    if rank == 0:
+        log(f"ring-patched attention layers: {_patched} (world={world})")
+    if world > 1 and _patched == 0 and not args.single_rank_ok:
+        raise SystemExit(
+            "FATAL: world_size > 1 but NO ring-patched attention layer exists. The ring "
+            "patch is a no-op at world_size<=1, so this process is running eight "
+            "independent single-rank models and every row it would write is void. Refusing.")
+    if world == 1 and _patched > 0 and rank == 0:
+        log("WARNING: world_size == 1 but ring layers ARE patched; unexpected, "
+            "the rows would still be single-rank.")
 
     # The prompt is built ONCE per (context, book) and reused by every arm: an arm-to-arm
     # timing difference must not be a prompt difference.
