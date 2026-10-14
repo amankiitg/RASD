@@ -1,0 +1,10 @@
+=== vLLM environment ===
+  venv        : /home/ubuntu/RASD/.venv-vllm
+  base python : /usr/bin/python3
+  vllm pin    : 0.6.3
+--> creating /home/ubuntu/RASD/.venv-vllm
+  python      : 3.10.12
+  torch       : 2.4.0+cu121
+  vllm        : 0.6.3
+  transformers: 5.19.0
+done. The campaign's own environment was not modified.

@@ -1,0 +1,71 @@
+# MLSys Phase 3 — mechanism isolation: NF4 draft vs bf16 draft @64k
+#
+# Reviewer complaint (roadmap T3.3): the round-cost increase is not
+# isolated to a mechanism. Candidate explanations:
+#   (a) context length itself lengthens each verify round, or
+#   (b) the NF4-quantised draft proposes tokens whose logits diverge from
+#       the target's, so acceptance drops and more rounds are needed.
+#
+# Holding target, context, k and seeds fixed, the ONLY change between the
+# two groups here is draft precision. If (b) drives it, the bf16-draft
+# group shows materially higher acceptance at identical context.
+#
+# 64k is chosen because it is long enough for the round-cost effect to be
+# visible and short enough to run both arms across 3 seeds cheaply.
+#
+# Cross-reference: the repo's own quant ablation (scripts/run_quant_ablation.py,
+# results/quant_mini/) covers the same question at short context; this is the
+# long-context counterpart with the new --draft-dtype plumbing.
+#
+# `draft_dtype` is also settable from the CLI (--draft-dtype nf4|bf16); the
+# levels below pin it explicitly so the two groups are self-describing.
+#
+# 2 groups x 3 seeds = 6 runs.
+
+canary:
+  id:   "mlsys_bf16_draft_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "yarn"      # factor=16 over Llama-2's 4k
+  kv_quant:          true        # target KV format held fixed across both arms
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42, 123, 456]
+
+# ---------------------------------------------------------------------------
+# (i) draft in NF4 — the production default
+# ---------------------------------------------------------------------------
+DRAFT_NF4:
+  name:   "bf16_draft_isolation_nf4"
+  factor: "draft_dtype"
+  levels:
+    - id: "BFTD_ctx64k_draftnf4"
+      context_length: 65536
+      draft_dtype:    "nf4"
+      quantize_draft: true
+      notes: "64k, draft NF4 — production path"
+
+# ---------------------------------------------------------------------------
+# (ii) draft in bf16 — the isolation arm
+# ---------------------------------------------------------------------------
+DRAFT_BF16:
+  name:   "bf16_draft_isolation_bf16"
+  factor: "draft_dtype"
+  levels:
+    - id: "BFTD_ctx64k_draftbf16"
+      context_length: 65536
+      draft_dtype:    "bf16"
+      quantize_draft: false
+      notes: "64k, draft bf16 unquantised — isolates NF4 logit divergence"

@@ -1,0 +1,55 @@
+# 123 REPLICATE OF THE 1M HEADLINE, one config per seed.
+#
+# WHY ONE CONFIG PER 123. `seeds:` ON A LEVEL DOES NOTHING. run_experiment.py pops the
+# seed list from `defaults` (line 590), merges each level over the defaults (611) and then
+# sets `run["seed"] = seed` from that list (612) -- so a level's own `seeds:` key is
+# overwritten every time, and the comment there says why: "Seeds are NOT an expansion axis
+# for these runs". The seeds/ablations session's SA_123_123 stage wrote `seed=42` into
+# every row and generated token digests BIT-IDENTICAL to the seed-42 rows (checked per
+# book), i.e. it re-ran seed 42 with a 123 in the filename. The only config-only way to
+# move the seed is here, in `defaults`.
+#
+# WHAT IT IS. The headline protocol unchanged -- T=0.7, 128 tokens, seed below,
+# spec_steps 4, draft_window_cap 4096, kv_block_size 2048, the five books -- so this is
+# the same cell as `SAMP_1M_SPEC` with one number different.
+#
+# SPEEDUPS REUSE the 1M target-only rate: a target-only row emits the argmax per step and
+# carries no sampling, so a seed cannot change the denominator (measured book variation
+# under 2%). No target-only row is re-run for a seed.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [123]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+
+SEED123_1M_SPEC:
+  name: seed1m_spec
+  factor: context_length
+  levels:
+  - id: SEED123_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'the 1M sampling headline at this config default seed; run_id carries the seed so rows cannot be confused'

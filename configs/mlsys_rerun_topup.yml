@@ -1,0 +1,82 @@
+# PART 2 TOP-UP — target-only denominators under the candidate engine.
+#
+# WHY. RESULTS_OCT 10 reports 512k target-only on n=1 and 1M target-only on n=2, because the
+# rerun's priority order spent its budget on the spec arms first. Those two figures are the
+# denominators of the 4.26x and 5.32x speedups, so they are the thinnest numbers in the
+# headline. This adds the missing books.
+#
+# PROTOCOL IS THE RERUN'S, UNCHANGED: configs/mlsys_rerun_r1.yml's candidate engine
+# (ring_decode_mode: split_kv, kv_block_size: 32768, ring_expand_after_rotation: true), FP4
+# weights + NF4 KV, T=0.7, max_new_tokens 128, spec_steps 0, the same revisions, the same
+# prompt pools and the same offsets per book. Seed 42 for every row.
+#
+# STAGE ORDER IS THE PRIORITY ORDER. The gate is first because stop condition S2 voids a row
+# that cannot prove its engine, and a gate row costs 90 seconds: if the provenance columns are
+# empty, nothing after it is worth running. 512k is last so it is what gets dropped if the cost
+# projection from the gate exceeds the $50 ceiling.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 0
+  kv_block_size: 32768
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  log_per_token: true
+  save_generated_tokens: true
+  ring_decode_mode: "split_kv"
+  ring_expand_after_rotation: true
+  seeds: [42]
+
+TP_GATE_128K_TARGET:
+  name: tp_gate_128k_target
+  factor: context_length
+  levels:
+  - id: TP_GATE_128K_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    notes: 'GATE: 1 row, 128k target-only. Verify the provenance columns and project the cost before anything else runs'
+
+TP_1M_TARGET:
+  name: tp_1m_target
+  factor: context_length
+  levels:
+  - id: TP_1M_TARGET
+    context_length: 1048576
+    documents: [pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    notes: 'P1: the three 1M books the rerun had no target-only row for; with train_0/train_1 this completes n=5'
+
+TP_512K_TARGET:
+  name: tp_512k_target
+  factor: context_length
+  levels:
+  - id: TP_512K_TARGET
+    context_length: 524288
+    documents: [pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    notes: 'P2: the two 512k aligned books the rerun had no target-only row for; with train_0 this completes n=3'
+

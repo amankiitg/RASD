@@ -1,0 +1,173 @@
+{
+  "run_id": "P2R_bf16_spec_pg19_train_1_s42",
+  "world_size": 8,
+  "measured_kv": "bfloat16",
+  "tokens": 64,
+  "positions": 63,
+  "max_shortfall": 6.125,
+  "worst_position": 22,
+  "non_argmax": 25,
+  "non_argmax_fraction": 0.3968253968253968,
+  "first_non_argmax_position": 2,
+  "failures": [
+    {
+      "position": 2,
+      "emitted_token": 387,
+      "argmax_token": 3021,
+      "shortfall": 1.875
+    },
+    {
+      "position": 3,
+      "emitted_token": 653,
+      "argmax_token": 198,
+      "shortfall": 4.0
+    },
+    {
+      "position": 7,
+      "emitted_token": 40070,
+      "argmax_token": 1628,
+      "shortfall": 1.25
+    },
+    {
+      "position": 8,
+      "emitted_token": 719,
+      "argmax_token": 433,
+      "shortfall": 2.125
+    },
+    {
+      "position": 9,
+      "emitted_token": 311,
+      "argmax_token": 264,
+      "shortfall": 0.875
+    },
+    {
+      "position": 10,
+      "emitted_token": 4639,
+      "argmax_token": 1501,
+      "shortfall": 3.5625
+    },
+    {
+      "position": 11,
+      "emitted_token": 279,
+      "argmax_token": 757,
+      "shortfall": 3.875
+    },
+    {
+      "position": 13,
+      "emitted_token": 1148,
+      "argmax_token": 1778,
+      "shortfall": 2.5
+    },
+    {
+      "position": 14,
+      "emitted_token": 364,
+      "argmax_token": 433,
+      "shortfall": 3.3125
+    },
+    {
+      "position": 15,
+      "emitted_token": 83,
+      "argmax_token": 15930,
+      "shortfall": 0.125
+    },
+    {
+      "position": 22,
+      "emitted_token": 3174,
+      "argmax_token": 1272,
+      "shortfall": 6.125
+    },
+    {
+      "position": 26,
+      "emitted_token": 1455,
+      "argmax_token": 358,
+      "shortfall": 1.9375
+    },
+    {
+      "position": 28,
+      "emitted_token": 69439,
+      "argmax_token": 5895,
+      "shortfall": 3.25
+    },
+    {
+      "position": 29,
+      "emitted_token": 291,
+      "argmax_token": 11,
+      "shortfall": 6.0625
+    },
+    {
+      "position": 32,
+      "emitted_token": 11299,
+      "argmax_token": 4985,
+      "shortfall": 3.375
+    },
+    {
+      "position": 34,
+      "emitted_token": 389,
+      "argmax_token": 345,
+      "shortfall": 3.125
+    },
+    {
+      "position": 35,
+      "emitted_token": 279,
+      "argmax_token": 6212,
+      "shortfall": 0.75
+    },
+    {
+      "position": 36,
+      "emitted_token": 6558,
+      "argmax_token": 5015,
+      "shortfall": 1.25
+    },
+    {
+      "position": 40,
+      "emitted_token": 1070,
+      "argmax_token": 1243,
+      "shortfall": 0.875
+    },
+    {
+      "position": 45,
+      "emitted_token": 1070,
+      "argmax_token": 3463,
+      "shortfall": 0.1875
+    },
+    {
+      "position": 47,
+      "emitted_token": 2815,
+      "argmax_token": 11203,
+      "shortfall": 3.625
+    },
+    {
+      "position": 48,
+      "emitted_token": 11,
+      "argmax_token": 345,
+      "shortfall": 4.4375
+    },
+    {
+      "position": 51,
+      "emitted_token": 198,
+      "argmax_token": 358,
+      "shortfall": 1.25
+    },
+    {
+      "position": 54,
+      "emitted_token": 3974,
+      "argmax_token": 10457,
+      "shortfall": 1.0625
+    },
+    {
+      "position": 59,
+      "emitted_token": 3974,
+      "argmax_token": 10457,
+      "shortfall": 1.5625
+    }
+  ],
+  "noise_floor": {
+    "max_abs_delta": 7.84375,
+    "control_max_abs_delta": 0.0,
+    "positions": 63
+  },
+  "budget_s": 900.0,
+  "elapsed_s": 156.689,
+  "spec_steps": 4,
+  "context_length": 8192
+}

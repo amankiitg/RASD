@@ -1,0 +1,17 @@
+{"round_idx": 0, "global_pos_start": 4096, "spec_steps": 4, "n_acc": 4, "draft_tokens": [262, 265, 29892, 408], "accepted": [true, true, true, true]}
+{"round_idx": 1, "global_pos_start": 4101, "spec_steps": 4, "n_acc": 2, "draft_tokens": [2153, 28454, 304, 1104], "accepted": [true, true, false, true]}
+{"round_idx": 2, "global_pos_start": 4104, "spec_steps": 4, "n_acc": 0, "draft_tokens": [314, 549, 278, 282], "accepted": [false, false, true, true]}
+{"round_idx": 3, "global_pos_start": 4105, "spec_steps": 4, "n_acc": 4, "draft_tokens": [1678, 376, 29909, 2460], "accepted": [true, true, true, true]}
+{"round_idx": 4, "global_pos_start": 4110, "spec_steps": 4, "n_acc": 1, "draft_tokens": [626, 29875, 29892, 286], "accepted": [true, false, true, true]}
+{"round_idx": 5, "global_pos_start": 4112, "spec_steps": 4, "n_acc": 3, "draft_tokens": [4084, 4099, 29991, 13], "accepted": [true, true, true, false]}
+{"round_idx": 6, "global_pos_start": 4116, "spec_steps": 4, "n_acc": 3, "draft_tokens": [329, 29892, 540, 329], "accepted": [true, true, true, false]}
+{"round_idx": 7, "global_pos_start": 4120, "spec_steps": 4, "n_acc": 3, "draft_tokens": [5089, 1769, 13, 13], "accepted": [true, true, true, false]}
+{"round_idx": 8, "global_pos_start": 4124, "spec_steps": 4, "n_acc": 0, "draft_tokens": [376, 29949, 332, 26361], "accepted": [false, true, true, true]}
+{"round_idx": 9, "global_pos_start": 4125, "spec_steps": 4, "n_acc": 4, "draft_tokens": [16894, 304, 278, 16402], "accepted": [true, true, true, true]}
+{"round_idx": 10, "global_pos_start": 4130, "spec_steps": 4, "n_acc": 4, "draft_tokens": [10186, 324, 793, 344], "accepted": [true, true, true, true]}
+{"round_idx": 11, "global_pos_start": 4135, "spec_steps": 4, "n_acc": 4, "draft_tokens": [262, 29892, 1190, 293], "accepted": [true, true, true, true]}
+{"round_idx": 12, "global_pos_start": 4140, "spec_steps": 4, "n_acc": 2, "draft_tokens": [3876, 13, 13, 1678], "accepted": [true, true, false, true]}
+{"round_idx": 13, "global_pos_start": 4143, "spec_steps": 4, "n_acc": 4, "draft_tokens": [15535, 278, 5208, 1026], "accepted": [true, true, true, true]}
+{"round_idx": 14, "global_pos_start": 4148, "spec_steps": 4, "n_acc": 4, "draft_tokens": [1747, 28472, 274, 475], "accepted": [true, true, true, true]}
+{"round_idx": 15, "global_pos_start": 4153, "spec_steps": 4, "n_acc": 4, "draft_tokens": [6760, 287, 29889, 1932], "accepted": [true, true, true, true]}
+{"round_idx": 16, "global_pos_start": 4158, "spec_steps": 4, "n_acc": 1, "draft_tokens": [278, 13, 25603, 307], "accepted": [true, false, true, true]}

@@ -1,0 +1,18 @@
+reason: operator stop -- greedy repetition invalidates the 256k acceptance headline
+utc: 2026-10-10T11:35:37Z
+instance: 16cc2a5795594ce195b39e223dd8134b
+region: us-east-1
+ip: 132.145.132.138
+manifest started 2026-10-10T01:53:02Z; stopped during natural_spec_gated_256k (started 11:32:06Z)
+
+PULLED ARTIFACTS AND ONE TRANSFORMATION
+  pod_results/ holds every CSV this run produced, the per-round traces
+  (per_token/, the acceptance-by-window evidence), the generated text
+  (generated/, 9.6 MB -- the " He was deceived." loops are here in full), the
+  memory traces, the gate's generated text, and tokens_slim/.
+  tokens_slim/: the 25 token sidecars with prompt_token_ids and engine_input_ids
+  REMOVED. Those two fields are up to 262,144 ints each and are fully
+  reproducible from the staged pg19_docs memmap plus doc_id/seed; every hash,
+  kv_dtype, token count and the ~1024 generated ids the repetition audit reads are
+  kept. This took the directory from 48 MB to 13 MB. The full sidecars were on the
+  pod and the pod is terminated.

@@ -1,0 +1,203 @@
+{
+  "run_id": "P2R_bf16_targetonly_pg19_train_1_s42",
+  "world_size": 8,
+  "measured_kv": "bfloat16",
+  "tokens": 64,
+  "positions": 63,
+  "max_shortfall": 6.5625,
+  "worst_position": 53,
+  "non_argmax": 30,
+  "non_argmax_fraction": 0.47619047619047616,
+  "first_non_argmax_position": 2,
+  "failures": [
+    {
+      "position": 2,
+      "emitted_token": 10707,
+      "argmax_token": 3021,
+      "shortfall": 3.1875
+    },
+    {
+      "position": 3,
+      "emitted_token": 276,
+      "argmax_token": 375,
+      "shortfall": 0.625
+    },
+    {
+      "position": 4,
+      "emitted_token": 7636,
+      "argmax_token": 345,
+      "shortfall": 1.25
+    },
+    {
+      "position": 8,
+      "emitted_token": 387,
+      "argmax_token": 267,
+      "shortfall": 1.25
+    },
+    {
+      "position": 9,
+      "emitted_token": 439,
+      "argmax_token": 264,
+      "shortfall": 4.5
+    },
+    {
+      "position": 10,
+      "emitted_token": 10437,
+      "argmax_token": 10788,
+      "shortfall": 1.875
+    },
+    {
+      "position": 12,
+      "emitted_token": 904,
+      "argmax_token": 430,
+      "shortfall": 1.9375
+    },
+    {
+      "position": 15,
+      "emitted_token": 293,
+      "argmax_token": 3691,
+      "shortfall": 0.375
+    },
+    {
+      "position": 16,
+      "emitted_token": 7828,
+      "argmax_token": 2194,
+      "shortfall": 1.125
+    },
+    {
+      "position": 23,
+      "emitted_token": 12040,
+      "argmax_token": 507,
+      "shortfall": 0.5
+    },
+    {
+      "position": 28,
+      "emitted_token": 358,
+      "argmax_token": 374,
+      "shortfall": 0.25
+    },
+    {
+      "position": 29,
+      "emitted_token": 617,
+      "argmax_token": 1253,
+      "shortfall": 1.4375
+    },
+    {
+      "position": 35,
+      "emitted_token": 704,
+      "argmax_token": 311,
+      "shortfall": 4.125
+    },
+    {
+      "position": 36,
+      "emitted_token": 198,
+      "argmax_token": 345,
+      "shortfall": 0.75
+    },
+    {
+      "position": 38,
+      "emitted_token": 15448,
+      "argmax_token": 2057,
+      "shortfall": 2.875
+    },
+    {
+      "position": 40,
+      "emitted_token": 264,
+      "argmax_token": 279,
+      "shortfall": 1.3125
+    },
+    {
+      "position": 41,
+      "emitted_token": 4363,
+      "argmax_token": 3021,
+      "shortfall": 0.625
+    },
+    {
+      "position": 42,
+      "emitted_token": 315,
+      "argmax_token": 1405,
+      "shortfall": 1.4375
+    },
+    {
+      "position": 43,
+      "emitted_token": 10748,
+      "argmax_token": 682,
+      "shortfall": 1.9375
+    },
+    {
+      "position": 44,
+      "emitted_token": 267,
+      "argmax_token": 18454,
+      "shortfall": 0.25
+    },
+    {
+      "position": 45,
+      "emitted_token": 22125,
+      "argmax_token": 11,
+      "shortfall": 6.3125
+    },
+    {
+      "position": 46,
+      "emitted_token": 11,
+      "argmax_token": 345,
+      "shortfall": 0.25
+    },
+    {
+      "position": 48,
+      "emitted_token": 345,
+      "argmax_token": 358,
+      "shortfall": 3.125
+    },
+    {
+      "position": 51,
+      "emitted_token": 682,
+      "argmax_token": 1063,
+      "shortfall": 0.125
+    },
+    {
+      "position": 53,
+      "emitted_token": 12205,
+      "argmax_token": 374,
+      "shortfall": 6.5625
+    },
+    {
+      "position": 55,
+      "emitted_token": 856,
+      "argmax_token": 358,
+      "shortfall": 2.5
+    },
+    {
+      "position": 56,
+      "emitted_token": 506,
+      "argmax_token": 3021,
+      "shortfall": 4.6875
+    },
+    {
+      "position": 57,
+      "emitted_token": 1557,
+      "argmax_token": 2230,
+      "shortfall": 1.4375
+    },
+    {
+      "position": 59,
+      "emitted_token": 52677,
+      "argmax_token": 374,
+      "shortfall": 0.0
+    },
+    {
+      "position": 62,
+      "emitted_token": 1102,
+      "argmax_token": 358,
+      "shortfall": 0.9375
+    }
+  ],
+  "noise_floor": {
+    "max_abs_delta": 10.25,
+    "control_max_abs_delta": 0.0,
+    "positions": 63
+  },
+  "budget_s": 900.0,
+  "elapsed_s": 155.145,
+  "spec_steps": 0,
+  "context_length": 8192
+}

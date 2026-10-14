@@ -1,0 +1,80 @@
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 00/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 01/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 02/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 03/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 04/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 05/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 06/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 07/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 08/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 09/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 10/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 11/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 12/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 13/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 14/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 15/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 16/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 17/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 18/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 19/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 20/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 21/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 22/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 23/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 24/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 25/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 26/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 27/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 28/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 29/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 30/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:12535 [0] NCCL INFO Channel 31/1 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9742 [0] NCCL INFO Bootstrap : Using eno1:10.19.87.105<0>
+150-136-41-22:9742:9742 [0] NCCL INFO NET/Plugin: No plugin found (libnccl-net.so)
+150-136-41-22:9742:9742 [0] NCCL INFO NET/Plugin: Using internal network plugin.
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 00/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 00/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 01/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 01/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 02/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 02/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 03/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 03/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 04/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 04/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 05/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 05/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 06/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 06/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 07/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 07/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 08/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 08/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 09/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 09/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 10/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 10/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 11/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 11/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 12/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 12/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 13/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 13/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 14/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 14/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 15/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 15/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 16/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 16/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 17/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 17/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 18/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 18/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 19/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 19/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 20/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 20/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 21/0 : 0[0] -> 1[1] via P2P/CUMEM/read
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 21/24 :    0   1   2   3   4   5   6   7
+150-136-41-22:9742:9809 [0] NCCL INFO Channel 22/0 : 0[0] -> 1[1] via P2P/CUMEM/read

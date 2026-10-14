@@ -1,0 +1,69 @@
+# 2-RANK PROBE VALIDATION config -- NOT a campaign config, and no manifest stage
+# or watcher path reads it.
+#
+# WHY IT EXISTS. The teacher-forced probe shipped broken at 8 ranks: `gen_ids` is
+# populated only on rank 0 (the metric guards in RASDInference.generate are
+# `self._rank == 0`), and the probe's entry condition tested it, so rank 0 entered
+# a ring collective alone, completed 7036 of them by itself and then sat in the
+# NCCL watchdog for 3600 s (2026-10-09T00:00Z, ~$43 of 8xA100-80GB). A 1-rank
+# harness cannot see that class of bug, which is exactly why it shipped.
+#
+# WHAT IT VALIDATES, on 2 ranks and nothing else:
+#   * every rank ENTERS the probe (the fix's whole point) and produces numbers;
+#   * the numbers are comparable to the measured 1-rank reference
+#     (8k/bf16/64 tokens: max shortfall 0.375, non-argmax 2/63, noise floor
+#     max|delta| 0.688, control 0.000);
+#   * the gate's pair is the bf16 one, so this is the configuration that ships.
+#
+# SHORT CONTEXT ON PURPOSE: 8k, not the gate's 128k. The question here is whether
+# the ranks agree on the COMPUTATION, and rank participation does not depend on
+# context length. Paying for 128k to answer it would be paying for the campaign's
+# question, not this one.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+
+PROBE_2RANK:
+  name: probe_2rank
+  factor: context_length
+  levels:
+  # bf16 KV, because that is the pair the gate runs on. The NF4 cap-64 pair no
+  # longer carries a probe at all (analysis plan 6.1d): NF4 noise flips 20% of
+  # argmaxes at 128k, so its numbers can never gate.
+  - id: P2R_bf16_spec
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 4
+    kv_quant: false
+    checkpoint_every: 0
+    teacher_forced_check: true
+    notes: 'bf16 KV speculative arm -- the probe must produce numbers on BOTH ranks'
+  - id: P2R_bf16_targetonly
+    context_length: 8192
+    documents: [pg19_train_1]
+    max_new_tokens: 64
+    spec_steps: 0
+    kv_quant: false
+    checkpoint_every: 0
+    teacher_forced_check: true
+    notes: 'target-only partner; the target-only path also had to be fixed, since
+      its metric guard is the other place gen_ids was rank-0-only'

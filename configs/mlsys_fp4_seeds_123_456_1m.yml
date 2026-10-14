@@ -1,0 +1,65 @@
+# PHASE 3-C — THE FP4 SEED REPLICATES, BOTH SEEDS IN ONE SESSION.
+#
+# WHY THIS FILE EXISTS RATHER THAN TWO SESSIONS. Phase 2 chose branch C (the measured
+# quantization speedup was 1.113x, below the 1.5x threshold), so the deliverable is the seed
+# spread at 1M rather than a bf16 campaign. A config's seed can only be set in `defaults`
+# (run_experiment.py:590-612 overwrites a per-level `seeds`), and `defaults` applies to every
+# stage in the file, so one stage listing `seeds: [123, 456]` produces both replicates --
+# while two parked-config sessions would cost exactly the same and need a second capacity wait.
+# The parked `mlsys_seed123_1m.yml` and `mlsys_seed456_1m.yml` are LEFT UNTOUCHED, as
+# instructed; this is an additional config, not a replacement for them.
+#
+# WHAT IT REPLICATES. `SAMP_1M_SPEC` exactly: T=0.7, 128 tokens, spec_steps 4,
+# draft_window_cap 4096, kv_block_size 2048, the five books, seed 42's row already existing.
+# Only the seed moves. FP4 weights + NF4 KV, i.e. the headline precision, because branch C
+# keeps the campaign where it is.
+#
+# SPEEDUPS REUSE THE 1M TARGET-ONLY RATE. CORRECTED 2026-10-13: the original argument here --
+# that a target-only row emits the argmax and carries no sampling -- was WRONG. Target-only
+# samples at T>0 (rasd_inference.py:1725 -> _sample at :327-338, torch.multinomial for T != 0),
+# and two seeds gave different streams. The reuse still holds, for a weaker reason: ignore_eos
+# pins the token count and the per-step cost does not depend on which token was drawn, so a seed
+# moves the rate by less than the book-to-book spread already measured (under 2%).
+#
+# ORDER IS RUN ORDER: seed 123 first, then 456, so a timer-truncated session still has one
+# complete replicate. The rows are pulled and committed as each stage finishes.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [123, 456]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+
+# THE STAGE. One id for both seeds: the run_id carries the seed
+# (`FP4_SEED_1M_SPEC_pg19_train_0_s456`), and the CSV's `seed` column records it, so the two
+# replicates cannot be confused with each other or with seed 42's rows.
+FP4_SEED_1M_SPEC:
+  name: fp4_seed_1m_spec
+  factor: context_length
+  levels:
+  - id: FP4_SEED_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'Phase 3-C: the 1M headline cell at seeds 123 and 456, five books each'

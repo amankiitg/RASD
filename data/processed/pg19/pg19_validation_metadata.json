@@ -1,0 +1,120 @@
+{
+  "chunks": [
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_0.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_1.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_2.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_3.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_4.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_5.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_6.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_7.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_8.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_9.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_10.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_11.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_12.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_13.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_14.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_15.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_16.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_17.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_18.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_19.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_20.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_21.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_22.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_23.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_24.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_25.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_26.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_27.dat",
+      "length": 32768
+    },
+    {
+      "file": "data/processed/pg19/pg19_validation_chunk_28.dat",
+      "length": 11173
+    }
+  ]
+}

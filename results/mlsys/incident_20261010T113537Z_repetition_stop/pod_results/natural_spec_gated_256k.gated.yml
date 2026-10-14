@@ -1,0 +1,84 @@
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds:
+  - 42
+  log_per_token: true
+  save_generated_text: true
+  save_generated_tokens: true
+  measure_target_ppl: true
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_docs/documents.json
+GATED_llama3_f16_256k_SPEC:
+  name: natural_256k
+  factor: context_length
+  levels:
+  - id: NATURAL_256k
+    context_length: 262144
+    documents:
+    - pg19_train_0
+    - pg19_train_1
+    - pg19_train_115
+    - pg19_train_537
+    - pg19_train_915
+    - pg19_train_1404
+    - pg19_train_1726
+    - pg19_train_1981
+    - pg19_train_2204
+    - pg19_train_2768
+    rope_type: llama3
+    rope_factor: 16
+    max_new_tokens: 1024
+    checkpoint_every: 0
+    notes: speculative arm, 10 documents, 1024 tokens, 256k gated rung
+GATED_llama3_f16_256k_TARGET_FULL:
+  name: natural_256k_target_full
+  factor: context_length
+  levels:
+  - id: NATURAL_256k_targetfull
+    context_length: 262144
+    documents:
+    - pg19_train_0
+    - pg19_train_1
+    - pg19_train_115
+    max_new_tokens: 1024
+    spec_steps: 0
+    checkpoint_every: 0
+    rope_type: llama3
+    rope_factor: 16
+    notes: 'FULL target-only: losslessness + end-to-end paired ratio (3 docs)'
+GATED_llama3_f16_256k_TARGET_SHORT:
+  name: natural_256k_target_short
+  factor: context_length
+  levels:
+  - id: NATURAL_256k_targetshort
+    context_length: 262144
+    documents:
+    - pg19_train_537
+    - pg19_train_915
+    - pg19_train_1404
+    - pg19_train_1726
+    - pg19_train_1981
+    - pg19_train_2204
+    - pg19_train_2768
+    max_new_tokens: 128
+    prompt_gen_tokens: 1024
+    spec_steps: 0
+    checkpoint_every: 0
+    measure_target_ppl: false
+    rope_type: llama3
+    rope_factor: 16
+    notes: 'SHORT target-only: decode-only rate for the paired ratio (7 docs)'

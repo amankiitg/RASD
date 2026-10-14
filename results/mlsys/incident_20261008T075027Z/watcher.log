@@ -1,0 +1,316 @@
+2026-10-08T01:26:48Z instance watchdog = campaign clock = 40h
+2026-10-08T01:26:48Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-08T01:26:48Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T01:26:48Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T01:26:48Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-08T01:26:48Z capacity wait bounded until epoch=1791682008 (+72h)
+2026-10-08T01:26:49Z attempt=1 regions=none capacity=no next_sleep=64s
+2026-10-08T01:27:54Z attempt=2 regions=none capacity=no next_sleep=54s
+2026-10-08T01:28:49Z attempt=3 regions=none capacity=no next_sleep=75s
+2026-10-08T01:30:05Z attempt=4 regions=none capacity=no next_sleep=57s
+2026-10-08T01:31:03Z attempt=5 regions=none capacity=no next_sleep=73s
+2026-10-08T01:32:17Z attempt=6 regions=none capacity=no next_sleep=57s
+2026-10-08T01:33:15Z attempt=7 regions=none capacity=no next_sleep=67s
+2026-10-08T01:34:23Z attempt=8 regions=none capacity=no next_sleep=44s
+2026-10-08T01:35:08Z attempt=9 regions=none capacity=no next_sleep=58s
+2026-10-08T01:36:07Z attempt=10 regions=none capacity=no next_sleep=51s
+2026-10-08T01:36:59Z attempt=11 regions=none capacity=no next_sleep=64s
+2026-10-08T01:38:04Z attempt=12 regions=none capacity=no next_sleep=75s
+2026-10-08T01:39:20Z attempt=13 regions=none capacity=no next_sleep=50s
+2026-10-08T01:40:11Z attempt=14 regions=none capacity=no next_sleep=68s
+2026-10-08T01:41:20Z attempt=15 regions=none capacity=no next_sleep=46s
+2026-10-08T01:42:07Z attempt=16 regions=none capacity=no next_sleep=52s
+2026-10-08T01:43:00Z attempt=17 regions=none capacity=no next_sleep=50s
+2026-10-08T01:43:51Z attempt=18 regions=none capacity=no next_sleep=45s
+2026-10-08T01:44:37Z attempt=19 regions=none capacity=no next_sleep=44s
+2026-10-08T01:45:22Z attempt=20 regions=none capacity=no next_sleep=75s
+2026-10-08T01:46:38Z attempt=21 regions=none capacity=no next_sleep=63s
+2026-10-08T01:47:42Z attempt=22 regions=none capacity=no next_sleep=66s
+2026-10-08T01:48:49Z attempt=23 regions=none capacity=no next_sleep=60s
+2026-10-08T01:49:50Z attempt=24 regions=none capacity=no next_sleep=76s
+2026-10-08T01:51:07Z attempt=25 regions=none capacity=no next_sleep=44s
+2026-10-08T01:51:52Z attempt=26 regions=none capacity=no next_sleep=56s
+2026-10-08T01:52:49Z attempt=27 regions=none capacity=no next_sleep=78s
+2026-10-08T01:54:08Z attempt=28 regions=none capacity=no next_sleep=75s
+2026-10-08T01:55:24Z attempt=29 regions=none capacity=no next_sleep=54s
+2026-10-08T01:56:19Z attempt=30 regions=none capacity=no next_sleep=72s
+2026-10-08T01:57:32Z attempt=31 regions=none capacity=no next_sleep=52s
+2026-10-08T01:58:25Z attempt=32 regions=none capacity=no next_sleep=74s
+2026-10-08T01:59:40Z attempt=33 regions=none capacity=no next_sleep=63s
+2026-10-08T02:00:44Z attempt=34 regions=none capacity=no next_sleep=57s
+2026-10-08T02:01:42Z attempt=35 regions=none capacity=no next_sleep=44s
+2026-10-08T02:02:27Z attempt=36 regions=none capacity=no next_sleep=61s
+2026-10-08T02:03:29Z attempt=37 regions=none capacity=no next_sleep=62s
+2026-10-08T02:04:32Z attempt=38 regions=none capacity=no next_sleep=55s
+2026-10-08T02:05:28Z attempt=39 regions=none capacity=no next_sleep=55s
+2026-10-08T02:06:24Z attempt=40 regions=none capacity=no next_sleep=46s
+2026-10-08T02:07:11Z attempt=41 regions=none capacity=no next_sleep=44s
+2026-10-08T02:07:56Z attempt=42 regions=none capacity=no next_sleep=46s
+2026-10-08T02:08:43Z attempt=43 regions=none capacity=no next_sleep=41s
+2026-10-08T02:09:25Z attempt=44 regions=none capacity=no next_sleep=41s
+2026-10-08T02:10:07Z attempt=45 regions=none capacity=no next_sleep=66s
+2026-10-08T02:11:14Z attempt=46 regions=none capacity=no next_sleep=78s
+2026-10-08T02:12:33Z attempt=47 regions=none capacity=no next_sleep=66s
+2026-10-08T02:13:40Z attempt=48 regions=none capacity=no next_sleep=69s
+2026-10-08T02:14:50Z attempt=49 regions=none capacity=no next_sleep=60s
+2026-10-08T02:15:51Z attempt=50 regions=none capacity=no next_sleep=73s
+2026-10-08T02:17:05Z attempt=51 regions=none capacity=no next_sleep=64s
+2026-10-08T02:18:10Z attempt=52 regions=none capacity=no next_sleep=44s
+2026-10-08T02:18:55Z attempt=53 regions=none capacity=no next_sleep=72s
+2026-10-08T02:20:08Z attempt=54 regions=none capacity=no next_sleep=65s
+2026-10-08T02:21:14Z attempt=55 regions=us-midwest-1 capacity=yes next_sleep=78s
+2026-10-08T02:21:18Z LAUNCHED f7cb8d2f9cf8484f84f400b63f3f45ca in us-midwest-1 (reason=detected)
+2026-10-08T02:21:18Z campaign clock starts NOW: 2026-10-09T18:21:18Z (+40h, sized to the campaign)
+2026-10-08T02:27:45Z instance active at 147.224.208.97
+2026-10-08T02:27:46Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-08T02:27:51Z   repo staged
+  data/processed/pg19_docs: 10 files, 0 unresolved
+2026-10-08T02:27:52Z   data/processed/pg19_docs verified
+  data/processed/pg19_docs_diverse: 10 files, 0 unresolved
+2026-10-08T02:27:53Z   data/processed/pg19_docs_diverse verified
+  data/processed/pg19_llama3: 3 files, 0 unresolved
+2026-10-08T02:27:55Z   data/processed/pg19_llama3 verified
+  data/processed/pg19: 29 files, 0 unresolved
+2026-10-08T02:27:56Z   data/processed/pg19 verified
+started
+2026-10-08T02:30:16Z   vLLM venv provisioning started (log: ~/vllm_venv.log)
+2026-10-08T02:30:16Z starting the manifest
+started
+2026-10-08T04:25:56Z TERMINATING f7cb8d2f9cf8484f84f400b63f3f45ca
+{"data": {"terminated_instances":[{"id":"f7cb8d2f9cf8484f84f400b63f3f45ca","name":"rasd-mlsys","ip":"147.224.208.97","private_ip":"10.19.138.195","status":"terminating","ssh_key_names":["rasd-amank"],"file_system_names":[],"region":{"name":"us-midwest-1","description":"Illinois, USA"},"instance_type":{"name":"gpu_8x_a100_80gb_sxm4","description":"8x A100 (80 GB SXM4)","gpu_description":"A100 (80 GB SXM4)","price_cents_per_hour":2232,"specs":{"vcpus":240,"memory_gib":1800,"storage_gib":20480,"gpus":8},"architecture":"x86_64"},"workspace_id":"8b1934768e734777ac3e4f029a8cc15b","hostname":"147-224-208-97","jupyter_token":"97290e431f7041e9812e3ce22ed07e82","jupyter_url":"https://160754c00c524769abdefa9b72c00b69-0.lambdaspaces.com/?token=97290e431f7041e9812e3ce22ed07e82","is_reserved":false,"first_healthy":"2026-10-08T02:27:28.630713Z","actions":{"migrate":{"available":true},"rebuild":{"available":true},"restart":{"available":true},"cold_reboot":{"available":true},"power_cycle":{"available":true},"terminate":{"available":true}},"tags":[],"firewall_rulesets":[]}]}}2026-10-08T04:25:59Z confirming termination by polling to ZERO instances (stderr visible)
+2026-10-08T04:26:00Z   attempt 1.1: instances=1
+2026-10-08T04:26:15Z   attempt 1.2: instances=1
+2026-10-08T04:26:31Z   attempt 1.3: instances=1
+2026-10-08T04:26:46Z   attempt 1.4: instances=1
+2026-10-08T04:27:01Z   attempt 1.5: instances=1
+2026-10-08T04:27:17Z   attempt 1.6: instances=1
+2026-10-08T04:27:32Z   attempt 1.7: instances=1
+2026-10-08T04:27:47Z   attempt 1.8: instances=0
+2026-10-08T04:27:47Z CONFIRMED TERMINATED (0 instances)
+2026-10-08T05:38:47Z HF token: present (37 chars, not shown)
+2026-10-08T05:38:47Z instance watchdog = campaign clock = 40h
+2026-10-08T05:38:47Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-08T05:38:47Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T05:38:47Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T05:38:47Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-08T05:38:47Z capacity wait bounded until epoch=1791697127 (+72h)
+2026-10-08T05:38:48Z attempt=1 regions=us-east-1,us-midwest-1 capacity=yes next_sleep=57s
+2026-10-08T05:38:53Z LAUNCHED 36808697f38d438f9312b2eb4bc5f274 in us-east-1 (reason=detected)
+2026-10-08T05:38:53Z campaign clock starts NOW: 2026-10-09T21:38:53Z (+40h, sized to the campaign)
+2026-10-08T05:46:01Z instance active at 129.213.146.78
+2026-10-08T05:46:01Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-08T05:46:06Z   repo staged
+2026-10-08T05:46:06Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+2026-10-08T05:46:55Z FATAL: the campaign environment could not be provisioned.
+2026-10-08T05:46:55Z FATAL: ~/pod_env.log tail:
+    === campaign environment ===
+      repo        : /home/ubuntu/RASD
+      conda       : /home/ubuntu/miniconda3
+      env         : rasd-gpu
+      lock        : /home/ubuntu/RASD/requirements-lock.txt
+      flash-attn  : 2.8.3
+    --> no conda at /home/ubuntu/miniconda3; installing Miniconda
+    --> creating conda env rasd-gpu (python 3.10)
+      interpreter : /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python (Python 3.10.22)
+      no persistent filesystem at /lambda/nfs/rasd-fs (ephemeral disk this run);
+      model weights download again and are lost on termination
+    FATAL: HF_TOKEN is not set. The campaign's models are gated; without a
+    FATAL: token every arm fails at model load.
+2026-10-08T05:46:56Z FATAL: refusing to start a campaign that cannot import transformers.
+2026-10-08T05:46:56Z TERMINATING 36808697f38d438f9312b2eb4bc5f274
+{"data": {"terminated_instances":[{"id":"36808697f38d438f9312b2eb4bc5f274","name":"rasd-mlsys","ip":"129.213.146.78","private_ip":"10.19.88.116","status":"terminating","ssh_key_names":["rasd-amank"],"file_system_names":[],"region":{"name":"us-east-1","description":"Virginia, USA"},"instance_type":{"name":"gpu_8x_a100_80gb_sxm4","description":"8x A100 (80 GB SXM4)","gpu_description":"A100 (80 GB SXM4)","price_cents_per_hour":2232,"specs":{"vcpus":240,"memory_gib":1800,"storage_gib":20480,"gpus":8},"architecture":"x86_64"},"workspace_id":"8b1934768e734777ac3e4f029a8cc15b","hostname":"129-213-146-78","jupyter_token":"f2c877736b27471cb4c65e239de360dc","jupyter_url":"https://660142d2469b4bf89168a78750f0db9c-0.lambdaspaces.com/?token=f2c877736b27471cb4c65e239de360dc","is_reserved":false,"first_healthy":"2026-10-08T05:45:35.524800Z","actions":{"migrate":{"available":true},"rebuild":{"available":true},"restart":{"available":true},"cold_reboot":{"available":true},"power_cycle":{"available":true},"terminate":{"available":true}},"tags":[],"firewall_rulesets":[]}]}}2026-10-08T05:46:59Z confirming termination by polling to ZERO instances (stderr visible)
+2026-10-08T05:47:00Z   attempt 1.1: instances=1
+2026-10-08T05:47:15Z   attempt 1.2: instances=1
+2026-10-08T05:47:30Z   attempt 1.3: instances=1
+2026-10-08T05:47:46Z   attempt 1.4: instances=1
+2026-10-08T05:48:01Z   attempt 1.5: instances=1
+2026-10-08T05:48:16Z   attempt 1.6: instances=1
+2026-10-08T05:48:32Z   attempt 1.7: instances=1
+2026-10-08T05:48:47Z   attempt 1.8: instances=0
+2026-10-08T05:48:47Z CONFIRMED TERMINATED (0 instances)
+2026-10-08T05:52:18Z HF token: present (37 chars, not shown)
+2026-10-08T05:52:18Z instance watchdog = campaign clock = 40h
+2026-10-08T05:52:18Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-08T05:52:18Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T05:52:18Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T05:52:18Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-08T05:52:18Z capacity wait bounded until epoch=1791697938 (+72h)
+2026-10-08T05:52:18Z attempt=1 regions=us-east-1 capacity=yes next_sleep=79s
+2026-10-08T05:52:23Z LAUNCHED fc01233ad8ce4185917c7f31b61d4bd1 in us-east-1 (reason=detected)
+2026-10-08T05:52:23Z campaign clock starts NOW: 2026-10-09T21:52:23Z (+40h, sized to the campaign)
+2026-10-08T06:00:11Z instance active at 129.213.93.229
+2026-10-08T06:00:12Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-08T06:00:16Z   repo staged
+2026-10-08T06:00:16Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+      accelerate           0.33.0
+      bitsandbytes         0.49.2
+      datasets             4.8.5
+      diptest              ok
+      flash_attn           ok
+      hf:Llama-2-7b-hf     accessible
+      hf:Llama-3.1-8B      accessible
+      jsonlines            ok
+      numpy                1.26.4
+      scipy                1.15.3
+      src.models.rasd_inference ok
+      tokenizers           0.20.3
+      torch                2.5.1+cu124
+      transformers         4.46.3
+      yaml                 ok
+      cuda available   True (8 devices)
+      0, 4 MiB, 81920 MiB
+      1, 4 MiB, 81920 MiB
+      2, 4 MiB, 81920 MiB
+      3, 4 MiB, 81920 MiB
+      4, 4 MiB, 81920 MiB
+      5, 4 MiB, 81920 MiB
+      6, 4 MiB, 81920 MiB
+      7, 4 MiB, 81920 MiB
+2026-10-08T06:03:27Z FATAL: no campaign interpreter on the pod (looked for the rasd-gpu env).
+2026-10-08T06:03:27Z FATAL: scripts/mlsys_pod_env.sh reported success, so this is a bug in
+2026-10-08T06:03:27Z FATAL: the resolution order, not in the install. Not starting the run.
+2026-10-08T06:03:27Z TERMINATING fc01233ad8ce4185917c7f31b61d4bd1
+{"data": {"terminated_instances":[{"id":"fc01233ad8ce4185917c7f31b61d4bd1","name":"rasd-mlsys","ip":"129.213.93.229","private_ip":"10.19.93.55","status":"terminating","ssh_key_names":["rasd-amank"],"file_system_names":[],"region":{"name":"us-east-1","description":"Virginia, USA"},"instance_type":{"name":"gpu_8x_a100_80gb_sxm4","description":"8x A100 (80 GB SXM4)","gpu_description":"A100 (80 GB SXM4)","price_cents_per_hour":2232,"specs":{"vcpus":240,"memory_gib":1800,"storage_gib":20480,"gpus":8},"architecture":"x86_64"},"workspace_id":"8b1934768e734777ac3e4f029a8cc15b","hostname":"129-213-93-229","jupyter_token":"1e10f57c00db47d5abd36b7a45b3b04f","jupyter_url":"https://b2aa9224f0dc44c6a99c838bb617d816-0.lambdaspaces.com/?token=1e10f57c00db47d5abd36b7a45b3b04f","is_reserved":false,"first_healthy":"2026-10-08T06:00:01.741626Z","actions":{"migrate":{"available":true},"rebuild":{"available":true},"restart":{"available":true},"cold_reboot":{"available":true},"power_cycle":{"available":true},"terminate":{"available":true}},"tags":[],"firewall_rulesets":[]}]}}2026-10-08T06:03:31Z confirming termination by polling to ZERO instances (stderr visible)
+2026-10-08T06:03:31Z   attempt 1.1: instances=1
+2026-10-08T06:03:47Z   attempt 1.2: instances=1
+2026-10-08T06:04:02Z   attempt 1.3: instances=1
+2026-10-08T06:04:17Z   attempt 1.4: instances=1
+2026-10-08T06:04:33Z   attempt 1.5: instances=1
+2026-10-08T06:04:48Z   attempt 1.6: instances=1
+2026-10-08T06:05:04Z   attempt 1.7: instances=1
+2026-10-08T06:05:19Z   attempt 1.8: instances=0
+2026-10-08T06:05:19Z CONFIRMED TERMINATED (0 instances)
+2026-10-08T06:25:46Z HF token: present (37 chars, not shown)
+2026-10-08T06:25:47Z instance watchdog = campaign clock = 40h
+2026-10-08T06:25:47Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-08T06:25:47Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T06:25:47Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T06:25:47Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-08T06:25:47Z capacity wait bounded until epoch=1791699946 (+72h)
+2026-10-08T06:25:47Z attempt=1 regions=none capacity=no next_sleep=60s
+2026-10-08T06:26:48Z attempt=2 regions=none capacity=no next_sleep=42s
+2026-10-08T06:27:31Z attempt=3 regions=none capacity=no next_sleep=40s
+2026-10-08T06:28:12Z attempt=4 regions=none capacity=no next_sleep=58s
+2026-10-08T06:29:11Z attempt=5 regions=none capacity=no next_sleep=60s
+2026-10-08T06:30:12Z attempt=6 regions=none capacity=no next_sleep=77s
+2026-10-08T06:31:30Z attempt=7 regions=none capacity=no next_sleep=50s
+2026-10-08T06:32:21Z attempt=8 regions=none capacity=no next_sleep=54s
+2026-10-08T06:33:16Z attempt=9 regions=none capacity=no next_sleep=73s
+2026-10-08T06:34:30Z attempt=10 regions=none capacity=no next_sleep=65s
+2026-10-08T06:35:36Z attempt=11 regions=none capacity=no next_sleep=62s
+2026-10-08T06:36:39Z attempt=12 regions=none capacity=no next_sleep=74s
+2026-10-08T06:37:54Z attempt=13 regions=none capacity=no next_sleep=41s
+2026-10-08T06:38:36Z attempt=14 regions=none capacity=no next_sleep=58s
+2026-10-08T06:39:35Z attempt=15 regions=none capacity=no next_sleep=51s
+2026-10-08T06:40:27Z attempt=16 regions=none capacity=no next_sleep=42s
+2026-10-08T06:41:10Z attempt=17 regions=none capacity=no next_sleep=59s
+2026-10-08T06:42:10Z attempt=18 regions=none capacity=no next_sleep=64s
+2026-10-08T06:43:15Z attempt=19 regions=none capacity=no next_sleep=70s
+2026-10-08T06:44:26Z attempt=20 regions=none capacity=no next_sleep=73s
+2026-10-08T06:45:40Z attempt=21 regions=none capacity=no next_sleep=45s
+2026-10-08T06:46:25Z attempt=22 regions=none capacity=no next_sleep=42s
+2026-10-08T06:47:08Z attempt=23 regions=none capacity=no next_sleep=40s
+2026-10-08T06:47:50Z attempt=24 regions=none capacity=no next_sleep=45s
+2026-10-08T06:48:36Z attempt=25 regions=none capacity=no next_sleep=45s
+2026-10-08T06:49:22Z attempt=26 regions=none capacity=no next_sleep=56s
+2026-10-08T06:50:19Z attempt=27 regions=none capacity=no next_sleep=46s
+2026-10-08T06:51:05Z attempt=28 regions=none capacity=no next_sleep=49s
+2026-10-08T06:51:55Z attempt=29 regions=none capacity=no next_sleep=71s
+2026-10-08T06:53:07Z attempt=30 regions=none capacity=no next_sleep=74s
+2026-10-08T06:54:22Z attempt=31 regions=none capacity=no next_sleep=61s
+2026-10-08T06:55:24Z attempt=32 regions=none capacity=no next_sleep=67s
+2026-10-08T06:56:32Z attempt=33 regions=none capacity=no next_sleep=56s
+2026-10-08T06:57:29Z attempt=34 regions=none capacity=no next_sleep=50s
+2026-10-08T06:58:20Z attempt=35 regions=none capacity=no next_sleep=44s
+2026-10-08T06:59:05Z attempt=36 regions=none capacity=no next_sleep=79s
+2026-10-08T07:00:25Z attempt=37 regions=none capacity=no next_sleep=55s
+2026-10-08T07:01:21Z attempt=38 regions=none capacity=no next_sleep=50s
+2026-10-08T07:02:12Z attempt=39 regions=none capacity=no next_sleep=74s
+2026-10-08T07:03:27Z attempt=40 regions=none capacity=no next_sleep=54s
+2026-10-08T07:04:21Z attempt=41 regions=none capacity=no next_sleep=69s
+2026-10-08T07:05:31Z attempt=42 regions=none capacity=no next_sleep=65s
+2026-10-08T07:06:37Z attempt=43 regions=none capacity=no next_sleep=43s
+2026-10-08T07:07:21Z attempt=44 regions=none capacity=no next_sleep=48s
+2026-10-08T07:08:10Z attempt=45 regions=none capacity=no next_sleep=77s
+2026-10-08T07:09:28Z attempt=46 regions=none capacity=no next_sleep=76s
+2026-10-08T07:10:45Z attempt=47 regions=none capacity=no next_sleep=48s
+2026-10-08T07:11:34Z attempt=48 regions=none capacity=no next_sleep=67s
+2026-10-08T07:12:42Z attempt=49 regions=none capacity=no next_sleep=63s
+2026-10-08T07:13:46Z attempt=50 regions=none capacity=no next_sleep=79s
+2026-10-08T07:15:06Z attempt=51 regions=none capacity=no next_sleep=46s
+2026-10-08T07:15:53Z attempt=52 regions=none capacity=no next_sleep=66s
+2026-10-08T07:17:00Z attempt=53 regions=none capacity=no next_sleep=61s
+2026-10-08T07:18:02Z attempt=54 regions=none capacity=no next_sleep=67s
+2026-10-08T07:19:10Z attempt=55 regions=none capacity=no next_sleep=51s
+2026-10-08T07:20:02Z attempt=56 regions=none capacity=no next_sleep=49s
+2026-10-08T07:20:52Z attempt=57 regions=none capacity=no next_sleep=76s
+2026-10-08T07:22:09Z attempt=58 regions=none capacity=no next_sleep=40s
+2026-10-08T07:22:49Z attempt=59 regions=us-east-1 capacity=yes next_sleep=67s
+2026-10-08T07:22:52Z LAUNCH_REFUSED reason=detected region=us-east-1: {"error": {"code":"instance-operations/launch/insufficient-capacity","message":"Not enough capacity to fulfill launch request.","suggestion":"Choose an instance
+2026-10-08T07:22:52Z   every listed region refused; re-polling rather than treating the
+2026-10-08T07:22:52Z   advisory list as a reservation
+2026-10-08T07:24:00Z attempt=60 regions=none capacity=no next_sleep=72s
+2026-10-08T07:25:13Z attempt=61 regions=none capacity=no next_sleep=73s
+2026-10-08T07:26:27Z attempt=62 regions=none capacity=no next_sleep=75s
+2026-10-08T07:27:43Z attempt=63 regions=none capacity=no next_sleep=52s
+2026-10-08T07:28:36Z attempt=64 regions=none capacity=no next_sleep=64s
+2026-10-08T07:29:41Z attempt=65 regions=none capacity=no next_sleep=80s
+2026-10-08T07:31:02Z attempt=66 regions=none capacity=no next_sleep=66s
+2026-10-08T07:32:09Z attempt=67 regions=none capacity=no next_sleep=41s
+2026-10-08T07:32:51Z attempt=68 regions=none capacity=no next_sleep=66s
+2026-10-08T07:33:58Z attempt=69 regions=none capacity=no next_sleep=75s
+2026-10-08T07:35:14Z attempt=70 regions=none capacity=no next_sleep=49s
+2026-10-08T07:36:04Z attempt=71 regions=none capacity=no next_sleep=66s
+2026-10-08T07:37:11Z attempt=72 regions=us-east-1 capacity=yes next_sleep=57s
+2026-10-08T07:37:18Z LAUNCHED 12b6fc0e685544ae95449378951376a0 in us-east-1 (reason=detected)
+2026-10-08T07:37:18Z campaign clock starts NOW: 2026-10-09T23:37:18Z (+40h, sized to the campaign)
+2026-10-08T07:44:45Z instance active at 129.213.22.128
+2026-10-08T07:44:46Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-08T07:44:52Z   repo staged
+2026-10-08T07:44:52Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+      accelerate           0.33.0
+      bitsandbytes         0.49.2
+      datasets             4.8.5
+      diptest              ok
+      flash_attn           ok
+      hf:Llama-2-7b-hf     accessible
+      hf:Llama-3.1-8B      accessible
+      jsonlines            ok
+      numpy                1.26.4
+      scipy                1.15.3
+      src.models.rasd_inference ok
+      tokenizers           0.20.3
+      torch                2.5.1+cu124
+      transformers         4.46.3
+      yaml                 ok
+      cuda available   True (8 devices)
+      0, 4 MiB, 81920 MiB
+      1, 4 MiB, 81920 MiB
+      2, 4 MiB, 81920 MiB
+      3, 4 MiB, 81920 MiB
+      4, 4 MiB, 81920 MiB
+      5, 4 MiB, 81920 MiB
+      6, 4 MiB, 81920 MiB
+      7, 4 MiB, 81920 MiB
+2026-10-08T07:48:04Z   interpreter: /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python
+  torch 2.5.1+cu124 | transformers 4.46.3 | cuda True 8 devices
+  data/processed/pg19_docs: 10 files, 0 unresolved
+2026-10-08T07:48:15Z   data/processed/pg19_docs verified
+  data/processed/pg19_docs_diverse: 10 files, 0 unresolved
+2026-10-08T07:48:16Z   data/processed/pg19_docs_diverse verified
+  data/processed/pg19_llama3: 3 files, 0 unresolved
+2026-10-08T07:48:17Z   data/processed/pg19_llama3 verified
+  data/processed/pg19: 29 files, 0 unresolved
+2026-10-08T07:48:18Z   data/processed/pg19 verified
+started
+2026-10-08T07:50:22Z   vLLM venv provisioning started (log: ~/vllm_venv.log)
+2026-10-08T07:50:22Z starting the manifest
+started
+2026-10-08T07:50:27Z manifest finished rc=1 — ABORTED
+2026-10-08T07:50:27Z INCIDENT (manifest aborted rc=1): logs -> /Users/amankesarwani/PycharmProjects/RASD/results/mlsys/incident_20261008T075027Z
+2026-10-08T07:50:28Z   pulled ~/manifest.log (14 lines)
+2026-10-08T07:50:29Z   pulled ~/manifest.rc (1 lines)
+2026-10-08T07:50:30Z   pulled ~/pod_env.log (54 lines)
+2026-10-08T07:50:31Z   pulled ~/vllm_venv.log (10 lines)
+2026-10-08T07:50:31Z   ~/manifest_watchdog.log not present
+2026-10-08T07:50:32Z   pulled RUN_LOG.txt

@@ -1,0 +1,13 @@
+{"round_idx": 0, "global_pos_start": 62660, "spec_steps": 4, "n_acc": 0, "draft_tokens": [262, 13173, 16905, 7418], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 62661, "spec_steps": 4, "n_acc": 0, "draft_tokens": [30128, 6542, 660, 29878], "accepted": [false, false, true, false]}
+{"round_idx": 2, "global_pos_start": 62662, "spec_steps": 4, "n_acc": 1, "draft_tokens": [15253, 713, 498, 3977], "accepted": [true, false, false, false]}
+{"round_idx": 3, "global_pos_start": 62664, "spec_steps": 4, "n_acc": 1, "draft_tokens": [10943, 491, 8741, 10907], "accepted": [true, false, true, false]}
+{"round_idx": 4, "global_pos_start": 62666, "spec_steps": 4, "n_acc": 0, "draft_tokens": [630, 515, 8579, 3357], "accepted": [false, false, false, false]}
+{"round_idx": 5, "global_pos_start": 62667, "spec_steps": 4, "n_acc": 0, "draft_tokens": [29888, 29983, 15566, 933], "accepted": [false, false, false, false]}
+{"round_idx": 6, "global_pos_start": 62668, "spec_steps": 4, "n_acc": 0, "draft_tokens": [840, 1225, 8446, 29953], "accepted": [false, false, false, false]}
+{"round_idx": 7, "global_pos_start": 62669, "spec_steps": 4, "n_acc": 0, "draft_tokens": [413, 5871, 29916, 29983], "accepted": [false, false, false, false]}
+{"round_idx": 8, "global_pos_start": 62670, "spec_steps": 4, "n_acc": 0, "draft_tokens": [307, 29954, 29880, 29892], "accepted": [false, false, false, false]}
+{"round_idx": 9, "global_pos_start": 62671, "spec_steps": 4, "n_acc": 0, "draft_tokens": [7251, 3963, 18031, 29871], "accepted": [false, false, false, false]}
+{"round_idx": 10, "global_pos_start": 62672, "spec_steps": 4, "n_acc": 0, "draft_tokens": [1372, 8020, 413, 5422], "accepted": [false, false, false, true]}
+{"round_idx": 11, "global_pos_start": 62673, "spec_steps": 4, "n_acc": 0, "draft_tokens": [1499, 2019, 29944, 8838], "accepted": [false, false, false, true]}
+{"round_idx": 12, "global_pos_start": 62674, "spec_steps": 4, "n_acc": 0, "draft_tokens": [1527, 29890, 29871, 30641], "accepted": [false, false, false, false]}

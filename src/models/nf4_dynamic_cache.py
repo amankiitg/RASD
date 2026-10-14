@@ -76,6 +76,7 @@ class NF4DynamicCache(_HFCache):
         dtype: torch.dtype = torch.bfloat16,
         bf16_prefix_size: int = 0,
         update_chunk_size: int = 0,
+        tail_merge_below: int = 64,
     ):
         """Args:
             block_size: NF4 block size for the codec.
@@ -94,6 +95,17 @@ class NF4DynamicCache(_HFCache):
                 first global-tokens at all.
                 Memory cost: 32 layers * 8 KV-heads * 128 tokens * 128
                 head_dim * 2 (K+V) * 2 bytes = 8 MB per rank, negligible.
+            tail_merge_below: fold a new small chunk into the previous one
+                while both are shorter than this many tokens. A target-only
+                decode appends ONE token per step, so without this a 1024-token
+                generation leaves 1025 chunks per layer and `_dequantize_layer`
+                concatenates 1025 tensors on EVERY forward -- per-step cost that
+                grows with the number of steps, which is the one shape a decode
+                loop cannot have. The fold is exact: quantization blocks live in
+                the HEAD dimension, so each position's codes and scales are
+                independent of its neighbours and concatenating two chunks along
+                the sequence axis concatenates their blocks in the same order
+                (asserted in tests/test_nf4_tail_merge.py). 0 disables it.
             update_chunk_size: when > 0, quantize the NF4 portion of
                 each update() call in chunks of this many tokens along
                 the sequence axis. At 1M context the prefill calls
@@ -137,6 +149,10 @@ class NF4DynamicCache(_HFCache):
         if update_chunk_size < 0:
             raise ValueError(f"update_chunk_size={update_chunk_size} must be >= 0")
         self.update_chunk_size = update_chunk_size
+        if tail_merge_below < 0:
+            raise ValueError(
+                f"tail_merge_below={tail_merge_below} must be >= 0")
+        self.tail_merge_below = int(tail_merge_below)
         self._k_codes: List[List[torch.Tensor]] = []
         self._k_scales: List[List[torch.Tensor]] = []
         self._v_codes: List[List[torch.Tensor]] = []
@@ -163,6 +179,27 @@ class NF4DynamicCache(_HFCache):
     # ------------------------------------------------------------------
     # DynamicCache compat surface — `update()`
     # ------------------------------------------------------------------
+
+    def _append_nf4_chunk(self, layer_idx: int, kc, ks, vc, vs) -> None:
+        """Append one NF4 chunk, folding it into the tail while both are small.
+
+        Concatenating along dim 2 (the sequence axis) is exact here, not an
+        approximation: `quantize_nf4` blocks run along the HEAD dimension, so a
+        position's codes and scales do not depend on the positions around it and
+        the merged tensor holds the very same per-position blocks in the same
+        order. That is what makes a fold safe to do without re-quantizing.
+        """
+        for codes, scales, c, sc in (
+                (self._k_codes[layer_idx], self._k_scales[layer_idx], kc, ks),
+                (self._v_codes[layer_idx], self._v_scales[layer_idx], vc, vs)):
+            thr = self.tail_merge_below
+            if (thr > 0 and codes
+                    and c.shape[2] < thr and codes[-1].shape[2] < thr):
+                codes[-1] = torch.cat([codes[-1], c], dim=2)
+                scales[-1] = torch.cat([scales[-1], sc], dim=2)
+            else:
+                codes.append(c)
+                scales.append(sc)
 
     def update(
         self,
@@ -228,10 +265,7 @@ class NF4DynamicCache(_HFCache):
                 # update_chunk_size=0 (the default).
                 kc, ks = quantize_nf4(nf4_k, block_size=self.block_size)
                 vc, vs = quantize_nf4(nf4_v, block_size=self.block_size)
-                self._k_codes[layer_idx].append(kc)
-                self._k_scales[layer_idx].append(ks)
-                self._v_codes[layer_idx].append(vc)
-                self._v_scales[layer_idx].append(vs)
+                self._append_nf4_chunk(layer_idx, kc, ks, vc, vs)
             else:
                 # Chunked path (M4 1M memory pressure mitigation):
                 # quantize chunk-by-chunk so peak transient is bounded
@@ -245,10 +279,7 @@ class NF4DynamicCache(_HFCache):
                     v_chunk = nf4_v[:, :, start:end, :].contiguous()
                     kc, ks = quantize_nf4(k_chunk, block_size=self.block_size)
                     vc, vs = quantize_nf4(v_chunk, block_size=self.block_size)
-                    self._k_codes[layer_idx].append(kc)
-                    self._k_scales[layer_idx].append(ks)
-                    self._v_codes[layer_idx].append(vc)
-                    self._v_scales[layer_idx].append(vs)
+                    self._append_nf4_chunk(layer_idx, kc, ks, vc, vs)
                     del k_chunk, v_chunk, kc, ks, vc, vs
 
         return self._dequantize_layer(layer_idx)

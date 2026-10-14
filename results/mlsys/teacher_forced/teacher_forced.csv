@@ -1,0 +1,5 @@
+cell,tokens,tol,positive_verdict,positive_max_shortfall,negative_off_verdict,negative_off_max_shortfall,negative_draft_verdict,negative_draft_max_shortfall,draft_agreement,measured_kv
+32K_nf4,64,2.0,TF_MISMATCH,,TF_MISMATCH,20.4375,TF_MISMATCH,8.4375,0,nf4
+32K_bf16,64,2.0,TF_LOSSLESS,0.1875,TF_MISMATCH,12.4375,TF_MISMATCH,9.25,1,bfloat16
+8K_nf4,64,2.0,TF_MISMATCH,,TF_MISMATCH,15.9375,TF_MISMATCH,6.625,5,nf4
+8K_bf16,64,2.0,TF_LOSSLESS,0.375,TF_MISMATCH,16.125,TF_MISMATCH,6.75,2,bfloat16

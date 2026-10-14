@@ -1,0 +1,97 @@
+# DECODE-DIAGNOSIS FOLLOW-UP, PART 1 — the diagnostic session's parameter block.
+#
+# THIS FILE IS NOT RUN BY run_experiment.py. Part 1 is driven by a custom pod-side script
+# (scripts/mlsys_df_remote.sh + scripts/mlsys_df_arms.py) because the measurement it needs --
+# four engine configurations compared against each other in ONE model load -- cannot be
+# expressed as a stage of a runner that loads the model once per invocation. The reason is
+# cost and comparability: a pod-side run_experiment.py invocation reloads the 8B target, so
+# four arms would be four loads (~20 min of the session's budget) and the arm-to-arm
+# difference would include whatever the load did.
+#
+# The driver still needs a config, for one thing only: `scripts/mlsys_stage_list.py` derives
+# the INTENDED STAGE LIST from this file's key order, and the pod asserts that list against
+# what it is about to run (R9). So the keys below are the stages the remote script runs, in
+# its order, and they are asserted even though run_experiment.py never reads this file.
+#
+# WHY THE LEVELS CARRY THE REAL NUMBERS. Should this ever be run through run_experiment.py
+# by mistake, it should measure the same thing the pod script does, not something else.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  dtype: bfloat16
+  rope_type: "none"
+  quantize_target: true
+  quantize_draft: true
+  kv_quant: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  temperature: 0.7
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  seeds: [42]
+  max_new_tokens: 32
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  ring_decode_mode: "ring"
+  ring_expand_after_rotation: false
+
+DF_TOP0:
+  name: df_topo
+  factor: context_length
+  levels:
+  - id: DF_TOP0
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'shell stage: nvidia-smi topo -m, GPU and NVLink inventory'
+
+DF_BENCH_RING:
+  name: df_bench
+  factor: context_length
+  levels:
+  - id: DF_BENCH_RING
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'bare batch_isend_irecv ring, 256 rounds x {4 KB, 33 MB, 133 MB, 266 MB, 66 MB}'
+
+DF_SMOKE_SPLIT_8K:
+  name: df_smoke
+  factor: context_length
+  levels:
+  - id: DF_SMOKE_SPLIT_8K
+    context_length: 8192
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    spec_steps: 0
+    ring_decode_mode: "split_kv"
+    notes: 'split-KV at 8k under CUDA_LAUNCH_BLOCKING=1: synchronous traceback, or a row'
+
+DF_ARMS_128K:
+  name: df_arms
+  factor: context_length
+  levels:
+  - id: DF_ARMS_128K
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'ring2048 / ring32768 / ring32768x / splitkv x {target-only, spec}, one model load'
+
+DF_PPL_128K:
+  name: df_ppl
+  factor: context_length
+  levels:
+  - id: DF_PPL_128K
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    measure_target_ppl: true
+    notes: 'gated: 1024-token target ppl per arm. NOTE it is a PREFILL forward, so it does not exercise the decode path a split-KV change alters'

@@ -1,0 +1,250 @@
+# PROTOCOL A: SAMPLING. target gradientai/...-Gradient-1048k (native 1M, no rope
+# scaling), draft Llama-3.2-1B (window capped 4096), 8x A100-80GB, NF4 KV.
+#
+# WHY SAMPLING. Under greedy on 2026-10-11, 9 of 15 rows looped, and a greedy cycle is
+# trivially "accepted" (0.6429 and 0.7419 against 0.2132 on the one clean 1M row), so
+# looping both inflates acceptance and destroys usable n. Sampling attacks the cause; the
+# exclusion rule stays anyway.
+#
+# temperature 0.7, top_p 1.0, seed 42, 128 tokens, periodicity reported for every row.
+# The engine implements the standard rejection criterion min(1, p_target/p_draft) with the
+# residual bonus resample, tested at temperature 1.0 and already exercised end-to-end by
+# the natural_f1 and m4 campaigns -- but never at 1M, hence step SAMP_CHECK_1M_SPEC.
+#
+# TARGET-ONLY ROWS ARE SUBSAMPLED: measured target-only throughput varied under 2% across
+# books last night (0.05113/0.05132/0.05236 at 1M), so 2 books at 1M and 1 book at each
+# aligned rung are enough, and every speedup divides by the MEAN target-only tok/s at that
+# context FROM THIS SESSION. Speedups and tok/s are computed as tokens_generated/time_sec,
+# never from the rounded throughput_tps field.
+#
+# ORDER IS RUN ORDER (the remote script derives its step list from this file's key order):
+#   a sanity (separate config)  b quality redo, greedy  c 1M sampling check (STOPS the
+#   sampling stages if it fails)  d 1M  e aligned 512k  f aligned 128k  g rope, LAST.
+# If time or budget runs short, stages are dropped from the END (g, then f); d is never
+# dropped.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+QUALITY_FIX_128K:
+  name: quality_fix_128k
+  factor: context_length
+  levels:
+  - id: QUALITY_FIX_128K
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: 'ppl of the final 1024 tokens at 128k, GREEDY, aligned to the 1M continuation'
+QUALITY_FIX_1M:
+  name: quality_fix_1m
+  factor: context_length
+  levels:
+  - id: QUALITY_FIX_1M
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 8
+    measure_target_ppl: true
+    notes: 'ppl of the SAME final 1024 tokens at 1M, GREEDY'
+SAMP_CHECK_1M_SPEC:
+  name: samp_check_1m
+  factor: context_length
+  levels:
+  - id: SAMP_CHECK_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'STEP c: one 1M spec row; the remote script inspects it and stops all T>0 stages if it fails'
+SAMP_1M_SPEC:
+  name: samp_1m
+  factor: context_length
+  levels:
+  - id: SAMP_1M_SPEC
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915, pg19_train_1726, pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'STEP d: the sampling headline, 6 books at 1M'
+SAMP_1M_TARGET:
+  name: samp_1m_target
+  factor: context_length
+  levels:
+  - id: SAMP_1M_TARGET
+    context_length: 1048576
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'STEP d partner: target-only at 1M, 2 books, same T'
+SAMP_ALIGNED_512K_SPEC:
+  name: samp_aligned_512k
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_512K_SPEC
+    context_length: 524288
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'STEP e: aligned 512k, windows ending at the 1M prompt end'
+SAMP_ALIGNED_512K_TARGET:
+  name: samp_aligned_512k_target
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_512K_TARGET
+    context_length: 524288
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'STEP e partner: 1 book'
+SAMP_ALIGNED_128K_SPEC:
+  name: samp_aligned_128k
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'STEP f: aligned 128k'
+SAMP_ALIGNED_128K_TARGET:
+  name: samp_aligned_128k_target
+  factor: context_length
+  levels:
+  - id: SAMP_ALIGNED_128K_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'STEP f partner: 1 book'
+ROPE_SAMP_NATIVE_SPEC:
+  name: rope_samp_native
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_NATIVE_SPEC
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    rope_type: "none"
+    notes: 'STEP g: native control, shipped llama3 block untouched'
+ROPE_SAMP_F16_SPEC:
+  name: rope_samp_f16
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_F16_SPEC
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    notes: 'STEP g: shipped llama3 dict, only factor changed to 16'
+ROPE_SAMP_F32_SPEC:
+  name: rope_samp_f32
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_F32_SPEC
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    notes: 'STEP g: shipped llama3 dict, only factor changed to 32'
+ROPE_SAMP_NATIVE_TARGET:
+  name: rope_samp_native_target
+  factor: context_length
+  levels:
+  - id: ROPE_SAMP_NATIVE_TARGET
+    # The rope intervention needs a target that SHIPS a rope_scaling to
+    # modify. gradientai/...-Gradient-1048k ships rope_scaling: None, and the
+    # engine refuses llama3 rope on it outright:
+    #   ValueError: rope_type='llama3' requested for ... but its shipped
+    #   rope_scaling is None; this rung requires a model that ...
+    # Caught by the 2026-10-11 rehearsal (ROPE_SAMP_F16_SPEC, 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    rope_type: "none"
+    notes: 'STEP g partner: native arm target-only, 1 book'

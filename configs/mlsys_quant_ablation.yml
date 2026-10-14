@@ -1,0 +1,157 @@
+# QUANTIZATION ABLATION, 128k, ONE SETTING AT A TIME.
+#
+# WHY. Stage b of the seeds/ablations session measured a decode step at 128k as 3.79 s of
+# which <=1.7% is ring transfer and ~87-98% is local work -- while the whole 128k prefill
+# takes 8.8 s. A per-step path that costs a third of a full prefill is doing far too much
+# work, and the code says why: with `kv_quant: true` the NF4 cache's update() dequantizes
+# the FULL local cache for the kernel on EVERY step (src/models/nf4_dynamic_cache.py:212),
+# so the per-step cost is O(context); the FP4 weight path adds a dequant per linear call.
+# This session measures what each of those costs, by turning each off and changing nothing
+# else.
+#
+# ONE SETTING PER STAGE, AND THE CONTROL IS RE-MEASURED IN THIS SESSION. The 128k headline
+# rows are from the Oct 12 sampling session on a different instance, so `SAQ_CONTROL` is
+# the in-session denominator: without it every difference below could be a host effect.
+#
+# ORDER IS PRIORITY (the driver's deadline takes over from the END): the control first,
+# then the decisive contrast, then the decomposition. A run cut short still answers the
+# question it was launched for.
+#
+# WHAT IT IS NOT. No new protocol: T=0.7, 128 tokens, seed 42, spec_steps 4,
+# draft_window_cap 4096, kv_block_size 2048, aligned 128k pool, one book, both arms.
+# `quantize_draft` stays TRUE in every stage -- the draft's precision is not the variable
+# under test and moving it would confound the spec arms.
+#
+# MEMORY, CHECKED BEFORE LAUNCHING (bf16 weights + bf16 KV, per GPU): weights 16.1 GB
+# replicated per rank; KV is sequence-sharded so each rank holds S/8 = 16384 tokens =
+# 2.0 GB at 128k; the FFN transient scales from the ~9 GB measured at S_local = 128k, so
+# ~1.1 GB here. Total ~19 GB against 80 GB, and the NF4 path materialises the same bf16
+# cache per step anyway, so no stage here is near the ceiling.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  # PER-RANK MEMORY SIDECARS. Phase 1 requires peak memory per rank, ALLOCATED and
+  # RESERVED, for all eight ranks -- the CSV's gpu_peak_mem_mb is rank 0's allocated
+  # peak only, so it cannot answer that. The remote script's run_experiment.py call has
+  # no --memory-trace flag and no env switch for it, so this config key is the only
+  # config-only route; it writes <out>/memory_trace/<run_id>.rank<r>.json per rank, which
+  # is the same facility Figure 3 used. It is a sidecar: the snapshots are taken at
+  # lifecycle points, so it does not change the measured protocol.
+  memory_trace: true
+
+SAQ_CONTROL:
+  name: saq_control
+  factor: context_length
+  levels:
+  - id: SAQ_CONTROL_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    notes: 'CONTROL: headline settings (FP4 weights, NF4 KV round-trip), target-only, in-session denominator'
+  - id: SAQ_CONTROL_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'CONTROL: headline settings, spec arm'
+
+SAQ_BOTH_OFF:
+  name: saq_both_off
+  factor: context_length
+  levels:
+  - id: SAQ_BOTH_OFF_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    quantize_target: false
+    kv_quant: false
+    notes: 'CHANGES TWO SETTINGS on purpose: bf16 weights AND bf16 KV, the decisive contrast'
+  - id: SAQ_BOTH_OFF_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    quantize_target: false
+    kv_quant: false
+    notes: 'bf16 weights and bf16 KV, spec arm'
+
+SAQ_W_OFF:
+  name: saq_w_off
+  factor: context_length
+  levels:
+  - id: SAQ_W_OFF_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    quantize_target: false
+    notes: 'ONESETTING: bf16 weights (quantize_target false), NF4 KV unchanged, target-only'
+  - id: SAQ_W_OFF_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    quantize_target: false
+    notes: 'ONESETTING: bf16 weights, spec arm'
+
+SAQ_KV_OFF:
+  name: saq_kv_off
+  factor: context_length
+  levels:
+  - id: SAQ_KV_OFF_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    spec_steps: 0
+    kv_quant: false
+    notes: 'ONESETTING: KV round-trip off (kv_quant false), FP4 weights unchanged, target-only'
+  - id: SAQ_KV_OFF_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    kv_quant: false
+    notes: 'ONESETTING: KV round-trip off, spec arm'

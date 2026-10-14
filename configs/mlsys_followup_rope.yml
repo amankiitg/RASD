@@ -1,0 +1,92 @@
+# FOLLOW-UP SESSION. Order matters and is the file's key order: the quality redo
+# first, then the aligned scaling rows, then the redesigned rope intervention LAST, so
+# that rope can never delay or risk the stages before it.
+#
+# Every group here writes its own CSV through the session script's session_a_<GROUP>.csv
+# rule, and all stage ids are new, so nothing from the main session is overwritten.
+#
+# THE ROPE ARMS, read from configs/mlsys_rope_intervention_128k.yml and unchanged in
+# substance: all three run Llama-3.1-8B with the Llama-3.2-1B draft, and they differ ONLY
+# in the target's rotary block --
+#   ROPE_FIX_NATIVE_SPEC  rope_type none      the shipped llama3 block, untouched
+#   ROPE_FIX_F16_SPEC     rope_type llama3    the SHIPPED dict with only factor -> 16
+#   ROPE_FIX_F32_SPEC     rope_type llama3    ... and factor -> 32
+# with rope_anchor_base 8192, so the comparison isolates the factor and cannot be
+# attributed to swapping the rope implementation. max_new_tokens 128, greedy, periodicity
+# reported per row, looping rows flagged and excluded from means.
+#
+# WINDOWS ARE ALIGNED, unlike the old rope config which read pg19_docs from its start:
+# all arms read data/processed/pg19_1m_128kwin, whose windows end at the same token as the
+# 1M prompt, so a rope effect cannot be confounded with a passage effect.
+defaults:
+  target_model_name: meta-llama/Llama-3.1-8B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_text: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+ROPE_FIX_NATIVE_SPEC:
+  name: rope_fix_native
+  factor: context_length
+  levels:
+  - id: ROFIX_NATIVE
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 128
+    rope_type: "none"
+    checkpoint_every: 0
+    notes: 'native control: shipped llama3 block untouched'
+ROPE_FIX_F16_SPEC:
+  name: rope_fix_f16
+  factor: context_length
+  levels:
+  - id: ROFIX_F16
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 128
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    checkpoint_every: 0
+    notes: 'shipped llama3 dict with only factor changed to 16'
+ROPE_FIX_F32_SPEC:
+  name: rope_fix_f32
+  factor: context_length
+  levels:
+  - id: ROFIX_F32
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 128
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    checkpoint_every: 0
+    notes: 'shipped llama3 dict with only factor changed to 32'
+ROPE_FIX_NATIVE_TARGET:
+  name: rope_fix_native_target
+  factor: context_length
+  levels:
+  - id: ROFIX_NATIVE_targetonly
+    context_length: 131072
+    documents: [pg19_train_0, pg19_train_1, pg19_train_915]
+    max_new_tokens: 128
+    spec_steps: 0
+    rope_type: "none"
+    checkpoint_every: 0
+    notes: 'target-only partner for the NATIVE arm only, for the same-session speedup'

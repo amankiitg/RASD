@@ -1,0 +1,70 @@
+2026-10-08T14:23:33Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+spend before manifest: $34.86
+2026-10-08T14:23:33Z STALL_WATCHDOG started pid=7919 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+=== stage gate_calibration (projected $22, 1.0h; watchdog 40h) ===
+2026-10-08T14:23:33Z STAGE_START name=gate_calibration timeout=14400s
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:  25%|██▌       | 1/4 [00:27<01:21, 27.17s/it]Downloading shards:  50%|█████     | 2/4 [00:50<00:50, 25.01s/it]Downloading shards:  75%|███████▌  | 3/4 [01:09<00:22, 22.09s/it]Downloading shards: 100%|██████████| 4/4 [01:17<00:00, 16.45s/it]Downloading shards: 100%|██████████| 4/4 [01:17<00:00, 19.27s/it]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.31s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.13s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.06s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.32it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.12it/s]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.6` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:595: UserWarning: `do_sample` is set to `False`. However, `top_p` is set to `0.9` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_p`.
+  warnings.warn(
+The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12548.40it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.34s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.15s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.07s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.30it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.10it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12633.45it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.48s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.21s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.11s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.26it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.05it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12219.39it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.75s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.32s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.16s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.22it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01s/it]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13923.00it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.32s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.14s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.07s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.31it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.11it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13508.23it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.47s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.20s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.10s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.27it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.06it/s]
+Downloading shards:   0%|          | 0/2 [00:00<?, ?it/s]Downloading shards:  50%|█████     | 1/2 [00:46<00:46, 46.81s/it]Downloading shards: 100%|██████████| 2/2 [01:09<00:00, 32.71s/it]Downloading shards: 100%|██████████| 2/2 [01:09<00:00, 34.82s/it]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:04<00:04,  4.97s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.07s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.35s/it]
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (4096). Depending on the model, you may observe exceptions, performance degradation, or nothing at all.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12345.27it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.65s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.37s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.28s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.09it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.09s/it]
+Downloading shards:   0%|          | 0/2 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 2/2 [00:00<00:00, 10433.59it/s]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:05<00:05,  5.18s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.12s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.43s/it]
+
+  candidate                    ctx     anchor        ppl   ratio   blank    rep   eos  gate
+  P1_native_32k              32768   declared     1.0325     1.0  0.1667 0.0075    no  PASS
+  P2_native_64k              65536   declared     1.0302     1.0  0.3158 0.1273    no  FAIL
+      -> blank lines 32%
+  P3_native_128k            131072   declared     1.0458     1.0  0.1875  0.029    no  PASS
+  B_native_32k               32768   declared     1.0325     1.0  0.1667 0.0075    no  PASS
+  B_native_64k               65536   declared     1.0302     1.0  0.3158 0.1273    no  FAIL
+      -> blank lines 32%
+  B_native_128k             131072   declared     1.0458     1.0  0.1875  0.029    no  PASS
+  B_llama2_yarn8_32k_correct   32768   declared     7.0155     1.0  0.3889 0.0381    no  FAIL
+      -> blank lines 39%
+  N1_arm4_f2_construction   131072 anchor_on_context   372.9072 356.576     0.0    0.0   YES  FAIL
+      -> ppl 356.58x native > 1.5x; EOS at token 5; rope mismatch: built anchor_on_context (err 0), not the intended config
+  N2_llama2_misanchored      32768 anchor_on_context 53107.2525 7569.9882  0.9848    0.0    no  FAIL
+      -> ppl 7569.99x native > 1.5x; blank lines 98%; rope mismatch: built anchor_on_context (err 0), not the intended config
+
+  wrote results/mlsys/gate_calibration.csv
+2026-10-08T14:36:27Z STAGE_OK name=gate_calibration wall=774s cost=$4.80 cumulative=$39.66
+--- gate_calibration rc=0 wall=774s cost=$4.80 cumulative=$39.66
+  positive P1_native_32k                want=pass  got=pass  ppl=1.0325       baseline=1.0325       ratio=1.0
+  positive P2_native_64k                want=pass  got=fail  ppl=1.0302       baseline=1.0302       ratio=1.0
+  positive P3_native_128k               want=pass  got=pass  ppl=1.0458       baseline=1.0458       ratio=1.0
+  positive B_native_32k                 want=pass  got=pass  ppl=1.0325       baseline=1.0325       ratio=1.0
+  positive B_native_64k                 want=pass  got=fail  ppl=1.0302       baseline=1.0302       ratio=1.0
+  positive B_native_128k                want=pass  got=pass  ppl=1.0458       baseline=1.0458       ratio=1.0
+  positive B_llama2_yarn8_32k_correct   want=pass  got=fail  ppl=7.0155       baseline=7.0155       ratio=1.0
+  negative N1_arm4_f2_construction      want=fail  got=fail  ppl=372.9072     baseline=1.0458       ratio=356.576
+  negative N2_llama2_misanchored        want=fail  got=fail  ppl=53107.2525   baseline=7.0155       ratio=7569.9882
+  positive-control ppl spread max/min = 6.8098  (informational: the tolerance is FIXED at 1.5x by the plan revision; this is the evidence the measurement sits well inside it)
+
+CALIBRATION FAILED:
+  - P2_native_64k: expected pass, got fail (blank lines 32%); ppl=1.0302
+  - B_native_64k: expected pass, got fail (blank lines 32%); ppl=1.0302
+  - B_llama2_yarn8_32k_correct: expected pass, got fail (blank lines 39%); ppl=7.0155
+
+The gate is wrong, not the control. Fix the gate before gating any candidate; do not relax the threshold to make a control agree.
+2026-10-08T14:36:27Z ABORT: gate calibration failed its controls; refusing to gate candidates
+ABORT: calibration controls disagree

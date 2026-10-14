@@ -1,0 +1,524 @@
+# MLSys run manifest — stages in execution order.
+#
+# Read by scripts/mlsys_manifest.sh on the pod and by the provisioning watcher.
+#
+# THE ANALYSIS PLAN IS THE CONTRACT. docs/mlsys_analysis_plan.md (including its
+# dated revision block) fixes the metrics, the unit of independence, the
+# documents per rung, the interval method, the baseline design, the comparisons
+# and the payoff rule. This file says which stages produce those numbers. Where
+# the two disagree, the plan wins and this file is wrong.
+#
+# TARGET POLICY (binding):
+#   * Target is Llama-3.1-8B; at 128k and below it runs its NATIVE shipped
+#     `llama3` rope block, untouched.
+# The runner's execution order is the authority; the `order:` fields below match
+# it. The gate and the correction evidence run BEFORE the expensive 128k stage on
+# purpose: they are cheap and can only invalidate rope configurations, so failing
+# fast there is worth more than a nominal numbering.
+#
+#   * Above 128k ONLY a rope configuration that passed the CALIBRATED coherence
+#     gate may be used, and the runner enforces it by filtering the config
+#     (scripts/mlsys_gate_filter.py) rather than by trusting this comment.
+#   * No training-free YaRN on a 4k-native model. Measured: 4.9x native
+#     perplexity and newline collapse even correctly anchored.
+#   * transformers stays at 4.47.1 with rope_anchor_base. On that release YaRN
+#     IGNORES rope_scaling["original_max_position_embeddings"], so the gate
+#     asserts what the model actually built from its inv_freq.
+#
+# DECODING CONTRACT: greedy (temperature=0), ignore_eos=true,
+# prompt_tokens + 1 BOS + tokens_generated == context_length exactly.
+#
+# TARGET-ONLY BASELINE DESIGN (plan revision, 2026-10-06): per rung, 3 documents
+# at the full 1024 tokens (losslessness + the end-to-end paired ratio) and 7 at
+# 128 tokens (decode-only rate for the paired ratio). The paired ratio is
+# reported on decode-only tok/s for all 10 documents with the end-to-end ratio
+# beside it for the 3 full pairs. Prefill is identical across arms and under 5%
+# of the decode wall, so the end-to-end ratio is a prefill-weighted restatement
+# of the decode ratio rather than an independent quantity.
+
+meta:
+  name: mlsys_natural_text_ladder
+  analysis_plan: docs/mlsys_analysis_plan.md
+  transformers_pin: "4.47.1"
+  node_rate_per_hour: 22.32
+  max_cost_usd: 850                  # SESSION ceiling, enforced by the runner
+                                     # before every stage: spent + projection
+                                     # must stay under it. The per-stage guard
+                                     # bounds one stage; this bounds the run.
+  ask_before_stage_over_usd: 300     # per stage, not cumulative
+  max_hours: 20                      # default on-instance watchdog
+  terminate_grace_minutes: 60
+  results_dir: results/mlsys
+  staging: per_run
+  pull_verify: sha256
+  interim_report_after_each_stage: true
+
+# Cost model, from measured cells (ARM4 f1 128k, ARM2 128k, the Llama-2 matrix
+# at 256k/512k/1M). Per-token decode cost scales ~linearly with context because
+# the ring decode is communication-bound:
+#
+#   context   prefill   spec decode   target-only decode
+#    128k       10s       0.55 s/tok       4.39 s/tok
+#    256k       35s       1.10 s/tok       8.80 s/tok
+#    512k       97s       2.20 s/tok      17.60 s/tok
+#
+# At this baseline design the target-only arms are STILL 75% of every rung's
+# wall time, even after moving 7 of 10 documents down to 128 tokens: the three
+# full-length pairs alone are 3.75h of the 128k rung's 6.46h.
+cost_model:
+  per_rung_wall_hours:
+    "128k": {spec: 1.59, target_full: 3.75, target_short: 1.11, total: 6.46}
+    "256k": {spec: 3.23, target_full: 7.54, target_short: 2.26, total: 13.02}
+    "512k": {spec: 6.53, target_full: 15.10, target_short: 4.57, total: 26.20}
+
+prompts:
+  natural:
+    source: pg19_document
+    documents_json: data/processed/pg19_docs/documents.json
+    documents_dir: data/processed/pg19_docs
+    log_prompt_hash: true
+  synthetic:
+    source: synthetic
+    log_prompt_hash: true
+
+documents:
+  core_10: [pg19_train_0, pg19_train_1, pg19_train_115, pg19_train_537,
+            pg19_train_915, pg19_train_1404, pg19_train_1726,
+            pg19_train_1981, pg19_train_2204, pg19_train_2768]
+  target_full_first3: [pg19_train_0, pg19_train_1, pg19_train_115]
+  rungs: [131072, 262144, 524288]
+
+# Stages projected above ask_before_stage_over_usd do not start unless their id
+# is in MLSYS_APPROVED_STAGES, and the refusal is logged with the projected
+# figure. With the campaign at this cost, essentially every spec stage is above
+# the threshold, so the list is the mechanism that makes the approval explicit.
+#
+# APPROVED (operator, 2026-10-06):
+#   gate_calibration, engine_cap_smoke, natural_f1_128k, impl_validation,
+#   coherence_gate, correction_note_evidence, natural_spec_gated_256k
+# NOT APPROVED:
+#   natural_spec_gated_512k, natural_f1_128k_diverse, synthetic_spec_gated_*,
+#   vllm_ladder   (not named in either list; treated as not approved because
+#                  "absent from the approval list" must mean "not approved")
+
+stages:
+  - id: gate_calibration
+    kind: gate_calibration
+    order: 1
+    script: scripts/mlsys_coherence_gate.py
+    candidates: configs/mlsys_gate_controls.json
+    est_hours: 1.0
+    est_cost_usd: 22
+    cost_note: >
+      Raised from $13 when every control gained a declared native baseline at
+      its own context: 9 rows instead of 5, and three of them at 128k where a
+      row costs ~4x a 32k row. A control with no baseline cannot be measured,
+      so the extra rows are the price of the verdicts meaning anything.
+    positive_controls: [P1_native_32k, P2_declared_shipped_64k, P3_native_128k]
+    negative_controls: [N1_arm4_f2_construction, N2_llama2_misanchored]
+    sets_threshold: >
+      The perplexity tolerance is set from the POSITIVE controls' measured spread
+      and written into the plan's revisions block. A gate that has never run on
+      real weights has not been calibrated.
+    fail_action: >
+      A positive control that FAILS means the gate is wrong, not the control.
+      A negative control that PASSES means the gate cannot detect a known-bad
+      configuration: fix the gate before gating any candidate, and never relax
+      the threshold to make a control agree.
+    output: results/mlsys/gate_calibration.csv
+
+  - id: engine_cap_smoke
+    kind: smoke
+    order: 2
+    depends_on: [gate_calibration]
+    config: configs/mlsys_engine_cap_smoke.yml
+    est_hours: 1.5
+    est_cost_usd: 34
+    checkpoint: scripts/mlsys_cap_smoke_check.py
+    asserts:
+      - tokens_generated == max_new_tokens EXACTLY, both arms, caps 64 and 1024
+      - the per-round trace accounts for exactly the cap
+        (sum n_emitted + one bonus per non-truncated round == cap)
+      - only the FINAL round may be flagged round_truncated
+      - prompt_tokens + 1 BOS + tokens_generated == context_length
+      - the speculative/target-only pair is token-identical (lossless)
+    fail_action: >
+      STOP the manifest before natural_f1_128k. The generation cap was changed
+      in the engine and has never executed on a GPU; if it is wrong it does not
+      fail loudly, it silently changes the generated length and invalidates the
+      losslessness comparison and the acceptance denominator.
+    why: >
+      The one change in this campaign that fails quietly rather than loudly.
+      Cost is dominated by the 1024-token target-only partner (4505 s of the
+      5414 s total), which is exactly the run losslessness needs.
+    output: results/mlsys/engine_cap_smoke.csv
+
+  - id: natural_f1_128k
+    kind: spec
+    order: 5
+    depends_on: [engine_cap_smoke]
+    config: configs/mlsys_natural_f1_128k.yml
+    rung: 131072
+    native_rope: true
+    est_hours: 6.5
+    est_cost_usd: 144
+    baseline_design: {target_full_docs: 3, target_short_docs: 7}
+    log_per_token: true
+    memory_trace: true
+    losslessness: required
+    measure_target_ppl: true
+    output: results/mlsys/natural_f1_128k.csv
+    why: >
+      The f1 acceptance ceiling on non-degenerate text at the native window,
+      with target perplexity beside every acceptance figure. Answers whether the
+      reported saturation is the repetitive synthetic prompt or the system.
+
+  - id: rope_intervention_128k
+    kind: spec
+    order: 5.5
+    depends_on: [natural_f1_128k]
+    config: configs/mlsys_rope_intervention_128k.yml
+    groups: [RI_native_128k_SPEC, RI_llama3_f16_128k_SPEC, RI_llama3_f32_128k_SPEC]
+    rung: 131072
+    require_gate_verdict: pass
+    gate_candidates: configs/mlsys_rope_intervention_candidates.json
+    # Each treated arm is gated at 128k ON ITS OWN; a failure is recorded as
+    # that arm's result and the other arms still run. The native arm is the
+    # control and always runs.
+    gate_candidates_per_arm: [RI_llama3_f16_128k, RI_llama3_f32_128k]
+    est_hours: 5.4
+    est_cost_usd: 120
+    baseline_design: {target_full_docs: 0, target_short_docs: 0}
+    spec_only: true
+    losslessness: not_required
+    measure_target_ppl: true
+    output: results/mlsys/rope_intervention_128k.csv
+    fail_action: >
+      If a treated arm fails the gate at 128k, the failure IS that arm's
+      result: record it, do not run that arm, and do not retry with a different
+      threshold. A threshold relaxed to make the intervention agree is a
+      threshold that no longer excludes anything. The other arms still run:
+      inferring one factor's coherence from another's would be an assumption,
+      and that assumption is what the ARM4 f2 cell punished.
+    why: >
+      Pre-registered C6. Every other comparison moves the context length and
+      the rope together, so none isolates a rope intervention. Context is held
+      at 128k and ONLY the target's rope moves, so if acceptance here is a
+      property of the positional frame rather than of the context, that is
+      visible.
+
+      THREE ARMS: native, factor 16, factor 32. With a single treated arm a
+      difference and an equivalence are both uninterpretable -- factor 16 may
+      sit close enough to the shipped 8 that nothing moves, or far enough that
+      coherence breaks -- so the stage carries two factors and reports native
+      vs each (f16 vs f32 is reported as a secondary contrast only).
+
+      Speculative runs only: nothing is reported as a ratio against a
+      baseline, only as a paired difference between speculative arms, so there
+      is no target-only arm to pair against and losslessness does not apply.
+      Equivalence margin 0.05 on EACH paired difference; an interval
+      overlapping the boundary is INCONCLUSIVE, which with n = 10 documents is
+      the likely outcome and is not a failure.
+
+  - id: impl_validation
+    kind: cross_impl
+    order: 6
+    depends_on: [natural_f1_128k]
+    script: scripts/mlsys_vllm_baseline.py
+    vllm_only: true
+    compare_against: results/mlsys/natural_f1_128k.csv
+    documents: target_full_first3
+    rung: 131072
+    max_new_tokens: 1024
+    est_hours: 1.0
+    est_cost_usd: 22
+    compare: >
+      vLLM speculative decoding only. The RASD side is natural_f1_128k's own
+      rows and token sidecars, not a duplicate run, so this stage adds no RASD
+      wall time and the comparison is against the exact rows being published.
+      Compare acceptance; run the losslessness check on both.
+    output: results/mlsys/impl_validation.csv
+    why: >
+      An acceptance number with no independent implementation behind it is a
+      number about our own code.
+
+  - id: coherence_gate
+    kind: gate
+    order: 3
+    depends_on: [gate_calibration]
+    script: scripts/mlsys_coherence_gate.py
+    candidates: configs/mlsys_rope_candidates.json
+    contexts: [262144, 524288]
+    threshold_from: gate_calibration
+    est_hours: 2.0
+    est_cost_usd: 45
+    output: results/mlsys/coherence_gate.csv
+    fail_action: >
+      A failed candidate is REMOVED from the ladder, never re-run with adjusted
+      settings until it passes. The runner filters the stage configs by the
+      verdict (scripts/mlsys_gate_filter.py).
+
+  - id: correction_note_evidence
+    kind: rope_quality
+    order: 4
+    script: scripts/mlsys_coherence_gate.py
+    candidates: configs/mlsys_correction_candidates.json
+    est_hours: 2.1
+    est_cost_usd: 45
+    output: results/mlsys/correction_note_evidence.csv
+    why: >
+      The correction note claims the anchor explains most of the perplexity
+      damage and not the degeneration. That needs the paper's actual factors,
+      with and without the correct anchor, at full prompt length. Never reported
+      as a speculation result.
+
+  # The group name carries the gate candidate it requires, because
+  # scripts/mlsys_gate_filter.py matches a group to a candidate BY NAME. A group
+  # that names no candidate is dropped, which is the safe default but silently
+  # skips the stage — so the names are load-bearing, not cosmetic.
+  - id: natural_spec_gated_256k
+    kind: spec
+    order: 7
+    depends_on: [coherence_gate]
+    require_gate_verdict: pass
+    config: configs/mlsys_natural_gated.yml
+    groups: [GATED_llama3_f16_256k_SPEC, GATED_llama3_f16_256k_TARGET_FULL, GATED_llama3_f16_256k_TARGET_SHORT]
+    rung: 262144
+    est_hours: 13.0
+    est_cost_usd: 291
+    watchdog_hours: 20
+    losslessness: required
+    measure_target_ppl: true
+    output: results/mlsys/natural_spec_gated_256k.csv
+    note: RUNS FIRST of the two gated rungs, per the plan revision.
+
+  - id: natural_spec_gated_512k
+    kind: spec
+    order: 8
+    depends_on: [natural_spec_gated_256k]
+    require_gate_verdict: pass
+    conditional_on: "256k completes cleanly AND credit remains"
+    config: configs/mlsys_natural_gated.yml
+    groups: [GATED_llama3_f32_512k_SPEC, GATED_llama3_f32_512k_TARGET_FULL, GATED_llama3_f32_512k_TARGET_SHORT]
+    rung: 524288
+    est_hours: 26.2
+    est_cost_usd: 585
+    watchdog_hours: 40
+    own_session: true
+    losslessness: required
+    measure_target_ppl: true
+    output: results/mlsys/natural_spec_gated_512k.csv
+    note: >
+      Needs its own instance session with the watchdog raised to 40h: at 26.2h
+      the default 20h watchdog would kill it mid-stage, and the
+      finish-before-deadline guard would refuse to start it.
+
+  - id: natural_f1_128k_diverse
+    kind: spec
+    order: 9
+    optional: true
+    depends_on: [natural_f1_128k]
+    config: configs/mlsys_natural_f1_128k_diverse.yml
+    rung: 131072
+    est_hours: 6.5
+    est_cost_usd: 144
+    losslessness: required
+    measure_target_ppl: true
+    output: results/mlsys/natural_f1_128k_diverse.csv
+    why: >
+      10 books sampled from the 534 eligible at 128k, so the headline number is
+      not a property of the Bible/Shakespeare set the paired design is forced
+      into at 512k.
+
+  - id: synthetic_spec_gated_128k
+    kind: spec
+    order: 10
+    optional: true
+    depends_on: [coherence_gate]
+    require_gate_verdict: pass
+    config: configs/mlsys_synthetic_gated.yml
+    groups: [NATIVE_synth_128k_SPEC, NATIVE_synth_128k_TARGET_FULL, NATIVE_synth_128k_TARGET_SHORT]
+    rung: 131072
+    est_hours: 6.5
+    est_cost_usd: 144
+    losslessness: required
+    output: results/mlsys/synthetic_spec_gated_128k.csv
+    why: Secondary comparison at the same configuration; isolates prompt content.
+
+  - id: synthetic_spec_gated_256k
+    kind: spec
+    order: 11
+    optional: true
+    depends_on: [natural_spec_gated_256k]
+    require_gate_verdict: pass
+    config: configs/mlsys_synthetic_gated.yml
+    groups: [GATED_llama3_f16_256k_SYNTH_SPEC, GATED_llama3_f16_256k_SYNTH_TARGET_FULL, GATED_llama3_f16_256k_SYNTH_TARGET_SHORT]
+    rung: 262144
+    est_hours: 13.0
+    est_cost_usd: 291
+    losslessness: required
+    output: results/mlsys/synthetic_spec_gated_256k.csv
+    why: Secondary comparison at the gated 256k configuration.
+
+  - id: vllm_ladder
+    kind: baseline
+    order: 12
+    optional: true
+    script: scripts/mlsys_vllm_baseline.py
+    plain_decode_only: true
+    documents: target_full_first3
+    contexts: [131072, 262144, 524288]
+    models: [meta-llama/Llama-3.1-8B]
+    quantizations: [bfloat16]
+    max_new_tokens: 1024
+    est_hours: 1.25
+    est_cost_usd: 28
+    output: results/mlsys/vllm_baseline.csv
+    what_it_adds: >
+      Kept because it measures something impl_validation does not: PLAIN
+      (non-speculative) vLLM decode throughput at 256k and 512k, and whether
+      vLLM can serve those contexts at all on 8 ranks (an OOM or a required
+      tensor-parallel change is itself a result). impl_validation covers only
+      128k.
+      NARROWED (plan revision, 2026-10-07): Llama-3.1-8B at bfloat16 only. The
+      ladder swept Llama-2 and a bitsandbytes precision as well, which doubled
+      the cells to answer a question nobody asked -- a throughput reference is
+      for THIS campaign's target, and a second model at a second weight
+      precision makes the table a comparison across two configurations rather
+      than a reference for one. Cost recomputed on the halved cell count (12 ->
+      6 cells): 1.25h / $28, down from 2.5h / $56.
+    unit_check: >
+      Report vLLM generation throughput in the SAME unit as RASD's throughput_tps
+      (end-to-end generation tok/s), never forward_tps. Set unit_matched=yes ONLY
+      when prompt token ids, max_new_tokens, EOS policy and tensor_parallel_size
+      all match the RASD cell. Record honestly where vLLM cannot match.
+
+# HELPER STAGES. These run around a parent stage and previously had no cost
+# entry, so `est_cost` could not price them and the aggregate guard could not
+# see them. They are priced explicitly here, and each names its PARENT: a helper
+# is allowed exactly when its parent is, and it is skipped when its parent was
+# refused or did not run. A refused stage must not have its validation run --
+# validating a stage that never produced rows reports failure for something that
+# never happened, and inflates STAGE_INVALID.
+helpers:
+  - id: gate_calibration_check
+    parent: gate_calibration
+    est_hours: 0.02
+    est_cost_usd: 1
+    script: scripts/mlsys_gate_calibration_check.py
+  - id: engine_cap_smoke_check
+    parent: engine_cap_smoke
+    est_hours: 0.02
+    est_cost_usd: 1
+    script: scripts/mlsys_cap_smoke_check.py
+  - id: rope_intervention_gate
+    parent: rope_intervention_128k
+    # Runs BEFORE its parent: it is what decides whether each treated arm of that
+    # stage may run at all. So it needs the parent to be APPROVED, not to have
+    # already run -- requiring the latter would refuse the gate that gates it.
+    runs_before_parent: true
+    est_hours: 0.6
+    est_cost_usd: 13
+    script: scripts/mlsys_coherence_gate.py
+  - id: rope_intervention_128k_comparison
+    parent: rope_intervention_128k
+    est_hours: 0.02
+    est_cost_usd: 1
+    script: scripts/mlsys_rope_intervention.py
+  - id: _losslessness
+    parent: "*"
+    est_hours: 0.05
+    est_cost_usd: 1
+    script: scripts/mlsys_losslessness.py
+  - id: _doc_intervals
+    parent: "*"
+    est_hours: 0.05
+    est_cost_usd: 1
+    script: scripts/mlsys_document_bootstrap.py
+  - id: _round_acceptance
+    parent: "*"
+    est_hours: 0.05
+    est_cost_usd: 1
+    script: scripts/mlsys_cluster_bootstrap.py
+
+reporting:
+  primary_metric: alpha_round
+  acceptance:
+    alpha_round: accepted_prefix_length / gamma, PER ROUND
+    alpha_total_ratio: total_accepted / total_proposed   # == alpha_round when gamma is constant
+    alpha_iid: the memoryless alpha solving E[N] = alpha + ... + alpha^gamma
+    report_all_three: true
+    warn_if_conflated: true
+    exclude_partial_final_round: true    # rounds flagged round_truncated
+    record_n_emitted: true
+    report_n_acc_distribution: true
+    flag_saturated_above: 0.90
+  intervals:
+    method: bootstrap_over_documents
+    n_boot: 10000
+    alpha: 0.05
+    resample_unit: documents
+    also_report_cluster_t_interval: true
+    paired_for_ratios: true
+    pairing_key: pair_id
+    pairing_note: >
+      Every row carries `pair_id` = "<context_length>:<doc_id>", shared by the
+      spec row and its target-only partners, plus `arm_role` in
+      {spec, target_full, target_short}. The paired bootstrap selects the
+      intended target arm BY THAT ID rather than by position. A pair_id with
+      more than one candidate target arm is an ERROR unless --target-role names
+      the one wanted, and the roles actually used are written into the output
+      (`paired_arm_roles`), so the pairing is auditable instead of inferred.
+      The previous positional rule took the first row whose spec_steps equalled
+      the target arm, so a document with two partners silently used whichever
+      came first in the file and nothing in the output said which.
+    script: scripts/mlsys_document_bootstrap.py
+  speedup:
+    unit: decode_tokens_per_second_after_prefill     # decode_tps, pre-registered
+    also_report: end_to_end_generation_tokens_per_second   # throughput_tps
+    baseline: paired target-only run, same document
+    payoff_rule: >
+      "Stops paying off" at rung C when the 95% document-bootstrap interval on
+      the paired decode-rate ratio lies entirely below 1.0. An interval that
+      contains 1.0 is INCONCLUSIVE, never rounded. If the robustness t interval
+      disagrees, the boundary is reported as not reached. A saturated rung
+      cannot support this claim.
+  losslessness:
+    required: true
+    compare: token_ids
+    fail_action: cell is not a result; report the first mismatch position
+    script: scripts/mlsys_losslessness.py
+  target_quality:
+    required: true
+    measure: continuation_perplexity_after_full_length_prompt
+    script: src/analysis/target_quality.py
+
+guards:
+  - ask before starting any SINGLE stage projected above ask_before_stage_over_usd
+  - "the ALLOWLIST (MLSYS_ONLY_STAGES) is the authority -- a stage not on it does
+    not run whatever its projection, and an EMPTY allowlist approves nothing. It
+    defaults to the approved set, because 'unset' must never mean 'run everything'"
+  - an aggregate SESSION ceiling (meta.max_cost_usd) refuses any stage whose
+    projection would take cumulative spend past it
+  - "the cost projection FAILS CLOSED -- an unreadable or missing estimate refuses
+    the stage instead of being read as zero"
+  - every helper and stage runs under the resolved interpreter (MLSYS_PYTHON or
+    the conda env), never bare python3
+  - the manifest STOPS before natural_f1_128k if engine_cap_smoke fails
+  - the manifest STOPS if gate calibration fails its controls
+  - a gate that clears NO candidate is a hard failure for that gated stage, not a
+    skip; --allow-empty is not used
+  - every stage passes --timeout-per-run-s sized at >=2x the longest projected
+    single run at its rung (128k 9000s, 256k 18000s, 512k 36200s)
+  - a stage passes only if its CSV holds the expected number of runs, all with
+    status ok; --abort-on-failure stops at the first error row
+  - pull and sha256-verify after EVERY stage, before the next one starts
+  - interim report after every stage
+  - never write into results/mlsys while a pull is in progress
+  - terminate the instance on every exit path and CONFIRM via the API (poll to
+    zero instances, never accept "terminating")
+  - a wall-clock WATCHDOG (meta.max_hours, overridable per stage) stops the
+    ladder; a stage whose projection would run past it is REFUSED BEFORE it
+    starts, and every refusal forces a non-zero exit so a shortened run is never
+    reported as a clean one
+  - never print API keys

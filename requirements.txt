@@ -31,6 +31,10 @@ numpy==2.4.4
 pandas==3.0.2
 scipy==1.17.1
 
+# Hartigan dip test (MLSys Phase 4). Validated C port of Hartigan &
+# Hartigan (1985); used instead of hand-rolling the GCM/LCM algorithm.
+diptest==0.11.0
+
 # Figures + tables (mentor M4 deliverables F1-F7)
 matplotlib==3.10.8
 seaborn==0.13.2

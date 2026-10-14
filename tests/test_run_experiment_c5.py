@@ -182,12 +182,14 @@ class TestIntegrationPoints:
     def test_sidecar_written_only_on_rank_zero(self):
         """Only rank 0 should write the sidecar file; otherwise we'd
         get 8x duplicate writes per run."""
-        assert re.search(
-            r"if local_rank == 0:[\s\S]{0,200}write_per_token_sidecar\(",
-            RUN_EXP_SRC,
-        ), (
+        from tests.source_guard_utils import calls_under_rank0_guard
+        assert calls_under_rank0_guard(RUN_EXP_SRC, "write_per_token_sidecar"), (
             "C5 regression: write_per_token_sidecar not gated by "
             "`if local_rank == 0:` — would duplicate writes 8x"
+        )
+        # The generated-token sidecar is subject to the same rule.
+        assert calls_under_rank0_guard(RUN_EXP_SRC, "write_generated_tokens_sidecar"), (
+            "losslessness sidecar not gated by `if local_rank == 0:`"
         )
 
 
@@ -214,8 +216,12 @@ class TestProfileFlag:
         assert "from src.analysis.profiler import RoundProfiler" in RUN_EXP_SRC, (
             "C7 regression: RoundProfiler not imported in worker"
         )
+        # The wrapper gained per-rank selection and op-table output (decode diagnosis,
+        # 2026-10-13), so the constructor is now multi-line and `enabled=True` is one
+        # keyword among several. The property under test is unchanged: RoundProfiler
+        # wraps the generate_text call.
         assert re.search(
-            r"with RoundProfiler\(enabled=True\)[\s\S]{0,200}engine\.generate_text",
+            r"with RoundProfiler\([\s\S]{0,400}?enabled=True[\s\S]{0,400}?engine\.generate_text",
             RUN_EXP_SRC,
         ), (
             "C7 regression: RoundProfiler not wrapping generate_text call"
@@ -245,10 +251,8 @@ class TestProfileFlag:
 
     def test_profiler_sidecar_written_only_on_rank_zero(self):
         """Profiler sidecar gated by `if local_rank == 0:` like per-token trace."""
-        assert re.search(
-            r"if local_rank == 0:[\s\S]{0,400}write_profiler_sidecar\(",
-            RUN_EXP_SRC,
-        ), (
+        from tests.source_guard_utils import calls_under_rank0_guard
+        assert calls_under_rank0_guard(RUN_EXP_SRC, "write_profiler_sidecar"), (
             "C7 regression: write_profiler_sidecar not gated by rank-0"
         )
 
@@ -310,22 +314,44 @@ class TestPromptSource:
         sig = inspect.signature(build_prompt)
         assert sig.parameters["source"].default == "synthetic"
 
-    def test_build_prompt_synthetic_unchanged(self):
-        """Synthetic path produces the same repeated-paragraph prompt
-        regardless of seed/source kwargs."""
+    def test_build_prompt_synthetic_is_seed_dependent(self):
+        """A7: the synthetic path MUST vary with seed.
+
+        It previously ignored `seed` entirely, which meant "3 seeds" was
+        really "1 prompt x 3 decoding seeds" — the exact weakness the
+        prompt-diversity fix exists to remove. Three seeds must now give
+        three different prompts, and the same seed must be reproducible.
+        """
         from run_experiment import build_prompt
 
         class _StubTok:
-            def encode(self, s):
-                return list(range(len(s.split())))
+            """Content-preserving stub: a word always maps to the same id,
+            so a different sentence ORDER yields different token ids (a
+            position-based stub would decode every order identically and
+            make this test vacuous)."""
+            def __init__(self):
+                self._vocab = {}
+            def _id(self, w):
+                if w not in self._vocab:
+                    self._vocab[w] = len(self._vocab)
+                return self._vocab[w]
+            def encode(self, s, add_special_tokens=False):
+                return [self._id(w) for w in s.split()]
             def decode(self, ids):
-                return " ".join(f"tok{i}" for i in ids)
+                inv = {v: k for k, v in self._vocab.items()}
+                return " ".join(inv.get(i, f"?{i}") for i in ids)
 
         tok = _StubTok()
-        p1 = build_prompt(64, tok)
-        p2 = build_prompt(64, tok, source="synthetic", seed=42)
-        p3 = build_prompt(64, tok, source="synthetic", seed=999)
-        assert p1 == p2 == p3, "synthetic prompt must be seed-independent"
+        p42 = build_prompt(64, tok)
+        p42b = build_prompt(64, tok, source="synthetic", seed=42)
+        p123 = build_prompt(64, tok, source="synthetic", seed=123)
+        p456 = build_prompt(64, tok, source="synthetic", seed=456)
+
+        # default seed is 42 -> identical to an explicit 42
+        assert p42 == p42b, "same seed must be reproducible"
+        # distinct seeds -> distinct prompts
+        assert len({p42, p123, p456}) == 3, (
+            "synthetic prompt must differ across seeds (A7)")
 
     def test_build_prompt_pg19_requires_meta(self):
         """source='pg19' without a meta_path must raise — silently
@@ -360,6 +386,13 @@ class TestPromptSource:
                 # assert build_prompt produced *something* from these ids.
                 return f"PG19[{ids[0]}..{ids[-1]}]"
 
+            def encode(self, s, add_special_tokens=False):
+                # Present because build_prompt verifies its length
+                # round-trip. One id per whitespace token is enough for the
+                # assertions here; the round-trip warning it may trigger is
+                # harmless (a stub is not expected to round-trip).
+                return [i for i, _ in enumerate(s.split())]
+
         out = build_prompt(64, _StubTok(), source="pg19",
                            pg19_meta=str(meta_path), seed=42)
         assert out.startswith("PG19[")
@@ -383,6 +416,9 @@ class TestPromptSource:
         class _StubTok:
             def decode(self, ids):
                 return ",".join(str(i) for i in ids)
+
+            def encode(self, s, add_special_tokens=False):
+                return [int(x) for x in s.split(",") if x]
 
         a = build_prompt(64, _StubTok(), source="pg19",
                          pg19_meta=str(meta_path), seed=42)
@@ -443,11 +479,17 @@ class TestPromptSource:
         """The worker (_run_single_worker) must read prompt_source from
         the run dict and pass it to build_prompt — the missing link
         between CLI flag and the actual prompt content."""
+        # The flag must reach build_prompt. The worker now reads it into a
+        # local first (a second source, pg19_document, is served by a different
+        # builder), so assert the two links rather than their adjacency.
+        assert re.search(r"run\.get\([\"\']prompt_source[\"\']", RUN_EXP_SRC), (
+            "p35d wiring gap: worker never reads run['prompt_source']"
+        )
         assert re.search(
-            r"build_prompt\([\s\S]{0,400}source=run\.get\([\"\']prompt_source[\"\']",
+            r"build_prompt\([\s\S]{0,600}source=prompt_source",
             RUN_EXP_SRC,
         ), (
-            "p35d wiring gap: worker doesn't pass run['prompt_source'] "
+            "p35d wiring gap: worker doesn't pass the prompt source "
             "into build_prompt(); CLI flag has no effect on actual run."
         )
 
@@ -686,3 +728,113 @@ class TestRulerScorer:
         (tmp_path / "TEST_r4.ruler_niah.json").write_text(json.dumps(needle_meta))
         result = mod.score_one(tmp_path / "TEST_r4.ruler_niah.json")
         assert result["found"] == -1
+
+
+class TestIgnoreEosB3:
+    """MLSys B3 (REVISED) — ARM4 honors EOS; max_new_tokens is a cap.
+
+    B3 originally forced exactly max_new_tokens tokens by ignoring EOS. On the
+    ARM4 cells that is the wrong direction: f1/f2/f4 push the target out of
+    distribution, the model emits EOS early, and forced post-EOS rounds are
+    precisely the low-acceptance regime under measurement. Ignoring EOS would
+    INFLATE the apparent collapse with padding rounds that the model never
+    intended to produce; honoring EOS can only understate it. For a claim of
+    the form "acceptance degrades as the factor rises", understating is the
+    safe error and inflating is not.
+
+    max_new_tokens: 128 stays as a CAP so a cell cannot run away, not as a
+    target the engine must reach.
+    """
+
+    def test_ignore_eos_defaults_off(self):
+        """Default must stay False so M3/M4 replay is byte-identical."""
+        import inspect
+        from src.models.rasd_inference import RASDConfig
+        assert inspect.signature(RASDConfig).parameters["ignore_eos"].default is False
+
+    def test_run_experiment_propagates_ignore_eos(self):
+        import re
+        src = (REPO_ROOT / "run_experiment.py").read_text()
+        assert re.search(r'ignore_eos\s*=\s*bool\(run\.get\("ignore_eos",\s*False\)\)', src), \
+            "ignore_eos not propagated from the run dict into RASDConfig"
+
+    def test_both_eos_break_sites_are_guarded(self):
+        """The guard must exist on BOTH early-stops (target-only and spec) so
+        the option is usable in either mode; ARM4 simply leaves it off."""
+        src = (REPO_ROOT / "src" / "models" / "rasd_inference.py").read_text()
+        guarded = src.count("not cfg.ignore_eos")
+        assert guarded == 2, f"expected 2 guarded EOS breaks, found {guarded}"
+
+    def test_every_arm4_config_honors_eos_with_128_cap(self):
+        import glob
+        import yaml
+        files = (glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_f*.yml"))
+                 + glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_llama3*.yml")))
+        assert files, "no ARM4 configs found"
+        for f in files:
+            d = yaml.safe_load(Path(f).read_text())["defaults"]
+            assert d.get("max_new_tokens") == 128, f"{f}: max_new_tokens != 128"
+            # False or absent both mean "honor EOS"; only True is a failure.
+            assert d.get("ignore_eos") is not True, (
+                f"{f}: ignore_eos must be false/absent — forced post-EOS rounds "
+                f"would inflate the ARM4 collapse")
+
+    def test_no_arm4_config_still_ignores_eos(self):
+        import glob
+        import yaml
+        files = (glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_f*.yml"))
+                 + glob.glob(str(REPO_ROOT / "configs" / "mlsys_arm4_llama3*.yml")))
+        offenders = []
+        for f in files:
+            d = yaml.safe_load(Path(f).read_text()).get("defaults", {})
+            if d.get("ignore_eos") is True:
+                offenders.append(Path(f).name)
+        assert not offenders, f"ARM4 configs still ignoring EOS: {offenders}"
+
+
+
+class TestSyntheticPromptNoBosInjection:
+    """Regression guard for the ARM4-f1 collapse.
+
+    build_prompt repeated the token LIST returned by tokenizer.encode(block).
+    With the default add_special_tokens=True that list starts with a BOS, so
+    every repetition carried one: 1337 BOS tokens, once per ~97 tokens, 4 of
+    them in the final 400. The model was asked to continue a document that
+    restarts continuously, and ARM4-f1 acceptance collapsed to 0.24 from round
+    0 against Arm2's 0.89. The old builder repeated a STRING and encoded once,
+    so it had exactly one BOS — which is why only the A7 path regressed.
+    """
+
+    @staticmethod
+    def _prompt_ids(seed, n=4096):
+        from transformers import AutoTokenizer
+        from run_experiment import build_prompt
+        tok = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+        text = build_prompt(n, tok, source="synthetic", seed=seed)
+        return tok, tok(text, add_special_tokens=False)["input_ids"]
+
+    def test_no_bos_beyond_position_zero(self):
+        tok, ids = self._prompt_ids(42)
+        bos = tok.convert_tokens_to_ids("<|begin_of_text|>")
+        interior = [i for i, t in enumerate(ids) if t == bos]
+        assert interior == [], (
+            f"BOS injected at {len(interior)} position(s) inside the prompt "
+            f"(first at {interior[:3]}); token-list repetition is replicating "
+            f"the special token again")
+
+    def test_engine_visible_length_is_exact(self):
+        # B2: prompt + max_new_tokens must fit the window, and gate (b)
+        # requires the prompt to be exactly window - 128.
+        n = 4096
+        _, ids = self._prompt_ids(123, n)
+        assert len(ids) == n, f"prompt is {len(ids)} tokens, requested {n}"
+
+    def test_seed_dependent_and_reproducible(self):
+        import hashlib
+        import json
+        _, a = self._prompt_ids(42)
+        _, a2 = self._prompt_ids(42)
+        _, b = self._prompt_ids(456)
+        h = lambda x: hashlib.sha256(json.dumps(list(x)).encode()).hexdigest()
+        assert h(a) == h(a2), "prompt is not reproducible for a fixed seed"
+        assert h(a) != h(b), "different seeds produced identical prompts"

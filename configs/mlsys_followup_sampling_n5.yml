@@ -1,0 +1,138 @@
+# n=5 EXTENSION of the Oct 12 sampling session: brings the aligned 128k and 512k
+# rungs, and the three rope arms, up to the SAME FIVE BOOKS the 1M rung already has.
+#
+# WHY. `RESULTS_OCT.md` compares acceptance across contexts, but the rungs did not
+# cover the same books: 1M had n=5 (train_0, 1, 915, 2204, 2768) while the aligned
+# 128k and 512k rungs and all three rope arms had n=3 (train_0, 1, 915). An
+# acceptance-vs-context trend over unequal book sets is not a trend -- the 1M mean
+# could differ from the 128k mean because the books differ. This config runs the
+# TWO MISSING BOOKS (2204, 2768) at each of those arms so every rung can be
+# reported on the identical five.
+#
+# WHAT IT IS NOT. No new books are introduced, no new protocol, no new model: the
+# defaults below are copied field for field from `mlsys_followup_sampling.yml`
+# (T=0.7, 128 tokens, spec_steps 4, prompt_gen_tokens 1024, seed 42, periodicity per
+# row), and the two books were VERIFIED to have >= 1024 continuation tokens at both
+# aligned windows before this config was written (3073 at 128k, 3072 at 512k).
+#
+# SPEC ROWS ONLY, AND WHY THAT IS ENOUGH. Target-only rows are subsampled on
+# purpose -- measured target-only throughput varied under 2% across books -- so the
+# speedups for the extended rungs reuse the EXISTING target-only rows from the
+# Oct 12 session (`SAMP_ALIGNED_128K_TARGET_*`, `SAMP_ALIGNED_512K_TARGET_*`,
+# `ROPE_SAMP_NATIVE_TARGET_*`). Nothing here re-measures them.
+#
+# NEW STAGE IDS AND CSVs, deliberately: the level ids are `SAMP_EXT_*`/`ROPE_EXT_*`,
+# so `session_a_<group>.csv` and every `run_id` are new and the Oct 12 CSVs and
+# token sidecars cannot be overwritten or confused with these.
+#
+# NO ROPE GATE. The gate measures the INTERVENTION's coherence -- same target, same
+# revision, same rope dict, same one candidate per factor -- and it already ran on
+# 2026-10-12 with gate_pass=True on all three arms (ROFIX_NATIVE / ROFIX_F16 /
+# ROFIX_F32). It has no per-book dependence, so re-running it would spend 10
+# minutes of 8x time to re-answer a settled question. `SESSION_GATE_CANDIDATES` is
+# therefore left unset for this session, and that is a decision, not an omission.
+#
+# ORDER IS RUN ORDER (the remote script derives its step list from this file's key
+# order): 512k first (the most expensive new rows, so a failure is found early),
+# then 128k, then the rope arms on the smaller target model.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+SAMP_EXT_ALIGNED_512K_SPEC:
+  name: samp_ext_aligned_512k
+  factor: context_length
+  levels:
+  - id: SAMP_EXT_ALIGNED_512K_SPEC
+    context_length: 524288
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'n=5 extension: aligned 512k windows, the two books the Oct 12 rung lacked'
+SAMP_EXT_ALIGNED_128K_SPEC:
+  name: samp_ext_aligned_128k
+  factor: context_length
+  levels:
+  - id: SAMP_EXT_ALIGNED_128K_SPEC
+    context_length: 131072
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    notes: 'n=5 extension: aligned 128k windows, the two books the Oct 12 rung lacked'
+ROPE_EXT_SAMP_NATIVE_SPEC:
+  name: rope_ext_samp_native
+  factor: context_length
+  levels:
+  - id: ROPE_EXT_SAMP_NATIVE_SPEC
+    # Same target as the Oct 12 rope arms and for the same reason: the intervention
+    # needs a model that SHIPS a rope_scaling dict to modify, and
+    # gradientai/...-Gradient-1048k ships None (the engine refuses llama3 rope on it
+    # outright -- caught by the 2026-10-11 rehearsal, ROPE_SAMP_F16_SPEC 2 error rows).
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    rope_type: "none"
+    notes: 'n=5 extension: native control, shipped llama3 block untouched'
+ROPE_EXT_SAMP_F16_SPEC:
+  name: rope_ext_samp_f16
+  factor: context_length
+  levels:
+  - id: ROPE_EXT_SAMP_F16_SPEC
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    notes: 'n=5 extension: shipped llama3 dict, only factor changed to 16'
+ROPE_EXT_SAMP_F32_SPEC:
+  name: rope_ext_samp_f32
+  factor: context_length
+  levels:
+  - id: ROPE_EXT_SAMP_F32_SPEC
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 131072
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 128
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    notes: 'n=5 extension: shipped llama3 dict, only factor changed to 32'

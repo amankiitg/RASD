@@ -1,0 +1,2 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+SAMP_CHECK_1M_SPEC_pg19_train_0_s42,pg19_train_0,4,1048576,128,0.3776,0.39,0.0,0.0,0.0,3,34,0.0532,128,0.0,False,,1,1,0,,0.39,ok,

@@ -123,6 +123,21 @@ def _sdpa_step(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return out, lse
 
 
+def _expand_kv_heads(t: torch.Tensor, groups: int) -> torch.Tensor:
+    """HF's `repeat_kv`: (B, H, S, D) -> (B, H*groups, S, D), values duplicated.
+
+    Byte-for-byte what `transformers.models.llama.modeling_llama.repeat_kv` computes (the
+    same expand-then-reshape, so the same head order and the same copies), reproduced here
+    so the kernel does not import transformers. It returns a fresh tensor, not a view:
+    `_attn_step` permutes and copies immediately afterwards anyway, so the expansion costs
+    one local copy either way -- what changes is that the RING no longer carries it.
+    """
+    if groups <= 1:
+        return t
+    B, H, S, D = t.shape
+    return t[:, :, None, :, :].expand(B, H, groups, S, D).reshape(B, H * groups, S, D)
+
+
 def _attn_step(q_bhsd: torch.Tensor, k_bhsd: torch.Tensor, v_bhsd: torch.Tensor,
                scale: float, dropout_p: float, causal: bool
                ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -326,6 +341,7 @@ def _ring_against_sharded(
     process_group,
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
+    kv_groups: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Ring W steps over the sharded prefill K/V.
 
@@ -344,9 +360,16 @@ def _ring_against_sharded(
                         Saturates at 1 under the standard ring P2P pattern;
                         higher values are accepted but produce identical
                         behaviour to 1.
+        kv_groups       GQA repeat factor, when the caller has NOT already expanded
+                        the KV heads. `k_sharded_local`/`v_sharded_local` then hold
+                        num_kv_heads; the expansion to num_heads happens on each
+                        RECEIVED slice, so the rotation ships 1/kv_groups the bytes.
+                        The values and their head order are unchanged, so the result
+                        is bit-identical to expanding before the rotation.
     """
     if world_size == 1:
-        return _attn_step(q_global, k_sharded_local, v_sharded_local,
+        return _attn_step(q_global, _expand_kv_heads(k_sharded_local, kv_groups),
+                          _expand_kv_heads(v_sharded_local, kv_groups),
                           scale=scale, dropout_p=dropout_p, causal=False)
 
     assert _DIST_AVAILABLE and dist.is_initialized(), \
@@ -415,7 +438,7 @@ def _ring_against_sharded(
         if _trace:
             print(f"[ring rank={rank}] step={step} computing attn", flush=True)
         out_step, lse_step = _attn_step(
-            q_global, k_cur, v_cur,
+            q_global, _expand_kv_heads(k_cur, kv_groups), _expand_kv_heads(v_cur, kv_groups),
             scale=scale, dropout_p=dropout_p, causal=False,
         )
         if out_acc is None:
@@ -454,6 +477,137 @@ def _ring_against_sharded(
     return out_acc, lse_acc
 
 
+def merge_split_kv_partials(
+    outs, lses, out_dtype=None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Merge per-rank (out, lse) partials by the log-sum-exp identity. PURE.
+
+    WHY IT IS A FUNCTION OF LISTS RATHER THAN OF COLLECTIVES. The merge is the part that
+    can be wrong -- a double-counted shard or a max taken before the weights are formed
+    both produce plausible-looking output -- and a function that takes the partials
+    directly can be tested against a single full attention over the concatenated shards.
+    The distributed path (world_size > 1) gathers with one all_gather and then calls this,
+    so the tested code IS the code that runs.
+
+    Math, per rank r with `lse_r = logsumexp(scores_r)` and `out_r = softmax(scores_r) @ V_r`
+    in the flash-attention convention:
+        M   = max_r lse_r                (numerical safety, fp32)
+        num = sum_r out_r * exp(lse_r - M)
+        den = sum_r exp(lse_r - M)
+        out = num / den,      lse = M + log(den)
+    """
+    import torch as _t
+    if not outs:
+        raise ValueError("merge_split_kv_partials: no partials")
+    if len(outs) == 1:
+        return outs[0], lses[0]
+    lse_f = _t.stack([l.to(_t.float32) for l in lses], dim=0)      # (R,B,H,S_q)
+    out_f = _t.stack([o.to(_t.float32) for o in outs], dim=0)      # (R,B,H,S_q,D)
+    m = lse_f.amax(dim=0)                                          # (B,H,S_q)
+    w = _t.exp(lse_f - m.unsqueeze(0))                             # (R,B,H,S_q)
+    num = (out_f * w.unsqueeze(-1)).sum(dim=0)
+    den = w.sum(dim=0)
+    out = num / den.unsqueeze(-1)
+    lse = m + _t.log(den)
+    dtype = out_dtype or outs[0].dtype
+    return out.to(dtype), lse
+
+
+def ring_attention_decode_split_kv(
+    q_global: torch.Tensor,       # (B, H, S_q, D)  — replicated Q (S_q = 1 for decode)
+    k_local: torch.Tensor,        # (B, H, S_prefill_local + tail_count, D)
+    v_local: torch.Tensor,
+    rank: int,
+    world_size: int,
+    tail_count: int,
+    scale: Optional[float] = None,
+    dropout_p: float = 0.0,
+    process_group: Optional["dist.ProcessGroup"] = None,
+    kv_groups: int = 1,
+) -> torch.Tensor:
+    """DECODE-DIAGNOSIS COUNTERFACTUAL: split-KV attention with no rotation.
+
+    WHY THIS EXISTS. For a query of length 1 the ring protocol is pure overhead: the
+    baseline rotates the whole local K/V shard around the ring `world_size` times so that
+    every rank can see every shard, which means each rank's attention kernel reads the
+    ENTIRE context (its own shard once per rotation) instead of just its own slice. The
+    standard split-KV formulation gets the same result with no rotation at all:
+
+        each rank r computes (out_r, lse_r) against ITS OWN shard only,
+        then the partial results are merged by the log-sum-exp identity:
+            num = sum_r out_r * exp(lse_r - M),  den = sum_r exp(lse_r - M),  out = num/den
+
+    with M the max lse across ranks for numerical safety. `out` is (B, H, S_q, D) and
+    `lse` is (B, H, S_q), both tiny when S_q = 1, so the combine moves bytes proportional
+    to heads x head_dim, not to context length.
+
+    WHAT IT DOES NOT CHANGE. K/V construction, `repeat_kv`, the cache layout, and the
+    replicated tail's handling are all untouched -- this swaps the attention combination
+    only, which is what makes it a one-thing counterfactual. It is NOT numerically
+    bit-identical to the ring path: summation order differs, so bf16 rounding differs.
+    """
+    import torch.distributed as dist
+    B, H, S_q, D = q_global.shape
+    if scale is None:
+        scale = 1.0 / math.sqrt(D)
+    S_total_local = k_local.shape[2]
+    S_prefill_local = S_total_local - tail_count
+    assert S_prefill_local >= 0, "tail_count exceeds the local cache"
+    if S_prefill_local == 0:
+        raise ValueError("split-KV decode needs a non-empty prefill shard")
+
+    out_r, lse_r = _attn_step(q_global,
+                              _expand_kv_heads(k_local[:, :, :S_prefill_local, :], kv_groups),
+                              _expand_kv_heads(v_local[:, :, :S_prefill_local, :], kv_groups),
+                              scale=scale, dropout_p=dropout_p, causal=False)
+
+    if world_size > 1:
+        assert dist.is_initialized(), "split-KV decode needs torch.distributed"
+        # WHY all_reduce AND NOT all_gather (2026-10-13). The first version gathered the
+        # ranks' packed (out, lse) into a list of freshly allocated buffers, and on the pod
+        # it died with "CUDA error: an illegal memory access" on the first decode step --
+        # a fault the CPU tests cannot see, because the failure mode needs NCCL. A
+        # collective inside the model forward is order- and shape-sensitive in ways a P2P
+        # ring is not, so this uses the two primitives that have no list argument and no
+        # output allocation: a MAX reduce for the numerical offset and a SUM reduce for the
+        # packed numerator and denominator. Same arithmetic, fewer ways to be wrong.
+        out_f = out_r.to(torch.float32)
+        lse_f = lse_r.to(torch.float32)
+        m = lse_f.amax(dim=-1, keepdim=True).contiguous()
+        dist.all_reduce(m, op=dist.ReduceOp.MAX, group=process_group)
+        w = torch.exp(lse_f - m)                                  # (B, H, S_q)
+        num = (out_f * w.unsqueeze(-1)).contiguous()
+        packed = torch.cat([num, w.unsqueeze(-1)], dim=-1).contiguous()
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM, group=process_group)
+        num_r, den_r = packed[..., :D].contiguous(), packed[..., D:].contiguous()
+        out_prefill = (num_r / den_r).to(out_r.dtype)
+        den_sq = den_r.squeeze(-1)                            # (B, H, S_q)
+        # KEEP THE KEEPDIM ON `m`. `m` is (B, H, 1) whatever S_q is (it is an amax over the
+        # last dim with keepdim=True); squeezing it gives (B, H), which broadcasts against
+        # (B, H, S_q) into (B, H, H) -- not an error, a SILENT 32x shape blow-up -- and it
+        # fires exactly when S_q == 1, i.e. on the target-only decode path, which is the
+        # path the 8k smoke ran. For S_q > 1 the squeeze instead raises a size mismatch, so
+        # the same line failed two different ways depending on the arm.
+        lse_prefill = (m + torch.log(den_sq))
+    else:
+        out_prefill, lse_prefill = merge_split_kv_partials([out_r], [lse_r], out_r.dtype)
+
+    if tail_count <= 0:
+        return out_prefill
+
+    # The replicated tail is identical on every rank, so it is merged ONCE, AFTER the
+    # combine -- counting it inside the cross-rank sum would multiply its contribution by
+    # world_size.
+    k_tail = k_local[:, :, S_prefill_local:, :]
+    v_tail = v_local[:, :, S_prefill_local:, :]
+    out_tail, lse_tail = _attn_step(q_global, _expand_kv_heads(k_tail, kv_groups),
+                                    _expand_kv_heads(v_tail, kv_groups),
+                                    scale=scale, dropout_p=dropout_p,
+                                    causal=(S_q == tail_count))
+    out_combined, _ = _combine(out_prefill, lse_prefill, out_tail, lse_tail)
+    return out_combined
+
+
 def ring_attention_decode(
     q_global: torch.Tensor,       # (B, H, S_q, D)  — replicated Q
     k_local: torch.Tensor,        # (B, H, S_local_prefill + tail_count, D)
@@ -466,6 +620,8 @@ def ring_attention_decode(
     process_group: Optional["dist.ProcessGroup"] = None,
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
+    split_kv: bool = False,
+    kv_groups: int = 1,
 ) -> torch.Tensor:
     """Ring attention for decode/verify under the dual-cache layout.
 
@@ -509,13 +665,24 @@ def ring_attention_decode(
     has_prefill = S_prefill_local > 0
     has_tail    = tail_count > 0
 
+    # DECODE-DIAGNOSIS counterfactual switch. Default False keeps the ring path exactly as
+    # measured for every existing row; the diagnosis sets it from config so baseline and
+    # counterfactual can be measured in ONE session on ONE box.
+    if split_kv and world_size > 1 and has_prefill:
+        return ring_attention_decode_split_kv(
+            q_global, k_local, v_local,
+            rank=rank, world_size=world_size, tail_count=tail_count,
+            scale=scale, dropout_p=dropout_p, process_group=process_group,
+            kv_groups=kv_groups,
+        )
+
     if not has_prefill and not has_tail:
         raise ValueError("ring_attention_decode: empty K/V")
 
     if not has_prefill:
         # Only tail (degenerate; no prefill positions to ring over).
         out, _ = _attn_step(
-            q_global, k_local, v_local,
+            q_global, _expand_kv_heads(k_local, kv_groups), _expand_kv_heads(v_local, kv_groups),
             scale=scale, dropout_p=dropout_p, causal=(S_q == tail_count),
         )
         return out
@@ -530,6 +697,7 @@ def ring_attention_decode(
         process_group=process_group,
         chunk_size=chunk_size,
         prefetch_depth=prefetch_depth,
+        kv_groups=kv_groups,
     )
 
     if not has_tail:
@@ -539,7 +707,7 @@ def ring_attention_decode(
     k_tail = k_local[:, :, S_prefill_local:, :]
     v_tail = v_local[:, :, S_prefill_local:, :]
     out_tail, lse_tail = _attn_step(
-        q_global, k_tail, v_tail,
+        q_global, _expand_kv_heads(k_tail, kv_groups), _expand_kv_heads(v_tail, kv_groups),
         scale=scale, dropout_p=dropout_p, causal=(S_q == tail_count),
     )
 

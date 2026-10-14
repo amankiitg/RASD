@@ -1,0 +1,78 @@
+# RERUN SANITY - the two-row pair the driver runs before any stage.
+#
+# PROTOCOL IS SESSION A'S, UNCHANGED: T=0.7, max_new_tokens 128, spec_steps 4, draft_window_cap
+# 4096, prefetch_depth 1, FP4 weights + NF4 KV (the branch-C precision), bfloat16, ignore_eos,
+# top_p 1.0, the same target/draft revisions, the same books and offsets, the periodicity check
+# on every row. THE ONLY DIFFERENCE FROM SESSION A IS THE CANDIDATE ENGINE, below.
+#
+# THE CANDIDATE ENGINE, and why each key is here:
+#   ring_decode_mode: split_kv      the decode path stops rotating K/V around the ring. Each
+#                                   rank attends to its own shard and the partials merge with
+#                                   two tiny collectives. Measured 3.560x on target-only
+#                                   decode s/tok at 128k, in-session, against this same config
+#                                   with ring_decode_mode: ring.
+#   kv_block_size: 32768            >= S_local, so a rotation is a single chunk (was 2048).
+#                                   Bit-identical; inert under split_kv but kept so the config
+#                                   states ONE engine rather than a mixture.
+#   ring_expand_after_rotation: true  the GQA repeat_kv moves to the receiving side of the
+#                                   rotation, so the wire payload is 4x smaller. Bit-identical;
+#                                   inert under split_kv for the same reason.
+#
+# WHY THE LAST TWO ARE KEPT EVEN THOUGH THEY ARE INERT UNDER split_kv. They are bit-identical
+# and cost nothing, and the two of them are worth 1.273x on the RING path -- which matters if
+# split-KV ever has to be withdrawn, because the fallback is a better engine than Session A's.
+# Their speedup is NOT claimed for this rerun; the rerun's claim is split-KV's alone.
+#
+# See results/mlsys/RERUN_DECISION.md for the gate this config passed.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 32768
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  temperature: 0.7
+  max_new_tokens: 128
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  log_per_token: true
+  save_generated_tokens: true
+  ring_decode_mode: "split_kv"
+  ring_expand_after_rotation: true
+  seeds: [42]
+
+RR_SANITY_SPEC:
+  name: rr_sanity_spec
+  factor: context_length
+  levels:
+  - id: RR_SANITY_SPEC
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 4
+    notes: 'sanity: spec arm'
+
+RR_SANITY_TARGET:
+  name: rr_sanity_target
+  factor: context_length
+  levels:
+  - id: RR_SANITY_TARGET
+    context_length: 131072
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    spec_steps: 0
+    notes: 'sanity: target-only arm'

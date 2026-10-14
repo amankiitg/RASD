@@ -1,0 +1,12 @@
+{
+  "session": "phase3-profile",
+  "profile": "a",
+  "nproc": 1,
+  "instance_id": "61d4c57d0fac41c18bcb8f6b93251f37",
+  "instance_type": "gpu_1x_a100_sxm4",
+  "region": "us-east-1",
+  "rate_usd_per_hour": 1.99,
+  "launched_utc": "2026-10-12T08:28:46+00:00",
+  "config": "configs/mlsys_profile_128k.yml",
+  "what_it_measures": "target-only decode at 128k, 24 measured tokens, torch.profiler compute/comm/idle sidecar; target-only means spec_steps 0"
+}

@@ -28,10 +28,12 @@ Usage
 
 import argparse
 import csv
+import hashlib
 import itertools
 import json
 import logging
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -53,8 +55,77 @@ log = logging.getLogger("rasd.runner")
 RESULTS_DIR = Path("results/ablations")
 RESULTS_CSV  = RESULTS_DIR / "ablations.csv"
 
-CSV_FIELDS = [
-    "run_id", "group", "level_id", "seed",
+def _guard_output_collision(output_csv: str | Path, stage_id: str,
+                            planned_level_ids=None,
+                            overwrite: bool = False) -> None:
+    """Refuse to write a stage's results over an artifact it does not own.
+
+    Learned the hard way: the ARM4 driver wrote a stage named
+    `pg19_short_target` with `--output results/mlsys/pg19_multiseed.csv`, which
+    is the filename of an unrelated multi-seed AGGREGATE produced by the
+    analysis pipeline. The stage would have overwritten it. `gpu_hours.csv`
+    had the same problem from the other direction (a cross-run cumulative
+    ledger vs a per-stage output).
+
+    The contract: a per-stage result file must be named for exactly one stage.
+    If the target already exists and its recorded stage (= the seed-0 canary's
+    level_id / run_id prefix) does not match this stage, abort rather than
+    silently clobber. Pass --overwrite-stage to deliberately re-run and
+    replace the same stage.
+
+    This is deliberately a hard failure: a silently overwritten aggregate is
+    indistinguishable from a correct result afterwards, which is the failure
+    class this project keeps having to reconstruct from git history.
+
+    OWNERSHIP IS THE STAGE'S OWN LEVEL IDS, NOT A NAME PATTERN
+    ---------------------------------------------------------
+    The first version of this decided ownership by pattern-matching the stage
+    id's first token against the recorded level ids (`stage_id.split("_")[0] in
+    lv`). That can never be true for this campaign: the stage is
+    `engine_cap_smoke` while its levels are `CAPS_prefix64`, so the test failed
+    for every pair and the guard refused. Worse, it was called from the WORKER,
+    whose argv never carried --stage-id, so the stage it compared was the
+    literal string "unnamed" -- and the worker does not even write the CSV: it
+    writes a per-run `.tmp` that the parent reads and appends.
+
+    The effect was that the second row of every stage died with "subprocess
+    produced no output", i.e. every measurement stage in the campaign. Found by
+    the 1x run_experiment probe on 2026-10-08 before it could cost another 8x
+    launch.
+
+    So ownership is now exact and the call moved to the PARENT, the only writer:
+    the file is this stage's if every level id in it is one this stage plans to
+    write. A previous attempt of the same stage passes (its levels are the same),
+    which is what makes a retry or --resume work; a file holding anything else
+    is refused.
+    """
+    path = Path(output_csv)
+    if not path.exists() or overwrite:
+        return
+    try:
+        import pandas as pd
+        df = pd.read_csv(path)
+        existing = sorted({str(x) for x in df.get("level_id", []) if str(x)})
+    except Exception:
+        existing = []
+    # No rows, or no level_id column at all, means this is not a per-stage
+    # result CSV and it is not ours to check.
+    if not existing:
+        return
+    planned = {str(x) for x in (planned_level_ids or []) if str(x)}
+    foreign = [lv for lv in existing if lv not in planned]
+    if not foreign:
+        return
+    raise SystemExit(
+        f"REFUSING to write {path} for stage {stage_id!r}: the file holds rows "
+        f"from {foreign[:4]}{'...' if len(foreign) > 4 else ''}, which this "
+        f"stage does not produce. Give this stage its own filename "
+        f"(recommended) or pass --overwrite-stage if you really mean to "
+        f"replace it."
+    )
+
+
+CSV_FIELDS = [    "run_id", "group", "level_id", "seed",
     "target_model_name", "draft_model_name",
     "spec_steps", "kv_block_size", "prefetch_depth",
     "context_length", "dtype",
@@ -63,7 +134,130 @@ CSV_FIELDS = [
     "acceptance_rate", "mean_latency_ms", "ttft_ms",
     "gpu_peak_mem_mb",
     "n_rounds", "status", "error",
+    # MLSys Phase 1/3 — draft isolation provenance. Appended (not
+    # interleaved) so existing CSV headers keep their column order and
+    # --resume against older result files still aligns.
+    "draft_window_cap", "draft_dtype",
+    # MLSys Phase A — generation-length provenance. ARM4 uses 128 (2x the
+    # M3/M4 value of 64) so the per-round dip test has more rounds; recording
+    # it makes that visible in the results rather than inferred. Appended for
+    # the same --resume alignment reason as above.
+    "max_new_tokens",
+    # MLSys A6 — per-row provenance. Provenance is only meaningful if it
+    # travels with the row: a revision pin that lives only in a config file
+    # cannot be checked against an old CSV later.
+    "target_revision", "draft_revision",
+    "prompt_tokens", "prompt_sha256",
+    # MLSys analysis-plan fields. Appended for the same --resume alignment
+    # reason as above. `doc_id` names the PG-19 book a row belongs to, which
+    # the plan makes the unit of independence; the decoding contract is
+    # recorded because losslessness is only defined under greedy +
+    # ignore_eos, and a row from a different contract must not be compared
+    # against one from this one.
+    "prompt_source", "doc_id", "temperature", "top_p", "ignore_eos",
+    # Pairing key. Spec, target-full and target-short rows of the same rung and
+    # document carry the SAME pair_id, so the paired bootstrap can select the
+    # intended target arm by id instead of by position. Position-based
+    # selection (`first row with spec_steps == 0`) silently averaged or
+    # discarded the other arm whenever a document had more than one partner,
+    # and nothing in the output said which partner had been used.
+    "pair_id", "arm_role",
+    # Which arm of a multi-arm intervention this row is, when a stage declares
+    # one. `arm_role` says spec/target, which is not enough to tell the arms of
+    # rope_intervention_128k apart: all three are speculative, and the stage's
+    # whole purpose is to compare them.
+    "rope_arm",
+    "generated_tokens_sha256",
+    # Target quality beside acceptance (plan 4.3). Blank when not measured,
+    # which is distinguishable from a measured zero.
+    "target_ppl", "ppl_tokens",
+    # Sequence the engine actually built (prompt + leading BOS + generated).
+    # Recorded so the plan's identity can be checked from the CSV instead of
+    # trusted, since the plan and the manifest previously disagreed about
+    # whether the BOS was inside `context_length`.
+    "sequence_tokens",
+    # Pre-registered decode rate: generated tokens over the post-prefill wall.
+    # The same definition is used in both arms, so any convention cancels in
+    # the paired ratio. Preferred over the end-to-end rate for the primary
+    # metric because prefill is identical across arms and under 5% of the
+    # decode wall (measured 0.22% at 128k, 0.54% at 512k).
+    "decode_tps",
+    # ENGINE PROVENANCE (2026-10-13, decode-diagnosis Part 3). The rerun compares two
+    # ENGINES, not two configurations of one engine, so a row has to be able to prove which
+    # engine produced it. `ring_decode_mode`, `ring_chunk_size` and
+    # `ring_expand_after_rotation` are read OFF THE PATCHED MODULES after the run (see
+    # `_ring_engine_report`) rather than copied from the config: a config key that stops
+    # being wired through leaves the engine at its default while the config still claims the
+    # new value, and the row would look correct. `ring_layers_patched` makes a world_size=1
+    # run (where the patch is a no-op) visible instead of silently comparing two identical
+    # engines. `git_commit` and `nccl_env` record the rest of "which engine".
+    "ring_decode_mode", "ring_chunk_size", "ring_expand_after_rotation",
+    "ring_layers_patched", "git_commit", "nccl_env",
 ]
+
+
+def _git_commit() -> str:
+    """The commit the ROW was produced from. Cached: this is called per row."""
+    global _GIT_COMMIT_CACHE
+    if _GIT_COMMIT_CACHE is None:
+        # CODE_COMMIT first: the driver stages the tree and names the commit, and the pod has
+        # no .git (its ~/RASD is an rsync), so a pod-side rev-parse returns nothing and every
+        # row would record "unknown" -- which voids a rerun that compares two engines.
+        env = (os.environ.get("CODE_COMMIT") or "").strip()
+        if env:
+            _GIT_COMMIT_CACHE = env
+            return _GIT_COMMIT_CACHE
+        try:
+            _GIT_COMMIT_CACHE = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
+                text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:                                   # noqa: BLE001
+            _GIT_COMMIT_CACHE = "unknown"
+    return _GIT_COMMIT_CACHE
+
+
+_GIT_COMMIT_CACHE = None
+
+# The NCCL knobs that change the transport or the ring's collective behaviour. Only those
+# that are SET are recorded, so the column is short and says exactly what was special.
+_NCCL_KEYS = ("NCCL_DEBUG", "NCCL_DEBUG_SUBSYS", "NCCL_P2P_LEVEL", "NCCL_P2P_DISABLE",
+              "NCCL_SHM_DISABLE", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_TOPO_FILE",
+              "NCCL_ALGO", "NCCL_PROTO", "NCCL_NVLS_ENABLE", "NCCL_BUFFSIZE", "NCCL_MIN_NCHANNELS",
+              "NCCL_MAX_NCHANNELS", "NCCL_NSOCKS_PERTHREAD", "NCCL_SOCKET_NTHREADS")
+
+
+def _nccl_env_report() -> str:
+    return ";".join(f"{k}={os.environ[k]}" for k in _NCCL_KEYS if os.environ.get(k))
+
+
+def _ring_engine_report(engine) -> dict:
+    """The ring settings the ENGINE actually holds, read off the patched attention modules.
+
+    A single value per knob, or a `MIXED(...)` marker if the modules disagree -- which is
+    what a half-applied arm would look like, and is worth seeing rather than averaging away.
+    """
+    layers = getattr(getattr(engine.target_model, "model", None), "layers", None) or []
+
+    def _one(attr, default, cast=str):
+        vals = set()
+        n = 0
+        for layer in layers:
+            attn = getattr(layer, "self_attn", None)
+            if attn is None or not hasattr(attn, "_ring_chunk_size"):
+                continue
+            n += 1
+            vals.add(cast(getattr(attn, attr, default)))
+        if n == 0:
+            return "", 0
+        if len(vals) == 1:
+            return next(iter(vals)), n
+        return f"MIXED({sorted(vals)})", n
+
+    mode, n = _one("_ring_decode_mode", "ring")
+    chunk, _ = _one("_ring_chunk_size", None, lambda v: "" if v is None else int(v))
+    expand, _ = _one("_ring_expand_after_rotation", False, bool)
+    return {"ring_decode_mode": mode, "ring_chunk_size": chunk,
+            "ring_expand_after_rotation": expand, "ring_layers_patched": n}
 
 
 def _per_token_sidecar_path(output_csv: str | Path, run_id: str) -> Path:
@@ -95,6 +289,327 @@ def write_per_token_sidecar(
         for record in trace:
             f.write(json.dumps(record) + "\n")
     return path
+
+
+# How far the source length may be adjusted to make the engine's prompt exactly
+# the rung length. Measured drift on the staged pool is a constant 7 tokens for
+# the one book that drifts; the bound only has to exceed it comfortably.
+MAX_PROMPT_SHIFT = 4096
+
+
+def _generated_tokens_dir(output_csv: str | Path) -> Path:
+    return Path(output_csv).resolve().parent / "tokens"
+
+
+# How long the teacher-forced probe may run before it is declared failed. It is
+# a wall-clock budget, not a per-forward timeout: the probe is a few hundred
+# forwards and takes seconds, and anything past this is a fault. The same number
+# bounds the process group's own watchdog (see PROBE_PG_TIMEOUT_MIN), because an
+# in-process check cannot rescue a rank already blocked INSIDE a collective.
+PROBE_BUDGET_S = float(os.environ.get("MLSYS_PROBE_BUDGET_S", 900))
+PROBE_PG_TIMEOUT_MIN = float(os.environ.get("MLSYS_PG_TIMEOUT_MINUTES", 15))
+
+
+def _agree_on_probe(probe: dict | None, world_size: int,
+                    local_rank: int) -> dict | None:
+    """Every rank takes the SAME verdict on the probe.
+
+    A rank that fails alone is the divergence that killed the 2026-10-09T00:00Z
+    run: the failing rank leaves the collectives its peers are still entering, so
+    the failure surfaces as a watchdog timeout an hour later instead of as an
+    error now. `all_gather_object` settles it in one collective that every rank
+    enters -- if ANY rank's probe failed, every rank records an error, with the
+    failing rank's own message so the reason is not an unattributed
+    "something failed somewhere".
+    """
+    if world_size <= 1:
+        return probe
+    import torch.distributed as dist
+    own = "" if probe is None else str(probe.get("error") or "")
+    gathered: list = [None] * world_size
+    dist.all_gather_object(gathered, own)
+    messages = [m for m in gathered if m]
+    if not messages:
+        return probe
+    return {"error": messages[0], "world_size": world_size,
+            "rank_errors": len(messages)}
+
+
+def run_teacher_forced_probe(engine, run: dict, gen_ids, engine_input_ids,
+                             world_size: int, local_rank: int) -> dict | None:
+    """The probe, driven so that every rank enters it with the same input.
+
+    Split out of `_run_single_worker` so the two properties that matter can be
+    tested without a ring: (1) the entry condition is the run flag -- NOT the
+    rank-local presence of `gen_ids`, which is None on ranks 1-7 by
+    construction; and (2) all ranks agree to fail, so a single rank's error
+    cannot strand the others in a collective.
+    """
+    if world_size > 1:
+        import torch.distributed as dist
+        box = [gen_ids, engine_input_ids] if local_rank == 0 else [None, None]
+        try:
+            dist.broadcast_object_list(box, src=0)
+        except Exception as e:                          # noqa: BLE001
+            # The ids cannot be agreed on, so the probe cannot be run by all
+            # ranks. Report it rather than letting each rank decide for itself.
+            return {"error": f"probe input broadcast failed: "
+                             f"{type(e).__name__}: {e}",
+                    "world_size": world_size}
+        gen_ids, engine_input_ids = box[0], box[1]
+
+    if not gen_ids:
+        # Reachable only when the run genuinely emitted nothing. It is checked
+        # AFTER the broadcast so every rank reaches the same verdict.
+        return {"error": f"no emitted tokens to judge (gen_ids={gen_ids!r})",
+                "world_size": world_size}
+
+    try:
+        probe = engine.teacher_forced_probe(engine_input_ids, gen_ids,
+                                            budget_s=PROBE_BUDGET_S)
+        probe["spec_steps"] = run.get("spec_steps")
+        probe["context_length"] = run.get("context_length")
+    except Exception as e:                              # noqa: BLE001
+        probe = {"error": f"{type(e).__name__}: {e}", "world_size": world_size}
+    return _agree_on_probe(probe, world_size, local_rank)
+
+
+def write_teacher_forced_sidecar(output_csv: str | Path, run_id: str,
+                                 payload: dict) -> Path | None:
+    """Write the teacher-forced probe for one run: `<tokens_dir>/<run_id>.tflossless.json`.
+
+    A SEPARATE file from the generated-token sidecar on purpose. That sidecar's
+    schema is read by the losslessness and cap-smoke stages, and adding fields to
+    it would change the shape of an artifact other stages already validate.
+    """
+    path = _generated_tokens_dir(output_csv) / f"{run_id}.tflossless.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = {"run_id": run_id}
+    out.update(payload or {})
+    path.write_text(json.dumps(out, indent=2, default=str) + "\n")
+    return path
+
+
+def write_generated_tokens_sidecar(
+    output_csv: str | Path, run_id: str, token_ids: list[int] | None,
+    provenance: dict | None = None,
+) -> Path | None:
+    """Write the raw generated token IDs for a run.
+
+    Losslessness is a token-level claim, so the token IDs must survive the run.
+    Only decoded text was saved before, and text is not injective: a decode then
+    re-encode need not round-trip, so a text comparison could neither prove nor
+    disprove token-level agreement.
+
+    One JSON file per run, including the provenance needed to pair it with its
+    counterpart (prompt hash, context, generation length, decoding contract).
+    The pairing fields are duplicated here rather than looked up from the CSV so
+    that a sidecar is self-describing and cannot be silently paired with the
+    wrong row after a CSV is regenerated.
+    """
+    if token_ids is None:
+        return None
+    path = _generated_tokens_dir(output_csv) / f"{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"run_id": run_id, "generated_token_ids": [int(t) for t in token_ids]}
+    payload.update(provenance or {})
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def _exact_token_window(tokenizer, ids: list[int], prompt_len: int,
+                        max_probe: int = 8, max_shift: int = 4096):
+    """Pick the source length whose re-encoded prompt is EXACTLY `prompt_len`.
+
+    Returns `(text, got, source_len)`.
+
+    The engine takes a prompt *string* and re-tokenises it, so the ids the model
+    sees are `encode(decode(ids[:L]))`, which need not be `ids[:L]` and need not
+    even have the same length. Measured on the staged pool this is
+    document-dependent: 9 of 10 books round-trip exactly at every rung, and one
+    loses a constant 7 tokens at every length (130047 -> 130040), because a
+    single token early in the book decodes to text that re-encodes to 7 tokens.
+
+    The prompt length is not negotiable — it must be exactly
+    `context - gen - 1` tokens for the sequence to be exactly the rung — so the
+    source length `L` is adjusted by the observed deficit, which is locally
+    constant. Two probes suffice in practice; the loop exists for the case where
+    moving `L` crosses another such token.
+    """
+    if not ids:
+        raise ValueError("empty source")
+    L = min(prompt_len, len(ids))
+    for _ in range(max_probe):
+        if not 0 < L <= len(ids):
+            break
+        text = tokenizer.decode(ids[:L])
+        got = tokenizer.encode(text, add_special_tokens=False)
+        if len(got) == prompt_len:
+            return text, got, L
+        # `len(got) == L + deficit`, so moving L by the deficit removes it.
+        L = L + (prompt_len - len(got))
+        if abs(L - prompt_len) > max_shift:
+            break
+    raise RuntimeError(
+        f"could not find a source length whose engine prompt is exactly "
+        f"{prompt_len} tokens (last tried L={L}, engine prompt "
+        f"{len(got) if 'got' in dir() else 'n/a'}); refusing to run at a context "
+        f"that was not measured"
+    )
+
+
+def _prompt_gen_tokens(run: dict) -> int:
+    """The generation length that defines the PROMPT window for this run.
+
+    Every arm of a rung must be given the SAME prompt, because the plan's
+    losslessness check compares token ids between a speculative run and its
+    target-only partners. The prompt window is `[0, C - gen_tokens - 1)`, so if
+    each arm used its own `max_new_tokens` the 128-token baselines would get a
+    prompt 896 tokens longer than the 1024-token speculative run they are
+    supposed to check -- a different context, over which token equality says
+    nothing. The pairing guard would then report every one of those seven cells
+    as BAD_PAIR, and a stage that declares `losslessness: required` would fail
+    on a defect that only the prompt builder could have caused.
+
+    A level therefore sets `prompt_gen_tokens` to the RUNG's generation length
+    and leaves it equal to `max_new_tokens` for every other arm. Absent, the
+    behaviour is exactly as before.
+    """
+    return int(run.get("prompt_gen_tokens") or run.get("max_new_tokens", 1024))
+
+
+def _build_pg19_document_prompt(documents_json: str, context_length: int,
+                                doc_id: str, tokenizer, gen_tokens: int = 1024):
+    """Build one rung's prompt from a single PG-19 book.
+
+    Returns `(prompt_text, continuation_ids, provenance)`.
+
+    The document is one book, not an offset into a concatenated stream, so the
+    plan's unit of independence is real. Windows, from one contiguous span:
+
+        prompt        [0, C - gen_tokens - 1)
+        continuation  [C - gen_tokens - 1, C - 1)
+
+    The `- 1` is the engine's leading BOS: `generate_text` calls the tokenizer
+    without `add_special_tokens=False`, so the model sees one token more than
+    the prompt ids counted here. Without it the sequence would be C + 1, one
+    position past the native 128k window, which is exactly the kind of silent
+    off-by-one that turns a rung into an extrapolation measurement.
+
+    The continuation is what the runs generate into and what perplexity is
+    scored on. It has to be contiguous with the prompt: a continuation placed
+    after a generation-length gap would need a forward of more than C, which at
+    native 128k would again measure extrapolation rather than the rung.
+    """
+    import numpy as np
+    meta = json.loads(Path(documents_json).read_text())
+    docs = {d["doc_id"]: d for d in meta["documents"]}
+    if doc_id not in docs:
+        raise ValueError(
+            f"{documents_json}: unknown doc_id {doc_id!r}; "
+            f"available: {sorted(docs)[:5]}..."
+        )
+    d = docs[doc_id]
+    prompt_len = context_length - gen_tokens - 1
+    if prompt_len < 1:
+        raise ValueError(
+            f"context {context_length} leaves no room for a prompt after "
+            f"{gen_tokens} generated tokens and the leading BOS"
+        )
+    if d["length"] < context_length:
+        raise RuntimeError(
+            f"{doc_id}: {d['length']} tokens, need {context_length} for "
+            f"context {context_length} (prompt {prompt_len} + continuation "
+            f"{gen_tokens})"
+        )
+    arr = np.memmap(d["file"], dtype="int32", mode="r")
+    source_len = min(d["length"], prompt_len + MAX_PROMPT_SHIFT + 1024)
+    text, got, used = _exact_token_window(
+        tokenizer, arr[:source_len].astype(int).tolist(), prompt_len)
+    # Contiguous with the PROMPT TEXT: the continuation is the book text that
+    # follows the prompt the model actually sees, so perplexity is conditioned
+    # on the passage it scores, and the losslessness pairing is against the same
+    # prompt.
+    cont = arr[used:used + gen_tokens].astype(int).tolist()
+    if len(cont) != gen_tokens:
+        raise RuntimeError(
+            f"{doc_id}: continuation is {len(cont)} tokens, need {gen_tokens}; "
+            f"the document is too short for this rung"
+        )
+    provenance = {
+        "doc_id": doc_id,
+        # The exact ids the engine will feed. Saved so a second implementation
+        # can be given THIS prompt rather than one rebuilt from the same book:
+        # a rebuilt prompt is a different prompt, and an acceptance or
+        # throughput comparison against it is not like-for-like.
+        "prompt_token_ids": [int(t) for t in got],
+        "doc_title": d.get("title"),
+        "doc_url": d.get("url"),
+        "prompt_tokens": len(got),
+        "prompt_sha256": hashlib.sha256(
+            ",".join(map(str, got)).encode()).hexdigest(),
+        "continuation_sha256": hashlib.sha256(
+            ",".join(map(str, cont)).encode()).hexdigest(),
+        # Sequence the engine will actually build: prompt + BOS + generation.
+        "sequence_tokens": len(got) + 1 + gen_tokens,
+        "prompt_source_len": int(used),
+    }
+    sequence_tokens = len(got) + 1 + gen_tokens      # + 1 for the leading BOS
+    if sequence_tokens != context_length:
+        # Not ">": an under-length sequence is also wrong, because the rung is
+        # supposed to BE that context length. Both directions are a measurement
+        # of a different context than the one recorded.
+        raise RuntimeError(
+            f"{doc_id}: the engine would build a {sequence_tokens}-token "
+            f"sequence ({len(got)} prompt + 1 BOS + {gen_tokens} generated) for "
+            f"rung context {context_length}; refusing to run at a context we "
+            f"would not be measuring"
+        )
+    return text, cont, provenance
+
+
+def _measure_target_ppl(engine, prompt: str, continuation_ids: list[int],
+                        world_size: int, local_rank: int):
+    """Perplexity of the target on a held-out continuation after the prompt.
+
+    Returns `(ppl, scored_tokens)` on every rank (the all-reduce is inside), so
+    the caller does not have to reason about which rank holds the total.
+
+    The sequence is encoded exactly as `generate_text` encodes it, i.e. with the
+    tokenizer's default special tokens, so the count that reaches the model here
+    is the same one the generation used. Scoring only the continuation means the
+    prompt contributes context without contributing loss.
+    """
+    import torch
+    import torch.distributed as dist
+    from src.analysis.target_quality import continuation_nll, perplexity_from_sums
+
+    model = engine.target_model
+    prompt_ids = engine.tokenizer(prompt)["input_ids"]
+    ids = torch.tensor([list(prompt_ids) + list(continuation_ids)],
+                       dtype=torch.long, device=model.device)
+    # A sequence whose length is not divisible by world_size is fine: the last
+    # rank pads its forward to a common length (see `local_bounds`), which is
+    # what keeps the ring's collective count identical on every rank. Refusing
+    # the sequence instead would silently drop rungs whose token count happens
+    # not to divide by 8.
+
+    def _forward(local_ids, abs_pos):
+        return model.model(
+            input_ids=local_ids, position_ids=abs_pos, use_cache=False,
+            past_key_values=None,
+        ).last_hidden_state
+
+    total, n, _ = continuation_nll(
+        model, ids, score_from=len(prompt_ids), forward=_forward,
+        rank=local_rank, world_size=world_size,
+    )
+    if world_size > 1:
+        buf = torch.tensor([total, float(n)], dtype=torch.float64,
+                           device=model.device)
+        dist.all_reduce(buf, op=dist.ReduceOp.SUM)
+        total, n = float(buf[0]), int(buf[1])
+    return perplexity_from_sums(total, n), n
 
 
 def _profiler_sidecar_path(output_csv: str | Path, run_id: str) -> Path:
@@ -160,6 +675,12 @@ def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
     for group_id in ablation_keys:
         group = cfg[group_id]
         for level in group["levels"]:
+            # MLSys analysis plan: the document is the unit of independence, so
+            # a level may name a list of documents and expand into one run per
+            # document. Seeds are NOT an expansion axis for these runs — greedy
+            # decoding makes a seed change a no-op — but the suffix is kept so
+            # run ids stay unique and sortable against the older rows.
+            documents = level.get("documents")
             for seed in seeds:
                 run = deepcopy(defaults)
                 run.update({k: v for k, v in level.items() if k not in ("notes",)})
@@ -167,36 +688,74 @@ def build_run_configs(cfg: dict, groups: Optional[List[str]], debug: bool,
                 run["group"]    = group_id
                 run["level_id"] = level["id"]
                 run["debug"]    = debug
-                run["run_id"]   = f"{level['id']}_s{seed}"
-                runs.append(run)
+                if documents:
+                    for doc_id in documents:
+                        r = deepcopy(run)
+                        r["doc_id"] = doc_id
+                        r["run_id"] = f"{level['id']}_{doc_id}_s{seed}"
+                        runs.append(r)
+                else:
+                    run["run_id"] = f"{level['id']}_s{seed}"
+                    runs.append(run)
 
     return runs
 
 
 # ---------------------------------------------------------------------------
 # wandb helpers
+#
+# W&B is a LOGGING SIDE-CHANNEL. Every run's deliverable is the CSV row written
+# beside these calls, so nothing here may kill a stage: a credentials or network
+# problem with wandb has to downgrade to "no wandb logging" and leave the
+# measurement intact.
+#
+# That intent was already in the code -- `ImportError` was handled with "wandb
+# not installed -- skipping" -- but only for a MISSING wandb. On 2026-10-08 an
+# INSTALLED wandb with no API key raised `wandb.errors.errors.UsageError: No API
+# key configured` out of `wandb.init`, which is not an ImportError. It
+# propagated out of rank 0 of engine_cap_smoke, torchrun turned it into
+# ChildFailedError, and the stage failed after 24 s having done no GPU work at
+# all. Every stage that runs run_experiment would have failed the same way: six
+# of the nine approved ones.
+#
+# So all three calls are non-fatal, and each one reports what it lost.
 # ---------------------------------------------------------------------------
 
 def init_wandb(run: dict, project: str):
     try:
         import wandb
+    except ImportError:
+        log.warning("wandb not installed — skipping wandb logging.")
+        return None
+    try:
         return wandb.init(
             project=project,
             name=run["run_id"],
             config={k: v for k, v in run.items() if k not in ("run_id", "group", "level_id", "debug")},
             reinit=True,
         )
-    except ImportError:
-        log.warning("wandb not installed — skipping wandb logging.")
+    except Exception as e:                      # noqa: BLE001
+        # Auth, network, protocol version, an unloggable config value: the ways
+        # the wandb client can fail are open-ended and none of them is a fact
+        # about the model. Record the reason and carry on.
+        log.warning("wandb init failed (%s: %s) — skipping wandb logging.",
+                    type(e).__name__, e)
         return None
 
 
 def log_wandb(wb_run, metrics: dict):
     if wb_run is None:
         return
-    import wandb
-    wb_run.log(metrics)
-    wb_run.finish()
+    try:
+        import wandb
+        wb_run.log(metrics)
+        wb_run.finish()
+    except Exception as e:                      # noqa: BLE001
+        # Hardened for the same reason as init. A dropped wandb buffer already
+        # cost the 2026-05-10 ctx512k/ctx1M failures their stack-trace context,
+        # and a raise HERE would discard a run that has already been measured.
+        log.warning("wandb log failed (%s: %s) — the row is still written.",
+                    type(e).__name__, e)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +768,33 @@ def load_completed_runs(csv_path: Path) -> set:
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         return {row["run_id"] for row in reader if row.get("status") == "ok"}
+
+
+def format_dry_run(runs: list[dict]) -> str:
+    """The dry-run table, as text. THE authoritative printer.
+
+    `scripts/mlsys_manifest.sh` counts the run lines of this output to decide how
+    many rows a stage must write (`expected_rows`), and the rehearsal stub prints
+    it instead of a copy of it. A second printer that drifted by a character in
+    the separator would make the manifest's row check agree with the stub and
+    with nothing else -- the check would pass while the real run's plan was never
+    looked at.
+    """
+    lines = [f"\n{'RUN ID':<35}  {'GROUP':<5}  {'SEED':>5}  CONFIG", "-" * 80]
+    for r in runs:
+        config_summary = (
+            f"draft={r['draft_model_name'].split('/')[-1]}  "
+            f"k={r['spec_steps']}  "
+            f"block={r['kv_block_size']}  "
+            f"prefetch={r['prefetch_depth']}  "
+            f"target={r['target_model_name'].split('/')[-1]}  "
+            f"dwindow={r.get('draft_window_cap') or 'native'}  "
+            f"ddtype={r.get('draft_dtype', 'auto')}"
+        )
+        lines.append(
+            f"{r['run_id']:<35}  {r['group']:<5}  {r['seed']:>5}  {config_summary}")
+    lines.append(f"\n{len(runs)} runs total.")
+    return "\n".join(lines)
 
 
 def append_csv(csv_path: Path, row: dict):
@@ -230,7 +816,8 @@ def build_prompt(context_length: int, tokenizer,
                  pg19_meta: str | None = None,
                  seed: int = 42,
                  ruler_sidecar_dir: str | None = None,
-                 run_id: str | None = None) -> str:
+                 run_id: str | None = None,
+                 margin: int = 0) -> str:
     """Build a prompt of approximately `context_length` tokens.
 
     source="synthetic" (default): repeated technical-English paragraph.
@@ -251,24 +838,95 @@ def build_prompt(context_length: int, tokenizer,
     if source == "pg19":
         if pg19_meta is None:
             raise ValueError("source='pg19' requires pg19_meta path")
-        return _build_pg19_prompt(context_length, tokenizer, pg19_meta, seed)
+        return _build_pg19_prompt(context_length, tokenizer, pg19_meta, seed,
+                                  margin=margin)
     if source == "ruler_niah":
         return _build_ruler_niah_prompt(
             context_length, tokenizer, seed,
             sidecar_dir=ruler_sidecar_dir, run_id=run_id,
         )
-    # Default: synthetic repeated-paragraph
-    base = (
-        "The following is a detailed technical analysis of distributed machine learning systems. "
-        "Ring attention enables long-context inference by sharding the sequence across GPUs. "
-        "Speculative decoding accelerates generation by using a smaller draft model. "
+    # Default: synthetic repeated-paragraph.
+    # A7 — the sentence ORDER is derived from `seed`, so three seeds produce
+    # three genuinely different prompts (different token ids), not one prompt
+    # decoded three times. Before this the builder ignored `seed` entirely
+    # and "3 seeds" was really "1 prompt x 3 decoding seeds".
+    #
+    # NOTE: Arm1 and Arm2 share this TEMPLATE but not the same token ids —
+    # they use different tokenizers (Llama-2 BPE vs the Llama-3 tiktoken-style
+    # vocabulary), so even the same seed yields different token sequences
+    # across arms. Cross-arm prompt identity was never achievable; what is
+    # required is that each arm's seeds differ from each other.
+    _SYNTHETIC_SENTENCES = (
+        "The following is a detailed technical analysis of distributed machine learning systems. ",
+        "Ring attention enables long-context inference by sharding the sequence across GPUs. ",
+        "Speculative decoding accelerates generation by using a smaller draft model. ",
+        "Key-value cache compression reduces the memory footprint of long sequences. ",
+        "Rotary position embeddings interpolate smoothly across extended contexts. ",
+        "Pipeline parallelism partitions layers while tensor parallelism splits weights. ",
+        "Memory bandwidth, not compute, usually bounds decoding throughput. ",
+        "Interconnect latency determines how well ring rotation overlaps with attention. ",
     )
-    tokens = tokenizer.encode(base)
-    repeats = max(1, context_length // len(tokens))
-    full_text = base * repeats
-    # Trim to exactly context_length tokens
-    full_tokens = tokenizer.encode(full_text)[:context_length]
-    return tokenizer.decode(full_tokens)
+    rng = random.Random(int(seed))
+    order = list(_SYNTHETIC_SENTENCES)
+    rng.shuffle(order)
+    block = "".join(order)
+    # add_special_tokens=False is REQUIRED: this list is repeated below, so a
+    # BOS prepended here is replicated at every repetition boundary. With the
+    # default it appeared 1337 times (once per ~97 tokens, 4 in the last 400),
+    # which asks the model to continue a document that restarts continuously.
+    # That is what collapsed ARM4-f1 acceptance to 0.24 from round 0, while
+    # Arm2 — whose builder repeated a STRING and encoded once — measured 0.89.
+    block_tokens = tokenizer.encode(block, add_special_tokens=False)
+    if not block_tokens:
+        block_tokens = tokenizer.encode(
+            "The following is a detailed technical analysis. ",
+            add_special_tokens=False)
+    # Over-provision so we can trim DOWN to hit the target exactly. The
+    # engine takes a prompt STRING and re-tokenises it, so the id count can
+    # drift across decode->encode; B2 requires prompt+output to fit inside
+    # the native window, so we converge on the requested count rather than
+    # hoping the round-trip is lossless.
+    #
+    # The round trip is LOSSY here and NOT merely off by a constant: each
+    # repetition re-merges the sentence-boundary tokens, so re-encoding
+    # returns roughly one token fewer per block. Feeding decode() exactly
+    # `context_length` ids therefore yields a prompt SHORTER than requested
+    # (measured: 130944 -> 129595), and a fixed over-provision cannot fix that
+    # because the loss grows with the repetition count. So solve for the id
+    # count whose ENGINE-VISIBLE length equals the target, using the observed
+    # ratio to converge in a few encodes instead of a linear scan (each
+    # encode is ~130k tokens, so a scan would be minutes).
+    reps = context_length // max(1, len(block_tokens)) + 64
+    pool = block_tokens * reps
+    n = context_length
+    text = tokenizer.decode(pool[:n])
+    L = len(tokenizer.encode(text, add_special_tokens=False))
+    for _ in range(14):
+        if L == context_length:
+            break
+        n = max(1, int(round(n * context_length / max(1, L))))
+        if L < context_length:
+            n += 1
+        if n > len(pool):
+            break
+        text = tokenizer.decode(pool[:n])
+        L = len(tokenizer.encode(text, add_special_tokens=False))
+    if L != context_length:
+        # Local scan to land exactly; the ratio step can oscillate by one.
+        for delta in list(range(1, 96)) + list(range(-1, -96, -1)):
+            m = n + delta
+            if m < 1 or m > len(pool):
+                continue
+            t = tokenizer.decode(pool[:m])
+            l2 = len(tokenizer.encode(t, add_special_tokens=False))
+            if l2 == context_length:
+                n, text, L = m, t, l2
+                break
+    if L != context_length:
+        logger.warning(
+            "synthetic prompt length %d != requested %d after convergence",
+            L, context_length)
+    return text
 
 
 def _build_ruler_niah_prompt(context_length: int, tokenizer, seed: int,
@@ -344,7 +1002,7 @@ def _build_ruler_niah_prompt(context_length: int, tokenizer, seed: int,
 
 
 def _build_pg19_prompt(context_length: int, tokenizer,
-                       meta_path: str, seed: int) -> str:
+                       meta_path: str, seed: int, margin: int = 0) -> str:
     """Load a PG-19 chunk slice of context_length tokens and decode it.
 
     Picks a chunk pseudorandomly seeded from `seed` (same logic as
@@ -356,15 +1014,30 @@ def _build_pg19_prompt(context_length: int, tokenizer,
     chunks = meta["chunks"]
     if not chunks:
         raise RuntimeError(f"{meta_path}: no chunks in metadata")
-    suitable = [c for c in chunks if c["length"] >= context_length]
+    # Long-context gate/natural-text runs need prompt + a scored continuation
+    # inside ONE chunk, so prefer the longest chunks and take a contiguous
+    # slice. `margin` is the extra tokens the caller wants held back after the
+    # prompt; it defaults to 0 for the historical dose-response callers.
+    need = context_length + int(margin)
+    suitable = sorted((c for c in chunks if c["length"] >= need),
+                      key=lambda c: c["file"])
     rng = np.random.default_rng(seed)
     if suitable:
-        c = suitable[rng.integers(0, len(suitable))]
+        c = suitable[int(rng.integers(0, len(suitable)))]
         arr = np.memmap(c["file"], dtype="int32", mode="r")
-        start = int(rng.integers(0, c["length"] - context_length + 1))
+        start = int(rng.integers(0, c["length"] - need + 1))
         ids = list(arr[start:start + context_length].astype(int))
     else:
-        # Concatenate chunks if no single chunk is long enough
+        # Concatenate chunks if no single chunk is long enough.
+        #
+        # WARNING (not exercised by any published cell): stitching chunks
+        # concatenates independently-tokenised id arrays, so every chunk
+        # boundary carries whatever special token its preprocessing prepended
+        # (a BOS, typically). That would inject one BOS per boundary — the
+        # same failure mode as the synthetic-prompt BOS bug, though via a
+        # different route. Any caller reaching here MUST strip boundary
+        # specials before concatenating, or stage longer chunks instead; the
+        # long-context gate stages 1M-token chunks precisely to avoid it.
         joined = []
         for c in chunks:
             arr = np.memmap(c["file"], dtype="int32", mode="r")
@@ -372,7 +1045,20 @@ def _build_pg19_prompt(context_length: int, tokenizer,
             if len(joined) >= context_length:
                 break
         ids = joined[:context_length]
-    return tokenizer.decode(ids)
+    text = tokenizer.decode(ids)
+    # The engine takes a prompt STRING and re-tokenises it, so verify the
+    # caller actually gets the requested token count. Natural text round-trips
+    # far more cleanly than the synthetic repetition (which loses ~1 token per
+    # block), but "cleanly" is not "exactly", and a silently short prompt would
+    # break B2 (prompt+output inside the native window).
+    got = len(tokenizer.encode(text, add_special_tokens=False))
+    if got != context_length:
+        log.warning(
+            "PG-19 prompt round-trip: requested %d tokens, engine will see %d "
+            "(delta %+d, %.4f%%)", context_length, got, got - context_length,
+            100.0 * (got - context_length) / max(1, context_length))
+    return text
+
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +1124,43 @@ def _ring_peer_loop(local_rank: int, world_size: int, kv_block_size: int,
     print(f"[TRACE peer rank={local_rank}] all {max_rounds} rounds done", flush=True)
 
 
+def decode_rate_tps(tokens_generated, time_sec, ttft_ms) -> float:
+    """Decode-only tokens/second: `(tokens_generated - 1) / (time_sec - ttft)`.
+
+    The first token is the product of prefill, not of the decode loop: it is
+    already available at ttft. The remaining `tokens_generated - 1` tokens are
+    what the post-prefill wall actually produced, so dividing the FULL token
+    count by the decode wall overstates the decode rate by one token's worth.
+
+    Both arms use this same helper, because the paired ratio is a comparison of
+    two decode rates: computing it one way for the spec arm and another for the
+    target-only arm would put the difference into the ratio.
+    """
+    n = int(tokens_generated)
+    if n < 1:
+        return 0.0
+    wall = max(float(time_sec) - (ttft_ms or 0.0) / 1000.0, 1e-9)
+    return (n - 1) / wall
+
+
+def _arm_role(run: dict) -> str:
+    """What this row is, for pairing: spec, target_full or target_short.
+
+    Taken from the group name when the config supplies one (the stage configs
+    name their groups `*_TARGET_FULL` / `*_TARGET_SHORT`), and otherwise from the
+    generation length against the spec arm's: a target-only row that generates
+    the full 1024 tokens is the short arm's complement, not a different thing.
+    """
+    group = str(run.get("group", "") or "").upper()
+    if int(run.get("spec_steps", 0) or 0) > 0:
+        return "spec"
+    if group.endswith("TARGET_FULL") or "TARGET_FULL" in group:
+        return "target_full"
+    if group.endswith("TARGET_SHORT") or "TARGET_SHORT" in group:
+        return "target_short"
+    return f"target_{int(run.get('max_new_tokens', 0) or 0)}"
+
+
 def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
     """Worker executed in a subprocess — full isolation, fresh CUDA context.
 
@@ -476,7 +1199,15 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         dist.init_process_group(
             backend="nccl",
             device_id=torch.device(f"cuda:{local_rank}"),
-            timeout=timedelta(hours=1),
+            # This is the ONLY thing that can end a rank that is blocked inside a
+            # collective: an in-process budget check never gets a turn, because
+            # the rank is waiting on NCCL. It was an hour, which is why the
+            # 2026-10-09T00:00Z divergence burned 3600 s before it reported
+            # anything (the DistBackendError in the probe sidecar is this
+            # watchdog, not the probe). Bounded by the probe budget instead. The
+            # longest legitimate collective in this campaign is seconds: a ring
+            # exchange of one chunk's KV, or a logits broadcast.
+            timeout=timedelta(minutes=PROBE_PG_TIMEOUT_MIN),
         )
     else:
         torch.cuda.set_device(0)
@@ -506,9 +1237,25 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C2b RoPE strategy. Default "linear" preserves M3 behavior.
             # Use "yarn" for M4 1M context (factor=256 over Llama-2's 4k).
             rope_type         = str(run.get("rope_type", "linear")),
+            # MLSys B1 — explicit extrapolation factor (None = automatic).
+            rope_factor       = (float(run["rope_factor"])
+                                 if run.get("rope_factor") is not None else None),
+            # MLSys — YaRN anchor override (None = the model's own window).
+            # Set to the model's true pretraining base (8192 for Llama-3.1)
+            # to build on the native scaling instead of re-basing it.
+            rope_anchor_base  = (int(run["rope_anchor_base"])
+                                 if run.get("rope_anchor_base") is not None
+                                 else None),
+            # MLSys B3 — exact-length generation (EOS ignored).
+            ignore_eos        = bool(run.get("ignore_eos", False)),
             # C11 NF4 KV-cache. Default False -> M3 byte-identical.
             # Phase C P3.5 final matrix uses kv_quant=true at all contexts.
             kv_quant          = bool(run.get("kv_quant", False)),
+            # MLSys Phase 1/3 — draft isolation knobs. Both default to
+            # None/"auto", which reproduces M3/M4 behaviour exactly.
+            draft_window_cap  = (int(run["draft_window_cap"])
+                                 if run.get("draft_window_cap") else None),
+            draft_dtype       = str(run.get("draft_dtype", "auto")),
             # M4 Phase C 2026-05-10 NF4 acceptance-recovery levers. The
             # YAMLs don't override these by default; we let the RASDConfig
             # defaults apply (kv_outlier_prefix_size=128, kv_block_size_nf4=32).
@@ -520,6 +1267,11 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # M4 paper memory attribution. Off by default. When True,
             # rasd_inference.generate() snapshots per-stage GPU memory
             # via MemoryTracer and writes a JSON sidecar.
+            # DECODE-DIAGNOSIS counterfactual switch (default keeps the ring path).
+            ring_decode_mode       = str(run.get("ring_decode_mode", "ring")),
+            # DECODE-DIAGNOSIS counterfactual: defer the GQA repeat_kv to after the ring
+            # receive, so the rotation ships num_kv_heads instead of num_heads copies.
+            ring_expand_after_rotation = bool(run.get("ring_expand_after_rotation", False)),
             memory_trace           = bool(run.get("memory_trace", False)),
             memory_trace_dir       = run.get("memory_trace_dir") or None,
             seed              = int(run["seed"]),
@@ -527,6 +1279,12 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             # C13 per-position trace (M4 Phase A2). Default off so M3
             # replay is byte-identical when --log-per-token is unset.
             log_per_token     = bool(run.get("log_per_token", False)),
+            # MLSys analysis plan (a) — return raw generated token IDs so the
+            # losslessness check can compare token streams, not decoded text.
+            save_generated_tokens = bool(run.get("save_generated_tokens", False)),
+            # M3 — top-k logits per emitted position, so a divergence is scored
+            # on the cross margin rather than each arm's own top1-top2 gap.
+            dump_logits_topk  = int(run.get("dump_logits_topk", 0) or 0),
             # C6 generation checkpoint/resume (Phase C blocker #2 from
             # 2026-05-10 third-pass review). Default 0 -> disabled.
             # 1M cells set checkpoint_every>=1 to recover from crashes
@@ -541,22 +1299,113 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             run_id            = run["run_id"],
         )
         engine = RASDInference(cfg)
-        prompt = build_prompt(
-            int(run.get("context_length", 65536)),
-            engine.tokenizer,
-            source=run.get("prompt_source", "synthetic"),
-            pg19_meta=run.get("prompt_pg19_meta"),
-            seed=int(run.get("seed", 42)),
-            ruler_sidecar_dir=run.get("ruler_sidecar_dir"),
-            run_id=run["run_id"],
-        )
+        prompt_source = run.get("prompt_source", "synthetic")
+        continuation_ids: list[int] = []
+        doc_prov: dict = {}
+        if prompt_source == "pg19_document":
+            doc_json = run.get("prompt_documents_json")
+            if not doc_json:
+                raise ValueError(
+                    "prompt_source='pg19_document' requires prompt_documents_json"
+                )
+            doc_id = run.get("doc_id")
+            if not doc_id:
+                raise ValueError(
+                    "prompt_source='pg19_document' requires doc_id"
+                )
+            prompt, continuation_ids, doc_prov = _build_pg19_document_prompt(
+                doc_json,
+                int(run.get("context_length", 65536)),
+                doc_id,
+                engine.tokenizer,
+                gen_tokens=_prompt_gen_tokens(run),
+            )
+        else:
+            prompt = build_prompt(
+                int(run.get("context_length", 65536)),
+                engine.tokenizer,
+                source=prompt_source,
+                pg19_meta=run.get("prompt_pg19_meta"),
+                seed=int(run.get("seed", 42)),
+                ruler_sidecar_dir=run.get("ruler_sidecar_dir"),
+                run_id=run["run_id"],
+            )
+
+        # MLSys A6 — per-row prompt provenance. Record the exact prompt
+        # token count and a content hash so a result can be tied to the
+        # precise input that produced it (A7 makes the prompt seed-dependent,
+        # so this is the only way to prove the three seeds really differ).
+        try:
+            _pids = engine.tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            row["prompt_tokens"] = len(_pids)
+            row["prompt_sha256"] = hashlib.sha256(
+                ",".join(str(i) for i in _pids).encode()).hexdigest()
+        except Exception as _e:  # noqa: BLE001
+            row["prompt_tokens"] = ""
+            row["prompt_sha256"] = ""
+            log.warning("prompt provenance failed: %r", _e)
+        row["target_revision"] = run.get("target_revision") or ""
+        row["draft_revision"] = run.get("draft_revision") or ""
+        row["prompt_source"] = prompt_source
+        # PLANNED sequence length, from the document pool: prompt + 1 BOS + the
+        # RUNG's generation length. Correct for an arm that generates the rung's
+        # full length; overwritten below with what the engine actually built,
+        # because the two differ by design for the 128-token baselines (a shorter
+        # generation into the same prompt) and differ by accident whenever a run
+        # stops early.
+        if doc_prov.get("sequence_tokens") is not None:
+            row["sequence_tokens"] = doc_prov["sequence_tokens"]
+        row["doc_id"] = run.get("doc_id", "") or ""
+        # pair_id: rung + document, shared across the arms compared. The rung is
+        # in the key because the same document is run at several contexts and a
+        # document-only key would pair a 128k spec row with a 256k baseline.
+        _ctx = run.get("context_length", "")
+        row["pair_id"] = f"{_ctx}:{row['doc_id']}" if row["doc_id"] else ""
+        row["arm_role"] = _arm_role(run)
+        row["rope_arm"] = str(run.get("rope_arm", "") or "")
+        row["temperature"] = run.get("temperature", 1.0)
+        row["top_p"] = run.get("top_p", 1.0)
+        row["ignore_eos"] = bool(run.get("ignore_eos", False))
+        if doc_prov:
+            # The pool builder hashed the same token IDs this row just hashed.
+            # If they disagree the row is not the document it claims to be, and
+            # pairing it with its target-only counterpart would be unsound.
+            if doc_prov["prompt_sha256"] != row["prompt_sha256"]:
+                log.warning(
+                    "document prompt hash mismatch for %s: pool=%s engine=%s",
+                    doc_prov["doc_id"], doc_prov["prompt_sha256"],
+                    row["prompt_sha256"],
+                )
 
         # M4 C7 — torch.profiler wrap (default off). Enabled per-row via
         # run["profile"] = True (set from --profile CLI flag below).
-        profile_enabled = bool(run.get("profile", False)) and local_rank == 0
+        # DECODE-DIAGNOSIS: WHICH RANKS GET PROFILED, AND WHAT IS WRITTEN OUT.
+        #
+        # Rank 0 alone was hardcoded, and rank 0 is the one rank whose behaviour differs:
+        # it is where the row's metrics are written and (in this engine) where the
+        # replicated-Q attention has no ring sender to wait on first. A profile that only
+        # ever sees rank 0 cannot tell a ring-wide cost from a rank-0 artefact, which is
+        # why the diagnosis asks for a middle rank too. `profile_ranks` defaults to [0], so
+        # every existing config keeps its previous behaviour exactly.
+        #
+        # The op tables and chrome trace land beside the row's CSV under
+        # <csv_dir>/profiler_ops/ and <csv_dir>/profiler_traces/, named by run and rank.
+        _profile_ranks = run.get("profile_ranks")
+        if _profile_ranks is None:
+            _profile_ranks = [0]
+        profile_enabled = bool(run.get("profile", False)) and local_rank in _profile_ranks
         if profile_enabled:
             from src.analysis.profiler import RoundProfiler
-            with RoundProfiler(enabled=True) as _prof:
+            _pdir = Path(output_csv).resolve().parent
+            _rid = run["run_id"]
+            with RoundProfiler(
+                enabled=True,
+                rank=local_rank,
+                ops_path=_pdir / "profiler_ops" / f"{_rid}.rank{local_rank}.json",
+                trace_path=_pdir / "profiler_traces" / f"{_rid}.rank{local_rank}.json.gz",
+                top=int(run.get("profile_top", 30)),
+                record_shapes=True,
+            ) as _prof:
                 generated_text, metrics = engine.generate_text(prompt)
             metrics["_profiler_summary"] = _prof.summary
         else:
@@ -588,9 +1437,124 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
         # wandb logging — it's a list-of-dicts, not a wandb-loggable
         # scalar. Only rank 0 receives a non-None trace (others get
         # None per RASDInference.generate's rank-0 guard).
+        gen_ids = metrics.pop("generated_token_ids", None)
+        # The target's top-1 minus top-2 logit gap at each emitted position,
+        # aligned with `gen_ids`. The losslessness verdict needs it to tell a
+        # numerics tie (the target was indifferent, so either candidate is
+        # defensible) from a real divergence, and it lives in the sidecar so the
+        # check can be re-run from the artifacts alone.
+        token_gaps = metrics.pop("token_gaps", None)
+        # The precision the engine MEASURED on the loaded models and the live
+        # cache. Deliberately not derived from the run's config: `quantize_*`
+        # is an instruction, and the loader warns-and-skips 4-bit off CUDA, so a
+        # config-derived label would report the claim rather than the run.
+        numerics = metrics.pop("numerics", {}) or {}
+        # ALIGNMENT CHECK. `token_gaps` is a parallel array to the emitted ids:
+        # the losslessness tie rule reads the gap at the position where two arms
+        # first diverge, so a list that is one short silently reports the wrong
+        # token's indifference -- and it does it in the direction of excusing a
+        # real mismatch as a tie. A misaligned list is worse than no list.
+        #
+        # The VERDICT is taken here (cheap, and it decides whether the sidecar is
+        # written) but the RAISE is DEFERRED to `_raise_if_misaligned` below,
+        # after the perplexity measurement. `_measure_target_ppl` ends in a
+        # collective: raising on rank 0 here would leave every other rank waiting
+        # in that all_reduce until the watchdog killed the job, turning a clear
+        # error into a hang.
+        alignment_error = ""
+        if gen_ids is not None and token_gaps is not None \
+                and len(token_gaps) != len(gen_ids):
+            alignment_error = (
+                f"{run['run_id']}: token_gaps has {len(token_gaps)} entries "
+                f"for {len(gen_ids)} emitted tokens; refusing to write a "
+                f"misaligned gap array (the tie rule would read the wrong "
+                f"position)")
+        # The ids the TARGET was actually fed, BOS included, from the engine's
+        # own tensor. `prompt_tokens` and `prompt_sha256` are the prompt WITHOUT
+        # the BOS -- that is what the engine's prompt builder is defined over --
+        # so a consumer that claims to replay the target's input needs this
+        # field, and comparing it against the no-BOS ids is a one-token
+        # difference at the front of every rotary phase.
+        engine_input_ids = metrics.pop("engine_input_ids", None)
+        if engine_input_ids is None:
+            try:
+                # The same call generate_text makes: the engine's real input.
+                engine_input_ids = engine.tokenizer(
+                    prompt, add_special_tokens=True)["input_ids"]
+            except Exception:                       # noqa: BLE001
+                engine_input_ids = None
+        # ---- teacher-forced probe (the MLSys losslessness gate) -----------
+        # Runs on EVERY rank, and every rank must ENTER it: the forwards go
+        # through ring attention when world_size > 1, so a rank that skips the
+        # probe leaves its peers inside a collective it never issues.
+        #
+        # That is not hypothetical. `gen_ids` and `engine_input_ids` are
+        # RANK-0-ONLY (the metric guards in RASDInference.generate are
+        # `self._rank == 0`, so ranks 1-7 pop None), and this block used to be
+        # driven off their rank-local truthiness -- `and gen_ids and
+        # engine_input_ids`. On 2026-10-09T00:00Z rank 0 therefore entered the
+        # probe alone, completed 7036 collectives by itself, and then sat in the
+        # NCCL watchdog for 3600 s until it died with DistBackendError while
+        # ranks 1-7 waited somewhere else entirely. The ids are BROADCAST now and
+        # the entry condition is the run flag alone.
+        #
+        # An error is captured into the sidecar rather than raised, so a probe
+        # failure is reported as a missing measurement instead of killing a stage
+        # whose real work succeeded -- and the checker treats a missing probe as
+        # UNVERIFIED, never as a pass.
+        tf_probe = None
+        if run.get("teacher_forced_check"):
+            tf_probe = run_teacher_forced_probe(
+                engine, run, gen_ids, engine_input_ids,
+                world_size=world_size, local_rank=local_rank)
         trace = metrics.pop("per_token_trace", None)
         prof_summary = metrics.pop("_profiler_summary", None)
+        if local_rank == 0 and tf_probe is not None:
+            write_teacher_forced_sidecar(output_csv, run["run_id"], tf_probe)
         if local_rank == 0:
+            # No sidecar at all when the gap array is misaligned: a written
+            # sidecar is read later by the losslessness and cap-smoke stages,
+            # and one whose gaps are shifted is worse than a missing file.
+            tok_sidecar = None
+            if not alignment_error:
+                tok_sidecar = write_generated_tokens_sidecar(
+                    output_csv, run["run_id"], gen_ids, {
+                        **doc_prov,
+                        "engine_input_ids": engine_input_ids,
+                        "prompt_tokens": row.get("prompt_tokens"),
+                        "prompt_sha256": row.get("prompt_sha256"),
+                        "context_length": run.get("context_length"),
+                        "max_new_tokens": run.get("max_new_tokens"),
+                        "spec_steps": run.get("spec_steps"),
+                        "temperature": run.get("temperature", 1.0),
+                        "top_p": run.get("top_p", 1.0),
+                        "ignore_eos": bool(run.get("ignore_eos", False)),
+                        "token_gaps": token_gaps,
+                        # M3 — the top-k logits per emitted position, present only
+                        # when the run set dump_logits_topk. It has to be listed
+                        # HERE: this dict is the sidecar's whole schema, so a
+                        # metric the engine computes and this list omits is
+                        # silently dropped. That is exactly what happened on the
+                        # first 2026-10-10 pilot, where the run was configured
+                        # with dump_logits_topk=6 and the sidecar came back with
+                        # no token_topk at all, leaving the cross margin
+                        # "undetermined" for a divergence the run was built to
+                        # explain.
+                        "token_topk": metrics.get("token_topk"),
+                        # The numerics this run was measured under, so a comparison
+                        # against another engine can say what differs rather than
+                        # implying the two ran the same arithmetic. MEASURED on the
+                        # loaded models and the live cache, never read from the
+                        # config: the campaign's RASD cells run FP4 weights and an
+                        # NF4 KV cache while vLLM 0.6.3 has no NF4 KV path, and that
+                        # difference is why token agreement between them is
+                        # reported descriptively instead of scored.
+                        **numerics,
+                        "throughput_tps": row.get("throughput_tps"),
+                    })
+            if tok_sidecar is not None:
+                log.info("Wrote generated token ids: %s (%d tokens)",
+                         tok_sidecar, len(gen_ids))
             sidecar = write_per_token_sidecar(trace, output_csv, run["run_id"])
             if sidecar is not None:
                 log.info("Wrote per-position trace: %s (%d records)",
@@ -604,10 +1568,62 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
                          prof_summary["comm_us"]    / 1000,
                          prof_summary["idle_us"]    / 1000)
 
+        # Target quality beside acceptance (plan 4.3). Measured after the
+        # generation so a quality number always ships with its acceptance
+        # number; an acceptance figure alone cannot distinguish a healthy
+        # target from a broken one.
+        if run.get("measure_target_ppl") and continuation_ids:
+            try:
+                ppl, n_ppl = _measure_target_ppl(
+                    engine, prompt, continuation_ids, world_size, local_rank,
+                )
+                row["target_ppl"] = round(ppl, 6)
+                row["ppl_tokens"] = n_ppl
+            except Exception as _pe:  # noqa: BLE001
+                # A failed quality measurement must not discard an otherwise
+                # good generation, but it must be visible rather than blank.
+                row["target_ppl"] = ""
+                row["ppl_tokens"] = ""
+                row["error"] = f"target_ppl failed: {type(_pe).__name__}: {_pe}"
+                log.warning("target_ppl failed: %r", _pe)
+        # LAST COLLECTIVE IS DONE (the perplexity all-reduce above). Only now is
+        # it safe for one rank to abort: before this point, raising on rank 0
+        # would strand the other ranks inside that collective.
+        if alignment_error:
+            raise RuntimeError(alignment_error)
+        row["generated_tokens_sha256"] = (
+            hashlib.sha256(",".join(str(i) for i in gen_ids).encode()).hexdigest()
+            if gen_ids else ""
+        )
+        # Decode-only rate. The first token arrives at ttft, so the remaining
+        # `tokens_generated - 1` tokens are the post-prefill wall's product;
+        # either convention is defensible and both arms use this one.
+        # The sequence the engine actually held, as the ENGINE measured it --
+        # `int(generated_ids.shape[1])`, the length of the final sequence tensor.
+        #
+        # It is deliberately NOT `prompt_tokens + 1 + tokens_generated`. That
+        # expression is the identity the row is supposed to be checked AGAINST,
+        # so writing it here made the check a restatement of the row's own
+        # arithmetic: it could not fail, and it verified nothing. Taken from the
+        # engine, the check compares three independently obtained numbers -- the
+        # prompt length (from the tokenizer), the emitted ids (from the
+        # sidecar) and this one (from the tensor).
+        seq = metrics.get("sequence_tokens")
+        if seq is None:
+            # An engine that does not report it leaves the planned value in
+            # place, which the identity check will reject. Inventing a number
+            # here is what the check exists to prevent.
+            log.warning("engine reported no sequence_tokens for %s; the identity "
+                        "check will fail this row", run["run_id"])
+        else:
+            row["sequence_tokens"] = int(seq)
         row.update({
             "tokens_generated": metrics["tokens_generated"],
             "time_sec":         round(metrics["time_sec"], 4),
             "throughput_tps":   round(metrics["throughput_tps"], 2),
+            "decode_tps":       round(decode_rate_tps(metrics["tokens_generated"],
+                                                      metrics["time_sec"],
+                                                      metrics.get("ttft_ms")), 3),
             "acceptance_rate":  round(metrics["acceptance_rate"], 4),
             "mean_latency_ms":  round(metrics["mean_latency_ms"], 3),
             "ttft_ms":          round(metrics["ttft_ms"], 3),
@@ -633,10 +1649,26 @@ def _run_single_worker(run: dict, wandb_project: str, output_csv: str):
             err_dir.mkdir(parents=True, exist_ok=True)
             (err_dir / f"{run['run_id']}.traceback.txt").write_text(tb_str)
         if wb_run is not None:
-            import wandb; wb_run.finish(exit_code=1)
+            # Never let a wandb failure replace the exception being handled.
+            # This runs INSIDE `except`, and a raise here would lose both the
+            # original error and the CSV row that is still to be written below.
+            try:
+                import wandb; wb_run.finish(exit_code=1)
+            except Exception:                   # noqa: BLE001
+                pass
 
     # Write results BEFORE destroy_process_group — destroy can hang if peers
     # are slow to reach the same barrier, and we don't want to lose metrics.
+    # ENGINE PROVENANCE (R2), read from the live modules: see `_ring_engine_report`.
+    # Wrapped because a provenance read must never cost a good generation its row.
+    try:
+        row.update(_ring_engine_report(engine))
+    except Exception as _re:                                # noqa: BLE001
+        row["ring_layers_patched"] = ""
+        row["ring_report_error"] = f"{type(_re).__name__}: {_re}"
+    row["git_commit"] = _git_commit()
+    row["nccl_env"] = _nccl_env_report()
+
     if local_rank == 0:
         # mkdir -p the output_csv's parent so writing the .tmp file
         # doesn't FileNotFoundError on first-run output dirs that
@@ -679,8 +1711,20 @@ def execute_run(run: dict, wandb_project: str, output_csv: str,
 
     if nproc > 1:
         # torchrun spawns nproc processes, each gets RANK/LOCAL_RANK/WORLD_SIZE set
+        # Spawned through THIS interpreter, not through a `torchrun` looked up
+        # on PATH. `torchrun` from PATH is a different interpreter whenever PATH
+        # does not put this environment first, and the children then run against
+        # that interpreter's site-packages: the failure is a worker that dies
+        # with `ModuleNotFoundError: No module named 'transformers'` while the
+        # parent, which imported transformers perfectly well, reports only that
+        # the run errored. That happened on a validation pod on 2026-10-09, where
+        # a bare non-interactive ssh shell had a different PATH from the
+        # watcher's, and it is the kind of failure that costs a whole stage
+        # before anyone sees the real message.
+        # `python -m torch.distributed.run` is the documented equivalent of the
+        # `torchrun` console script.
         cmd = [
-            "torchrun",
+            sys.executable, "-m", "torch.distributed.run",
             f"--nproc_per_node={nproc}",
             "--master_port=29500",
             __file__,
@@ -766,6 +1810,74 @@ def _wait_gpu_idle(pause: float = 5.0):
 # Main
 # ---------------------------------------------------------------------------
 
+def apply_cli_to_runs(args, runs: list[dict]) -> None:
+    """CLI flags -> the run dicts. One function, so nothing can diverge.
+
+    This block used to live inside `main()`, which meant the rehearsal's stub had
+    to carry its own copy of the same logic. A copy of seven propagation rules is
+    a place for the rehearsal and the real run to disagree -- and the whole point
+    of the rehearsal is that they cannot. Both callers now share this, including:
+
+      * `--profile` (the per-run torch profiler wrap),
+      * prompt-source VALIDATION (`pg19` without `--prompt-pg19-meta` is a
+        configuration error, not a silently synthetic prompt),
+      * the RULER sidecar directory setup, which defaults to a path derived from
+        `--output`.
+    """
+    # Propagate the --log-per-token flag onto every run dict so the
+    # subprocess worker picks it up (each run is serialized via --_worker).
+    if args.log_per_token:
+        for r in runs:
+            r["log_per_token"] = True
+    if args.profile:
+        for r in runs:
+            r["profile"] = True
+    if args.save_generated_text:
+        for r in runs:
+            r["save_generated_text"] = True
+    if args.save_generated_tokens:
+        for r in runs:
+            r["save_generated_tokens"] = True
+    if args.dump_logits_topk:
+        for r in runs:
+            r["dump_logits_topk"] = int(args.dump_logits_topk)
+    if args.prompt_source != "synthetic":
+        if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
+            raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
+        # Default RULER sidecar dir is <output_csv_dir>/ruler/
+        ruler_dir = (args.ruler_sidecar_dir
+                     or str(Path(args.output).resolve().parent / "ruler"))
+        for r in runs:
+            r["prompt_source"] = args.prompt_source
+            if args.prompt_pg19_meta:
+                r["prompt_pg19_meta"] = args.prompt_pg19_meta
+            if args.prompt_source == "ruler_niah":
+                r["ruler_sidecar_dir"] = ruler_dir
+    if args.memory_trace:
+        for r in runs:
+            r["memory_trace"] = True
+            # Default sidecar dir is alongside the output csv:
+            #   <output_csv>/../memory_trace/<run_id>.rank<r>.json
+            r.setdefault(
+                "memory_trace_dir",
+                str(Path(args.output).parent / "memory_trace"),
+            )
+    if args.checkpoint_every > 0:
+        for r in runs:
+            # Per-run override wins; CLI flag is a default for runs that
+            # don't specify their own checkpoint_every in the YAML
+            r.setdefault("checkpoint_every", args.checkpoint_every)
+    # MLSys Phase 1/3 — draft isolation knobs. `setdefault` so a YAML level
+    # can pin its own value (arm configs are one-YAML-per-arm, so both
+    # routes work); the CLI flag acts as the grid-wide default.
+    if args.draft_window_cap is not None:
+        for r in runs:
+            r.setdefault("draft_window_cap", args.draft_window_cap)
+    if args.draft_dtype != "auto":
+        for r in runs:
+            r.setdefault("draft_dtype", args.draft_dtype)
+
+
 def main():
     parser = argparse.ArgumentParser(description="RASD ablation runner")
     parser.add_argument("--config",   default="configs/ablations.yml", help="Path to YAML config")
@@ -777,6 +1889,13 @@ def main():
     parser.add_argument("--resume",   action="store_true", help="Skip runs already in results CSV")
     parser.add_argument("--wandb-project", default="rasd-ablations", help="wandb project name")
     parser.add_argument("--output",   default=str(RESULTS_CSV), help="Output CSV path")
+    parser.add_argument("--stage-id", default=None,
+                        help="Identifier of the stage that owns --output, used "
+                             "to refuse writing a stage's results over an "
+                             "unrelated artifact's filename (f).")
+    parser.add_argument("--overwrite-stage", action="store_true",
+                        help="Deliberately replace --output even if it belongs "
+                             "to a different stage.")
     parser.add_argument("--nproc",    type=int, default=8,
                         help="GPUs per run (torchrun nproc_per_node). Use 1 for single-GPU. "
                              "Default 8 — required for ring attention A3/A4 ablations.")
@@ -837,12 +1956,44 @@ def main():
                         help="Directory to write per-run RULER needle metadata "
                              "JSONs (used by scripts/score_ruler_niah.py). "
                              "Defaults to <output_csv_dir>/ruler/.")
+    parser.add_argument("--save-generated-tokens", action="store_true",
+                        help="Write each run's raw generated token IDs to "
+                             "<output_csv_dir>/tokens/<run_id>.json. "
+                             "Losslessness is a token-level claim and decoded "
+                             "text is not injective, so the IDs must survive "
+                             "the run for the check to be possible at all. "
+                             "Default off so M3 replay stays byte-identical.")
+    parser.add_argument("--dump-logits-topk", type=int, default=0,
+                        help="Write the top-k (token, logit) pairs at every "
+                             "emitted position into the token sidecar. Needed to "
+                             "score a spec/target divergence on the CROSS margin: "
+                             "the per-arm top1-top2 gaps already recorded cannot "
+                             "decide a case where the arms rank different tokens "
+                             "at the top, which is 2 of the 10 real divergences. "
+                             "0 (default) keeps the sidecar unchanged.")
     parser.add_argument("--save-generated-text", action="store_true",
                         help="Write the decoded generated text from each run "
                              "to <output_csv_dir>/generated/<run_id>.txt. "
                              "Used by F5 (qualitative comparison table) and "
                              "F8 (low-acceptance error analysis). Default off "
                              "so M3 replay stays byte-identical.")
+    # --- MLSys experiment program (2026-10-04) ---
+    parser.add_argument("--draft-window-cap", type=int, default=None,
+                        help="Hard cap (tokens) on the draft model's context "
+                             "window. Default: the draft's native "
+                             "max_position_embeddings (exact M3/M4 behaviour). "
+                             "MLSys Phase 1 arm 2 uses 4096 to hold the draft "
+                             "at a 4k window while the target runs natively at "
+                             "128k. A YAML level may set its own "
+                             "`draft_window_cap`, which takes precedence.")
+    parser.add_argument("--draft-dtype", choices=["auto", "nf4", "bf16"],
+                        default="auto",
+                        help="Draft weight precision. 'auto' (default) follows "
+                             "the config's quantize_draft — i.e. M3/M4 "
+                             "behaviour. 'nf4' forces 4-bit NF4 (CUDA only). "
+                             "'bf16' forces unquantized bf16 draft weights. "
+                             "MLSys Phase 3 runs the same 64k cell both ways to "
+                             "isolate NF4 draft/target logit divergence.")
     # Internal: subprocess worker mode
     parser.add_argument("--_worker",  default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -851,66 +2002,34 @@ def main():
     if args._worker:
         run = json.loads(args._worker)
         output_csv = args.output
+        # NO COLLISION GUARD HERE. The worker writes only a per-run `.tmp`; the
+        # parent reads it and appends to the CSV. Guarding in the worker meant
+        # guarding a file this process does not write, with a stage id this
+        # process was never given (`--stage-id` is not in worker_args), so it
+        # refused the second row of every stage as the stage "unnamed".
         _run_single_worker(run, args.wandb_project, output_csv)
         return
 
     cfg        = load_config(args.config)
     all_runs   = build_run_configs(cfg, args.groups, args.debug, seed_filter=args.seeds)
-    # Propagate the --log-per-token flag onto every run dict so the
-    # subprocess worker picks it up (each run is serialized via --_worker).
-    if args.log_per_token:
-        for r in all_runs:
-            r["log_per_token"] = True
-    if args.profile:
-        for r in all_runs:
-            r["profile"] = True
-    if args.save_generated_text:
-        for r in all_runs:
-            r["save_generated_text"] = True
-    if args.prompt_source != "synthetic":
-        if args.prompt_source == "pg19" and not args.prompt_pg19_meta:
-            raise SystemExit("--prompt-source=pg19 requires --prompt-pg19-meta")
-        # Default RULER sidecar dir is <output_csv_dir>/ruler/
-        ruler_dir = (args.ruler_sidecar_dir
-                     or str(Path(args.output).resolve().parent / "ruler"))
-        for r in all_runs:
-            r["prompt_source"] = args.prompt_source
-            if args.prompt_pg19_meta:
-                r["prompt_pg19_meta"] = args.prompt_pg19_meta
-            if args.prompt_source == "ruler_niah":
-                r["ruler_sidecar_dir"] = ruler_dir
-    if args.memory_trace:
-        for r in all_runs:
-            r["memory_trace"] = True
-            # Default sidecar dir is alongside the output csv:
-            #   <output_csv>/../memory_trace/<run_id>.rank<r>.json
-            r.setdefault(
-                "memory_trace_dir",
-                str(Path(args.output).parent / "memory_trace"),
-            )
-    if args.checkpoint_every > 0:
-        for r in all_runs:
-            # Per-run override wins; CLI flag is a default for runs that
-            # don't specify their own checkpoint_every in the YAML
-            r.setdefault("checkpoint_every", args.checkpoint_every)
+    apply_cli_to_runs(args, all_runs)
     output_csv = Path(args.output)
 
     log.info("Total runs: %d", len(all_runs))
 
     if args.dry_run:
-        print(f"\n{'RUN ID':<35}  {'GROUP':<5}  {'SEED':>5}  CONFIG")
-        print("-" * 80)
-        for r in all_runs:
-            config_summary = (
-                f"draft={r['draft_model_name'].split('/')[-1]}  "
-                f"k={r['spec_steps']}  "
-                f"block={r['kv_block_size']}  "
-                f"prefetch={r['prefetch_depth']}  "
-                f"target={r['target_model_name'].split('/')[-1]}"
-            )
-            print(f"{r['run_id']:<35}  {r['group']:<5}  {r['seed']:>5}  {config_summary}")
-        print(f"\n{len(all_runs)} runs total.")
+        print(format_dry_run(all_runs))
         return
+
+    # The parent is the only writer of the CSV, and the only process that knows
+    # which stage is writing it and which level ids that stage will produce.
+    # The canary's id is included because the canary appends its row to this
+    # same file before the grid runs.
+    planned_level_ids = {r.get("level_id") for r in all_runs}
+    if cfg.get("canary"):
+        planned_level_ids.add(cfg["canary"].get("id"))
+    _guard_output_collision(output_csv, args.stage_id or "unnamed",
+                            planned_level_ids, overwrite=args.overwrite_stage)
 
     # ---- Canary run: execute default config before the full grid ----
     canary_cfg = cfg.get("canary")
@@ -941,12 +2060,20 @@ def main():
                 canary_run["log_per_token"] = True
             if args.save_generated_text:
                 canary_run["save_generated_text"] = True
+            if args.save_generated_tokens:
+                canary_run["save_generated_tokens"] = True
+            if args.dump_logits_topk:
+                canary_run["dump_logits_topk"] = int(args.dump_logits_topk)
             if args.memory_trace:
                 canary_run["memory_trace"] = True
                 canary_run.setdefault(
                     "memory_trace_dir",
                     str(Path(args.output).parent / "memory_trace"),
                 )
+            if args.draft_window_cap is not None:
+                canary_run.setdefault("draft_window_cap", args.draft_window_cap)
+            if args.draft_dtype != "auto":
+                canary_run.setdefault("draft_dtype", args.draft_dtype)
             if args.prompt_source != "synthetic":
                 canary_run["prompt_source"] = args.prompt_source
                 if args.prompt_pg19_meta:

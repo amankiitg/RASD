@@ -1,0 +1,6 @@
+reason : manifest aborted rc=1
+utc    : 2026-10-08T07:50:27Z
+instance: 12b6fc0e685544ae95449378951376a0
+region : us-east-1
+manifest_rc: 1
+host   : Amans-MacBook-Air.local

@@ -1,0 +1,14 @@
+\begin{tabular}{llrrrr}
+\toprule
+Context & Arm & \multicolumn{2}{c}{Decode s/token} & Speedup & $n$ \\
+\cmidrule(lr){3-4}
+ & & old ring & split-KV & & (cells) \\
+\midrule
+128k & spec & 1.4779 & \textbf{0.5275} & 2.80$\times$ & 3 \\
+128k & target-only & 3.4925 & \textbf{1.0596} & 3.30$\times$ & 1 \\
+512k & spec & 3.5344 & \textbf{0.9384} & 3.77$\times$ & 3 \\
+512k & target-only & 9.9900 & \textbf{2.3460} & 4.26$\times$ & 1 \\
+1M & spec & 6.0506 & \textbf{1.3830} & 4.38$\times$ & 13 \\
+1M & target-only & 17.0902 & \textbf{3.2107} & 5.32$\times$ & 2 \\
+\bottomrule
+\end{tabular}

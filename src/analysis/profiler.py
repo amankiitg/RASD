@@ -24,6 +24,8 @@ Phase 3.6 — this module just provides the primitive.
 from __future__ import annotations
 
 import contextlib
+import logging
+import os
 import json
 import time
 from pathlib import Path
@@ -231,6 +233,9 @@ def aggregate_events(events: Iterable, wall_time_us: float) -> Dict[str, float]:
 # Context manager
 # ---------------------------------------------------------------------------
 
+_LOG = logging.getLogger(__name__)
+
+
 class RoundProfiler:
     """Context-manager wrapper around torch.profiler.profile for Fig 3.
 
@@ -249,9 +254,30 @@ class RoundProfiler:
         enabled: bool = False,
         output_path: Optional[str | Path] = None,
         activities: Optional[list[ProfilerActivity]] = None,
+        ops_path: Optional[str | Path] = None,
+        trace_path: Optional[str | Path] = None,
+        rank: int = 0,
+        top: int = 30,
+        record_shapes: bool = False,
     ):
+        """`ops_path`/`trace_path` are the DECODE-DIAGNOSIS additions.
+
+        WHY THEY EXIST. The four-bucket summary answers "compute vs comm vs idle vs
+        other" but cannot answer "which op", which is the question a 3.3 s decode token
+        raises: a bucket total names no kernel. `key_averages()` already holds the per-op
+        breakdown and was being thrown away one line after it was computed; `ops_path`
+        writes it out, `trace_path` exports the chrome trace beside it. Both default to
+        None, so every existing call site produces a byte-identical summary and pays
+        nothing. `rank` is recorded in the sidecar because the profiler runs per rank and
+        two ranks' tables are otherwise indistinguishable.
+        """
         self.enabled = enabled
         self.output_path = Path(output_path) if output_path else None
+        self.ops_path = Path(ops_path) if ops_path else None
+        self.trace_path = Path(trace_path) if trace_path else None
+        self.rank = rank
+        self.top = top
+        self.record_shapes = record_shapes
         self.summary: Optional[Dict[str, float]] = None
         self._prof: Optional[profile] = None
         self._t_start: Optional[float] = None
@@ -270,7 +296,7 @@ class RoundProfiler:
         self._t_start = time.perf_counter()
         self._prof = profile(
             activities=self._activities,
-            record_shapes=False,
+            record_shapes=self.record_shapes,
             with_stack=False,
         )
         self._prof.__enter__()
@@ -289,10 +315,102 @@ class RoundProfiler:
                 self.output_path.parent.mkdir(parents=True, exist_ok=True)
                 with self.output_path.open("w") as f:
                     json.dump(self.summary, f, indent=2)
+            self._write_ops()
         finally:
             self._prof = None
             self._t_start = None
         return False
+
+    def _write_ops(self) -> None:
+        """Per-op tables and the chrome trace, when the caller asked for them.
+
+        SELF time by design: inclusive time would attribute the whole step to whichever
+        parent frame encloses it, which is what the four-bucket summary already does.
+        Both the CUDA and the CPU ranking are written, because the diagnosis has to tell
+        "the GPU is busy doing this" from "the host is stalling the GPU" and one ranking
+        cannot distinguish them.
+
+        Column names follow the torch version: 2.5 names the CUDA column
+        `self_device_time_total` (a CUDA and an XPU run are the same field), older versions
+        `self_cuda_time_total`. The field actually used is recorded in the JSON so a reader
+        never has to guess which vocabulary produced the numbers.
+        """
+        if self._prof is None:
+            return
+        if self.trace_path is not None:
+            # `export_chrome_trace` writes JSON TEXT and ignores the extension, so a
+            # ".json.gz" path produces an uncompressed file that claims to be gzipped --
+            # a trap for whoever opens it later. Export to a temporary plain file and
+            # compress it here, so the name matches the contents.
+            try:
+                import gzip
+                import tempfile
+                self.trace_path.parent.mkdir(parents=True, exist_ok=True)
+                if str(self.trace_path).endswith(".gz"):
+                    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+                        tmp = tf.name
+                    self._prof.export_chrome_trace(tmp)
+                    with open(tmp, "rb") as src, gzip.open(self.trace_path, "wb") as dst:
+                        dst.write(src.read())
+                    os.unlink(tmp)
+                else:
+                    self._prof.export_chrome_trace(str(self.trace_path))
+            except Exception as exc:                        # noqa: BLE001
+                _LOG.warning("chrome trace export failed: %s", exc)
+        if self.ops_path is None:
+            return
+        try:
+            events = list(self._prof.key_averages())
+        except Exception as exc:                            # noqa: BLE001
+            _LOG.warning("key_averages failed: %s", exc)
+            return
+        dev_field = "self_device_time_total"
+        if events and not hasattr(events[0], dev_field):
+            dev_field = "self_cuda_time_total"
+
+        def table(key: str):
+            rows = []
+            for e in events:
+                us = float(getattr(e, key, 0.0) or 0.0)
+                if us <= 0:
+                    continue
+                rows.append({
+                    "op": str(e.key),
+                    "us": round(us, 1),
+                    "s": round(us / 1e6, 4),
+                    "calls": int(getattr(e, "count", 0) or 0),
+                    "input_shapes": str(getattr(e, "input_shapes", "") or ""),
+                })
+            rows.sort(key=lambda r: r["us"], reverse=True)
+            total = sum(r["us"] for r in rows) or 1.0
+            for r in rows:
+                r["pct"] = round(r["us"] / total * 100, 2)
+            return rows, total
+
+        dev_rows, dev_total = table(dev_field)
+        cpu_rows, cpu_total = table("self_cpu_time_total")
+        # WHICH TABLE IS THE PRIMARY ONE. On the 8x pod both columns carry data. On a
+        # machine with no CUDA the device column exists and is all zeros, so a reader
+        # handed an empty `top_device` would think the profile failed. `primary_table`
+        # names the column that actually has rows, and `device_field_empty` says whether
+        # the CUDA column was measured at all -- the difference between "no GPU here" and
+        # "the GPU did nothing", which are very different findings.
+        payload = {
+            "rank": self.rank,
+            "device_field": dev_field,
+            "primary_table": "device" if dev_rows else "cpu",
+            "device_field_empty": not dev_rows,
+            "self_device_total_s": round(dev_total / 1e6, 4),
+            "self_cpu_total_s": round(cpu_total / 1e6, 4),
+            "distinct_ops": len(events),
+            "profile_wall_s": round((self.summary or {}).get("wall_us", 0.0) / 1e6, 4),
+            "top_device": dev_rows[: self.top],
+            "top_cpu": cpu_rows[: self.top],
+            "below_top_device": [r["op"] for r in dev_rows[self.top: self.top + 10]],
+        }
+        self.ops_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.ops_path.open("w") as f:
+            json.dump(payload, f, indent=1)
 
     def round_marker(self, label: str):
         """NVTX range marker at a verify-loop boundary.

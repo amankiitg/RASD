@@ -1,0 +1,74 @@
+# PHASE B: does the target-only path actually sample at T=0.7, or silently emit argmax?
+#
+# WHY THIS IS A SEPARATE, TINY SESSION. The code says it samples: rasd_inference.py:1725 seeds
+# the first generated token through `_sample(next_token_logit, cfg.temperature, cfg.top_p)`,
+# and `_sample` (rasd_inference.py:327-338) returns `logits.argmax` ONLY when
+# `temperature == 0.0`; otherwise it divides by T and draws with `torch.multinomial`. So at
+# T=0.7 the target-only path is a real sampler. That makes a statement the campaign has been
+# repeating -- "a target-only row emits the argmax per step and carries no sampling" -- WRONG,
+# and because it was used to justify reusing one target-only rate across seeds, it has to be
+# settled by measurement rather than by my reading of the code.
+#
+# THE TEST, and it is designed so that either outcome is conclusive:
+#   PBT_T07  T=0.7, seeds 42 and 123 -> if the two token streams are IDENTICAL, the sampler
+#            ignores the seed; combined with the next row that means argmax.
+#   PBT_T00  T=0.0, seed 42 by default -> if T=0.7's stream equals the T=0.0 stream, the
+#            T=0.7 path is argmax with extra steps.
+# 32 tokens, one book, 8k context: long enough that an identical stream cannot arise by
+# chance (the probability two independent 32-token draws agree is ~1e-20 at these entropies),
+# short enough to cost seconds.
+#
+# HARDWARE: one 1x A100. R10 permits 1x only for work that does not depend on the ring path,
+# and this is exactly that -- it measures which token is emitted, not how long a step takes.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 0
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  # BOTH SEEDS HERE, because a config's seed list lives in `defaults` and applies to every
+  # stage (run_experiment.py:590-612). The T=0.0 stage therefore also runs twice; its second
+  # row is redundant and is not quoted, which is cheaper than a second session for a check
+  # that costs seconds per row.
+  seeds: [42, 123]
+  log_per_token: true
+  save_generated_tokens: true
+  max_new_tokens: 32
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+
+PBT_T07:
+  name: pbt_t07
+  factor: temperature
+  levels:
+  - id: PBT_T07_8K
+    context_length: 8192
+    documents: [pg19_train_0]
+    temperature: 0.7
+    max_new_tokens: 32
+    checkpoint_every: 0
+    notes: 'T=0.7 target-only at 8k, seeds 42 and 123: identical streams mean the seed does not reach the sampler'
+
+PBT_T00:
+  name: pbt_t00
+  factor: temperature
+  levels:
+  - id: PBT_T00_8K
+    context_length: 8192
+    documents: [pg19_train_0]
+    temperature: 0.0
+    max_new_tokens: 32
+    checkpoint_every: 0
+    notes: 'T=0.0 greedy reference at 8k: if T=0.7 equals this, T=0.7 is argmax'

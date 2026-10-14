@@ -1,0 +1,1 @@
+2026-10-09T04:02:27Z LIVENESS name=engine_cap_smoke limit=15min idle=902s bytes=58582 reason=manifest.log-not-growing

@@ -33,8 +33,48 @@ class TestPerTokenRecord:
         )
         assert set(rec.keys()) == {
             "round_idx", "global_pos_start", "spec_steps",
-            "n_acc", "draft_tokens", "accepted",
+            "n_acc", "draft_tokens", "accepted", "ended_on_eos",
         }
+
+    def test_ended_on_eos_present_and_false_by_default(self):
+        """The EOS flag must exist on EVERY record, not just the last one, so
+        analysis never conflates "key absent" with "round did not end on EOS".
+        The verify loop flips it in place on the terminating round."""
+        rec = _build_per_token_record(
+            round_idx=0, global_pos_start=0, spec_steps=4, n_acc=4,
+            draft_seq=torch.tensor([[1, 2, 3, 4]]),
+            accepted=torch.tensor([[True, True, True, True]]),
+        )
+        assert "ended_on_eos" in rec
+        assert rec["ended_on_eos"] is False
+
+    def test_verify_loop_sets_ended_on_eos_before_break(self):
+        """Source-inspect the integration: the flag must be set on the trace
+        record inside the same branch that breaks the verify loop, and the
+        break must stay gated on `not cfg.ignore_eos` (B3)."""
+        from tests.source_guard_utils import (
+            assignment_precedes_break, call_gated_by,
+        )
+        # Ordering is the property: the flag is flipped on the terminating round
+        # and THEN the loop breaks. Asserting that by adjacency to a regex-captured
+        # `break` broke as soon as an unrelated statement was inserted between
+        # them, which reported a regression that had not happened.
+        assert assignment_precedes_break(
+            RASD_INF_SRC, 'per_token_trace[-1]["ended_on_eos"] = True',
+            guard_fragment="cfg.log_per_token",
+        ), (
+            "ended_on_eos must be flipped on the terminating round before break, "
+            "and the flip must be gated on cfg.log_per_token so non-traced runs "
+            "stay byte-identical"
+        )
+
+    def test_ignore_eos_suppresses_the_flag(self):
+        """With ignore_eos set the break never fires, so generation runs to
+        max_new_tokens and every record must keep ended_on_eos=False."""
+        assert re.search(
+            r"if \(not cfg\.ignore_eos\) and \(cur_token == self\.tokenizer\.eos_token_id\)\.all\(\):",
+            RASD_INF_SRC,
+        ), "B3 regression: the EOS break is no longer gated on ignore_eos"
 
     def test_values_round_trip(self):
         draft_seq = torch.tensor([[7, 8, 9, 10]])
@@ -150,23 +190,16 @@ class TestPerTokenTraceIntegration:
     def test_trace_append_inside_log_guard(self):
         """The append into per_token_trace must be inside `if cfg.log_per_token`
         otherwise a small allocation runs every round at no benefit."""
-        lines = RASD_INF_SRC.splitlines()
-        append_idx = next(
-            (i for i, ln in enumerate(lines)
-             if "per_token_trace.append(" in ln),
-            None,
-        )
-        assert append_idx is not None, (
+        from tests.source_guard_utils import call_gated_by
+        assert "per_token_trace.append(" in RASD_INF_SRC, (
             "C13 regression: per_token_trace.append( … ) not present — "
             "trace not being recorded inside the verify loop"
         )
-        # Walk backwards up to 8 lines for the cfg.log_per_token guard
-        found = False
-        for i in range(append_idx - 1, max(0, append_idx - 8), -1):
-            if re.match(r"\s*if cfg\.log_per_token:", lines[i]):
-                found = True
-                break
-        assert found, (
+        # Structural, not a fixed backwards window: an insertion between the
+        # guard and the call is not a regression, an unguarded call is.
+        assert call_gated_by(
+            RASD_INF_SRC, "per_token_trace.append(", "cfg.log_per_token"
+        ), (
             "C13 regression: per_token_trace.append is not gated by "
             "`if cfg.log_per_token:` — adds allocation cost when disabled"
         )

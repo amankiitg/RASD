@@ -1,0 +1,55 @@
+# Validation-only config. NOT a campaign stage, and not part of any allowlist.
+#
+# WHY IT EXISTS. The byte-level liveness watchdog on 2026-10-09 stopped a healthy
+# campaign because a decode ROW can be silent for its whole duration -- this
+# engine printed progress only at phase boundaries. The fix prints a
+# `[PROGRESS run=... round=... tokens=... elapsed=...]` line from inside both
+# decode loops every 60s, and it has to be shown working on a real GPU before the
+# next campaign is armed, because the failure it prevents is a false abort.
+#
+# WHAT IT IS SHAPED FOR, and why each choice is deliberate:
+#   * 8k context, 1B models, bf16 KV: the point is the DECODE LOOP, and this is
+#     the cheapest thing that runs the real loop for minutes rather than seconds.
+#     The campaign's own 128k/8B rows do not fit a 40GB card at one rank.
+#   * target == draft: still a real verify/accept/commit round; a separate draft
+#     only adds a download. Nothing about the heartbeat depends on the draft.
+#   * synthetic prompts: no PG-19 corpus on the box, and the prompt content is
+#     irrelevant to whether a progress line is written.
+#   * max_new_tokens 4096 (spec) and 8192 (target-only): measured on this card,
+#     1B models at 8k run at 33.5 tok/s (spec) and 65.6 tok/s (target-only), so
+#     the first attempt at 2048/512 finished in 60s and 9s -- short enough that
+#     only the round-0 line was emitted and the run proved nothing. These sizes
+#     put both rows at ~2 minutes, i.e. several heartbeat intervals. The
+#     target-only row is included because that is the arm that was silent for 70
+#     minutes in the stopped campaign.
+defaults:
+  target_model_name: meta-llama/Llama-3.2-1B
+  draft_model_name: meta-llama/Llama-3.2-1B
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  kv_quant: false
+  dtype: bfloat16
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  measure_target_ppl: false
+  prompt_source: synthetic
+
+VALIDATE:
+  name: validate_heartbeat
+  factor: context_length
+  levels:
+  - id: VAL_spec_8k
+    context_length: 8192
+    max_new_tokens: 4096
+    checkpoint_every: 0
+    notes: 'speculative arm: the loop that prints [PROGRESS] between rounds'
+  - id: VAL_targetonly_8k
+    context_length: 8192
+    max_new_tokens: 8192
+    spec_steps: 0
+    checkpoint_every: 0
+    notes: 'the arm that was silent for 70 min in the stopped campaign'

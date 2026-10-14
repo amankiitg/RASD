@@ -1,0 +1,4291 @@
+{
+  "tokenizer": "meta-llama/Llama-3.1-8B",
+  "split": "train",
+  "dataset": "emozilla/pg19",
+  "limit": 3000,
+  "min_chars": 600000,
+  "books_scanned": 3000,
+  "books_screened_out": 2465,
+  "books": [
+    {
+      "index": 0,
+      "title": "The Bible Both Testaments King James Version",
+      "url": "http://www.gutenberg.org/ebooks/10",
+      "publication_date": 1611,
+      "chars": 4332639,
+      "tokens": 1152439
+    },
+    {
+      "index": 1,
+      "title": "The Complete Works of William Shakespeare",
+      "url": "http://www.gutenberg.org/ebooks/100",
+      "publication_date": 1623,
+      "chars": 5443801,
+      "tokens": 1469935
+    },
+    {
+      "index": 40,
+      "title": "The Magnetic North by Elizabeth Robins",
+      "url": "http://www.gutenberg.org/ebooks/10038",
+      "publication_date": 1904,
+      "chars": 853322,
+      "tokens": 217079
+    },
+    {
+      "index": 41,
+      "title": "The Works of Aphra Behn Vol. 3",
+      "url": "http://www.gutenberg.org/ebooks/10039",
+      "publication_date": 1915,
+      "chars": 840188,
+      "tokens": 238328
+    },
+    {
+      "index": 42,
+      "title": "Divine Comedy Complete by Dante Alighieri",
+      "url": "http://www.gutenberg.org/ebooks/1004",
+      "publication_date": 1892,
+      "chars": 664486,
+      "tokens": 166948
+    },
+    {
+      "index": 57,
+      "title": "The Iron Game by Henry Francis Keenan",
+      "url": "http://www.gutenberg.org/ebooks/10062",
+      "publication_date": 1891,
+      "chars": 794016,
+      "tokens": 193895
+    },
+    {
+      "index": 59,
+      "title": "Beltane The Smith by Jeffery Farnol",
+      "url": "http://www.gutenberg.org/ebooks/10064",
+      "publication_date": 1915,
+      "chars": 984139,
+      "tokens": 262397
+    },
+    {
+      "index": 71,
+      "title": "Divine Comedy Complete by Dante Alighieri",
+      "url": "http://www.gutenberg.org/ebooks/1008",
+      "publication_date": 1814,
+      "chars": 872278,
+      "tokens": 240921
+    },
+    {
+      "index": 75,
+      "title": "The House of the Whispering Pines by Anna Katharine Green",
+      "url": "http://www.gutenberg.org/ebooks/10083",
+      "publication_date": 1910,
+      "chars": 610362,
+      "tokens": 146223
+    },
+    {
+      "index": 99,
+      "title": "The Great Events by Famous Historians Vol. 2 by Various",
+      "url": "http://www.gutenberg.org/ebooks/10114",
+      "publication_date": 1905,
+      "chars": 939022,
+      "tokens": 222358
+    },
+    {
+      "index": 100,
+      "title": "All Saints' Day and Other Sermons by Charles Kingsley",
+      "url": "http://www.gutenberg.org/ebooks/10116",
+      "publication_date": 1878,
+      "chars": 635509,
+      "tokens": 158501
+    },
+    {
+      "index": 110,
+      "title": "Great Events by Famous Historians Vol. 17 by Charles Francis Horne",
+      "url": "http://www.gutenberg.org/ebooks/10128",
+      "publication_date": 1905,
+      "chars": 899919,
+      "tokens": 205442
+    },
+    {
+      "index": 112,
+      "title": "The Works of Charles and Mary Lamb Vol. 3 Books for Children",
+      "url": "http://www.gutenberg.org/ebooks/10130",
+      "publication_date": 1809,
+      "chars": 1133295,
+      "tokens": 282151
+    },
+    {
+      "index": 115,
+      "title": "The Book of Household Management by Mrs. Isabella Beeton",
+      "url": "http://www.gutenberg.org/ebooks/10136",
+      "publication_date": 1861,
+      "chars": 3027972,
+      "tokens": 800945
+    },
+    {
+      "index": 125,
+      "title": "Home as Found by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/10149",
+      "publication_date": 1871,
+      "chars": 888563,
+      "tokens": 213010
+    },
+    {
+      "index": 126,
+      "title": "The Oregon Trail by Francis Parkman Jr.",
+      "url": "http://www.gutenberg.org/ebooks/1015",
+      "publication_date": 1847,
+      "chars": 722245,
+      "tokens": 170920
+    },
+    {
+      "index": 128,
+      "title": "The Great Events by Famous Historians Volume 5 by Various",
+      "url": "http://www.gutenberg.org/ebooks/10151",
+      "publication_date": 1905,
+      "chars": 886779,
+      "tokens": 209649
+    },
+    {
+      "index": 131,
+      "title": "English Poets of the Eighteenth Century by Various",
+      "url": "http://www.gutenberg.org/ebooks/10161",
+      "publication_date": 1737,
+      "chars": 618730,
+      "tokens": 163237
+    },
+    {
+      "index": 135,
+      "title": "Across the Zodiac by Percy Greg",
+      "url": "http://www.gutenberg.org/ebooks/10165",
+      "publication_date": 1880,
+      "chars": 938837,
+      "tokens": 217471
+    },
+    {
+      "index": 146,
+      "title": "The Poetical Works of William Wordsworth Volume 1",
+      "url": "http://www.gutenberg.org/ebooks/10219",
+      "publication_date": 1896,
+      "chars": 688033,
+      "tokens": 170482
+    },
+    {
+      "index": 148,
+      "title": "The Pilgrims of New England by Mrs. J. B. Webb",
+      "url": "http://www.gutenberg.org/ebooks/10222",
+      "publication_date": 1853,
+      "chars": 693468,
+      "tokens": 161801
+    },
+    {
+      "index": 152,
+      "title": "Bleak House by Charles Dickens",
+      "url": "http://www.gutenberg.org/ebooks/1023",
+      "publication_date": 1731,
+      "chars": 1941618,
+      "tokens": 484188
+    },
+    {
+      "index": 154,
+      "title": "The Wrecker by Robert Louis Stevenson and Lloyd Osbourne",
+      "url": "http://www.gutenberg.org/ebooks/1024",
+      "publication_date": 1892,
+      "chars": 765300,
+      "tokens": 191861
+    },
+    {
+      "index": 168,
+      "title": "Persian Literature Volume 1 Comprising The Shah Nameh",
+      "url": "http://www.gutenberg.org/ebooks/10315",
+      "publication_date": 1909,
+      "chars": 841450,
+      "tokens": 209648
+    },
+    {
+      "index": 179,
+      "title": "Fruitfulness by Emile Zola",
+      "url": "http://www.gutenberg.org/ebooks/10330",
+      "publication_date": 1900,
+      "chars": 979407,
+      "tokens": 233498
+    },
+    {
+      "index": 184,
+      "title": "A Select Collection of Old English Plays Vol. 7 (4th edn.) by Various",
+      "url": "http://www.gutenberg.org/ebooks/10336",
+      "publication_date": 1744,
+      "chars": 683337,
+      "tokens": 189427
+    },
+    {
+      "index": 188,
+      "title": "Great Events by Famous Historians Volume 21 by Various",
+      "url": "http://www.gutenberg.org/ebooks/10341",
+      "publication_date": 1914,
+      "chars": 892716,
+      "tokens": 200908
+    },
+    {
+      "index": 190,
+      "title": "The Works of Charles and Mary Lamb Vol. 2: Elia by Charles Lamb",
+      "url": "http://www.gutenberg.org/ebooks/10343",
+      "publication_date": 1833,
+      "chars": 1121991,
+      "tokens": 286840
+    },
+    {
+      "index": 191,
+      "title": "Domestic Manners of the Americans by Fanny Trollope",
+      "url": "http://www.gutenberg.org/ebooks/10345",
+      "publication_date": 1832,
+      "chars": 652965,
+      "tokens": 153940
+    },
+    {
+      "index": 193,
+      "title": "The Works of Samuel Johnson Volume 6 by Samuel Johnson",
+      "url": "http://www.gutenberg.org/ebooks/10350",
+      "publication_date": 1825,
+      "chars": 1051215,
+      "tokens": 244469
+    },
+    {
+      "index": 194,
+      "title": "The Works of Samuel Johnson Volume 10 by Samuel Johnson",
+      "url": "http://www.gutenberg.org/ebooks/10351",
+      "publication_date": 1766,
+      "chars": 1113447,
+      "tokens": 251787
+    },
+    {
+      "index": 195,
+      "title": "The Works of Samuel Johnson Volume 11 by Samuel Johnson",
+      "url": "http://www.gutenberg.org/ebooks/10352",
+      "publication_date": 1825,
+      "chars": 1121258,
+      "tokens": 252386
+    },
+    {
+      "index": 197,
+      "title": "Life Of Johnson Volume 4 of 6 by Boswell",
+      "url": "http://www.gutenberg.org/ebooks/10357",
+      "publication_date": 1784,
+      "chars": 1170695,
+      "tokens": 306032
+    },
+    {
+      "index": 204,
+      "title": "The Bravo by J. Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/10363",
+      "publication_date": 1831,
+      "chars": 794915,
+      "tokens": 190685
+    },
+    {
+      "index": 206,
+      "title": "Precaution by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/10365",
+      "publication_date": 1820,
+      "chars": 862185,
+      "tokens": 202076
+    },
+    {
+      "index": 209,
+      "title": "Memoir and Diary of John Yeardley Minister of the Gospel",
+      "url": "http://www.gutenberg.org/ebooks/10369",
+      "publication_date": 1860,
+      "chars": 837482,
+      "tokens": 196175
+    },
+    {
+      "index": 217,
+      "title": "At Love's Cost by Charles Garvice",
+      "url": "http://www.gutenberg.org/ebooks/10379",
+      "publication_date": 1909,
+      "chars": 808720,
+      "tokens": 202592
+    },
+    {
+      "index": 219,
+      "title": "Bible Stories and Religious Classics by Philip P. Wells",
+      "url": "http://www.gutenberg.org/ebooks/10380",
+      "publication_date": 1903,
+      "chars": 876653,
+      "tokens": 218039
+    },
+    {
+      "index": 220,
+      "title": "The History of a Crime by Victor Hugo",
+      "url": "http://www.gutenberg.org/ebooks/10381",
+      "publication_date": 1900,
+      "chars": 864635,
+      "tokens": 214119
+    },
+    {
+      "index": 227,
+      "title": "Missionary Travels and Researches in South Africa by David Livingstone",
+      "url": "http://www.gutenberg.org/ebooks/1039",
+      "publication_date": 1857,
+      "chars": 1722684,
+      "tokens": 418599
+    },
+    {
+      "index": 249,
+      "title": "The Story of Evolution by Joseph McCabe",
+      "url": "http://www.gutenberg.org/ebooks/1043",
+      "publication_date": 1912,
+      "chars": 626621,
+      "tokens": 143252
+    },
+    {
+      "index": 254,
+      "title": "Wyandotte by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/10434",
+      "publication_date": 1871,
+      "chars": 924410,
+      "tokens": 226400
+    },
+    {
+      "index": 261,
+      "title": "American Big Game in Its Haunts by Various",
+      "url": "http://www.gutenberg.org/ebooks/10445",
+      "publication_date": 1897,
+      "chars": 611892,
+      "tokens": 142932
+    },
+    {
+      "index": 268,
+      "title": "Boswell's Life Of Johnson Volume 5 by James Boswell",
+      "url": "http://www.gutenberg.org/ebooks/10451",
+      "publication_date": 1773,
+      "chars": 1134470,
+      "tokens": 298403
+    },
+    {
+      "index": 270,
+      "title": "A Practical Physiology by Albert F. Blaisdell",
+      "url": "http://www.gutenberg.org/ebooks/10453",
+      "publication_date": 1897,
+      "chars": 839648,
+      "tokens": 198725
+    },
+    {
+      "index": 277,
+      "title": "Journals of Australian Explorations by A C and F T Gregory",
+      "url": "http://www.gutenberg.org/ebooks/10461",
+      "publication_date": 1858,
+      "chars": 779011,
+      "tokens": 189762
+    },
+    {
+      "index": 282,
+      "title": "A Select Collection of Old English Plays Vol. VIII",
+      "url": "http://www.gutenberg.org/ebooks/10467",
+      "publication_date": 1744,
+      "chars": 653803,
+      "tokens": 178063
+    },
+    {
+      "index": 285,
+      "title": "The New Machiavelli by H. G. Wells",
+      "url": "http://www.gutenberg.org/ebooks/1047",
+      "publication_date": 1911,
+      "chars": 832214,
+      "tokens": 194186
+    },
+    {
+      "index": 286,
+      "title": "The World's Greatest Books Vol. 1 by Various",
+      "url": "http://www.gutenberg.org/ebooks/10471",
+      "publication_date": 1910,
+      "chars": 628885,
+      "tokens": 154111
+    },
+    {
+      "index": 292,
+      "title": "Our Churches and Chapels by Atticus",
+      "url": "http://www.gutenberg.org/ebooks/10479",
+      "publication_date": 1869,
+      "chars": 626923,
+      "tokens": 150454
+    },
+    {
+      "index": 298,
+      "title": "An English Garner by Various",
+      "url": "http://www.gutenberg.org/ebooks/10489",
+      "publication_date": 1890,
+      "chars": 750082,
+      "tokens": 189094
+    },
+    {
+      "index": 307,
+      "title": "The Bars of Iron by Ethel May Dell",
+      "url": "http://www.gutenberg.org/ebooks/10509",
+      "publication_date": 1916,
+      "chars": 848273,
+      "tokens": 210652
+    },
+    {
+      "index": 332,
+      "title": "The Sea Lions by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/10545",
+      "publication_date": 1860,
+      "chars": 936953,
+      "tokens": 224240
+    },
+    {
+      "index": 335,
+      "title": "A Romance of the Republic by Lydia Maria Francis Child",
+      "url": "http://www.gutenberg.org/ebooks/10549",
+      "publication_date": 1867,
+      "chars": 706312,
+      "tokens": 172504
+    },
+    {
+      "index": 336,
+      "title": "A Select Collection of Old English Plays Vol. 9 by Various",
+      "url": "http://www.gutenberg.org/ebooks/10550",
+      "publication_date": 1744,
+      "chars": 731311,
+      "tokens": 203447
+    },
+    {
+      "index": 337,
+      "title": "The Life of Marie Antoinette Queen of France by Charles Duke Yonge",
+      "url": "http://www.gutenberg.org/ebooks/10555",
+      "publication_date": 1876,
+      "chars": 1135524,
+      "tokens": 267008
+    },
+    {
+      "index": 340,
+      "title": "Martin Eden by Jack London",
+      "url": "http://www.gutenberg.org/ebooks/1056",
+      "publication_date": 1913,
+      "chars": 776118,
+      "tokens": 193272
+    },
+    {
+      "index": 341,
+      "title": "The Last of the Foresters by John Esten Cooke",
+      "url": "http://www.gutenberg.org/ebooks/10560",
+      "publication_date": 1856,
+      "chars": 615623,
+      "tokens": 154846
+    },
+    {
+      "index": 355,
+      "title": "The History of England Volume 1 by David Hume",
+      "url": "http://www.gutenberg.org/ebooks/10574",
+      "publication_date": 1762,
+      "chars": 1393451,
+      "tokens": 343503
+    },
+    {
+      "index": 357,
+      "title": "International Short Stories: French by Various",
+      "url": "http://www.gutenberg.org/ebooks/10577",
+      "publication_date": 1910,
+      "chars": 644612,
+      "tokens": 156591
+    },
+    {
+      "index": 363,
+      "title": "Holland by Thomas Colley Grattan",
+      "url": "http://www.gutenberg.org/ebooks/10583",
+      "publication_date": 1899,
+      "chars": 786971,
+      "tokens": 177518
+    },
+    {
+      "index": 378,
+      "title": "A General History and Collection of Voyages and Travels Vol. 1",
+      "url": "http://www.gutenberg.org/ebooks/10600",
+      "publication_date": 1824,
+      "chars": 1270469,
+      "tokens": 310144
+    },
+    {
+      "index": 385,
+      "title": "English Literature by William J. Long",
+      "url": "http://www.gutenberg.org/ebooks/10609",
+      "publication_date": 1909,
+      "chars": 1284515,
+      "tokens": 307208
+    },
+    {
+      "index": 387,
+      "title": "Letters and Journals of James Eighth Earl of Elgin",
+      "url": "http://www.gutenberg.org/ebooks/10610",
+      "publication_date": 1872,
+      "chars": 1103920,
+      "tokens": 255826
+    },
+    {
+      "index": 391,
+      "title": "An Essay Concerning Humane Understanding Volume 1 by John Locke",
+      "url": "http://www.gutenberg.org/ebooks/10615",
+      "publication_date": 1690,
+      "chars": 835069,
+      "tokens": 193463
+    },
+    {
+      "index": 392,
+      "title": "An Essay Concerning Humane Understanding Volume 2 by John Locke",
+      "url": "http://www.gutenberg.org/ebooks/10616",
+      "publication_date": 1690,
+      "chars": 705895,
+      "tokens": 162036
+    },
+    {
+      "index": 397,
+      "title": "Concise Dictionary of Middle English by A. L. Mayhew",
+      "url": "http://www.gutenberg.org/ebooks/10625",
+      "publication_date": 1888,
+      "chars": 1173429,
+      "tokens": 518365
+    },
+    {
+      "index": 404,
+      "title": "Halleck's New English Literature by Reuben P. Halleck",
+      "url": "http://www.gutenberg.org/ebooks/10631",
+      "publication_date": 1740,
+      "chars": 1036655,
+      "tokens": 257468
+    },
+    {
+      "index": 406,
+      "title": "The History of the Rise Progress and Accomplishment",
+      "url": "http://www.gutenberg.org/ebooks/10633",
+      "publication_date": 1839,
+      "chars": 1375358,
+      "tokens": 317137
+    },
+    {
+      "index": 407,
+      "title": "Stories from the Italian Poets With Lives of the Writers",
+      "url": "http://www.gutenberg.org/ebooks/10635",
+      "publication_date": 1846,
+      "chars": 601524,
+      "tokens": 153825
+    },
+    {
+      "index": 414,
+      "title": "The Worlds Greatest Books by Various",
+      "url": "http://www.gutenberg.org/ebooks/10643",
+      "publication_date": 1910,
+      "chars": 616960,
+      "tokens": 152345
+    },
+    {
+      "index": 417,
+      "title": "Beacon Lights of History Volume XIII by John Lord",
+      "url": "http://www.gutenberg.org/ebooks/10648",
+      "publication_date": 1902,
+      "chars": 604853,
+      "tokens": 141398
+    },
+    {
+      "index": 418,
+      "title": "Beacon Lights of History Volume 14 by John Lord",
+      "url": "http://www.gutenberg.org/ebooks/10649",
+      "publication_date": 1902,
+      "chars": 631805,
+      "tokens": 143617
+    },
+    {
+      "index": 420,
+      "title": "Autobiography of Sir George Biddell Airy by George Biddell Airy",
+      "url": "http://www.gutenberg.org/ebooks/10655",
+      "publication_date": 1896,
+      "chars": 845550,
+      "tokens": 197853
+    },
+    {
+      "index": 421,
+      "title": "Hilda Lessways by Arnold Bennett",
+      "url": "http://www.gutenberg.org/ebooks/10658",
+      "publication_date": 1911,
+      "chars": 614444,
+      "tokens": 149101
+    },
+    {
+      "index": 426,
+      "title": "The Night Land by William Hope Hodgson",
+      "url": "http://www.gutenberg.org/ebooks/10662",
+      "publication_date": 1912,
+      "chars": 986643,
+      "tokens": 249643
+    },
+    {
+      "index": 430,
+      "title": "The War and Democracy by R. W. Seton-Watson J. Dover Wilson",
+      "url": "http://www.gutenberg.org/ebooks/10668",
+      "publication_date": 1915,
+      "chars": 720116,
+      "tokens": 162957
+    },
+    {
+      "index": 431,
+      "title": "At Last by Charles Kingsley",
+      "url": "http://www.gutenberg.org/ebooks/10669",
+      "publication_date": 1871,
+      "chars": 877258,
+      "tokens": 219436
+    },
+    {
+      "index": 432,
+      "title": "Personal Memoirs of U. S. Grant Vol. 1",
+      "url": "http://www.gutenberg.org/ebooks/1067",
+      "publication_date": 1885,
+      "chars": 731946,
+      "tokens": 171849
+    },
+    {
+      "index": 437,
+      "title": "The Reign of Greed by Jose Rizal",
+      "url": "http://www.gutenberg.org/ebooks/10676",
+      "publication_date": 1912,
+      "chars": 670757,
+      "tokens": 160180
+    },
+    {
+      "index": 440,
+      "title": "Personal Memoirs of U. S. Grant Vol. 2",
+      "url": "http://www.gutenberg.org/ebooks/1068",
+      "publication_date": 1885,
+      "chars": 884284,
+      "tokens": 207205
+    },
+    {
+      "index": 443,
+      "title": "Select Speeches of Kossuth",
+      "url": "http://www.gutenberg.org/ebooks/10691",
+      "publication_date": 1848,
+      "chars": 903290,
+      "tokens": 205571
+    },
+    {
+      "index": 444,
+      "title": "A Life of Gen. Robert E. Lee by John Esten Cooke",
+      "url": "http://www.gutenberg.org/ebooks/10692",
+      "publication_date": 1876,
+      "chars": 1021651,
+      "tokens": 232589
+    },
+    {
+      "index": 445,
+      "title": "Political Diary 1828-1830 Volume 2 by Edward Law",
+      "url": "http://www.gutenberg.org/ebooks/10693",
+      "publication_date": 1881,
+      "chars": 635088,
+      "tokens": 149769
+    },
+    {
+      "index": 450,
+      "title": "Character Writings of the 17th Century by Various",
+      "url": "http://www.gutenberg.org/ebooks/10699",
+      "publication_date": 1689,
+      "chars": 905222,
+      "tokens": 225763
+    },
+    {
+      "index": 451,
+      "title": "Far from the Madding Crowd by Thomas Hardy",
+      "url": "http://www.gutenberg.org/ebooks/107",
+      "publication_date": 1874,
+      "chars": 779070,
+      "tokens": 194854
+    },
+    {
+      "index": 452,
+      "title": "The History of England from the First Invasion by the Romans",
+      "url": "http://www.gutenberg.org/ebooks/10700",
+      "publication_date": 1912,
+      "chars": 1275909,
+      "tokens": 314328
+    },
+    {
+      "index": 453,
+      "title": "The History of Rome Vol. 1 by Theodor Mommsen",
+      "url": "http://www.gutenberg.org/ebooks/10701",
+      "publication_date": 1895,
+      "chars": 653147,
+      "tokens": 153780
+    },
+    {
+      "index": 454,
+      "title": "The History Of Rome Vol. 3 by Theodor Mommsen",
+      "url": "http://www.gutenberg.org/ebooks/10703",
+      "publication_date": 1895,
+      "chars": 1211690,
+      "tokens": 286022
+    },
+    {
+      "index": 455,
+      "title": "The History Of Rome Vol. 4 by Theodor Mommsen",
+      "url": "http://www.gutenberg.org/ebooks/10704",
+      "publication_date": 1903,
+      "chars": 1219288,
+      "tokens": 286394
+    },
+    {
+      "index": 456,
+      "title": "The History Of Rome Vol. 5 by Theodor Mommsen",
+      "url": "http://www.gutenberg.org/ebooks/10705",
+      "publication_date": 1903,
+      "chars": 1581808,
+      "tokens": 362481
+    },
+    {
+      "index": 462,
+      "title": "White Jacket by Herman Melville",
+      "url": "http://www.gutenberg.org/ebooks/10712",
+      "publication_date": 1892,
+      "chars": 818858,
+      "tokens": 202902
+    },
+    {
+      "index": 468,
+      "title": "Doctor Pascal by Emile Zola",
+      "url": "http://www.gutenberg.org/ebooks/10720",
+      "publication_date": 1893,
+      "chars": 667742,
+      "tokens": 159361
+    },
+    {
+      "index": 479,
+      "title": "Studies in Civics by James T. McCleary",
+      "url": "http://www.gutenberg.org/ebooks/10733",
+      "publication_date": 1897,
+      "chars": 736693,
+      "tokens": 174591
+    },
+    {
+      "index": 491,
+      "title": "The Story of the Champions of the Round Table by Howard Pyle",
+      "url": "http://www.gutenberg.org/ebooks/10745",
+      "publication_date": 1905,
+      "chars": 670424,
+      "tokens": 169610
+    },
+    {
+      "index": 503,
+      "title": "Enquire Within Upon Everything by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/10766",
+      "publication_date": 1894,
+      "chars": 1809066,
+      "tokens": 444418
+    },
+    {
+      "index": 504,
+      "title": "A Wanderer in Florence by E. V. Lucas",
+      "url": "http://www.gutenberg.org/ebooks/10769",
+      "publication_date": 1912,
+      "chars": 657942,
+      "tokens": 162234
+    },
+    {
+      "index": 506,
+      "title": "The Former Philippines thru Foreign Eyes by Toms de Comyn",
+      "url": "http://www.gutenberg.org/ebooks/10770",
+      "publication_date": 1819,
+      "chars": 1312355,
+      "tokens": 302815
+    },
+    {
+      "index": 524,
+      "title": "The Life and Opinions of Tristram Shandy Gentleman by Laurence Sterne",
+      "url": "http://www.gutenberg.org/ebooks/1079",
+      "publication_date": 1759,
+      "chars": 1030526,
+      "tokens": 266050
+    },
+    {
+      "index": 535,
+      "title": "The Return of Sherlock Holmes by Arthur Conan Doyle",
+      "url": "http://www.gutenberg.org/ebooks/108",
+      "publication_date": 1905,
+      "chars": 609300,
+      "tokens": 147520
+    },
+    {
+      "index": 537,
+      "title": "The Anatomy of Melancholy by Democritus Junior",
+      "url": "http://www.gutenberg.org/ebooks/10800",
+      "publication_date": 1621,
+      "chars": 3377013,
+      "tokens": 968232
+    },
+    {
+      "index": 538,
+      "title": "Coleridge's Literary Remains Volume 4 by Samuel Taylor Coleridge",
+      "url": "http://www.gutenberg.org/ebooks/10801",
+      "publication_date": 1839,
+      "chars": 646492,
+      "tokens": 159661
+    },
+    {
+      "index": 539,
+      "title": "General History and Collection of Voyages and Travels Vol. 2",
+      "url": "http://www.gutenberg.org/ebooks/10803",
+      "publication_date": 1824,
+      "chars": 1272461,
+      "tokens": 307234
+    },
+    {
+      "index": 543,
+      "title": "Constitutional History of England From 1760 to 1860",
+      "url": "http://www.gutenberg.org/ebooks/10807",
+      "publication_date": 1882,
+      "chars": 1056897,
+      "tokens": 236862
+    },
+    {
+      "index": 545,
+      "title": "Dead Souls by Nikolai Vasilievich Gogol",
+      "url": "http://www.gutenberg.org/ebooks/1081",
+      "publication_date": 1842,
+      "chars": 810269,
+      "tokens": 196526
+    },
+    {
+      "index": 549,
+      "title": "Legends Tales and Poems by Gustavo Adolfo Becquer",
+      "url": "http://www.gutenberg.org/ebooks/10814",
+      "publication_date": 1907,
+      "chars": 657903,
+      "tokens": 201224
+    },
+    {
+      "index": 552,
+      "title": "Sport and Work on the Nepaul Frontier by James Inglis",
+      "url": "http://www.gutenberg.org/ebooks/10818",
+      "publication_date": 1878,
+      "chars": 614420,
+      "tokens": 149990
+    },
+    {
+      "index": 555,
+      "title": "Discourses on the First Decade of Titus Livius by Niccolo Machiavelli",
+      "url": "http://www.gutenberg.org/ebooks/10827",
+      "publication_date": 1883,
+      "chars": 799874,
+      "tokens": 183430
+    },
+    {
+      "index": 556,
+      "title": "Roman History Books 1-3 by Titus Livius",
+      "url": "http://www.gutenberg.org/ebooks/10828",
+      "publication_date": 1904,
+      "chars": 637184,
+      "tokens": 150096
+    },
+    {
+      "index": 562,
+      "title": "Dr. Johnson's Works: Life Poems and Tales Vol. 1 by Samuel Johnson",
+      "url": "http://www.gutenberg.org/ebooks/10835",
+      "publication_date": 1777,
+      "chars": 855545,
+      "tokens": 216299
+    },
+    {
+      "index": 577,
+      "title": "The Works of Charles and Mary Lamb Vol. 6 Letters 1821-1842",
+      "url": "http://www.gutenberg.org/ebooks/10851",
+      "publication_date": 1821,
+      "chars": 1026443,
+      "tokens": 259777
+    },
+    {
+      "index": 584,
+      "title": "A Compilation of the Messages and Papers of the Presidents",
+      "url": "http://www.gutenberg.org/ebooks/10858",
+      "publication_date": 1829,
+      "chars": 638093,
+      "tokens": 136679
+    },
+    {
+      "index": 587,
+      "title": "Paris under the Commune by John Leighton",
+      "url": "http://www.gutenberg.org/ebooks/10861",
+      "publication_date": 1871,
+      "chars": 774509,
+      "tokens": 194396
+    },
+    {
+      "index": 591,
+      "title": "The Dolorous Passion of Our Lord Jesus Christ",
+      "url": "http://www.gutenberg.org/ebooks/10866",
+      "publication_date": 1904,
+      "chars": 702754,
+      "tokens": 164388
+    },
+    {
+      "index": 608,
+      "title": "Dio's Rome Vol. 4 by Cassius Dio",
+      "url": "http://www.gutenberg.org/ebooks/10883",
+      "publication_date": 1905,
+      "chars": 669990,
+      "tokens": 158168
+    },
+    {
+      "index": 609,
+      "title": "A Publisher and His Friends by Samuel Smiles",
+      "url": "http://www.gutenberg.org/ebooks/10884",
+      "publication_date": 1891,
+      "chars": 893325,
+      "tokens": 218266
+    },
+    {
+      "index": 617,
+      "title": "Dawn by H. Rider Haggard",
+      "url": "http://www.gutenberg.org/ebooks/10892",
+      "publication_date": 1884,
+      "chars": 1032191,
+      "tokens": 251533
+    },
+    {
+      "index": 630,
+      "title": "Phantom Fortune A Novel by M. E. Braddon",
+      "url": "http://www.gutenberg.org/ebooks/10905",
+      "publication_date": 1883,
+      "chars": 1009069,
+      "tokens": 247645
+    },
+    {
+      "index": 631,
+      "title": "The History of Rome; Vol. 2 Books 9 to 26 by Titus Livius",
+      "url": "http://www.gutenberg.org/ebooks/10907",
+      "publication_date": 1868,
+      "chars": 1266697,
+      "tokens": 299505
+    },
+    {
+      "index": 632,
+      "title": "Manual for Noncommissioned Officers and Privates of Infantry",
+      "url": "http://www.gutenberg.org/ebooks/10908",
+      "publication_date": 1917,
+      "chars": 635841,
+      "tokens": 152198
+    },
+    {
+      "index": 641,
+      "title": "A Compilation of the Messages and Papers of the Presidents",
+      "url": "http://www.gutenberg.org/ebooks/10919",
+      "publication_date": 1897,
+      "chars": 873953,
+      "tokens": 187469
+    },
+    {
+      "index": 643,
+      "title": "Two Years Ago Volume 1 by Charles Kinglsey",
+      "url": "http://www.gutenberg.org/ebooks/10920",
+      "publication_date": 1901,
+      "chars": 627629,
+      "tokens": 159050
+    },
+    {
+      "index": 647,
+      "title": "The Lands of the Saracen by Bayard Taylor",
+      "url": "http://www.gutenberg.org/ebooks/10924",
+      "publication_date": 1863,
+      "chars": 740539,
+      "tokens": 181453
+    },
+    {
+      "index": 654,
+      "title": "Over the Pass by Frederick Palmer",
+      "url": "http://www.gutenberg.org/ebooks/10932",
+      "publication_date": 1912,
+      "chars": 635823,
+      "tokens": 153771
+    },
+    {
+      "index": 657,
+      "title": "The Wonderful Adventures of Nils by Selma Lagerloef",
+      "url": "http://www.gutenberg.org/ebooks/10935",
+      "publication_date": 1907,
+      "chars": 828653,
+      "tokens": 203556
+    },
+    {
+      "index": 660,
+      "title": "The Headsman by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/10938",
+      "publication_date": 1832,
+      "chars": 904908,
+      "tokens": 213144
+    },
+    {
+      "index": 661,
+      "title": "After Waterloo: Reminiscences of European Travel",
+      "url": "http://www.gutenberg.org/ebooks/10939",
+      "publication_date": 1844,
+      "chars": 869351,
+      "tokens": 211940
+    },
+    {
+      "index": 663,
+      "title": "Manners Custom and Dress During the Middle Ages and During",
+      "url": "http://www.gutenberg.org/ebooks/10940",
+      "publication_date": 1874,
+      "chars": 950575,
+      "tokens": 227340
+    },
+    {
+      "index": 670,
+      "title": "The Light of Western Stars by Zane Grey",
+      "url": "http://www.gutenberg.org/ebooks/1095",
+      "publication_date": 1914,
+      "chars": 694098,
+      "tokens": 172823
+    },
+    {
+      "index": 674,
+      "title": "The Gospels in the Second Century by William Sanday",
+      "url": "http://www.gutenberg.org/ebooks/10955",
+      "publication_date": 1876,
+      "chars": 713932,
+      "tokens": 187165
+    },
+    {
+      "index": 688,
+      "title": "The Late Mrs. Null by Frank Richard Stockton",
+      "url": "http://www.gutenberg.org/ebooks/10973",
+      "publication_date": 1886,
+      "chars": 603009,
+      "tokens": 148638
+    },
+    {
+      "index": 694,
+      "title": "Lady John Russell by Desmond MacCarthy and Agatha Russell",
+      "url": "http://www.gutenberg.org/ebooks/10980",
+      "publication_date": 1910,
+      "chars": 744755,
+      "tokens": 178725
+    },
+    {
+      "index": 697,
+      "title": "Growth of the Soil by Knut Hamsun",
+      "url": "http://www.gutenberg.org/ebooks/10984",
+      "publication_date": 1917,
+      "chars": 761754,
+      "tokens": 196988
+    },
+    {
+      "index": 698,
+      "title": "The Infant System by Samuel Wilderspin",
+      "url": "http://www.gutenberg.org/ebooks/10985",
+      "publication_date": 1852,
+      "chars": 698868,
+      "tokens": 168295
+    },
+    {
+      "index": 704,
+      "title": "Selected Speeches on British Foreign Policy 1738-1914 by Edgar Jones",
+      "url": "http://www.gutenberg.org/ebooks/10990",
+      "publication_date": 1914,
+      "chars": 909637,
+      "tokens": 204880
+    },
+    {
+      "index": 705,
+      "title": "Dogs and All About Them by Robert Leighton",
+      "url": "http://www.gutenberg.org/ebooks/10991",
+      "publication_date": 1910,
+      "chars": 714105,
+      "tokens": 172275
+    },
+    {
+      "index": 709,
+      "title": "Two Years Ago Volume 2 by Charles Kingsley",
+      "url": "http://www.gutenberg.org/ebooks/10995",
+      "publication_date": 1901,
+      "chars": 604878,
+      "tokens": 154046
+    },
+    {
+      "index": 712,
+      "title": "A Catechism of the Steam Engine by John Bourne",
+      "url": "http://www.gutenberg.org/ebooks/10998",
+      "publication_date": 1884,
+      "chars": 827014,
+      "tokens": 196749
+    },
+    {
+      "index": 715,
+      "title": "Tess of the d'Urbervilles by Thomas Hardy",
+      "url": "http://www.gutenberg.org/ebooks/110",
+      "publication_date": 1891,
+      "chars": 838005,
+      "tokens": 206615
+    },
+    {
+      "index": 718,
+      "title": "The Spectator Vol. 2 of 3 Issues 203-416 by Joseph Addison",
+      "url": "http://www.gutenberg.org/ebooks/11010",
+      "publication_date": 1891,
+      "chars": 1812174,
+      "tokens": 454079
+    },
+    {
+      "index": 721,
+      "title": "Letters of a Traveller by William Cullen Bryant",
+      "url": "http://www.gutenberg.org/ebooks/11013",
+      "publication_date": 1850,
+      "chars": 601092,
+      "tokens": 142819
+    },
+    {
+      "index": 724,
+      "title": "Port of Adventure by Charles N. Williamson and Alice M. Williamson",
+      "url": "http://www.gutenberg.org/ebooks/11016",
+      "publication_date": 1913,
+      "chars": 611871,
+      "tokens": 151722
+    },
+    {
+      "index": 725,
+      "title": "Samuel F. B. Morse His Letters and Journals",
+      "url": "http://www.gutenberg.org/ebooks/11017",
+      "publication_date": 1914,
+      "chars": 733162,
+      "tokens": 173555
+    },
+    {
+      "index": 726,
+      "title": "Samuel F. B. Morse His Letters and Journals",
+      "url": "http://www.gutenberg.org/ebooks/11018",
+      "publication_date": 1914,
+      "chars": 976826,
+      "tokens": 240785
+    },
+    {
+      "index": 728,
+      "title": "A Compilation of the Messages and Papers of the Presidents",
+      "url": "http://www.gutenberg.org/ebooks/11021",
+      "publication_date": 1911,
+      "chars": 706898,
+      "tokens": 151796
+    },
+    {
+      "index": 737,
+      "title": "A Compilation of the Messages and Papers of the Presidents",
+      "url": "http://www.gutenberg.org/ebooks/11034",
+      "publication_date": 1911,
+      "chars": 1079234,
+      "tokens": 232879
+    },
+    {
+      "index": 738,
+      "title": "A Woman's Journey Round the World by Ida Pfeiffer",
+      "url": "http://www.gutenberg.org/ebooks/11039",
+      "publication_date": 1850,
+      "chars": 1064701,
+      "tokens": 255992
+    },
+    {
+      "index": 742,
+      "title": "Taquisara by F. Marion Crawford",
+      "url": "http://www.gutenberg.org/ebooks/11050",
+      "publication_date": 1896,
+      "chars": 805357,
+      "tokens": 193830
+    },
+    {
+      "index": 744,
+      "title": "The Custom of the Country by Edith Wharton",
+      "url": "http://www.gutenberg.org/ebooks/11052",
+      "publication_date": 1913,
+      "chars": 788006,
+      "tokens": 189723
+    },
+    {
+      "index": 765,
+      "title": "The Orations of Marcus Tullius Cicero Vol. 4 by Cicero",
+      "url": "http://www.gutenberg.org/ebooks/11080",
+      "publication_date": 1903,
+      "chars": 1243745,
+      "tokens": 294129
+    },
+    {
+      "index": 766,
+      "title": "Old Saint Paul's by William Harrison Ainsworth",
+      "url": "http://www.gutenberg.org/ebooks/11082",
+      "publication_date": 1666,
+      "chars": 1126567,
+      "tokens": 272926
+    },
+    {
+      "index": 780,
+      "title": "History Of Modern Philosophy by Richard Falckenberg",
+      "url": "http://www.gutenberg.org/ebooks/11100",
+      "publication_date": 1892,
+      "chars": 1503202,
+      "tokens": 352511
+    },
+    {
+      "index": 795,
+      "title": "Personal Memoirs Of A Residence Of Thirty Years With The Indian",
+      "url": "http://www.gutenberg.org/ebooks/11119",
+      "publication_date": 1851,
+      "chars": 1619026,
+      "tokens": 391641
+    },
+    {
+      "index": 798,
+      "title": "Choice Specimens of American Literature And Literary Reader",
+      "url": "http://www.gutenberg.org/ebooks/11122",
+      "publication_date": 1874,
+      "chars": 995340,
+      "tokens": 241944
+    },
+    {
+      "index": 799,
+      "title": "The German Classics of The Nineteenth and Twentieth Centuries",
+      "url": "http://www.gutenberg.org/ebooks/11123",
+      "publication_date": 1913,
+      "chars": 725175,
+      "tokens": 181727
+    },
+    {
+      "index": 801,
+      "title": "A Compilation of the Messages and Papers of the Presidents",
+      "url": "http://www.gutenberg.org/ebooks/11125",
+      "publication_date": 1857,
+      "chars": 646895,
+      "tokens": 139727
+    },
+    {
+      "index": 825,
+      "title": "A Cotswold Village by J. Arthur Gibbs",
+      "url": "http://www.gutenberg.org/ebooks/11160",
+      "publication_date": 1918,
+      "chars": 648723,
+      "tokens": 159447
+    },
+    {
+      "index": 838,
+      "title": "The World's Greatest Books Vol. 6 by Various",
+      "url": "http://www.gutenberg.org/ebooks/11180",
+      "publication_date": 1910,
+      "chars": 613567,
+      "tokens": 151989
+    },
+    {
+      "index": 857,
+      "title": "Narrative of a Survey of the Intertropical and Western Coasts",
+      "url": "http://www.gutenberg.org/ebooks/11203",
+      "publication_date": 1825,
+      "chars": 611040,
+      "tokens": 143597
+    },
+    {
+      "index": 858,
+      "title": "Diseases of the Horse's Foot by Harry Caulton Reeks",
+      "url": "http://www.gutenberg.org/ebooks/11204",
+      "publication_date": 1906,
+      "chars": 821858,
+      "tokens": 195166
+    },
+    {
+      "index": 861,
+      "title": "Modern India by William Eleroy Curtis",
+      "url": "http://www.gutenberg.org/ebooks/11212",
+      "publication_date": 1905,
+      "chars": 843685,
+      "tokens": 192574
+    },
+    {
+      "index": 863,
+      "title": "The Garies and Their Friends by Frank J. Webb",
+      "url": "http://www.gutenberg.org/ebooks/11214",
+      "publication_date": 1857,
+      "chars": 724817,
+      "tokens": 177127
+    },
+    {
+      "index": 865,
+      "title": "The Visioning by Susan Glaspell",
+      "url": "http://www.gutenberg.org/ebooks/11217",
+      "publication_date": 1911,
+      "chars": 623981,
+      "tokens": 151928
+    },
+    {
+      "index": 868,
+      "title": "The Bent Twig by Dorothy Canfield",
+      "url": "http://www.gutenberg.org/ebooks/11221",
+      "publication_date": 1915,
+      "chars": 924205,
+      "tokens": 221978
+    },
+    {
+      "index": 884,
+      "title": "Life and Adventures of Robinson Crusoe Of York Mariner",
+      "url": "http://www.gutenberg.org/ebooks/11239",
+      "publication_date": 1812,
+      "chars": 639397,
+      "tokens": 158926
+    },
+    {
+      "index": 886,
+      "title": "The Life of Michelangelo Buonarotti by John Addington Symonds",
+      "url": "http://www.gutenberg.org/ebooks/11242",
+      "publication_date": 1893,
+      "chars": 1084469,
+      "tokens": 257961
+    },
+    {
+      "index": 887,
+      "title": "Miles Wallingford: Sequel to Afloat and Ashore by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/11243",
+      "publication_date": 1844,
+      "chars": 922097,
+      "tokens": 225114
+    },
+    {
+      "index": 892,
+      "title": "Delights of Wisdom Pertaining to Conjugial Love by Emanuel Swedenborg",
+      "url": "http://www.gutenberg.org/ebooks/11248",
+      "publication_date": 1850,
+      "chars": 1470475,
+      "tokens": 354923
+    },
+    {
+      "index": 894,
+      "title": "Famous Reviews by Various",
+      "url": "http://www.gutenberg.org/ebooks/11251",
+      "publication_date": 1837,
+      "chars": 1112930,
+      "tokens": 263888
+    },
+    {
+      "index": 911,
+      "title": "Anti-Slavery Examiner Part 1 of 4 by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11271",
+      "publication_date": 1836,
+      "chars": 1450388,
+      "tokens": 359373
+    },
+    {
+      "index": 912,
+      "title": "Anti-Slavery Examiner Part 2 of 4 by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11272",
+      "publication_date": 1838,
+      "chars": 1841729,
+      "tokens": 433827
+    },
+    {
+      "index": 913,
+      "title": "Anti-Slavery Examiner Part 3 of 4 by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11273",
+      "publication_date": 1839,
+      "chars": 2071243,
+      "tokens": 498404
+    },
+    {
+      "index": 915,
+      "title": "The Anti-Slavery Examiner Omnibus by American Anti-Slavery Society",
+      "url": "http://www.gutenberg.org/ebooks/11275",
+      "publication_date": 1836,
+      "chars": 5795055,
+      "tokens": 1392970
+    },
+    {
+      "index": 916,
+      "title": "Civil Government in the United States Considered with",
+      "url": "http://www.gutenberg.org/ebooks/11276",
+      "publication_date": 1890,
+      "chars": 702241,
+      "tokens": 160965
+    },
+    {
+      "index": 934,
+      "title": "A School History of the United States by John Bach McMaster",
+      "url": "http://www.gutenberg.org/ebooks/11313",
+      "publication_date": 1897,
+      "chars": 866691,
+      "tokens": 206885
+    },
+    {
+      "index": 941,
+      "title": "Caleb Williams by William Godwin",
+      "url": "http://www.gutenberg.org/ebooks/11323",
+      "publication_date": 1794,
+      "chars": 824575,
+      "tokens": 193794
+    },
+    {
+      "index": 947,
+      "title": "Lands of the Slave and the Free by Henry A. Murray",
+      "url": "http://www.gutenberg.org/ebooks/11329",
+      "publication_date": 1857,
+      "chars": 1121722,
+      "tokens": 264875
+    },
+    {
+      "index": 969,
+      "title": "Germany and the Next War by Friedrich von Bernhardi",
+      "url": "http://www.gutenberg.org/ebooks/11352",
+      "publication_date": 1912,
+      "chars": 601067,
+      "tokens": 130606
+    },
+    {
+      "index": 971,
+      "title": "The Irrational Knot by George Bernard Shaw",
+      "url": "http://www.gutenberg.org/ebooks/11354",
+      "publication_date": 1880,
+      "chars": 661265,
+      "tokens": 163010
+    },
+    {
+      "index": 979,
+      "title": "The German Classics of The Nineteenth and Twentieth Centuries",
+      "url": "http://www.gutenberg.org/ebooks/11366",
+      "publication_date": 1914,
+      "chars": 990726,
+      "tokens": 229510
+    },
+    {
+      "index": 991,
+      "title": "The Research Magnificent by H. G. Wells",
+      "url": "http://www.gutenberg.org/ebooks/1138",
+      "publication_date": 1915,
+      "chars": 633198,
+      "tokens": 149686
+    },
+    {
+      "index": 1006,
+      "title": "The Red Rover by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/11409",
+      "publication_date": 1855,
+      "chars": 934786,
+      "tokens": 222383
+    },
+    {
+      "index": 1024,
+      "title": "The Danish History Books 1 through 9 by Saxo Grammaticus",
+      "url": "http://www.gutenberg.org/ebooks/1150",
+      "publication_date": 1905,
+      "chars": 905219,
+      "tokens": 221838
+    },
+    {
+      "index": 1029,
+      "title": "The Lions of the Lord by Harry Leon Wilson",
+      "url": "http://www.gutenberg.org/ebooks/11534",
+      "publication_date": 1903,
+      "chars": 681799,
+      "tokens": 166380
+    },
+    {
+      "index": 1031,
+      "title": "The Life and Letters of Elizabeth Prentiss by George L. Prentiss",
+      "url": "http://www.gutenberg.org/ebooks/11549",
+      "publication_date": 1882,
+      "chars": 1395542,
+      "tokens": 345840
+    },
+    {
+      "index": 1037,
+      "title": "Scott's Last Expedition Volume I by Captain R. F. Scott",
+      "url": "http://www.gutenberg.org/ebooks/11579",
+      "publication_date": 1913,
+      "chars": 1007867,
+      "tokens": 242568
+    },
+    {
+      "index": 1045,
+      "title": "The Second Generation by David Graham Phillips",
+      "url": "http://www.gutenberg.org/ebooks/11614",
+      "publication_date": 1906,
+      "chars": 633309,
+      "tokens": 154543
+    },
+    {
+      "index": 1060,
+      "title": "The Makers and Teachers of Judaism by Charles Foster Kent",
+      "url": "http://www.gutenberg.org/ebooks/11701",
+      "publication_date": 1911,
+      "chars": 751464,
+      "tokens": 183405
+    },
+    {
+      "index": 1063,
+      "title": "Kincaid's Battery by George W. Cable",
+      "url": "http://www.gutenberg.org/ebooks/11719",
+      "publication_date": 1719,
+      "chars": 607505,
+      "tokens": 154789
+    },
+    {
+      "index": 1064,
+      "title": "Life of Johnson Volume 6 (of 6) by James Boswell",
+      "url": "http://www.gutenberg.org/ebooks/11729",
+      "publication_date": 1807,
+      "chars": 1105518,
+      "tokens": 415050
+    },
+    {
+      "index": 1067,
+      "title": "Hellenica by Xenophon",
+      "url": "http://www.gutenberg.org/ebooks/1174",
+      "publication_date": 1891,
+      "chars": 727416,
+      "tokens": 185725
+    },
+    {
+      "index": 1075,
+      "title": "The Count of Monte Cristo by Alexandre Dumas Pere",
+      "url": "http://www.gutenberg.org/ebooks/1184",
+      "publication_date": 1888,
+      "chars": 2624460,
+      "tokens": 646319
+    },
+    {
+      "index": 1076,
+      "title": "U.S. Copyright Renewals 1974 January - June by US Copyright Office",
+      "url": "http://www.gutenberg.org/ebooks/11849",
+      "publication_date": 1876,
+      "chars": 654228,
+      "tokens": 239429
+    },
+    {
+      "index": 1077,
+      "title": "History of the Conflict Between Religion and Science",
+      "url": "http://www.gutenberg.org/ebooks/1185",
+      "publication_date": 1874,
+      "chars": 658841,
+      "tokens": 148453
+    },
+    {
+      "index": 1078,
+      "title": "Isaac T. Hopper by L. Maria Child",
+      "url": "http://www.gutenberg.org/ebooks/11859",
+      "publication_date": 1859,
+      "chars": 670988,
+      "tokens": 156506
+    },
+    {
+      "index": 1082,
+      "title": "Venetia by Benjamin Disraeli",
+      "url": "http://www.gutenberg.org/ebooks/11869",
+      "publication_date": 1869,
+      "chars": 920486,
+      "tokens": 223075
+    },
+    {
+      "index": 1084,
+      "title": "Hodge and His Masters by Richard Jefferies",
+      "url": "http://www.gutenberg.org/ebooks/11874",
+      "publication_date": 1874,
+      "chars": 733082,
+      "tokens": 172072
+    },
+    {
+      "index": 1090,
+      "title": "A Tramp Abroad by Mark Twain",
+      "url": "http://www.gutenberg.org/ebooks/119",
+      "publication_date": 1880,
+      "chars": 877280,
+      "tokens": 214567
+    },
+    {
+      "index": 1092,
+      "title": "Ailsa Paige by Robert W. Chambers",
+      "url": "http://www.gutenberg.org/ebooks/11904",
+      "publication_date": 1910,
+      "chars": 670841,
+      "tokens": 170882
+    },
+    {
+      "index": 1095,
+      "title": "Primitive Love and Love-Stories by Henry Theophilus Finck",
+      "url": "http://www.gutenberg.org/ebooks/11934",
+      "publication_date": 1899,
+      "chars": 1904621,
+      "tokens": 459498
+    },
+    {
+      "index": 1096,
+      "title": "The Symbolism of Freemasonry by Albert G. Mackey",
+      "url": "http://www.gutenberg.org/ebooks/11937",
+      "publication_date": 1882,
+      "chars": 610566,
+      "tokens": 144213
+    },
+    {
+      "index": 1099,
+      "title": "Master Tales of Mystery Volume 3 Collected by Francis J. Reynolds",
+      "url": "http://www.gutenberg.org/ebooks/11949",
+      "publication_date": 1915,
+      "chars": 709696,
+      "tokens": 175096
+    },
+    {
+      "index": 1102,
+      "title": "A Popular History of France From The Earliest Times V.6 of 6 by Guizot",
+      "url": "http://www.gutenberg.org/ebooks/11956",
+      "publication_date": 1899,
+      "chars": 1088173,
+      "tokens": 262547
+    },
+    {
+      "index": 1105,
+      "title": "Taras Bulba and Other Tales by Nikolai Vasilievich Gogol",
+      "url": "http://www.gutenberg.org/ebooks/1197",
+      "publication_date": 1835,
+      "chars": 617651,
+      "tokens": 151835
+    },
+    {
+      "index": 1110,
+      "title": "Robbery Under Arms by Thomas Alexander Browne",
+      "url": "http://www.gutenberg.org/ebooks/1198",
+      "publication_date": 1888,
+      "chars": 1083509,
+      "tokens": 276258
+    },
+    {
+      "index": 1115,
+      "title": "A Residence in France Complete by An English Lady",
+      "url": "http://www.gutenberg.org/ebooks/11996",
+      "publication_date": 1797,
+      "chars": 1212652,
+      "tokens": 281276
+    },
+    {
+      "index": 1119,
+      "title": "Gargantua and Pantagruel Complete by Francois Rabelais",
+      "url": "http://www.gutenberg.org/ebooks/1200",
+      "publication_date": 1838,
+      "chars": 1833477,
+      "tokens": 475693
+    },
+    {
+      "index": 1123,
+      "title": "Bred in the Bone by James Payn",
+      "url": "http://www.gutenberg.org/ebooks/12024",
+      "publication_date": 1872,
+      "chars": 820119,
+      "tokens": 203028
+    },
+    {
+      "index": 1131,
+      "title": "The World's Greatest Books Vol IX Ed. by Arthur Mee & J.A. Hammerton",
+      "url": "http://www.gutenberg.org/ebooks/12059",
+      "publication_date": 1616,
+      "chars": 625826,
+      "tokens": 149688
+    },
+    {
+      "index": 1134,
+      "title": "Nada the Lily by H. Rider Haggard",
+      "url": "http://www.gutenberg.org/ebooks/1207",
+      "publication_date": 1892,
+      "chars": 604869,
+      "tokens": 158413
+    },
+    {
+      "index": 1135,
+      "title": "The Philippines: Past and Present (Volume 1 of 2)",
+      "url": "http://www.gutenberg.org/ebooks/12077",
+      "publication_date": 1914,
+      "chars": 1051819,
+      "tokens": 237207
+    },
+    {
+      "index": 1138,
+      "title": "History of the Conquest of Peru by William Hickling Prescott",
+      "url": "http://www.gutenberg.org/ebooks/1209",
+      "publication_date": 1847,
+      "chars": 1277687,
+      "tokens": 300302
+    },
+    {
+      "index": 1142,
+      "title": "Ethelyn's Mistake by Mary Jane Holmes",
+      "url": "http://www.gutenberg.org/ebooks/12104",
+      "publication_date": 1869,
+      "chars": 643534,
+      "tokens": 156182
+    },
+    {
+      "index": 1151,
+      "title": "The Continental Classics Volume XVIII Mystery Tales by Various",
+      "url": "http://www.gutenberg.org/ebooks/12144",
+      "publication_date": 1909,
+      "chars": 684021,
+      "tokens": 167169
+    },
+    {
+      "index": 1152,
+      "title": "Poetical Works of William Wordsworth Vol. 2 of 8",
+      "url": "http://www.gutenberg.org/ebooks/12145",
+      "publication_date": 1819,
+      "chars": 772832,
+      "tokens": 203242
+    },
+    {
+      "index": 1161,
+      "title": "The Adventures of Jimmie Dale by Frank L. Packard",
+      "url": "http://www.gutenberg.org/ebooks/1218",
+      "publication_date": 1917,
+      "chars": 885029,
+      "tokens": 221161
+    },
+    {
+      "index": 1166,
+      "title": "Return of the Native by Thomas Hardy",
+      "url": "http://www.gutenberg.org/ebooks/122",
+      "publication_date": 1878,
+      "chars": 782670,
+      "tokens": 192121
+    },
+    {
+      "index": 1168,
+      "title": "Delsarte System of Oratory by Francois Delsarte et al.",
+      "url": "http://www.gutenberg.org/ebooks/12200",
+      "publication_date": 1893,
+      "chars": 759638,
+      "tokens": 175919
+    },
+    {
+      "index": 1176,
+      "title": "Who Goes There? by Blackwood Ketcham Benson",
+      "url": "http://www.gutenberg.org/ebooks/12229",
+      "publication_date": 1900,
+      "chars": 842069,
+      "tokens": 205637
+    },
+    {
+      "index": 1182,
+      "title": "A Study In Magic And Religion Vol. 1 of 2 by James George Frazer",
+      "url": "http://www.gutenberg.org/ebooks/12261",
+      "publication_date": 1913,
+      "chars": 925918,
+      "tokens": 242261
+    },
+    {
+      "index": 1183,
+      "title": "Father Payne by Arthur Christopher Benson",
+      "url": "http://www.gutenberg.org/ebooks/12264",
+      "publication_date": 1917,
+      "chars": 629601,
+      "tokens": 155634
+    },
+    {
+      "index": 1184,
+      "title": "The Expression of Emotion in Man and Animals by Charles Darwin",
+      "url": "http://www.gutenberg.org/ebooks/1227",
+      "publication_date": 1899,
+      "chars": 646242,
+      "tokens": 151953
+    },
+    {
+      "index": 1186,
+      "title": "On the Origin of Species by Charles Darwin",
+      "url": "http://www.gutenberg.org/ebooks/1228",
+      "publication_date": 1859,
+      "chars": 935088,
+      "tokens": 206199
+    },
+    {
+      "index": 1199,
+      "title": "Captain Fracasse by Theophile Gautier",
+      "url": "http://www.gutenberg.org/ebooks/1235",
+      "publication_date": 1863,
+      "chars": 906038,
+      "tokens": 217859
+    },
+    {
+      "index": 1200,
+      "title": "The Making of Religion by Andrew Lang",
+      "url": "http://www.gutenberg.org/ebooks/12353",
+      "publication_date": 1900,
+      "chars": 742669,
+      "tokens": 185911
+    },
+    {
+      "index": 1202,
+      "title": "First Across the Continent by Noah Brooks",
+      "url": "http://www.gutenberg.org/ebooks/1236",
+      "publication_date": 1804,
+      "chars": 619303,
+      "tokens": 144047
+    },
+    {
+      "index": 1207,
+      "title": "Poetical Works of William Wordsworth Vol. 3 of 8",
+      "url": "http://www.gutenberg.org/ebooks/12383",
+      "publication_date": 1815,
+      "chars": 793020,
+      "tokens": 199557
+    },
+    {
+      "index": 1215,
+      "title": "Frontier Stories by Bret Harte",
+      "url": "http://www.gutenberg.org/ebooks/12419",
+      "publication_date": 1887,
+      "chars": 774554,
+      "tokens": 190732
+    },
+    {
+      "index": 1217,
+      "title": "De Orbe Novo Volume 1 (of 2) Trans. by Francis Augustus MacNutt",
+      "url": "http://www.gutenberg.org/ebooks/12425",
+      "publication_date": 1912,
+      "chars": 760672,
+      "tokens": 180078
+    },
+    {
+      "index": 1220,
+      "title": "Toaster's Handbook compiled by Peggy Edmund & Harold W. Williams",
+      "url": "http://www.gutenberg.org/ebooks/12444",
+      "publication_date": 1916,
+      "chars": 802488,
+      "tokens": 203360
+    },
+    {
+      "index": 1221,
+      "title": "Messages and Papers of the Presidents: John Tyler Ed. by Richardson",
+      "url": "http://www.gutenberg.org/ebooks/12464",
+      "publication_date": 1911,
+      "chars": 1086671,
+      "tokens": 238121
+    },
+    {
+      "index": 1225,
+      "title": "The Knave of Diamonds by Ethel May Dell",
+      "url": "http://www.gutenberg.org/ebooks/12484",
+      "publication_date": 1912,
+      "chars": 641561,
+      "tokens": 159398
+    },
+    {
+      "index": 1227,
+      "title": "A Girl Of The Limberlost by Gene Stratton-Porter",
+      "url": "http://www.gutenberg.org/ebooks/125",
+      "publication_date": 1909,
+      "chars": 645240,
+      "tokens": 160900
+    },
+    {
+      "index": 1228,
+      "title": "Le Mort d'Arthur Vol. 1 by Thomas Malory",
+      "url": "http://www.gutenberg.org/ebooks/1251",
+      "publication_date": 1485,
+      "chars": 884284,
+      "tokens": 231268
+    },
+    {
+      "index": 1230,
+      "title": "Le Mort d'Arthur Vol. 2 by Thomas Malory",
+      "url": "http://www.gutenberg.org/ebooks/1252",
+      "publication_date": 1890,
+      "chars": 979577,
+      "tokens": 259171
+    },
+    {
+      "index": 1241,
+      "title": "The Three Musketeers by Alexandre Dumas Pere",
+      "url": "http://www.gutenberg.org/ebooks/1257",
+      "publication_date": 1844,
+      "chars": 1296837,
+      "tokens": 324495
+    },
+    {
+      "index": 1243,
+      "title": "Ten Years Later by Alexandre Dumas Pere",
+      "url": "http://www.gutenberg.org/ebooks/1258",
+      "publication_date": 1893,
+      "chars": 1512133,
+      "tokens": 378296
+    },
+    {
+      "index": 1246,
+      "title": "Twenty Years After by Alexandre Dumas Pere",
+      "url": "http://www.gutenberg.org/ebooks/1259",
+      "publication_date": 1910,
+      "chars": 1367035,
+      "tokens": 345945
+    },
+    {
+      "index": 1250,
+      "title": "Jane Eyre by Charlotte Bronte",
+      "url": "http://www.gutenberg.org/ebooks/1260",
+      "publication_date": 1897,
+      "chars": 1029939,
+      "tokens": 259930
+    },
+    {
+      "index": 1258,
+      "title": "The Roll-Call by Arnold Bennett",
+      "url": "http://www.gutenberg.org/ebooks/12654",
+      "publication_date": 1918,
+      "chars": 664990,
+      "tokens": 159731
+    },
+    {
+      "index": 1262,
+      "title": "The Mysterious Island by Jules Verne",
+      "url": "http://www.gutenberg.org/ebooks/1268",
+      "publication_date": 1874,
+      "chars": 1112379,
+      "tokens": 261064
+    },
+    {
+      "index": 1278,
+      "title": "Poems and Songs of Robert Burns by Robert Burns",
+      "url": "http://www.gutenberg.org/ebooks/1279",
+      "publication_date": 1905,
+      "chars": 821852,
+      "tokens": 228820
+    },
+    {
+      "index": 1298,
+      "title": "Salammbo by Gustave Flaubert",
+      "url": "http://www.gutenberg.org/ebooks/1290",
+      "publication_date": 1862,
+      "chars": 610445,
+      "tokens": 146565
+    },
+    {
+      "index": 1307,
+      "title": "Contes Francais by Douglas Labaree Buffum",
+      "url": "http://www.gutenberg.org/ebooks/12949",
+      "publication_date": 1907,
+      "chars": 787391,
+      "tokens": 253663
+    },
+    {
+      "index": 1309,
+      "title": "Newton Forster or The Merchant Service by Frederick Marryat",
+      "url": "http://www.gutenberg.org/ebooks/12959",
+      "publication_date": 1832,
+      "chars": 770206,
+      "tokens": 185907
+    },
+    {
+      "index": 1313,
+      "title": "The Virginian by Owen Wister",
+      "url": "http://www.gutenberg.org/ebooks/1298",
+      "publication_date": 1902,
+      "chars": 711771,
+      "tokens": 177642
+    },
+    {
+      "index": 1321,
+      "title": "The French Revolution by Thomas Carlyle",
+      "url": "http://www.gutenberg.org/ebooks/1301",
+      "publication_date": 1837,
+      "chars": 1852313,
+      "tokens": 480519
+    },
+    {
+      "index": 1337,
+      "title": "Selected Stories by Bret Harte",
+      "url": "http://www.gutenberg.org/ebooks/1312",
+      "publication_date": 1867,
+      "chars": 685893,
+      "tokens": 165736
+    },
+    {
+      "index": 1343,
+      "title": "The Christian Life by Thomas Arnold",
+      "url": "http://www.gutenberg.org/ebooks/13151",
+      "publication_date": 1856,
+      "chars": 713788,
+      "tokens": 168506
+    },
+    {
+      "index": 1350,
+      "title": "Criminal Psychology by Hans Gross",
+      "url": "http://www.gutenberg.org/ebooks/1320",
+      "publication_date": 1911,
+      "chars": 1352408,
+      "tokens": 309400
+    },
+    {
+      "index": 1351,
+      "title": "Sermons to the Natural Man by William G.T. Shedd",
+      "url": "http://www.gutenberg.org/ebooks/13204",
+      "publication_date": 1871,
+      "chars": 628013,
+      "tokens": 150072
+    },
+    {
+      "index": 1352,
+      "title": "Leaves of Grass by Walt Whitman",
+      "url": "http://www.gutenberg.org/ebooks/1322",
+      "publication_date": 1855,
+      "chars": 738177,
+      "tokens": 182875
+    },
+    {
+      "index": 1353,
+      "title": "The Revelation Explained by F. Smith",
+      "url": "http://www.gutenberg.org/ebooks/13229",
+      "publication_date": 1908,
+      "chars": 726445,
+      "tokens": 173344
+    },
+    {
+      "index": 1354,
+      "title": "The Conquest Of Peru by William H. Prescott",
+      "url": "http://www.gutenberg.org/ebooks/1323",
+      "publication_date": 1847,
+      "chars": 1784673,
+      "tokens": 456030
+    },
+    {
+      "index": 1356,
+      "title": "Twenty Years at Hull House by Jane Addams",
+      "url": "http://www.gutenberg.org/ebooks/1325",
+      "publication_date": 1910,
+      "chars": 632376,
+      "tokens": 140470
+    },
+    {
+      "index": 1364,
+      "title": "The Damnation of Theron Ware by Harold Frederic",
+      "url": "http://www.gutenberg.org/ebooks/133",
+      "publication_date": 1896,
+      "chars": 668570,
+      "tokens": 160880
+    },
+    {
+      "index": 1370,
+      "title": "Paul Kelver by Jerome Klapka (AKA Jerome K. Jerome)",
+      "url": "http://www.gutenberg.org/ebooks/1334",
+      "publication_date": 1902,
+      "chars": 756657,
+      "tokens": 185237
+    },
+    {
+      "index": 1387,
+      "title": "Pride and Prejudice by Jane Austen",
+      "url": "http://www.gutenberg.org/ebooks/1342",
+      "publication_date": 1813,
+      "chars": 684894,
+      "tokens": 160976
+    },
+    {
+      "index": 1402,
+      "title": "Russia by Donald Mackenzie Wallace",
+      "url": "http://www.gutenberg.org/ebooks/1349",
+      "publication_date": 1905,
+      "chars": 1702073,
+      "tokens": 376693
+    },
+    {
+      "index": 1403,
+      "title": "Two Little Savages by Ernest Thompson Seton",
+      "url": "http://www.gutenberg.org/ebooks/13499",
+      "publication_date": 1903,
+      "chars": 611915,
+      "tokens": 159025
+    },
+    {
+      "index": 1404,
+      "title": "Les Miserables by Victor Hugo",
+      "url": "http://www.gutenberg.org/ebooks/135",
+      "publication_date": 1887,
+      "chars": 3235103,
+      "tokens": 801623
+    },
+    {
+      "index": 1408,
+      "title": "Tales of a Traveller by Washington Irving",
+      "url": "http://www.gutenberg.org/ebooks/13514",
+      "publication_date": 1824,
+      "chars": 640918,
+      "tokens": 155206
+    },
+    {
+      "index": 1410,
+      "title": "Past and Present by Thomas Carlyle",
+      "url": "http://www.gutenberg.org/ebooks/13534",
+      "publication_date": 1795,
+      "chars": 649550,
+      "tokens": 171542
+    },
+    {
+      "index": 1414,
+      "title": "The Art of War by Baron Henri de Jomini",
+      "url": "http://www.gutenberg.org/ebooks/13549",
+      "publication_date": 1862,
+      "chars": 851782,
+      "tokens": 197047
+    },
+    {
+      "index": 1417,
+      "title": "The Cruise of the Cachalot by Frank T. Bullen",
+      "url": "http://www.gutenberg.org/ebooks/1356",
+      "publication_date": 1898,
+      "chars": 646500,
+      "tokens": 155169
+    },
+    {
+      "index": 1429,
+      "title": "The Complete Poetical Works of Henry Wadsworth Longfellow",
+      "url": "http://www.gutenberg.org/ebooks/1365",
+      "publication_date": 1902,
+      "chars": 1884913,
+      "tokens": 482587
+    },
+    {
+      "index": 1430,
+      "title": "The Cloister and the Hearth by Charles Reade",
+      "url": "http://www.gutenberg.org/ebooks/1366",
+      "publication_date": 1861,
+      "chars": 1525182,
+      "tokens": 389671
+    },
+    {
+      "index": 1432,
+      "title": "Sea-wolves of the Mediterranean by Currey E. Hamilton",
+      "url": "http://www.gutenberg.org/ebooks/13689",
+      "publication_date": 1910,
+      "chars": 633308,
+      "tokens": 153791
+    },
+    {
+      "index": 1435,
+      "title": "Astoria by Washington Irving",
+      "url": "http://www.gutenberg.org/ebooks/1371",
+      "publication_date": 1836,
+      "chars": 946578,
+      "tokens": 218825
+    },
+    {
+      "index": 1437,
+      "title": "The Adventures of Captain Bonneville by Washington Irving",
+      "url": "http://www.gutenberg.org/ebooks/1372",
+      "publication_date": 1837,
+      "chars": 690334,
+      "tokens": 160198
+    },
+    {
+      "index": 1444,
+      "title": "The Talisman by Walter Scott",
+      "url": "http://www.gutenberg.org/ebooks/1377",
+      "publication_date": 1825,
+      "chars": 742265,
+      "tokens": 178061
+    },
+    {
+      "index": 1447,
+      "title": "The Two Brothers by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1380",
+      "publication_date": 1887,
+      "chars": 612703,
+      "tokens": 149931
+    },
+    {
+      "index": 1473,
+      "title": "Rienzi the Last of the Roman Tribunes by Edward Bulwer Lytton",
+      "url": "http://www.gutenberg.org/ebooks/1396",
+      "publication_date": 1840,
+      "chars": 1053290,
+      "tokens": 260669
+    },
+    {
+      "index": 1479,
+      "title": "Anna Karenina by Leo Tolstoy",
+      "url": "http://www.gutenberg.org/ebooks/1399",
+      "publication_date": 1878,
+      "chars": 1966272,
+      "tokens": 479910
+    },
+    {
+      "index": 1481,
+      "title": "The Jungle by Upton Sinclair",
+      "url": "http://www.gutenberg.org/ebooks/140",
+      "publication_date": 1906,
+      "chars": 809562,
+      "tokens": 199240
+    },
+    {
+      "index": 1482,
+      "title": "Great Expectations by Charles Dickens",
+      "url": "http://www.gutenberg.org/ebooks/1400",
+      "publication_date": 1861,
+      "chars": 994063,
+      "tokens": 249856
+    },
+    {
+      "index": 1483,
+      "title": "The Every-day Life of Abraham Lincoln by Francis Fisher Browne",
+      "url": "http://www.gutenberg.org/ebooks/14004",
+      "publication_date": 1895,
+      "chars": 1237998,
+      "tokens": 295245
+    },
+    {
+      "index": 1489,
+      "title": "The Federalist Papers by Alexander Hamilton John Jay and James Madison",
+      "url": "http://www.gutenberg.org/ebooks/1404",
+      "publication_date": 1788,
+      "chars": 1147802,
+      "tokens": 246969
+    },
+    {
+      "index": 1497,
+      "title": "Mansfield Park by Jane Austen",
+      "url": "http://www.gutenberg.org/ebooks/141",
+      "publication_date": 1814,
+      "chars": 883403,
+      "tokens": 209634
+    },
+    {
+      "index": 1509,
+      "title": "Sons of the Soil by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1417",
+      "publication_date": 1890,
+      "chars": 668385,
+      "tokens": 165087
+    },
+    {
+      "index": 1510,
+      "title": "The Mating of Lydia by Mrs. Humphry Ward",
+      "url": "http://www.gutenberg.org/ebooks/14174",
+      "publication_date": 1913,
+      "chars": 748345,
+      "tokens": 183889
+    },
+    {
+      "index": 1525,
+      "title": "The Ancient Life History of the Earth by Henry Alleyne Nicholson",
+      "url": "http://www.gutenberg.org/ebooks/14279",
+      "publication_date": 1877,
+      "chars": 881234,
+      "tokens": 228793
+    },
+    {
+      "index": 1529,
+      "title": "The Mayor of Casterbridge by Thomas Hardy",
+      "url": "http://www.gutenberg.org/ebooks/143",
+      "publication_date": 1886,
+      "chars": 652758,
+      "tokens": 159310
+    },
+    {
+      "index": 1543,
+      "title": "No Name by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1438",
+      "publication_date": 1862,
+      "chars": 1490684,
+      "tokens": 360001
+    },
+    {
+      "index": 1546,
+      "title": "The Voyage Out by Virginia Woolf",
+      "url": "http://www.gutenberg.org/ebooks/144",
+      "publication_date": 1915,
+      "chars": 765118,
+      "tokens": 183143
+    },
+    {
+      "index": 1557,
+      "title": "The Doctor's Dilemma by Hesba Stretton",
+      "url": "http://www.gutenberg.org/ebooks/14454",
+      "publication_date": 1872,
+      "chars": 848029,
+      "tokens": 211575
+    },
+    {
+      "index": 1559,
+      "title": "Voyages and Travels Vol. 13 by Robert Kerr",
+      "url": "http://www.gutenberg.org/ebooks/14464",
+      "publication_date": 1824,
+      "chars": 1280677,
+      "tokens": 309825
+    },
+    {
+      "index": 1566,
+      "title": "The Valley of the Moon by Jack London",
+      "url": "http://www.gutenberg.org/ebooks/1449",
+      "publication_date": 1913,
+      "chars": 920530,
+      "tokens": 234449
+    },
+    {
+      "index": 1568,
+      "title": "The Religions of India by Edward Washburn Hopkins",
+      "url": "http://www.gutenberg.org/ebooks/14499",
+      "publication_date": 1895,
+      "chars": 1336126,
+      "tokens": 372986
+    },
+    {
+      "index": 1569,
+      "title": "Middlemarch by George Eliot",
+      "url": "http://www.gutenberg.org/ebooks/145",
+      "publication_date": 1871,
+      "chars": 1794665,
+      "tokens": 440159
+    },
+    {
+      "index": 1585,
+      "title": "Sister Teresa by George Moore",
+      "url": "http://www.gutenberg.org/ebooks/14614",
+      "publication_date": 1909,
+      "chars": 625051,
+      "tokens": 151502
+    },
+    {
+      "index": 1589,
+      "title": "Sketches and Studies in Italy and Greece Second Series by Symonds",
+      "url": "http://www.gutenberg.org/ebooks/14634",
+      "publication_date": 1914,
+      "chars": 655377,
+      "tokens": 159975
+    },
+    {
+      "index": 1591,
+      "title": "The Development of the European Nations by John Holland Rose",
+      "url": "http://www.gutenberg.org/ebooks/14644",
+      "publication_date": 1905,
+      "chars": 1367651,
+      "tokens": 331525
+    },
+    {
+      "index": 1596,
+      "title": "The History of England from the Accession of James II Vol. 1 of 5",
+      "url": "http://www.gutenberg.org/ebooks/1468",
+      "publication_date": 1890,
+      "chars": 1340877,
+      "tokens": 308507
+    },
+    {
+      "index": 1606,
+      "title": "Chance by Joseph Conrad",
+      "url": "http://www.gutenberg.org/ebooks/1476",
+      "publication_date": 1914,
+      "chars": 764634,
+      "tokens": 189923
+    },
+    {
+      "index": 1610,
+      "title": "A Vanished Arcadia by R. B. Cunninghame Graham",
+      "url": "http://www.gutenberg.org/ebooks/1479",
+      "publication_date": 1901,
+      "chars": 610711,
+      "tokens": 146730
+    },
+    {
+      "index": 1616,
+      "title": "The Four Horsemen of the Apocalypse by Vicente Blasco Ibanez",
+      "url": "http://www.gutenberg.org/ebooks/1484",
+      "publication_date": 1916,
+      "chars": 834222,
+      "tokens": 192019
+    },
+    {
+      "index": 1638,
+      "title": "The Republic by Plato",
+      "url": "http://www.gutenberg.org/ebooks/1497",
+      "publication_date": 1901,
+      "chars": 1195164,
+      "tokens": 278126
+    },
+    {
+      "index": 1655,
+      "title": "Sevenoaks by J. G. Holland",
+      "url": "http://www.gutenberg.org/ebooks/15214",
+      "publication_date": 1875,
+      "chars": 812516,
+      "tokens": 200977
+    },
+    {
+      "index": 1660,
+      "title": "Maxims Of His Grace The Duke Of Wellington by Wellington",
+      "url": "http://www.gutenberg.org/ebooks/15254",
+      "publication_date": 1845,
+      "chars": 772311,
+      "tokens": 176391
+    },
+    {
+      "index": 1666,
+      "title": "Jude the Obscure by Thomas Hardy",
+      "url": "http://www.gutenberg.org/ebooks/153",
+      "publication_date": 1895,
+      "chars": 804617,
+      "tokens": 200700
+    },
+    {
+      "index": 1669,
+      "title": "The Real Adventure by Henry Kitchell Webster",
+      "url": "http://www.gutenberg.org/ebooks/15384",
+      "publication_date": 1916,
+      "chars": 1127027,
+      "tokens": 273712
+    },
+    {
+      "index": 1671,
+      "title": "The Rise of Silas Lapham by William Dean Howells",
+      "url": "http://www.gutenberg.org/ebooks/154",
+      "publication_date": 1885,
+      "chars": 699697,
+      "tokens": 178824
+    },
+    {
+      "index": 1680,
+      "title": "New York Times Current History: The European War Jun 1915 V. 2 No. 3",
+      "url": "http://www.gutenberg.org/ebooks/15480",
+      "publication_date": 1915,
+      "chars": 750385,
+      "tokens": 169473
+    },
+    {
+      "index": 1683,
+      "title": "The Moonstone by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/155",
+      "publication_date": 1868,
+      "chars": 1073961,
+      "tokens": 261118
+    },
+    {
+      "index": 1687,
+      "title": "The Most Interesting Stories of All Nations by Various",
+      "url": "http://www.gutenberg.org/ebooks/1552",
+      "publication_date": 1909,
+      "chars": 698968,
+      "tokens": 174852
+    },
+    {
+      "index": 1698,
+      "title": "A Distinguished Provincial at Paris by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1559",
+      "publication_date": 1897,
+      "chars": 691072,
+      "tokens": 170650
+    },
+    {
+      "index": 1699,
+      "title": "The San Francisco Calamity by Earthquake and Fire",
+      "url": "http://www.gutenberg.org/ebooks/1560",
+      "publication_date": 1906,
+      "chars": 715622,
+      "tokens": 164019
+    },
+    {
+      "index": 1705,
+      "title": "The Last Days of Pompeii by Edward George Bulwer-Lytton",
+      "url": "http://www.gutenberg.org/ebooks/1565",
+      "publication_date": 1834,
+      "chars": 868957,
+      "tokens": 219319
+    },
+    {
+      "index": 1710,
+      "title": "A Handbook of the Boer War by Gale and Polden Limited",
+      "url": "http://www.gutenberg.org/ebooks/15699",
+      "publication_date": 1910,
+      "chars": 705188,
+      "tokens": 169782
+    },
+    {
+      "index": 1717,
+      "title": "The Life of Phineas T. Barnum by Joel Benton",
+      "url": "http://www.gutenberg.org/ebooks/1576",
+      "publication_date": 1891,
+      "chars": 772115,
+      "tokens": 185205
+    },
+    {
+      "index": 1718,
+      "title": "The Claverings by Anthony Trollope",
+      "url": "http://www.gutenberg.org/ebooks/15766",
+      "publication_date": 1867,
+      "chars": 1103629,
+      "tokens": 273666
+    },
+    {
+      "index": 1721,
+      "title": "Ishmael by Mrs. E. D. E. N. Southworth",
+      "url": "http://www.gutenberg.org/ebooks/15774",
+      "publication_date": 1876,
+      "chars": 1206450,
+      "tokens": 297458
+    },
+    {
+      "index": 1724,
+      "title": "Emma by Jane Austen",
+      "url": "http://www.gutenberg.org/ebooks/158",
+      "publication_date": 1815,
+      "chars": 883127,
+      "tokens": 212912
+    },
+    {
+      "index": 1726,
+      "title": "The Holy Bible Douay-Rheims Version Both Testaments by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1581",
+      "publication_date": 1610,
+      "chars": 5749483,
+      "tokens": 1555412
+    },
+    {
+      "index": 1727,
+      "title": "The Holy Bible Douay-Rheims Version New Testament by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1582",
+      "publication_date": 1610,
+      "chars": 1191587,
+      "tokens": 318676
+    },
+    {
+      "index": 1735,
+      "title": "Man and Wife by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1586",
+      "publication_date": 1870,
+      "chars": 1278618,
+      "tokens": 310329
+    },
+    {
+      "index": 1737,
+      "title": "Voyage Towards the South Pole and Round the World Volume 2 James Cook",
+      "url": "http://www.gutenberg.org/ebooks/15869",
+      "publication_date": 1777,
+      "chars": 637938,
+      "tokens": 158746
+    },
+    {
+      "index": 1738,
+      "title": "The Black Robe by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1587",
+      "publication_date": 1881,
+      "chars": 602672,
+      "tokens": 144279
+    },
+    {
+      "index": 1748,
+      "title": "His Excellency the Minister by Jules Claretie",
+      "url": "http://www.gutenberg.org/ebooks/15934",
+      "publication_date": 1900,
+      "chars": 758760,
+      "tokens": 185035
+    },
+    {
+      "index": 1757,
+      "title": "The Evil Eye; Or The Black Spector by William Carleton",
+      "url": "http://www.gutenberg.org/ebooks/16004",
+      "publication_date": 1881,
+      "chars": 792908,
+      "tokens": 193647
+    },
+    {
+      "index": 1758,
+      "title": "Valentine M'Clutchy The Irish Agent by William Carleton",
+      "url": "http://www.gutenberg.org/ebooks/16009",
+      "publication_date": 1881,
+      "chars": 1149109,
+      "tokens": 287038
+    },
+    {
+      "index": 1760,
+      "title": "Phelim O'Toole's Courtship and Other Stories by William Carleton",
+      "url": "http://www.gutenberg.org/ebooks/16019",
+      "publication_date": 1881,
+      "chars": 747182,
+      "tokens": 191447
+    },
+    {
+      "index": 1764,
+      "title": "The Lost Lady of Lone by E.D.E.N. Southworth",
+      "url": "http://www.gutenberg.org/ebooks/16039",
+      "publication_date": 1890,
+      "chars": 900344,
+      "tokens": 218993
+    },
+    {
+      "index": 1768,
+      "title": "Kenilworth by Sir Walter Scott",
+      "url": "http://www.gutenberg.org/ebooks/1606",
+      "publication_date": 1821,
+      "chars": 1072566,
+      "tokens": 262265
+    },
+    {
+      "index": 1772,
+      "title": "The Bible Douay-Rheims Old Testament Part I by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1609",
+      "publication_date": 1610,
+      "chars": 2328517,
+      "tokens": 632727
+    },
+    {
+      "index": 1775,
+      "title": "For Woman's Love by Mrs. E. D. E. N. Southworth",
+      "url": "http://www.gutenberg.org/ebooks/16094",
+      "publication_date": 1890,
+      "chars": 780328,
+      "tokens": 190371
+    },
+    {
+      "index": 1777,
+      "title": "Sense and Sensibility by Jane Austen",
+      "url": "http://www.gutenberg.org/ebooks/161",
+      "publication_date": 1811,
+      "chars": 673835,
+      "tokens": 161608
+    },
+    {
+      "index": 1778,
+      "title": "The Bible Douay-Rheims Old Testament Part 2 by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/1610",
+      "publication_date": 1610,
+      "chars": 2241022,
+      "tokens": 606811
+    },
+    {
+      "index": 1784,
+      "title": "Old English Libraries by Ernest Savage",
+      "url": "http://www.gutenberg.org/ebooks/1615",
+      "publication_date": 1911,
+      "chars": 707476,
+      "tokens": 202203
+    },
+    {
+      "index": 1801,
+      "title": "Prince Fortunatus by William Black",
+      "url": "http://www.gutenberg.org/ebooks/16217",
+      "publication_date": 1905,
+      "chars": 965221,
+      "tokens": 239002
+    },
+    {
+      "index": 1802,
+      "title": "The Law and the Lady by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1622",
+      "publication_date": 1875,
+      "chars": 768466,
+      "tokens": 186760
+    },
+    {
+      "index": 1809,
+      "title": "After Dark by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1626",
+      "publication_date": 1856,
+      "chars": 761878,
+      "tokens": 182934
+    },
+    {
+      "index": 1810,
+      "title": "The Evil Genius by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1627",
+      "publication_date": 1886,
+      "chars": 617030,
+      "tokens": 148461
+    },
+    {
+      "index": 1811,
+      "title": "The Life and Adventures of Kit Carson by De Witt C. Peters",
+      "url": "http://www.gutenberg.org/ebooks/16274",
+      "publication_date": 1627,
+      "chars": 893381,
+      "tokens": 203286
+    },
+    {
+      "index": 1813,
+      "title": "I Say No by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1629",
+      "publication_date": 1884,
+      "chars": 664561,
+      "tokens": 161980
+    },
+    {
+      "index": 1817,
+      "title": "Little Novels by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1630",
+      "publication_date": 1887,
+      "chars": 816568,
+      "tokens": 196593
+    },
+    {
+      "index": 1825,
+      "title": "The Book of the Bush by George Dunderdale",
+      "url": "http://www.gutenberg.org/ebooks/16349",
+      "publication_date": 1870,
+      "chars": 642490,
+      "tokens": 160700
+    },
+    {
+      "index": 1835,
+      "title": "The Lesser Bourgeoisie by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1641",
+      "publication_date": 1896,
+      "chars": 975368,
+      "tokens": 239798
+    },
+    {
+      "index": 1843,
+      "title": "The Ancient Irish Epic Tale T? B?alnge by Unknown",
+      "url": "http://www.gutenberg.org/ebooks/16464",
+      "publication_date": 1914,
+      "chars": 717234,
+      "tokens": 219886
+    },
+    {
+      "index": 1846,
+      "title": "McTeague by Frank Norris",
+      "url": "http://www.gutenberg.org/ebooks/165",
+      "publication_date": 1899,
+      "chars": 636721,
+      "tokens": 159271
+    },
+    {
+      "index": 1849,
+      "title": "Renaissance in Italy Volumes 1 and 2 by John Addington Symonds",
+      "url": "http://www.gutenberg.org/ebooks/16504",
+      "publication_date": 1887,
+      "chars": 1438669,
+      "tokens": 357943
+    },
+    {
+      "index": 1859,
+      "title": "The Prose Works of William Wordsworth by William Wordsworth",
+      "url": "http://www.gutenberg.org/ebooks/16550",
+      "publication_date": 1876,
+      "chars": 2798925,
+      "tokens": 674117
+    },
+    {
+      "index": 1884,
+      "title": "New Forces in Old China by Arthur Judson Brown",
+      "url": "http://www.gutenberg.org/ebooks/1675",
+      "publication_date": 1904,
+      "chars": 733973,
+      "tokens": 172787
+    },
+    {
+      "index": 1889,
+      "title": "The Writings of Thomas Jefferson Vol. 4 (of 4) ed. by T.J. Randolph",
+      "url": "http://www.gutenberg.org/ebooks/16784",
+      "publication_date": 1829,
+      "chars": 1332532,
+      "tokens": 307413
+    },
+    {
+      "index": 1897,
+      "title": "The Egoist by George Meredith",
+      "url": "http://www.gutenberg.org/ebooks/1684",
+      "publication_date": 1879,
+      "chars": 1049972,
+      "tokens": 258976
+    },
+    {
+      "index": 1904,
+      "title": "The Well at the World's End by William Morris",
+      "url": "http://www.gutenberg.org/ebooks/169",
+      "publication_date": 1896,
+      "chars": 1161957,
+      "tokens": 305701
+    },
+    {
+      "index": 1907,
+      "title": "The Life of Nelson Vol. I (of 2) by A. T. (Alfred Thayer) Mahan",
+      "url": "http://www.gutenberg.org/ebooks/16914",
+      "publication_date": 1897,
+      "chars": 915006,
+      "tokens": 213371
+    },
+    {
+      "index": 1910,
+      "title": "Tacitus: The Histories Volumes I and II by Caius Cornelius Tacitus",
+      "url": "http://www.gutenberg.org/ebooks/16927",
+      "publication_date": 1912,
+      "chars": 710020,
+      "tokens": 182109
+    },
+    {
+      "index": 1923,
+      "title": "The Book Of Mormon by Anonymous",
+      "url": "http://www.gutenberg.org/ebooks/17",
+      "publication_date": 1830,
+      "chars": 1535844,
+      "tokens": 410735
+    },
+    {
+      "index": 1938,
+      "title": "New Grub Street by George Gissing",
+      "url": "http://www.gutenberg.org/ebooks/1709",
+      "publication_date": 1891,
+      "chars": 1028655,
+      "tokens": 248288
+    },
+    {
+      "index": 1946,
+      "title": "Women of Modern France by Hugo P. Thieme",
+      "url": "http://www.gutenberg.org/ebooks/17159",
+      "publication_date": 1907,
+      "chars": 682841,
+      "tokens": 161381
+    },
+    {
+      "index": 1955,
+      "title": "Finished by H. Rider Haggard",
+      "url": "http://www.gutenberg.org/ebooks/1724",
+      "publication_date": 1724,
+      "chars": 639980,
+      "tokens": 163203
+    },
+    {
+      "index": 1959,
+      "title": "The Odyssey by Homer",
+      "url": "http://www.gutenberg.org/ebooks/1727",
+      "publication_date": 1897,
+      "chars": 678284,
+      "tokens": 172947
+    },
+    {
+      "index": 1961,
+      "title": "The Odyssey by Homer",
+      "url": "http://www.gutenberg.org/ebooks/1728",
+      "publication_date": 1879,
+      "chars": 764321,
+      "tokens": 202551
+    },
+    {
+      "index": 1981,
+      "title": "Mother's Remedies by T. J. Ritter",
+      "url": "http://www.gutenberg.org/ebooks/17439",
+      "publication_date": 1910,
+      "chars": 2840353,
+      "tokens": 682007
+    },
+    {
+      "index": 1983,
+      "title": "The Poetical Works of John Milton",
+      "url": "http://www.gutenberg.org/ebooks/1745",
+      "publication_date": 1673,
+      "chars": 910732,
+      "tokens": 239218
+    },
+    {
+      "index": 1986,
+      "title": "Other People's Money by Emile Gaboriau",
+      "url": "http://www.gutenberg.org/ebooks/1748",
+      "publication_date": 1874,
+      "chars": 825445,
+      "tokens": 205882
+    },
+    {
+      "index": 1987,
+      "title": "Cousin Betty by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1749",
+      "publication_date": 1897,
+      "chars": 870753,
+      "tokens": 217351
+    },
+    {
+      "index": 1992,
+      "title": "El Dorado by Baroness Orczy",
+      "url": "http://www.gutenberg.org/ebooks/1752",
+      "publication_date": 1913,
+      "chars": 689865,
+      "tokens": 167906
+    },
+    {
+      "index": 1998,
+      "title": "Roderick Hudson by Henry James",
+      "url": "http://www.gutenberg.org/ebooks/176",
+      "publication_date": 1875,
+      "chars": 737096,
+      "tokens": 180611
+    },
+    {
+      "index": 2004,
+      "title": "The American by Henry James",
+      "url": "http://www.gutenberg.org/ebooks/177",
+      "publication_date": 1877,
+      "chars": 739354,
+      "tokens": 183659
+    },
+    {
+      "index": 2006,
+      "title": "Suppression of the African Slave Trade to the US by W. E. B. Du Bois",
+      "url": "http://www.gutenberg.org/ebooks/17700",
+      "publication_date": 1896,
+      "chars": 769362,
+      "tokens": 207020
+    },
+    {
+      "index": 2011,
+      "title": "The House by the Church-Yard by J. Sheridan Le Fanu",
+      "url": "http://www.gutenberg.org/ebooks/17769",
+      "publication_date": 1904,
+      "chars": 1220829,
+      "tokens": 318465
+    },
+    {
+      "index": 2023,
+      "title": "Federalist Papers by Alexander Hamilton John Jay and James Madison",
+      "url": "http://www.gutenberg.org/ebooks/18",
+      "publication_date": 1788,
+      "chars": 1167763,
+      "tokens": 252934
+    },
+    {
+      "index": 2037,
+      "title": "Works of the Right Honourable Edmund Burke Vol. VII (of 12)",
+      "url": "http://www.gutenberg.org/ebooks/18161",
+      "publication_date": 1887,
+      "chars": 811551,
+      "tokens": 184890
+    },
+    {
+      "index": 2052,
+      "title": "The Lock and Key Library Classic Mystery and Detective Stories",
+      "url": "http://www.gutenberg.org/ebooks/1831",
+      "publication_date": 1909,
+      "chars": 747851,
+      "tokens": 184483
+    },
+    {
+      "index": 2053,
+      "title": "The Delight Makers by Adolf Bandelier",
+      "url": "http://www.gutenberg.org/ebooks/18310",
+      "publication_date": 1918,
+      "chars": 866954,
+      "tokens": 210397
+    },
+    {
+      "index": 2054,
+      "title": "Types of Naval Officers by A. T. Mahan (a.k.a.: Alfred Thayer Mahan)",
+      "url": "http://www.gutenberg.org/ebooks/18314",
+      "publication_date": 1901,
+      "chars": 756431,
+      "tokens": 177909
+    },
+    {
+      "index": 2063,
+      "title": "Abraham Lincoln by Lord Charnwood",
+      "url": "http://www.gutenberg.org/ebooks/18379",
+      "publication_date": 1917,
+      "chars": 1027188,
+      "tokens": 236952
+    },
+    {
+      "index": 2064,
+      "title": "A New Voyage to Carolina by John Lawson",
+      "url": "http://www.gutenberg.org/ebooks/1838",
+      "publication_date": 1709,
+      "chars": 623729,
+      "tokens": 157023
+    },
+    {
+      "index": 2067,
+      "title": "The Financier by Theodore Dreiser",
+      "url": "http://www.gutenberg.org/ebooks/1840",
+      "publication_date": 1912,
+      "chars": 1094722,
+      "tokens": 262590
+    },
+    {
+      "index": 2073,
+      "title": "The Story of the Hymns and Tunes Theron Brown and Hezekiah Butterworth",
+      "url": "http://www.gutenberg.org/ebooks/18444",
+      "publication_date": 1844,
+      "chars": 765519,
+      "tokens": 193989
+    },
+    {
+      "index": 2074,
+      "title": "The Treasure of Heaven by Marie Corelli",
+      "url": "http://www.gutenberg.org/ebooks/18449",
+      "publication_date": 1906,
+      "chars": 929120,
+      "tokens": 235754
+    },
+    {
+      "index": 2079,
+      "title": "Montezuma's Daughter by H. Rider Haggard",
+      "url": "http://www.gutenberg.org/ebooks/1848",
+      "publication_date": 1893,
+      "chars": 783679,
+      "tokens": 195659
+    },
+    {
+      "index": 2088,
+      "title": "Catherine de' Medici by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1854",
+      "publication_date": 1902,
+      "chars": 645749,
+      "tokens": 155755
+    },
+    {
+      "index": 2093,
+      "title": "Cousin Pons by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1856",
+      "publication_date": 1901,
+      "chars": 633520,
+      "tokens": 160305
+    },
+    {
+      "index": 2097,
+      "title": "One Hundred Merrie And Delightsome Stories by Various",
+      "url": "http://www.gutenberg.org/ebooks/18575",
+      "publication_date": 1899,
+      "chars": 806930,
+      "tokens": 199445
+    },
+    {
+      "index": 2101,
+      "title": "The Letters of Cassiodorus by Cassiodorus",
+      "url": "http://www.gutenberg.org/ebooks/18590",
+      "publication_date": 1886,
+      "chars": 1164393,
+      "tokens": 304003
+    },
+    {
+      "index": 2102,
+      "title": "The Life of George Washington Vol. 5 (of 5) by John Marshall",
+      "url": "http://www.gutenberg.org/ebooks/18595",
+      "publication_date": 1776,
+      "chars": 622115,
+      "tokens": 133960
+    },
+    {
+      "index": 2104,
+      "title": "Westward Ho! by Charles Kingsley",
+      "url": "http://www.gutenberg.org/ebooks/1860",
+      "publication_date": 1855,
+      "chars": 1385740,
+      "tokens": 352470
+    },
+    {
+      "index": 2113,
+      "title": "Phineas Redux by Anthony Trollope",
+      "url": "http://www.gutenberg.org/ebooks/18640",
+      "publication_date": 1874,
+      "chars": 1428430,
+      "tokens": 349044
+    },
+    {
+      "index": 2115,
+      "title": "Lincoln's Second Inaugural Address March 4",
+      "url": "http://www.gutenberg.org/ebooks/1865",
+      "publication_date": 1866,
+      "chars": 787849,
+      "tokens": 182281
+    },
+    {
+      "index": 2118,
+      "title": "North America Vol. 2 of 2 by Anthony Trollope",
+      "url": "http://www.gutenberg.org/ebooks/1866",
+      "publication_date": 1866,
+      "chars": 859978,
+      "tokens": 195323
+    },
+    {
+      "index": 2124,
+      "title": "A Certain Rich Man by William Allen White",
+      "url": "http://www.gutenberg.org/ebooks/18684",
+      "publication_date": 1909,
+      "chars": 876995,
+      "tokens": 219123
+    },
+    {
+      "index": 2125,
+      "title": "The Wide Wide World by Elizabeth Wetherell",
+      "url": "http://www.gutenberg.org/ebooks/18689",
+      "publication_date": 1885,
+      "chars": 1359241,
+      "tokens": 348409
+    },
+    {
+      "index": 2127,
+      "title": "The Deputy of Arcis by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1871",
+      "publication_date": 1896,
+      "chars": 728107,
+      "tokens": 177496
+    },
+    {
+      "index": 2128,
+      "title": "The Victim by Thomas Dixon",
+      "url": "http://www.gutenberg.org/ebooks/18721",
+      "publication_date": 1914,
+      "chars": 779684,
+      "tokens": 178376
+    },
+    {
+      "index": 2135,
+      "title": "Life in Morocco and Glimpses Beyond by Budgett Meakin",
+      "url": "http://www.gutenberg.org/ebooks/18764",
+      "publication_date": 1905,
+      "chars": 623997,
+      "tokens": 148705
+    },
+    {
+      "index": 2138,
+      "title": "Physiology and Hygiene for Secondary Schools by Francis Marion Walters",
+      "url": "http://www.gutenberg.org/ebooks/18779",
+      "publication_date": 1909,
+      "chars": 783280,
+      "tokens": 181131
+    },
+    {
+      "index": 2141,
+      "title": "Royalty Restored or London under Charles II by J. Fitzgerald Molloy",
+      "url": "http://www.gutenberg.org/ebooks/1879",
+      "publication_date": 1885,
+      "chars": 705963,
+      "tokens": 164411
+    },
+    {
+      "index": 2142,
+      "title": "The Pathfinder by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/1880",
+      "publication_date": 1840,
+      "chars": 982173,
+      "tokens": 235918
+    },
+    {
+      "index": 2153,
+      "title": "Then I'll Come Back to You by Larry Evans",
+      "url": "http://www.gutenberg.org/ebooks/18894",
+      "publication_date": 1915,
+      "chars": 607532,
+      "tokens": 152090
+    },
+    {
+      "index": 2160,
+      "title": "Armadale by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1895",
+      "publication_date": 1866,
+      "chars": 1640440,
+      "tokens": 399605
+    },
+    {
+      "index": 2162,
+      "title": "A Journal From Our Legation in Belgium by Hugh Gibson",
+      "url": "http://www.gutenberg.org/ebooks/18959",
+      "publication_date": 1917,
+      "chars": 607455,
+      "tokens": 139560
+    },
+    {
+      "index": 2169,
+      "title": "Typee by Herman Melville",
+      "url": "http://www.gutenberg.org/ebooks/1900",
+      "publication_date": 1892,
+      "chars": 656890,
+      "tokens": 153622
+    },
+    {
+      "index": 2185,
+      "title": "Darwin and Modern Science by A. C. Seward",
+      "url": "http://www.gutenberg.org/ebooks/1909",
+      "publication_date": 1909,
+      "chars": 1642659,
+      "tokens": 374778
+    },
+    {
+      "index": 2186,
+      "title": "Secret Societies And Subversive Movements by Nesta H. Webster",
+      "url": "http://www.gutenberg.org/ebooks/19104",
+      "publication_date": 1799,
+      "chars": 1067017,
+      "tokens": 257408
+    },
+    {
+      "index": 2194,
+      "title": "With Lee in Virginia by G. A. Henty",
+      "url": "http://www.gutenberg.org/ebooks/19154",
+      "publication_date": 1890,
+      "chars": 669099,
+      "tokens": 159027
+    },
+    {
+      "index": 2197,
+      "title": "The Queen of Hearts by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1917",
+      "publication_date": 1859,
+      "chars": 790578,
+      "tokens": 188318
+    },
+    {
+      "index": 2200,
+      "title": "The Friendships of Women by William Rounseville Alger",
+      "url": "http://www.gutenberg.org/ebooks/19199",
+      "publication_date": 1868,
+      "chars": 637632,
+      "tokens": 149011
+    },
+    {
+      "index": 2202,
+      "title": "The Andes and the Amazon by James Orton",
+      "url": "http://www.gutenberg.org/ebooks/19209",
+      "publication_date": 1870,
+      "chars": 609862,
+      "tokens": 155523
+    },
+    {
+      "index": 2203,
+      "title": "The Chouans by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1921",
+      "publication_date": 1895,
+      "chars": 617671,
+      "tokens": 151648
+    },
+    {
+      "index": 2204,
+      "title": "The History of England in Three Volumes Vol.II by Tobias Smollett",
+      "url": "http://www.gutenberg.org/ebooks/19217",
+      "publication_date": 1688,
+      "chars": 4867324,
+      "tokens": 1098080
+    },
+    {
+      "index": 2210,
+      "title": "Elinor Wyllys Vol. 2 by Susan Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/1928",
+      "publication_date": 1845,
+      "chars": 645781,
+      "tokens": 156634
+    },
+    {
+      "index": 2224,
+      "title": "Resurrection by Leo Tolstoy",
+      "url": "http://www.gutenberg.org/ebooks/1938",
+      "publication_date": 1916,
+      "chars": 972216,
+      "tokens": 238043
+    },
+    {
+      "index": 2232,
+      "title": "A Gentleman of France by Stanley Weyman",
+      "url": "http://www.gutenberg.org/ebooks/1939",
+      "publication_date": 1893,
+      "chars": 797257,
+      "tokens": 199020
+    },
+    {
+      "index": 2236,
+      "title": "On the Spanish Main by John Masefield",
+      "url": "http://www.gutenberg.org/ebooks/19396",
+      "publication_date": 1906,
+      "chars": 637334,
+      "tokens": 159263
+    },
+    {
+      "index": 2237,
+      "title": "History of Rationalism Embracing a Survey of the Present",
+      "url": "http://www.gutenberg.org/ebooks/19397",
+      "publication_date": 1867,
+      "chars": 1157615,
+      "tokens": 270369
+    },
+    {
+      "index": 2238,
+      "title": "By Right of Conquest by G. A. Henty",
+      "url": "http://www.gutenberg.org/ebooks/19398",
+      "publication_date": 1891,
+      "chars": 779646,
+      "tokens": 186414
+    },
+    {
+      "index": 2249,
+      "title": "Rise and Fall of Cesar Birotteau by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1942",
+      "publication_date": 1837,
+      "chars": 629128,
+      "tokens": 155631
+    },
+    {
+      "index": 2253,
+      "title": "On War Vol. 1 by Carl von Clausewitz",
+      "url": "http://www.gutenberg.org/ebooks/1946",
+      "publication_date": 1909,
+      "chars": 618789,
+      "tokens": 136795
+    },
+    {
+      "index": 2254,
+      "title": "The Price by Francis Lynde",
+      "url": "http://www.gutenberg.org/ebooks/19462",
+      "publication_date": 1911,
+      "chars": 643885,
+      "tokens": 157361
+    },
+    {
+      "index": 2257,
+      "title": "The Life of Joan of Arc Vol. 1 and 2 (of 2) by Anatole France",
+      "url": "http://www.gutenberg.org/ebooks/19488",
+      "publication_date": 1908,
+      "chars": 1794714,
+      "tokens": 504277
+    },
+    {
+      "index": 2269,
+      "title": "The Guests Of Hercules by C. N. Williamson and A. M. Williamson",
+      "url": "http://www.gutenberg.org/ebooks/19569",
+      "publication_date": 1912,
+      "chars": 877422,
+      "tokens": 214017
+    },
+    {
+      "index": 2270,
+      "title": "Beatrix by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1957",
+      "publication_date": 1899,
+      "chars": 662655,
+      "tokens": 164316
+    },
+    {
+      "index": 2273,
+      "title": "Analysis of Antient Mythology Volume II (of VI) by Jacob Bryant",
+      "url": "http://www.gutenberg.org/ebooks/19584",
+      "publication_date": 1807,
+      "chars": 634668,
+      "tokens": 186553
+    },
+    {
+      "index": 2279,
+      "title": "A Smaller History of Rome by William Smith and Eugene Lawrence",
+      "url": "http://www.gutenberg.org/ebooks/19694",
+      "publication_date": 1881,
+      "chars": 978840,
+      "tokens": 234763
+    },
+    {
+      "index": 2281,
+      "title": "The Legacy of Cain by Wilkie Collins",
+      "url": "http://www.gutenberg.org/ebooks/1975",
+      "publication_date": 1888,
+      "chars": 647881,
+      "tokens": 158744
+    },
+    {
+      "index": 2282,
+      "title": "Debit and Credit by Gustav Freytag",
+      "url": "http://www.gutenberg.org/ebooks/19754",
+      "publication_date": 1858,
+      "chars": 1300091,
+      "tokens": 316378
+    },
+    {
+      "index": 2283,
+      "title": "Peter Ruff and the Double Four by E. Phillips Oppenheim",
+      "url": "http://www.gutenberg.org/ebooks/1976",
+      "publication_date": 1912,
+      "chars": 665629,
+      "tokens": 161532
+    },
+    {
+      "index": 2293,
+      "title": "The Rise and Fall of the Confederate Government Vol. 1 (of 2)",
+      "url": "http://www.gutenberg.org/ebooks/19831",
+      "publication_date": 1881,
+      "chars": 1793267,
+      "tokens": 401183
+    },
+    {
+      "index": 2304,
+      "title": "History ... Foreign Missions ... Oriental Churches Vol. II by Anderson",
+      "url": "http://www.gutenberg.org/ebooks/19939",
+      "publication_date": 1872,
+      "chars": 743539,
+      "tokens": 177564
+    },
+    {
+      "index": 2306,
+      "title": "Thus Spake Zarathustra by Friedrich Nietzsche",
+      "url": "http://www.gutenberg.org/ebooks/1998",
+      "publication_date": 1869,
+      "chars": 639331,
+      "tokens": 161639
+    },
+    {
+      "index": 2318,
+      "title": "We Two by Edna Lyall",
+      "url": "http://www.gutenberg.org/ebooks/2007",
+      "publication_date": 1884,
+      "chars": 947553,
+      "tokens": 225668
+    },
+    {
+      "index": 2319,
+      "title": "Frank Fairlegh Illustrated Complete by Frank E. Smedley",
+      "url": "http://www.gutenberg.org/ebooks/20075",
+      "publication_date": 1904,
+      "chars": 1142141,
+      "tokens": 281049
+    },
+    {
+      "index": 2321,
+      "title": "Origin of Species 6th Edition by Charles Darwin",
+      "url": "http://www.gutenberg.org/ebooks/2009",
+      "publication_date": 1809,
+      "chars": 1251220,
+      "tokens": 275802
+    },
+    {
+      "index": 2325,
+      "title": "The Belief in Immortality and the Worship of the Dead Vol. 1 of 3",
+      "url": "http://www.gutenberg.org/ebooks/20116",
+      "publication_date": 1913,
+      "chars": 1251214,
+      "tokens": 314196
+    },
+    {
+      "index": 2327,
+      "title": "Bearn and the Pyrenees by Louisa Stuart Costello",
+      "url": "http://www.gutenberg.org/ebooks/20124",
+      "publication_date": 1844,
+      "chars": 1097202,
+      "tokens": 268327
+    },
+    {
+      "index": 2332,
+      "title": "My Bondage and My Freedom by Frederick Douglass",
+      "url": "http://www.gutenberg.org/ebooks/202",
+      "publication_date": 1855,
+      "chars": 765518,
+      "tokens": 185944
+    },
+    {
+      "index": 2335,
+      "title": "Nostromo: A Tale of the Seaboard by Joseph Conrad",
+      "url": "http://www.gutenberg.org/ebooks/2021",
+      "publication_date": 1904,
+      "chars": 967782,
+      "tokens": 232633
+    },
+    {
+      "index": 2343,
+      "title": "The Coming Conquest of England by August Niemann",
+      "url": "http://www.gutenberg.org/ebooks/2026",
+      "publication_date": 1904,
+      "chars": 601222,
+      "tokens": 139013
+    },
+    {
+      "index": 2348,
+      "title": "A Handbook of Health by Woods Hutchinson",
+      "url": "http://www.gutenberg.org/ebooks/20294",
+      "publication_date": 1911,
+      "chars": 637263,
+      "tokens": 155557
+    },
+    {
+      "index": 2349,
+      "title": "Unwritten Literature of Hawaii by Nathaniel Bright Emerson",
+      "url": "http://www.gutenberg.org/ebooks/20299",
+      "publication_date": 1909,
+      "chars": 810750,
+      "tokens": 191559
+    },
+    {
+      "index": 2350,
+      "title": "Uncle Tom's Cabin by Harriet Beecher Stowe",
+      "url": "http://www.gutenberg.org/ebooks/203",
+      "publication_date": 1852,
+      "chars": 1006053,
+      "tokens": 258553
+    },
+    {
+      "index": 2355,
+      "title": "Waverley or 'Tis Sixty Years Since by Sir Walter Scott",
+      "url": "http://www.gutenberg.org/ebooks/2034",
+      "publication_date": 1814,
+      "chars": 1064988,
+      "tokens": 258001
+    },
+    {
+      "index": 2364,
+      "title": "The Lock and Key Library Classic Mystery and Detective Stories",
+      "url": "http://www.gutenberg.org/ebooks/2038",
+      "publication_date": 1909,
+      "chars": 682118,
+      "tokens": 168095
+    },
+    {
+      "index": 2372,
+      "title": "The Lock and Key Library Stories by Modern American Authors",
+      "url": "http://www.gutenberg.org/ebooks/2043",
+      "publication_date": 1909,
+      "chars": 727530,
+      "tokens": 180198
+    },
+    {
+      "index": 2374,
+      "title": "The Education of Henry Adams by Henry Adams",
+      "url": "http://www.gutenberg.org/ebooks/2044",
+      "publication_date": 1907,
+      "chars": 1024554,
+      "tokens": 236081
+    },
+    {
+      "index": 2377,
+      "title": "The Lock and Key Library Stories of Modern French Novels",
+      "url": "http://www.gutenberg.org/ebooks/2047",
+      "publication_date": 1909,
+      "chars": 723978,
+      "tokens": 179376
+    },
+    {
+      "index": 2379,
+      "title": "The Sketch Book of Geoffrey Crayon Gent. by Washington Irving",
+      "url": "http://www.gutenberg.org/ebooks/2048",
+      "publication_date": 1864,
+      "chars": 745096,
+      "tokens": 175087
+    },
+    {
+      "index": 2380,
+      "title": "Real Life In London Illustrated Volumes I. and II. by Pierce Egan",
+      "url": "http://www.gutenberg.org/ebooks/20484",
+      "publication_date": 1905,
+      "chars": 2045770,
+      "tokens": 488698
+    },
+    {
+      "index": 2381,
+      "title": "Henry of Monmouth Volume 2 by J. Endell Tyler",
+      "url": "http://www.gutenberg.org/ebooks/20489",
+      "publication_date": 1838,
+      "chars": 761045,
+      "tokens": 171195
+    },
+    {
+      "index": 2391,
+      "title": "Two Years Before the Mast by Richard Henry Dana",
+      "url": "http://www.gutenberg.org/ebooks/2055",
+      "publication_date": 1840,
+      "chars": 917922,
+      "tokens": 230485
+    },
+    {
+      "index": 2393,
+      "title": "Life of William Carey by George Smith",
+      "url": "http://www.gutenberg.org/ebooks/2056",
+      "publication_date": 1885,
+      "chars": 835879,
+      "tokens": 198336
+    },
+    {
+      "index": 2413,
+      "title": "At the Point of the Bayonet by G. A. Henty",
+      "url": "http://www.gutenberg.org/ebooks/20729",
+      "publication_date": 1901,
+      "chars": 736179,
+      "tokens": 178933
+    },
+    {
+      "index": 2417,
+      "title": "St. Ronan's Well by Sir Walter Scott",
+      "url": "http://www.gutenberg.org/ebooks/20749",
+      "publication_date": 1894,
+      "chars": 1039818,
+      "tokens": 260351
+    },
+    {
+      "index": 2421,
+      "title": "The Nabob by Alphonse Daudet",
+      "url": "http://www.gutenberg.org/ebooks/2077",
+      "publication_date": 1878,
+      "chars": 870266,
+      "tokens": 209545
+    },
+    {
+      "index": 2426,
+      "title": "Memoirs of the Comtesse du Barry by Etienne Leon Lamothe-Langon",
+      "url": "http://www.gutenberg.org/ebooks/2082",
+      "publication_date": 1903,
+      "chars": 902872,
+      "tokens": 219072
+    },
+    {
+      "index": 2429,
+      "title": "In Search of the Castaways by Jules Verne",
+      "url": "http://www.gutenberg.org/ebooks/2083",
+      "publication_date": 1911,
+      "chars": 903956,
+      "tokens": 217788
+    },
+    {
+      "index": 2431,
+      "title": "The Way of All Flesh by Samuel Butler",
+      "url": "http://www.gutenberg.org/ebooks/2084",
+      "publication_date": 1912,
+      "chars": 880871,
+      "tokens": 212642
+    },
+    {
+      "index": 2433,
+      "title": "Cyropaedia by Xenophon",
+      "url": "http://www.gutenberg.org/ebooks/2085",
+      "publication_date": 1890,
+      "chars": 637305,
+      "tokens": 159502
+    },
+    {
+      "index": 2435,
+      "title": "Life and Letters of Charles Darwin Vol. 1 of 2 by Charles Darwin",
+      "url": "http://www.gutenberg.org/ebooks/2087",
+      "publication_date": 1858,
+      "chars": 1082803,
+      "tokens": 259158
+    },
+    {
+      "index": 2436,
+      "title": "Life and Letters of Charles Darwin Vol. 2 of 2 by Charles Darwin",
+      "url": "http://www.gutenberg.org/ebooks/2088",
+      "publication_date": 1871,
+      "chars": 1054620,
+      "tokens": 257749
+    },
+    {
+      "index": 2441,
+      "title": "The Original Writings of Samuel Adams Vol. 2",
+      "url": "http://www.gutenberg.org/ebooks/2092",
+      "publication_date": 1773,
+      "chars": 749429,
+      "tokens": 177001
+    },
+    {
+      "index": 2444,
+      "title": "The International Monthly Magazine Vol. 5 No. 1 January 1852",
+      "url": "http://www.gutenberg.org/ebooks/20955",
+      "publication_date": 1852,
+      "chars": 778564,
+      "tokens": 190016
+    },
+    {
+      "index": 2452,
+      "title": "History of the Moravian Church by J. E. Hutton",
+      "url": "http://www.gutenberg.org/ebooks/2099",
+      "publication_date": 1909,
+      "chars": 991815,
+      "tokens": 239077
+    },
+    {
+      "index": 2461,
+      "title": "The Willoughby Captains by Talbot Baines Reed",
+      "url": "http://www.gutenberg.org/ebooks/21044",
+      "publication_date": 1887,
+      "chars": 698891,
+      "tokens": 176969
+    },
+    {
+      "index": 2487,
+      "title": "History of Friedrich II of Prussia Vol. 18 of 21 Seven-Years War",
+      "url": "http://www.gutenberg.org/ebooks/2118",
+      "publication_date": 1759,
+      "chars": 744156,
+      "tokens": 195302
+    },
+    {
+      "index": 2488,
+      "title": "History of Friedrich II of Prussia Vol. 20 of 21 Friedrich is not",
+      "url": "http://www.gutenberg.org/ebooks/2120",
+      "publication_date": 1865,
+      "chars": 637610,
+      "tokens": 168338
+    },
+    {
+      "index": 2490,
+      "title": "History of Friedrich II of Prussia Vol. 21 of 21 Afternoon and",
+      "url": "http://www.gutenberg.org/ebooks/2121",
+      "publication_date": 1763,
+      "chars": 701542,
+      "tokens": 182729
+    },
+    {
+      "index": 2499,
+      "title": "Clayhanger by Arnold Bennett",
+      "url": "http://www.gutenberg.org/ebooks/21249",
+      "publication_date": 1910,
+      "chars": 1087356,
+      "tokens": 264500
+    },
+    {
+      "index": 2500,
+      "title": "The Nile Tributaries of Abyssinia by Samuel W. Baker",
+      "url": "http://www.gutenberg.org/ebooks/2125",
+      "publication_date": 1867,
+      "chars": 861599,
+      "tokens": 206522
+    },
+    {
+      "index": 2507,
+      "title": "Blue Jackets by George Manville Fenn",
+      "url": "http://www.gutenberg.org/ebooks/21299",
+      "publication_date": 1893,
+      "chars": 645348,
+      "tokens": 167460
+    },
+    {
+      "index": 2511,
+      "title": "Fitz the Filibuster by George Manville Fenn",
+      "url": "http://www.gutenberg.org/ebooks/21309",
+      "publication_date": 1903,
+      "chars": 681848,
+      "tokens": 176347
+    },
+    {
+      "index": 2514,
+      "title": "The Daughter of an Empress by Louise Muhlbach",
+      "url": "http://www.gutenberg.org/ebooks/2132",
+      "publication_date": 1893,
+      "chars": 678473,
+      "tokens": 162454
+    },
+    {
+      "index": 2521,
+      "title": "The Works of Aphra Behn Vol. I (of 6) by Aphra Behn",
+      "url": "http://www.gutenberg.org/ebooks/21339",
+      "publication_date": 1913,
+      "chars": 900853,
+      "tokens": 257409
+    },
+    {
+      "index": 2531,
+      "title": "Ronald Morton or the Fire Ships by W.H.G. Kingston",
+      "url": "http://www.gutenberg.org/ebooks/21389",
+      "publication_date": 1862,
+      "chars": 809007,
+      "tokens": 197466
+    },
+    {
+      "index": 2536,
+      "title": "From Powder Monkey to Admiral by W.H.G. Kingston",
+      "url": "http://www.gutenberg.org/ebooks/21404",
+      "publication_date": 1884,
+      "chars": 660840,
+      "tokens": 160007
+    },
+    {
+      "index": 2541,
+      "title": "Ben-Hur: A Tale of the Christ by Lew Wallace",
+      "url": "http://www.gutenberg.org/ebooks/2145",
+      "publication_date": 1880,
+      "chars": 1100945,
+      "tokens": 270890
+    },
+    {
+      "index": 2546,
+      "title": "Peter the Whaler by W.H.G. Kingston",
+      "url": "http://www.gutenberg.org/ebooks/21474",
+      "publication_date": 1851,
+      "chars": 642532,
+      "tokens": 158073
+    },
+    {
+      "index": 2553,
+      "title": "My First Voyage to Southern Seas by W.H.G. Kingston",
+      "url": "http://www.gutenberg.org/ebooks/21504",
+      "publication_date": 1860,
+      "chars": 751116,
+      "tokens": 183964
+    },
+    {
+      "index": 2557,
+      "title": "Mary Barton by Elizabeth Cleghorn Gaskell",
+      "url": "http://www.gutenberg.org/ebooks/2153",
+      "publication_date": 1848,
+      "chars": 893892,
+      "tokens": 225713
+    },
+    {
+      "index": 2565,
+      "title": "The Prime Minister by Anthony Trollope",
+      "url": "http://www.gutenberg.org/ebooks/2158",
+      "publication_date": 1876,
+      "chars": 1515027,
+      "tokens": 368661
+    },
+    {
+      "index": 2569,
+      "title": "The Expedition of Humphry Clinker by Tobias Smollett",
+      "url": "http://www.gutenberg.org/ebooks/2160",
+      "publication_date": 1771,
+      "chars": 850280,
+      "tokens": 207460
+    },
+    {
+      "index": 2570,
+      "title": "Flourishing of Romance and the Rise of Allegory by George Saintsbury",
+      "url": "http://www.gutenberg.org/ebooks/21600",
+      "publication_date": 1897,
+      "chars": 703608,
+      "tokens": 174612
+    },
+    {
+      "index": 2571,
+      "title": "Society by Henry Kalloch Rowe",
+      "url": "http://www.gutenberg.org/ebooks/21609",
+      "publication_date": 1916,
+      "chars": 753374,
+      "tokens": 163802
+    },
+    {
+      "index": 2572,
+      "title": "For the Temple by G. A. Henty",
+      "url": "http://www.gutenberg.org/ebooks/21614",
+      "publication_date": 1888,
+      "chars": 667218,
+      "tokens": 161215
+    },
+    {
+      "index": 2586,
+      "title": "The Miscellaneous Writings and Speeches of Lord Macaulay",
+      "url": "http://www.gutenberg.org/ebooks/2168",
+      "publication_date": 1826,
+      "chars": 827157,
+      "tokens": 190336
+    },
+    {
+      "index": 2591,
+      "title": "Sons and Lovers by David Herbert Lawrence",
+      "url": "http://www.gutenberg.org/ebooks/217",
+      "publication_date": 1913,
+      "chars": 881279,
+      "tokens": 221523
+    },
+    {
+      "index": 2592,
+      "title": "The Miscellaneous Writings and Speeches of Lord Macaulay",
+      "url": "http://www.gutenberg.org/ebooks/2170",
+      "publication_date": 1871,
+      "chars": 1119185,
+      "tokens": 254662
+    },
+    {
+      "index": 2623,
+      "title": "Sense and Sensibility by Jane Austen",
+      "url": "http://www.gutenberg.org/ebooks/21839",
+      "publication_date": 1896,
+      "chars": 690257,
+      "tokens": 164259
+    },
+    {
+      "index": 2643,
+      "title": "Mauprat by George Sand",
+      "url": "http://www.gutenberg.org/ebooks/2194",
+      "publication_date": 1837,
+      "chars": 695312,
+      "tokens": 168275
+    },
+    {
+      "index": 2651,
+      "title": "The Iliad by Homer",
+      "url": "http://www.gutenberg.org/ebooks/2199",
+      "publication_date": 1898,
+      "chars": 810035,
+      "tokens": 208503
+    },
+    {
+      "index": 2654,
+      "title": "The Genius by Margaret Horton Potter",
+      "url": "http://www.gutenberg.org/ebooks/22004",
+      "publication_date": 1906,
+      "chars": 807080,
+      "tokens": 193707
+    },
+    {
+      "index": 2657,
+      "title": "Standish of Standish by Jane G. Austin",
+      "url": "http://www.gutenberg.org/ebooks/22052",
+      "publication_date": 1889,
+      "chars": 651508,
+      "tokens": 160936
+    },
+    {
+      "index": 2668,
+      "title": "Travels in the Great Desert of Sahara by James Richardson",
+      "url": "http://www.gutenberg.org/ebooks/22094",
+      "publication_date": 1848,
+      "chars": 1561917,
+      "tokens": 390122
+    },
+    {
+      "index": 2669,
+      "title": "The Return of Sherlock Holmes by Arthur Conan Doyle",
+      "url": "http://www.gutenberg.org/ebooks/221",
+      "publication_date": 1903,
+      "chars": 611652,
+      "tokens": 147565
+    },
+    {
+      "index": 2678,
+      "title": "Old Rail Fence Corners by Various",
+      "url": "http://www.gutenberg.org/ebooks/22179",
+      "publication_date": 1914,
+      "chars": 610536,
+      "tokens": 148470
+    },
+    {
+      "index": 2680,
+      "title": "The Comedies of Terence by Publius Terentius Afer [a.k.a.: Terence]",
+      "url": "http://www.gutenberg.org/ebooks/22188",
+      "publication_date": 1896,
+      "chars": 728844,
+      "tokens": 203256
+    },
+    {
+      "index": 2686,
+      "title": "Molly Bawn by Margaret Wolfe Hamilton",
+      "url": "http://www.gutenberg.org/ebooks/22214",
+      "publication_date": 1900,
+      "chars": 813779,
+      "tokens": 204827
+    },
+    {
+      "index": 2688,
+      "title": "At Aboukir and Acre by George Alfred Henty",
+      "url": "http://www.gutenberg.org/ebooks/22224",
+      "publication_date": 1899,
+      "chars": 603356,
+      "tokens": 143156
+    },
+    {
+      "index": 2694,
+      "title": "The Legacy of Greece by Various",
+      "url": "http://www.gutenberg.org/ebooks/22259",
+      "publication_date": 1900,
+      "chars": 856561,
+      "tokens": 201034
+    },
+    {
+      "index": 2701,
+      "title": "Nicanor - Teller of Tales by C. Bryson Taylor",
+      "url": "http://www.gutenberg.org/ebooks/22304",
+      "publication_date": 1906,
+      "chars": 603667,
+      "tokens": 151639
+    },
+    {
+      "index": 2714,
+      "title": "A Pair of Blue Eyes by Thomas Hardy",
+      "url": "http://www.gutenberg.org/ebooks/224",
+      "publication_date": 1873,
+      "chars": 734796,
+      "tokens": 179237
+    },
+    {
+      "index": 2728,
+      "title": "New York Times Current History; The European War Vol 2 No. 5 August",
+      "url": "http://www.gutenberg.org/ebooks/22460",
+      "publication_date": 1915,
+      "chars": 701855,
+      "tokens": 160027
+    },
+    {
+      "index": 2733,
+      "title": "Across Unknown South America by Arnold Henry Savage Landor",
+      "url": "http://www.gutenberg.org/ebooks/22483",
+      "publication_date": 1913,
+      "chars": 1547070,
+      "tokens": 375173
+    },
+    {
+      "index": 2767,
+      "title": "The International Magazine Volume 2 No. 2 January 1851 by Various",
+      "url": "http://www.gutenberg.org/ebooks/22694",
+      "publication_date": 1851,
+      "chars": 814201,
+      "tokens": 196234
+    },
+    {
+      "index": 2768,
+      "title": "The Complete Shakespeare's First Folio [35 Plays]",
+      "url": "http://www.gutenberg.org/ebooks/2270",
+      "publication_date": 1623,
+      "chars": 4516403,
+      "tokens": 1327934
+    },
+    {
+      "index": 2777,
+      "title": "From Edinburgh to India & Burmah by William G. Burn Murdoch",
+      "url": "http://www.gutenberg.org/ebooks/22749",
+      "publication_date": 1908,
+      "chars": 679243,
+      "tokens": 168294
+    },
+    {
+      "index": 2778,
+      "title": "The Pioneers by James Fenimore Cooper",
+      "url": "http://www.gutenberg.org/ebooks/2275",
+      "publication_date": 1823,
+      "chars": 965622,
+      "tokens": 232778
+    },
+    {
+      "index": 2786,
+      "title": "The Aeneid by Virgil",
+      "url": "http://www.gutenberg.org/ebooks/228",
+      "publication_date": 1697,
+      "chars": 634256,
+      "tokens": 167830
+    },
+    {
+      "index": 2797,
+      "title": "Paul Patoff by F. Marion Crawford",
+      "url": "http://www.gutenberg.org/ebooks/22879",
+      "publication_date": 1899,
+      "chars": 855445,
+      "tokens": 203909
+    },
+    {
+      "index": 2809,
+      "title": "Nell of Shorne Mills by Charles Garvice",
+      "url": "http://www.gutenberg.org/ebooks/22961",
+      "publication_date": 1898,
+      "chars": 816128,
+      "tokens": 207690
+    },
+    {
+      "index": 2814,
+      "title": "The Descent of Man by Charles Darwin",
+      "url": "http://www.gutenberg.org/ebooks/2300",
+      "publication_date": 1874,
+      "chars": 1851257,
+      "tokens": 453415
+    },
+    {
+      "index": 2815,
+      "title": "Orley Farm by Anthony Trollope",
+      "url": "http://www.gutenberg.org/ebooks/23000",
+      "publication_date": 1862,
+      "chars": 1665328,
+      "tokens": 409932
+    },
+    {
+      "index": 2817,
+      "title": "A Simpleton by Charles Reade",
+      "url": "http://www.gutenberg.org/ebooks/2301",
+      "publication_date": 1873,
+      "chars": 712224,
+      "tokens": 180591
+    },
+    {
+      "index": 2823,
+      "title": "Captain Canot by Brantz Mayer and Theodore Canot",
+      "url": "http://www.gutenberg.org/ebooks/23034",
+      "publication_date": 1854,
+      "chars": 927077,
+      "tokens": 224237
+    },
+    {
+      "index": 2834,
+      "title": "A Voyage round the World by W.H.G. Kingston",
+      "url": "http://www.gutenberg.org/ebooks/23074",
+      "publication_date": 1880,
+      "chars": 760565,
+      "tokens": 188024
+    },
+    {
+      "index": 2839,
+      "title": "Travels through France & Italy by Tobias Smollett",
+      "url": "http://www.gutenberg.org/ebooks/2311",
+      "publication_date": 1766,
+      "chars": 818846,
+      "tokens": 200840
+    },
+    {
+      "index": 2843,
+      "title": "Olla Podrida by Frederick Marryat (a.k.a. Captain Marryat)",
+      "url": "http://www.gutenberg.org/ebooks/23139",
+      "publication_date": 1840,
+      "chars": 740196,
+      "tokens": 183982
+    },
+    {
+      "index": 2855,
+      "title": "Recollections and Letters of General Robert E. Lee",
+      "url": "http://www.gutenberg.org/ebooks/2323",
+      "publication_date": 1904,
+      "chars": 771811,
+      "tokens": 184168
+    },
+    {
+      "index": 2868,
+      "title": "Sister Carrie by Theodore Dreiser",
+      "url": "http://www.gutenberg.org/ebooks/233",
+      "publication_date": 1900,
+      "chars": 876858,
+      "tokens": 210206
+    },
+    {
+      "index": 2871,
+      "title": "History of Phoenicia by George Rawlinson",
+      "url": "http://www.gutenberg.org/ebooks/2331",
+      "publication_date": 1889,
+      "chars": 889107,
+      "tokens": 234344
+    },
+    {
+      "index": 2873,
+      "title": "Critical and Historical Essays Vol. 1 by Thomas Babington Macaulay",
+      "url": "http://www.gutenberg.org/ebooks/2332",
+      "publication_date": 1847,
+      "chars": 1724416,
+      "tokens": 393893
+    },
+    {
+      "index": 2876,
+      "title": "Critical and Historical Essays Vol. 2 by Thomas Babington Macaulay",
+      "url": "http://www.gutenberg.org/ebooks/2333",
+      "publication_date": 1843,
+      "chars": 1734184,
+      "tokens": 407111
+    },
+    {
+      "index": 2877,
+      "title": "Vegetable Teratology by Maxwell T. Masters",
+      "url": "http://www.gutenberg.org/ebooks/23354",
+      "publication_date": 1869,
+      "chars": 962388,
+      "tokens": 262523
+    },
+    {
+      "index": 2883,
+      "title": "Crown and Sceptre by George Manville Fenn",
+      "url": "http://www.gutenberg.org/ebooks/23382",
+      "publication_date": 1889,
+      "chars": 738109,
+      "tokens": 186549
+    },
+    {
+      "index": 2897,
+      "title": "A History of the Four Georges Volume I (of 4) by Justin McCarthy",
+      "url": "http://www.gutenberg.org/ebooks/23469",
+      "publication_date": 1901,
+      "chars": 757633,
+      "tokens": 190623
+    },
+    {
+      "index": 2899,
+      "title": "The Bishop's Secret by Fergus Hume",
+      "url": "http://www.gutenberg.org/ebooks/23474",
+      "publication_date": 1906,
+      "chars": 626340,
+      "tokens": 157551
+    },
+    {
+      "index": 2904,
+      "title": "Notable Voyagers by W.H.G. Kingston and Henry Frith",
+      "url": "http://www.gutenberg.org/ebooks/23494",
+      "publication_date": 1885,
+      "chars": 1011420,
+      "tokens": 241028
+    },
+    {
+      "index": 2906,
+      "title": "John Halifax Gentleman by Dinah Maria Mulock Craik",
+      "url": "http://www.gutenberg.org/ebooks/2351",
+      "publication_date": 1856,
+      "chars": 991539,
+      "tokens": 251767
+    },
+    {
+      "index": 2917,
+      "title": "Rookwood by William Harrison Ainsworth",
+      "url": "http://www.gutenberg.org/ebooks/23564",
+      "publication_date": 1823,
+      "chars": 912804,
+      "tokens": 229849
+    },
+    {
+      "index": 2922,
+      "title": "The Riddle of the Sands by Erskine Childers",
+      "url": "http://www.gutenberg.org/ebooks/2360",
+      "publication_date": 1902,
+      "chars": 605875,
+      "tokens": 153955
+    },
+    {
+      "index": 2923,
+      "title": "Searchlights on Health: Light on Dark Corners by Jefferis and Nichols",
+      "url": "http://www.gutenberg.org/ebooks/23609",
+      "publication_date": 1904,
+      "chars": 812277,
+      "tokens": 195588
+    },
+    {
+      "index": 2927,
+      "title": "Italian Popular Tales by Thomas Frederick Crane",
+      "url": "http://www.gutenberg.org/ebooks/23634",
+      "publication_date": 1885,
+      "chars": 889105,
+      "tokens": 237011
+    },
+    {
+      "index": 2928,
+      "title": "Plutarch's Morals by Plutarch",
+      "url": "http://www.gutenberg.org/ebooks/23639",
+      "publication_date": 1874,
+      "chars": 919677,
+      "tokens": 234820
+    },
+    {
+      "index": 2934,
+      "title": "Flamsted quarries by Mary E. Waller",
+      "url": "http://www.gutenberg.org/ebooks/23664",
+      "publication_date": 1910,
+      "chars": 726690,
+      "tokens": 181915
+    },
+    {
+      "index": 2940,
+      "title": "Sir Gibbie by George MacDonald",
+      "url": "http://www.gutenberg.org/ebooks/2370",
+      "publication_date": 1879,
+      "chars": 1045676,
+      "tokens": 274299
+    },
+    {
+      "index": 2955,
+      "title": "The History of Sir Richard Calmady by Lucas Malet",
+      "url": "http://www.gutenberg.org/ebooks/23784",
+      "publication_date": 1901,
+      "chars": 1537635,
+      "tokens": 372612
+    },
+    {
+      "index": 2961,
+      "title": "The Deliverance by Ellen Glasgow",
+      "url": "http://www.gutenberg.org/ebooks/2384",
+      "publication_date": 1904,
+      "chars": 749212,
+      "tokens": 187367
+    },
+    {
+      "index": 2969,
+      "title": "History of the Catholic Church from the Renaissance",
+      "url": "http://www.gutenberg.org/ebooks/2396",
+      "publication_date": 1915,
+      "chars": 865204,
+      "tokens": 201062
+    },
+    {
+      "index": 2970,
+      "title": "Story of My Life by Helen Keller",
+      "url": "http://www.gutenberg.org/ebooks/2397",
+      "publication_date": 1903,
+      "chars": 741576,
+      "tokens": 177186
+    },
+    {
+      "index": 2975,
+      "title": "There was a King in Egypt by Norma Lorimer",
+      "url": "http://www.gutenberg.org/ebooks/23994",
+      "publication_date": 1918,
+      "chars": 943490,
+      "tokens": 231253
+    },
+    {
+      "index": 2979,
+      "title": "The Memoirs of General the Baron de Marbot",
+      "url": "http://www.gutenberg.org/ebooks/2401",
+      "publication_date": 1892,
+      "chars": 1204432,
+      "tokens": 285509
+    }
+  ]
+}

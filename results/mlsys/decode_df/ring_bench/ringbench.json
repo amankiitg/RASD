@@ -1,0 +1,149 @@
+{
+ "tag": "ringbench",
+ "rounds": 256,
+ "world_size": 8,
+ "rank0_rows": [
+  {
+   "label": "tiny_4kb",
+   "size_mb_actual": 0.004,
+   "seq_len": 1,
+   "heads": 8,
+   "rank": 0,
+   "rounds": 256,
+   "ms_per_round": 10.3124,
+   "ms_per_round_p90": 10.4038,
+   "gb_per_s": 0.0,
+   "ms_total_256_rounds": 2639.99,
+   "world_size": 8
+  },
+  {
+   "label": "mb33",
+   "size_mb_actual": 33.292,
+   "seq_len": 2032,
+   "heads": 32,
+   "rank": 0,
+   "rounds": 256,
+   "ms_per_round": 10.3437,
+   "ms_per_round_p90": 10.4154,
+   "gb_per_s": 3.22,
+   "ms_total_256_rounds": 2647.98,
+   "world_size": 8
+  },
+  {
+   "label": "mb133",
+   "size_mb_actual": 133.169,
+   "seq_len": 8128,
+   "heads": 32,
+   "rank": 0,
+   "rounds": 256,
+   "ms_per_round": 10.3557,
+   "ms_per_round_p90": 10.423,
+   "gb_per_s": 12.86,
+   "ms_total_256_rounds": 2651.05,
+   "world_size": 8
+  },
+  {
+   "label": "mb266",
+   "size_mb_actual": 266.338,
+   "seq_len": 16256,
+   "heads": 32,
+   "rank": 0,
+   "rounds": 256,
+   "ms_per_round": 10.3462,
+   "ms_per_round_p90": 10.4314,
+   "gb_per_s": 25.74,
+   "ms_total_256_rounds": 2648.63,
+   "world_size": 8
+  },
+  {
+   "label": "k8_66mb_expand_after",
+   "size_mb_actual": 66.585,
+   "seq_len": 16256,
+   "heads": 8,
+   "rank": 0,
+   "rounds": 256,
+   "ms_per_round": 10.3389,
+   "ms_per_round_p90": 10.4175,
+   "gb_per_s": 6.44,
+   "ms_total_256_rounds": 2646.75,
+   "world_size": 8
+  }
+ ],
+ "skew": [
+  {
+   "label": "tiny_4kb",
+   "size_mb_actual": 0.004,
+   "per_rank_ms": [
+    10.3124,
+    10.3338,
+    10.3298,
+    10.3327,
+    10.3032,
+    10.31,
+    10.3221,
+    10.2937
+   ],
+   "spread_ms": 0.0401
+  },
+  {
+   "label": "mb33",
+   "size_mb_actual": 33.292,
+   "per_rank_ms": [
+    10.3437,
+    10.3494,
+    10.3633,
+    10.3557,
+    10.3458,
+    10.3927,
+    10.3763,
+    10.3387
+   ],
+   "spread_ms": 0.054
+  },
+  {
+   "label": "mb133",
+   "size_mb_actual": 133.169,
+   "per_rank_ms": [
+    10.3557,
+    10.3389,
+    10.3951,
+    10.3401,
+    10.3392,
+    10.3867,
+    10.3411,
+    10.3672
+   ],
+   "spread_ms": 0.0562
+  },
+  {
+   "label": "mb266",
+   "size_mb_actual": 266.338,
+   "per_rank_ms": [
+    10.3462,
+    10.3445,
+    10.3481,
+    10.3463,
+    10.3469,
+    10.3546,
+    10.3456,
+    10.3392
+   ],
+   "spread_ms": 0.0154
+  },
+  {
+   "label": "k8_66mb_expand_after",
+   "size_mb_actual": 66.585,
+   "per_rank_ms": [
+    10.3389,
+    10.3375,
+    10.3451,
+    10.3479,
+    10.3585,
+    10.3367,
+    10.3361,
+    10.3312
+   ],
+   "spread_ms": 0.0273
+  }
+ ]
+}

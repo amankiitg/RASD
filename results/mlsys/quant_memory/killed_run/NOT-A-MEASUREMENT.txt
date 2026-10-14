@@ -1,0 +1,11 @@
+These eight per-rank sidecars are from SAQ_BOTH_OFF in the 128k memory pass, and they are
+NOT a measurement. The driver's poll deadline (its timer less 15 minutes) fired at
+2026-10-12T23:26:10Z while that row was mid-decode, the instance was terminated, and the row
+never completed: there is no SAQ_BOTH_OFF stage line and no row in session_a_SAQ_*.csv.
+
+What they are good for is one bounded statement: the tracer wrote them at
+`post_target_prefill`, so the snapshot labels and values describe the PREFILL phase only, and
+rank 0's max_alloc there (19208 MB) is a LOWER BOUND on its true peak -- the CSV for the same
+arm in Phase 1 records 22727 MB for rank 0, the difference being decode-phase allocation the
+trace did not reach. They are kept, and quarantined, so that nobody later reads 19.2 GB as
+BOTH_OFF's per-rank footprint.

@@ -1,0 +1,7 @@
+builder,tokenizer,nominal_context,actual_prompt_tokens,ratio,cells_affected
+"OLD (pre-A7, 2836a64~1)",Llama-2-7b-hf,65536,62660,0.9561,M3/M4 64k matrix
+"OLD (pre-A7, 2836a64~1)",Llama-2-7b-hf,131072,125360,0.9564,"Arm1, M4 128k, LCFM 128k"
+"OLD (pre-A7, 2836a64~1)",Llama-2-7b-hf,262144,250716,0.9564,M4 256k
+"OLD (pre-A7, 2836a64~1)",Llama-2-7b-hf,524288,501472,0.9565,M4 512k
+"OLD (pre-A7, 2836a64~1)",Llama-2-7b-hf,1048576,1002984,0.9565,M4/PG19-spec 1M
+"OLD (pre-A7, 2836a64~1)",Llama-3.1-8B,131072,124803,0.9522,"Arm2, Arm3"

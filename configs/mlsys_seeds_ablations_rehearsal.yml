@@ -1,0 +1,213 @@
+# REHEARSAL for the seeds/ablations session. SAME STAGE IDS, SAME ONE-CHANGED-SETTING
+# PER STAGE, TINY SIZES: context 8192 and 48 new tokens throughout, 2 books throughout.
+#
+# WHY 48 TOKENS AND NOT 4. The first attempt used 4 and the session's own gate stopped it
+# at stage 3: with one spec round per row the acceptance is 0/4 or 4/4, so every row read
+# 0.0 and the check refused to continue -- correctly, since a check that cannot tell a
+# broken sampling path from a coarse one is not a check. 48 tokens at spec_steps 4 is
+# about 12 rounds per row, which is enough for the acceptance to be a fraction rather
+# than a coin flip, and still costs seconds. The gate is what caught this, which is the
+# gate working.
+#
+# WHAT THIS PROVES AND WHAT IT CANNOT. It proves the plumbing: the driver's manifest
+# reaching the pod intact, the stage list the pod derives matching the one the driver
+# intended, eleven steps in priority order, every per-level override surviving the
+# level merge (kv_block_size, seeds, draft_window_cap, temperature, spec_steps,
+# profile), the profiler's `profiler/<run_id>.json` landing in the pull, and the
+# per-stage CSVs coming back under a non-default SESSION_OUT. It cannot prove anything
+# about the ring: the rehearsal is one 1x A100, and `install_ring_attention` is a no-op
+# at world_size <= 1, so comm is zero by construction here and the rank count is the
+# one thing only the 8x run can exercise.
+#
+# NON-DEFAULT EVERYWHERE, ON PURPOSE. Every stage below keeps the setting it exists to
+# move (8192, [123], [456], 2048, 16384, 0.0, 1.0, 2, 6, profile on) so that a value
+# dropped in transit is a value the parameter check can refuse -- and the session
+# itself is driven with a non-default SESSION_OUT, SESSION_CFG and SESSION_CHECK_STAGE.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 48
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+
+SA_PROF_RING_128K:
+  name: sa_prof_ring_128k
+  factor: context_length
+  levels:
+  - id: SA_PROF_RING_128K_WARM
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 48
+    spec_steps: 0
+    profile: true
+    notes: 'REHEARSAL of stage b warm-up: proves the profiler sidecar is written and pulled'
+  - id: SA_PROF_RING_128K_TARGET
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 48
+    spec_steps: 0
+    profile: true
+    notes: 'REHEARSAL of stage b measured row'
+
+SA_RINGCHUNK_8192_TARGET:
+  name: sa_ringchunk_8192_target
+  factor: context_length
+  levels:
+  - id: SA_RINGCHUNK_8192_TARGET
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 0
+    kv_block_size: 8192
+    notes: 'REHEARSAL of stage c target-only arm'
+
+SA_RINGCHUNK_8192_SPEC:
+  name: sa_ringchunk_8192_spec
+  factor: context_length
+  levels:
+  - id: SA_RINGCHUNK_8192_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    kv_block_size: 8192
+    notes: 'REHEARSAL of stage c spec arm'
+
+SA_SEED_123_1M_SPEC:
+  name: sa_seed_123_1m_spec
+  factor: context_length
+  levels:
+  - id: SA_SEED_123_1M_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    seeds: [123]
+    notes: 'REHEARSAL of stage d seed 123'
+
+SA_SEED_456_1M_SPEC:
+  name: sa_seed_456_1m_spec
+  factor: context_length
+  levels:
+  - id: SA_SEED_456_1M_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    seeds: [456]
+    notes: 'REHEARSAL of stage d seed 456'
+
+SA_DRAFTWIN_2048_128K_SPEC:
+  name: sa_draftwin_2048_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_DRAFTWIN_2048_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    draft_window_cap: 2048
+    notes: 'REHEARSAL of stage e window 2048'
+
+SA_DRAFTWIN_16384_128K_SPEC:
+  name: sa_draftwin_16384_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_DRAFTWIN_16384_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    draft_window_cap: 16384
+    notes: 'REHEARSAL of stage e window 16384 (larger than this context: the cap must be a no-op, not an error)'
+
+SA_TEMP_0_128K_SPEC:
+  name: sa_temp_0_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_TEMP_0_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.0
+    max_new_tokens: 48
+    notes: 'REHEARSAL of stage f greedy'
+
+SA_TEMP_1_0_128K_SPEC:
+  name: sa_temp_1_0_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_TEMP_1_0_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 1.0
+    max_new_tokens: 48
+    notes: 'REHEARSAL of stage f T=1.0'
+
+SA_STEPS_2_128K_SPEC:
+  name: sa_steps_2_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_STEPS_2_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 2
+    notes: 'REHEARSAL of stage g spec_steps 2'
+
+SA_STEPS_6_128K_SPEC:
+  name: sa_steps_6_128k_spec
+  factor: context_length
+  levels:
+  - id: SA_STEPS_6_128K_SPEC
+    context_length: 8192
+    documents: [pg19_train_0, pg19_train_1]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 48
+    spec_steps: 6
+    notes: 'REHEARSAL of stage g spec_steps 6'

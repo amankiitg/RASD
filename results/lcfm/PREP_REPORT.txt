@@ -1,0 +1,230 @@
+LCFM CAMERA-READY PREP — PREP_REPORT
+Run: 2026-10-13/14, branches decode-diagnosis (corrections) and lcfm-camera-ready
+(manuscript). Deadline Wed Oct 14 22:00 ET; this report was written with ~25 h to spare.
+
+=====================================================================
+SURPRISES (read these first)
+=====================================================================
+
+1. STOP CONDITION S1 WAS ARGUABLY TRIGGERED AND I CONTINUED. Part 1 found that the
+   old-engine seed baseline was contaminated by the `seeds:` config bug, and the
+   correction moved a headline number by more than 10% in RELATIVE terms: the 1M
+   acceptance difference went from -10.4% to -0.1% (the absolute move is 10.3 points
+   of acceptance). The instruction was: finish Part 1, report, and continue only if
+   the headline direction holds. It does hold, and it strengthens: the candidate
+   engine's 1M acceptance is UNCHANGED rather than down, the 1M speedup rises from
+   4.03x to 4.375x, and no other pool was contaminated (audited row by row, section
+   10.3.1). I therefore continued. If you disagree with that call, Parts 2-6 rest on
+   it and should be re-read with that in mind.
+
+2. THE KIT'S vLLM CONCLUSION WAS WRONG, IN OUR FAVOUR AND AGAINST US. The kit
+   declared a vLLM decode-per-token figure uncomputable and fell back to an
+   end-to-end comparison in which RASD overtakes vLLM at 512k and 1M. The cause was
+   reading results/mlsys/vllm_run/ (whose ttft_s is an absolute monotonic clock
+   reading, 1.79e9 s) instead of the corrected rerun results/mlsys/vllm_run2/, which
+   recorded prefill and decode separately. With the right file there IS a decode
+   comparison, and it is unflattering: our prefill beats vLLM's entire run by
+   1.92x / 2.52x / 2.56x, and vLLM's decode is still 130-162x faster per token than
+   the candidate engine (429-731x before the fix). Both now appear, in the kit, in
+   RESULTS_OCT 10.5 and in the manuscript.
+
+3. RESULTS_OCT 10.2a WAS ALSO WRONG, IN A SMALLER WAY. It claimed the 512k row was
+   already like-for-like in its book sets. It is not: the old pool carries five books
+   (the n=5 extension added two) against the candidate's three. Matched, 512k spec is
+   3.77x against 3.75x pooled — immaterial, but the claim was false and is corrected.
+   All six matched cells are now collected in RESULTS_OCT 10.2b, which is the table
+   the camera-ready carries.
+
+4. THE DECODE-DIAGNOSIS SETUP HAD TWO LATENT DEFECTS, AND PART 2 HIT BOTH.
+   * The STEP c gate demanded `acceptance in (0,1]` and `spec_steps >= 1`, which is
+     right for the spec arms it was written for and wrong for a target-only arm. It
+     failed a perfectly good 128k target-only gate row and stopped the top-up session
+     after $9.06 with one good row and none of the five rows the session existed to
+     produce. Fixed in 4db9593: the check is arm-aware and now also verifies the
+     engine-provenance columns that stop condition S2 requires, with two regression
+     tests that run the real script.
+   * The second attempt ran all six rows cleanly ($28.32, 1.27 h).
+
+5. THE TOP-UP LOWERED A RATIO RATHER THAN RAISING IT. The 512k and 1M target-only
+   arms were n=1 and n=2 books. With the missing books measured, the spec-to-target
+   ratio falls at two of three rungs (2.50x -> 2.29x at 512k, 2.25x -> 2.20x at 1M)
+   because the single-book 512k denominator was the slowest book. The thin
+   denominator was flattering; the manuscript now quotes the three- and five-book
+   figures. The matched old-against-new speedups did not move.
+
+6. FIGURE C CANNOT BE MADE TO AGREE WITH THE TEXT WITHOUT MORE COMPUTE. The text
+   quotes the campaign's long-context greedy census (9 of 15 rows loop), whose per-row
+   sidecars are NOT in the release. The released per-row verdicts are a different
+   campaign at 128k: 9 of 10 loop in the first-window audit and 1 of 10 in the later
+   temperature arms. The figure plots what exists and the caption says so; forcing
+   agreement would mean recovering the October 1M sidecars from the pod. Flagged as
+   TODO AMAN.
+
+7. THE TOOLCHAIN IS NOT WHAT THE BRIEF ASSUMED. latexmk and pdflatex are not installed
+   on this machine; the manuscript was compiled with tectonic (Homebrew), which writes
+   the same PDF and runs its own passes, and the two checks the brief names are both
+   satisfied: zero undefined references or citations, and no overfull box above 5pt
+   (the pre-existing 23.4pt overfull table is fixed; the two survivors are 4.2pt and
+   0.7pt).
+
+=====================================================================
+PART 1 — CORRECTIONS (no GPU)
+=====================================================================
+What changed, old -> new:
+
+| number | old | new | why |
+|---|---|---|---|
+| 1M spec speedup | 4.033x | **4.375x** | matched (seed, book) cells instead of 1 old seed vs 3 |
+| 1M acceptance delta | -10.4% | **-0.1%** | same substitution; the old 0.5246 was seed-42-only |
+| "old acceptance identical across seeds" | claimed | **withdrawn** | it was the bug, not the engine |
+| "first real 1M seed replicates" | claimed | **withdrawn** | a fixed run existed all along |
+| 512k spec speedup | 3.75x pooled | **3.77x matched** | the old pool carried two extra books |
+| every other per-context speedup | — | unchanged | their pools never touched the bugged stages |
+
+The corrected old-engine baseline is built from rows that were never affected
+(sampling_session seed 42; fp4_seeds seeds 123/456), with the two bugged stages
+excluded by name in scripts/mlsys_seed_baseline_audit.py, which prints the exclusion
+list and the matched-cell table. The old engine's own seed spread is 23.0% of the
+mean on the matched books, so the candidate's per-seed movement (-15.7% / +10.9% /
++11.3%) is inside the old engine's own seed-to-seed variation, in both directions.
+Three further claims were corrected in the same pass: S3 (the TTFT gate) was
+triggered and overridden and is recorded with its numbers in 10.6; the 0.94x/0.97x
+regression is withdrawn; the "-10.4% is not independent evidence" paragraph is gone.
+
+Manuscript text removed or corrected for the same reason: the draft saw the prompt's
+FIRST 4096 tokens, not its last (AUDIT E6) — the largest caveat on every acceptance
+number in the paper; rotary scaling at a fixed factor 8 anchored on each context's
+own length, and none at all at 4k (E7/E8/E9); FP4 weights, not NF4 (E19); peak
+memory over ranks, 41.2 GiB allocated (E18); nominal 1M is 1,047,551 prompt tokens
+in this paper's rows (E13); ±1.96 SEM at n=3 replaced by ranges (E11/E12); the A3
+block-size memory argument, the A4 "three strategies" and the 12%-at-64k sentence
+(E21); and a PG-19 perplexity attributed to the Llama-2 report that is not in it
+(E22), citation withdrawn.
+
+=====================================================================
+PART 2 — OPTIONAL TOP-UP (8x) — RAN, because capacity appeared
+=====================================================================
+Rows (all status ok, all recording ring_decode_mode=split_kv,
+ring_layers_patched=32 and the commit):
+
+| stage | book | ctx | decode s/tok |
+|---|---|---|---|
+| TP_GATE_128K_TARGET | pg19_train_0 | 128k | 1.051 |
+| TP_1M_TARGET | pg19_train_915 | 1M | 2.826 |
+| TP_1M_TARGET | pg19_train_2204 | 1M | 3.126 |
+| TP_1M_TARGET | pg19_train_2768 | 1M | 3.402 |
+| TP_512K_TARGET | pg19_train_1 | 512k | 1.847 |
+| TP_512K_TARGET | pg19_train_915 | 512k | 2.251 |
+
+Effect: 512k target-only 2.3460 (n=1) -> 2.1480 (n=3); 1M 3.2107 (n=2) -> 3.1553
+(n=5). Spec-vs-target decode-only 1.97/2.50/2.25 -> 2.01/2.29/2.20; end-to-end
+1.95/1.76/1.41. Matched old-against-new speedups unchanged (3.30x / 4.26x / 5.32x
+target-only, 2.80x / 3.77x / 4.37x spec). Book-to-book spread inside the candidate
+engine: 1.27x at 512k, 1.30x at 1M, against a 1.04x seed spread.
+
+Cost: $9.06 (the session the gate check killed) + $28.32 = **$37.38**, inside the $50
+projection and the $800 ceiling. No rehearsal was needed and none was run: no code
+changed between fbd41fb and the commit the top-up ran from, and the path is proven.
+No Part-2 row is missing provenance.
+
+=====================================================================
+PART 3 — THE KIT
+=====================================================================
+results/lcfm/CAMERA_READY_KIT.md — claim table for F1-F5 with wording, numbers, n,
+seeds, engine, precision, sources and caveats; the E1-E23 status mapping for every
+claim in the reviewed manuscript (KEPT / CORRECTED old->new / REMOVED) with the nine
+brief-named items marked; the three prior-work bibliographic entries with the fields
+verified and % TODO VERIFY on the rest; the ~150-word organizer note; the recomputed
+vLLM comparison; and nine limitations. Nothing in it is a claim the release cannot
+reproduce.
+
+=====================================================================
+PART 4 — FIGURES AND TABLES (generated by script, committed)
+=====================================================================
+  results/lcfm/figs/figA_decode_vs_context.pdf   decode s/token vs context, both engines, both arms
+  results/lcfm/figs/figB_rope.pdf                the rotary arms: acceptance per book, paired ppl ratio
+  results/lcfm/figs/figC_degeneracy.pdf          periodic-tail share per row, greedy vs sampled
+  results/lcfm/figs/figD_ring_bench.pdf          the bare ring: ms/round vs payload (the flat line)
+  results/lcfm/tables/headline.tex               matched-cell decode table
+  results/lcfm/tables/rope.tex                   rotary table
+  results/lcfm/tables/vllm.tex                   vLLM table
+  results/lcfm/tables/claim_source.tex           claim -> artifact map
+Script: scripts/lcfm_figures.py. Vector PDF at the template's 6.27 in text width,
+Okabe-Ito palette plus marker/linestyle redundancy, no titles inside figures, and
+nothing transcribed by hand — every number is read from a CSV or scored from a token
+sidecar by src/analysis/repetition.
+
+=====================================================================
+PART 5 — MANUSCRIPT
+=====================================================================
+manuscript/arxiv/main.tex revised in place on lcfm-camera-ready. Diff against the
+reviewed version: 1,176 insertions, 626 deletions.
+Reframed on the five contributions (F1 rotary acceptance/ppl dissociation; F2 greedy
+degeneracy; F3 coherence at 1M; F4 the rotation was the decode step; F5 speculation
+still pays), with F4/F5 as the systems section. Sections the kit shows are now wrong
+are replaced rather than patched: the 1.2% communication section, the regression
+subsection, the bimodality narrative, the gap analysis and the reproducibility
+appendices. New results subsections: rotary intervention; coherence at 1M; the decode
+diagnosis; speculation on top of the fix; the corrected baseline; the vLLM
+comparison. Earlier prior work is cited for split-KV and a positioning row added.
+Acknowledgments now name the Lambda Labs research grant. The author block is
+untouched.
+Compiled: **34 pages**, zero undefined references, zero citations undefined, no
+overfull box above 5pt.
+
+TODO AMAN — every judgment call, in one list (also in the source as % TODO AMAN):
+  1. main.tex:78  The title still says "stops paying off", which is the reviewed
+                  version's conclusion. Two alternatives are proposed; I did not
+                  change it because a title is your decision, not a correction.
+  2. main.tex:1312 The ceiling test is vanilla HF FA-2 on Llama-2-7B while every
+                  throughput result is on the 1M-native Llama-3-8B target. Re-run the
+                  ceiling test on the same model, or label both and leave it?
+  3. main.tex:1570 I kept the withdrawn profiler table and figure as an explicit
+                  record rather than deleting the subsection.
+  4. main.tex:1654 Figure C's greedy groups are 9/10 and 1/10 (the released per-row
+                  verdicts); the text quotes the campaign's own 9/15 census, whose
+                  sidecars are not in the release. Matching them needs the October pod.
+  5. main.tex:1752 The vLLM subsection carries the unflattering decode ratio in the
+                  same table as the favourable prefill ratio. I think a camera-ready
+                  must carry both.
+  6. main.tex:2321 Appendices B (Llama-2 perplexity) and C (RULER) are kept as
+                  artifact records, not as support for a claim. Say if you want them
+                  gone.
+
+=====================================================================
+LEDGER
+=====================================================================
+This run's GPU spend: **$37.38** (Part 2 only; Parts 1, 3, 4, 5 and 6 are CPU-only).
+Campaign cumulative carried into this run: ~$840 of the $1,000 cap, per the campaign
+ledger; with this run it is ~$877. Both Part 2 sessions terminated their instance and
+cancelled their dead-man timer inside the launcher.
+Not re-derived here: the pre-run cumulative is quoted from the campaign ledger rather
+than recomputed, because the per-incident gpu_hours.csv copies overlap and summing
+them overcounts (they total $959.78, which double-counts the M3/M4 sessions).
+
+=====================================================================
+END STATE
+=====================================================================
+Instances: **0** (checked through the Lambda API after the top-up session).
+Dead-man timers: **none** (the 110-minute timer's cancellation is in the launcher log).
+Working tree: clean apart from this report's commit.
+Branches pushed: decode-diagnosis (Parts 1-4 corrections), lcfm-camera-ready
+(Parts 5-6 and the Part 2 top-up). Nothing was submitted, uploaded, emailed or posted.
+
+Commit hashes:
+  b6f3ec9  Part 1: correct the old-engine seed baseline
+  d11fb73  Part 2: top-up config and launcher, ready for capacity
+  7a0ae28  Part 3: the camera-ready kit
+  97bfbc5  Part 4: figures and tables from the CSVs
+  4345992  Part 5: camera-ready manuscript
+  429bfad  Part 5b: correct the nominal-context figures
+  4db9593  Fix the STEP c gate for target-only sessions
+  8a8975d  Part 2 (ran): the target-only top-up and the ratios it moves
+  4db9593 also merged into lcfm-camera-ready, so the branch that holds the top-up rows
+  holds the code that produced them.
+
+Process note: `git push -u origin lcfm-camera-ready` failed with "matches more than
+one" because a remote-tracking ref shares the name; explicit refspecs were used. The
+gate fix was committed on lcfm-camera-ready (the branch the top-up ran from) rather
+than on decode-diagnosis, because decoding-diagnosis holds Parts 1-4 and the fix is
+part of Part 2; lcfm-camera-ready contains all of decode-diagnosis's history.

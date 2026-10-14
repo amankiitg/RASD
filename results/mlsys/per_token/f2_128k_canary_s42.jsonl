@@ -1,0 +1,6 @@
+{"round_idx": 0, "global_pos_start": 65536, "spec_steps": 4, "n_acc": 0, "draft_tokens": [128000, 8872, 7208, 8923], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 65537, "spec_steps": 4, "n_acc": 0, "draft_tokens": [15638, 2191, 2001, 82], "accepted": [false, true, true, true]}
+{"round_idx": 2, "global_pos_start": 65538, "spec_steps": 4, "n_acc": 4, "draft_tokens": [6492, 315, 4332, 5780], "accepted": [true, true, true, true]}
+{"round_idx": 3, "global_pos_start": 65543, "spec_steps": 4, "n_acc": 0, "draft_tokens": [6067, 198, 12928, 10264], "accepted": [false, false, true, false]}
+{"round_idx": 4, "global_pos_start": 65544, "spec_steps": 4, "n_acc": 1, "draft_tokens": [78482, 301, 5859, 15638], "accepted": [true, false, false, false]}
+{"round_idx": 5, "global_pos_start": 65546, "spec_steps": 4, "n_acc": 4, "draft_tokens": [30, 5019, 1981, 30], "accepted": [true, true, true, true]}

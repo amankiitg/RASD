@@ -1,0 +1,14 @@
+2026-10-08T07:50:24Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+spend before manifest: $34.86
+2026-10-08T07:50:24Z STALL_WATCHDOG started pid=10887 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+=== stage gate_calibration (projected $22, 1.0h; watchdog 40h) ===
+2026-10-08T07:50:25Z STAGE_START name=gate_calibration timeout=14400s
+Traceback (most recent call last):
+  File "/home/ubuntu/RASD/scripts/mlsys_coherence_gate.py", line 48, in <module>
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+ModuleNotFoundError: No module named 'transformers'
+2026-10-08T07:50:27Z STAGE_FAILED name=gate_calibration rc=1 wall=2s cost=$0.01
+--- gate_calibration rc=1 wall=2s cost=$0.01 cumulative=$34.87
+2026-10-08T07:50:27Z ABORT: gate calibration did not succeed in this attempt rc=1
+ABORT: gate calibration rc=1; the gate is uncalibrated and no
+  candidate may be gated from it.

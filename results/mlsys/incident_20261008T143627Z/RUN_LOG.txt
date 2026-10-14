@@ -1,0 +1,5 @@
+2026-10-08T14:23:33Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+2026-10-08T14:23:33Z STALL_WATCHDOG started pid=7919 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+2026-10-08T14:23:33Z STAGE_START name=gate_calibration timeout=14400s
+2026-10-08T14:36:27Z STAGE_OK name=gate_calibration wall=774s cost=$4.80 cumulative=$39.66
+2026-10-08T14:36:27Z ABORT: gate calibration failed its controls; refusing to gate candidates

@@ -1,0 +1,6 @@
+reason : operator stop (resume in ~12h)
+utc    : 2026-10-09T11:07:10Z
+instance: d2e1825003d041ef887996efff29f2da
+region : us-east-1
+ip     : 129.213.87.10
+host   : Amans-MacBook-Air.local

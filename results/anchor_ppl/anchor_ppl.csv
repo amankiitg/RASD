@@ -1,0 +1,4 @@
+config,context,effective_anchor,ppl,ppl_at_4096,inv_freq_0,inv_freq_last,gen_chars,status,error,rope_scaling,ppl_seconds
+native_4k,4096,,2.9746432305114348,2.9746432305114348,1,0.000115478,693,ok,,null,0.8
+yarn_f8_anchor_ctx,32768,32768,826.9040833940666,4.893087786554262,1,1.44348e-05,302,ok,,"{""type"": ""yarn"", ""factor"": 8, ""original_max_position_embeddings"": 4096}",3.7
+yarn_f8_anchor_base,32768,4096,14.452623546825915,4.799132969490595,1,1.44348e-05,264,ok,,"{""type"": ""yarn"", ""factor"": 8, ""original_max_position_embeddings"": 4096}",3.7

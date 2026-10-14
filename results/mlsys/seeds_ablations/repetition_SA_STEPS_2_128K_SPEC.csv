@@ -1,0 +1,6 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+SA_STEPS_2_128K_SPEC_pg19_train_0_s42,pg19_train_0,2,131072,128,0.6792,0.6852,0.0,0.0,0.0,3,59,0.058,128,0.0,False,,1,1,0,,0.6852,ok,
+SA_STEPS_2_128K_SPEC_pg19_train_1_s42,pg19_train_1,2,131072,128,0.5678,0.575,0.0,0.0,0.0,5,36,0.087,128,0.0,False,,1,1,0,,0.575,ok,
+SA_STEPS_2_128K_SPEC_pg19_train_915_s42,pg19_train_915,2,131072,128,0.8021,0.8061,0.0,0.0,0.0,3,14,0.0789,128,0.0,False,,1,1,0,,0.8061,ok,
+SA_STEPS_2_128K_SPEC_pg19_train_2204_s42,pg19_train_2204,2,131072,128,0.614,0.614,0.0,0.0,0.0,4,42,0.0581,128,0.0,False,,1,1,0,,0.614,ok,
+SA_STEPS_2_128K_SPEC_pg19_train_2768_s42,pg19_train_2768,2,131072,128,0.6161,0.6228,0.0,0.0,0.0,7,15,0.0708,128,0.0,False,,1,1,0,,0.6228,ok,

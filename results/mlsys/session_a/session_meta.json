@@ -1,0 +1,18 @@
+{
+  "session": "A",
+  "instance_id": "0dfd9bafe061403db3b7e710da2d0739",
+  "instance_type": "gpu_8x_a100_80gb_sxm4",
+  "instance_description": "8x A100 (80 GB SXM4)",
+  "region": "us-midwest-1",
+  "rate_usd_per_hour": 22.32,
+  "launched_utc": "2026-10-10T18:56:59+00:00",
+  "target_model": "gradientai/Llama-3-8B-Instruct-Gradient-1048k",
+  "target_property": "max_position_embeddings 1048576, rope_theta 3.58e9, rope_scaling none",
+  "draft_model": "meta-llama/Llama-3.2-1B (window cap 4096)",
+  "pools": [
+    "data/processed/pg19_1m",
+    "data/processed/pg19_1m_128kwin"
+  ],
+  "speedup_rule": "spec vs target-only within THIS session only",
+  "protocol": "max_new_tokens 128, greedy, temperature 0, top_p 1, ignore_eos; periodicity reported per row"
+}

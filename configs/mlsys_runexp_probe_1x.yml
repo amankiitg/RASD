@@ -1,0 +1,63 @@
+# 1x PROBE config -- NOT a campaign config, and no manifest stage reads it.
+# tests/test_mlsys_runexp_probe_1x.py asserts that the manifest and the watcher
+# never reference this file, the same way the 1x gate repro is isolated.
+#
+# WHY IT EXISTS
+# The 2026-10-08T15:17Z run calibrated its gate for the first time and then died
+# in engine_cap_smoke on `wandb.errors.errors.UsageError: No API key configured`
+# -- before any GPU work, on a path that had never executed on a pod. Every stage
+# that calls run_experiment.py would have died the same way. That failure was
+# found by spending an 8xA100 launch; this config exists so the NEXT such
+# assumption is found on one GPU for about $1.
+#
+# WHAT IT DELIBERATELY MIRRORS
+# The campaign's own defaults, so the probe exercises the path the campaign
+# takes rather than a convenient subset of it: the same quantisation (NF4
+# weights, quantised KV), the same dtype, the same kv_block_size, the same
+# draft_window_cap lever, a speculative group AND its matched target-only
+# baseline, and a canary. Only the sizes are small: a 1B target and draft at 4k
+# for 8 tokens, which fits one 40 GB card.
+#
+# THE ONE NECESSARY DEVIATION
+# The probe driver passes `--nproc 1`; the manifest passes no --nproc and so
+# inherits the default of 8. A single-GPU node cannot run the 8-way ring, so the
+# torchrun path is NOT covered here. Everything inside a worker is.
+
+canary:
+  id:   "probe_1x_canary_s42"
+  seed: 42
+  max_new_tokens: 4
+
+defaults:
+  target_model_name: "meta-llama/Llama-3.2-1B"
+  draft_model_name:  "meta-llama/Llama-3.2-1B"
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "none"
+  kv_quant:          true
+  max_new_tokens:    8
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  draft_window_cap:  4096
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42]
+
+PROBE_SPEC:
+  name:   "probe_1x_spec"
+  factor: "context_length"
+  levels:
+    - id: "PROBE_ctx4k_spec"
+      context_length: 4096
+      checkpoint_every: 0
+
+PROBE_TARGET:
+  name:   "probe_1x_target_only"
+  factor: "context_length"
+  levels:
+    - id: "PROBE_ctx4k_targetonly"
+      context_length: 4096
+      spec_steps: 0
+      checkpoint_every: 0

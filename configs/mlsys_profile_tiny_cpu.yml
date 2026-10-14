@@ -1,0 +1,37 @@
+# CPU twin of configs/mlsys_profile_128k.yml, for proving the profile PLUMBING locally
+# before any paid GPU run. Same group name, same flags, same one-row shape; only the sizes
+# change (2048 context, 4 tokens). It measures nothing -- on CPU there is no CUDA to
+# profile -- but it exercises the --profile code path, the sidecar write and the reporting
+# script end to end.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 0
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+PROFILES:
+  name: profile_targetonly_tiny
+  factor: context_length
+  levels:
+  - id: PROF_TINY
+    context_length: 2048
+    documents: [pg19_train_0]
+    max_new_tokens: 4
+    checkpoint_every: 0
+    notes: 'local CPU plumbing test only'

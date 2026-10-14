@@ -1,0 +1,11 @@
+\begin{tabular}{lrrrrr}
+\toprule
+Context & \multicolumn{2}{c}{Prefill (s)} & \multicolumn{3}{c}{Decode (s/token)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-6}
+ & vLLM & RASD & vLLM & old ring & split-KV \\
+\midrule
+128k & 16.85 & 8.76 & 0.0081 & 3.49 & 1.06 \\
+512k & 222.80 & 88.56 & 0.0145 & 9.99 & 2.35 \\
+1M & 859.60 & 335.34 & 0.0234 & 17.09 & 3.21 \\
+\bottomrule
+\end{tabular}

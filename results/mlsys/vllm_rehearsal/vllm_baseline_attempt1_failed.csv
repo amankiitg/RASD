@@ -1,0 +1,19 @@
+model,context_length,max_new_tokens,tensor_parallel_size,rope_scaling,prompt_tokens,output_tokens,end_to_end_wall_s,decode_only_wall_s,ttft_s,throughput_tps_end_to_end,throughput_tps_decode_only,unit_matched,peak_mem_mb,status,error,attempt,config_used,error_class,log_path,vllm_version,quantization,eos_policy,prompt_source,prompt_sha256,doc_id,temperature,prompt_ids_from,prompt_ids_used_sha256,prompt_ids_verified,prompt_ids_from_engine,target_revision,draft_revision,max_model_len,interpreter,weight_precision,kv_dtype
+gradientai/Llama-3-8B-Instruct-Gradient-1048k,8192,128,1,,,,,,,,,,,error,"[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+/home/ubuntu/RASD/.venv-vllm/lib/python3.10/site-packages/vllm/connections.py:8: RuntimeWarning: Failed to read commit hash:
+No module named 'vllm._version'
+  from vllm.version import __version__ as VLLM_VERSION
+vLLM version is 'dev', pin is '0.6.3'. A throughput ratio is only comparable against a named release; install the pin or update VLLM_PIN deliberately.",1,1-default-tp8,,results/mlsys/logs/vllm_gradientai_Llama-3-8B-Instruct-Gradient-1048k_bfloat16_attempt1.log,,,,,,,0.0,,,,,,,8192,/home/ubuntu/RASD/.venv-vllm/bin/python,,
+gradientai/Llama-3-8B-Instruct-Gradient-1048k,8192,128,1,,,,,,,,,,,error,"[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+/home/ubuntu/RASD/.venv-vllm/lib/python3.10/site-packages/vllm/connections.py:8: RuntimeWarning: Failed to read commit hash:
+No module named 'vllm._version'
+  from vllm.version import __version__ as VLLM_VERSION
+vLLM version is 'dev', pin is '0.6.3'. A throughput ratio is only comparable against a named release; install the pin or update VLLM_PIN deliberately.",2,2-eager-mem95-seq1-chunked,,results/mlsys/logs/vllm_gradientai_Llama-3-8B-Instruct-Gradient-1048k_bfloat16_attempt2.log,,,,,,,0.0,,,,,,,8192,/home/ubuntu/RASD/.venv-vllm/bin/python,,
+gradientai/Llama-3-8B-Instruct-Gradient-1048k,8192,128,1,,,,,,,,,,,error,"[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+/home/ubuntu/RASD/.venv-vllm/lib/python3.10/site-packages/vllm/connections.py:8: RuntimeWarning: Failed to read commit hash:
+No module named 'vllm._version'
+  from vllm.version import __version__ as VLLM_VERSION
+vLLM version is 'dev', pin is '0.6.3'. A throughput ratio is only comparable against a named release; install the pin or update VLLM_PIN deliberately.",3,3-fallback-64k,,results/mlsys/logs/vllm_gradientai_Llama-3-8B-Instruct-Gradient-1048k_bfloat16_attempt3.log,,,,,,,0.0,,,,,,,65536,/home/ubuntu/RASD/.venv-vllm/bin/python,,

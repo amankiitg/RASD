@@ -1,0 +1,87 @@
+SESSION A "followup_samp2" — STAGE-BY-STAGE JUDGMENT (Phase 2, 2026-10-12)
+=============================================================================
+Written after the session ended, from THE STAGE LOG LINES AND THE STAGE CSVs ONLY.
+The DONE marker's rc is recorded below for completeness and was NOT used as the
+success signal (lesson L1: with the old `prev` guard an rc=0 session could have run
+none of steps d/e/f/g).
+
+Instance  cad0d8cdaf2e4994ae7a70322ef1efe3
+Type      gpu_8x_a100_80gb_sxm4, us-east-1, $22.32/hr
+Launched  2026-10-12T00:11:06Z  (dead-man timer pid 74459, PPID 1, 480 min)
+Config    configs/mlsys_followup_sampling.yml (protocol A, T=0.7), NPROC=8
+Remote    rc=0, DONE marker 2026-10-12T06:39:41Z
+Driver    saw the marker 06:42:11Z, final pull 06:42:12Z (104 files),
+          terminate issued, instances after terminate 0 (07:00:21Z), timer cancelled.
+Post-session verification (by effect, 2026-10-12T08:08:46Z)
+  instances via the Lambda API ....... 0
+  driver pid 69660 / timer pid 74459 .. both gone; no mlsys process matches pgrep
+Wall 24555 s = 6.82 h at $22.32/hr = $152.24.
+
+EVERY STAGE RAN. NOTHING WAS SKIPPED. (grep of session_a.log: no "SKIP" line exists.)
+
+-----------------------------------------------------------------------------
+stage                        rows  ok  bad  skipped   median row s   verdict
+-----------------------------------------------------------------------------
+a  sanity (separate cfg)        2   2    0   no           224.7      PASS
+b  QUALITY_FIX_128K  (greedy)   3   3    0   no            24.7      PASS
+b2 QUALITY_FIX_1M    (greedy)   3   3    0   no           382.1      PASS
+c  SAMP_CHECK_1M_SPEC           1   1    0   no          1198.4      PASS  <-- the gate
+d  SAMP_1M_SPEC                 7   5    2   no          1048.5      PARTIAL (see below)
+d2 SAMP_1M_TARGET               2   2    0   no          2544.0      PASS
+e  SAMP_ALIGNED_512K_SPEC       3   3    0   no           572.4      PASS
+e2 SAMP_ALIGNED_512K_TARGET     1   1    0   no          1360.2      PASS
+f  SAMP_ALIGNED_128K_SPEC       3   3    0   no           194.6      PASS
+f2 SAMP_ALIGNED_128K_TARGET     1   1    0   no           452.1      PASS
+   [gate] rope coherence gate   3   3    0   no             -        PASS, gate_pass=True x3
+g  ROPE_SAMP_NATIVE_SPEC        3   3    0   no           139.5      PASS
+g  ROPE_SAMP_F16_SPEC           3   3    0   no           169.4      PASS
+g  ROPE_SAMP_F32_SPEC           3   3    0   no           202.3      PASS
+g  ROPE_SAMP_NATIVE_TARGET      1   1    0   no           471.9      PASS
+-----------------------------------------------------------------------------
+                          total 34 ok rows, 2 bad rows over 5.32 h of measured row time
+
+STEP c: PASSED, so there is NO step-c failure to report. One ok row
+(SAMP_CHECK_1M_SPEC_pg19_train_0_s42): acceptance 0.3776, spec_steps 4,
+tokens_generated 128, time_sec 1198.4429 -> 128/1198.4429 = 0.1068 tok/s (NOT the
+CSV's rounded throughput_tps 0.11), 50 rounds, T=0.7, repetition-clean. The chain was
+cleared to run the remaining T>0 stages, and it did.
+
+THE ONE FAILURE IN THE SESSION (step d, deterministic, not transient)
+  run_id SAMP_1M_SPEC_pg19_train_1726_s42, status=error, TWICE:
+    RuntimeError: pg19_train_1726: continuation is 765 tokens, need 1024;
+                  the document is too short for this rung
+  (run_experiment.py:460, from _build_pg19_document_prompt; traceback kept in
+   errors/SAMP_1M_SPEC_pg19_train_1726_s42.traceback.txt)
+  The retry pass (step e) did retry it -- session_a.log shows
+  "### STEP e: retrying SAMP_1M_SPEC once (1 non-ok rows)" and the CSV then holds
+  the SAME run_id twice, both non-ok. This is a DATA defect, not a code or hardware
+  defect: book 1726 has only 765 tokens after the 1M window, and the config asks for
+  a 1024-token scored continuation (prompt_gen_tokens 1024). The engine's guard
+  refused it, correctly and deterministically.
+  CONSEQUENCE FOR THE HEADLINE: step d has 6 books configured and 5 ok rows. The 1M
+  sampling headline rests on n=5 books, not 6. pg19_train_1726 must be either dropped
+  from the pool or given a shorter scored continuation, and it must be reported as a
+  data exclusion, not as a hidden missing row.
+
+WHAT THIS SESSION ESTABLISHES (and what it does not)
+  + Sampling (T=0.7) works at 1M on 8 ranks: the check row and all 5 usable 1M spec
+    rows are ok, with acceptance ~0.38-0.52 -- the specific thing that was UNPROVEN
+    before this session (no 1M sampled row existed).
+  + Both arms fit and run at every rung 128k / 512k / 1M, with the aligned 512k/128k
+    partners measured at the same temperature.
+  + The rope intervention at 128k on meta-llama/Llama-3.1-8B is coherent on all three
+    arms (gate_pass True, ppl_ratio 1.0005-1.0156 vs the native baseline).
+  - It does NOT establish a multi-document 1M acceptance mean (n=5), anything about
+    a second seed, or anything about a production comparator.
+
+TOTALS FOR THE LEDGER
+  measured row time 19138.8 s = 5.32 h over 34 ok rows (pod-side progress block,
+  06:39:40Z). Session wall 6.82 h = $152.24. The difference is model load and
+  prefill, which the row timer does not include.
+  Cumulative campaign spend after this session: ~$327 of the $450 cap
+  (~$175 before it, + $152.24).
+
+HOW THIS SESSION WAS JUDGED, IN ONE LINE
+  Every stage's own `### stage <name> rc=... ok_rows=... bad_rows=...` line was read
+  and every stage CSV was counted, because rc=0 from the DONE marker is not evidence
+  that the stages ran.

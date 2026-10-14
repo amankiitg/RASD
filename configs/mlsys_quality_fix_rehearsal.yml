@@ -1,0 +1,60 @@
+# REHEARSAL twin of configs/mlsys_quality_fix.yml: identical group names, stage ids,
+# flags and output paths; only the sizes differ.
+# QUALITY REDO. The first attempt scored perplexity over 8 tokens because the ppl
+# window is set by prompt_gen_tokens and I had left it to default to max_new_tokens.
+# It also ran against a 128k pool that was exactly one window long, which made the
+# engine's exact-token-window search fail on two of three documents ("continuation is
+# 0 tokens", "could not find a source length ... refusing to run").
+#
+# Both are fixed here: prompt_gen_tokens 1024 in BOTH arms, and the aligned pool now
+# carries 8,192 tokens of slack taken FORWARD, so the 128k prompt still ends exactly
+# where the 1M continuation begins (array_equal asserted against the 1M arm for all six
+# books) while leaving the search room.
+#
+# NEW stage ids and therefore NEW CSVs: session_a_QUALITY_FIX_128K.csv and
+# session_a_QUALITY_FIX_1M.csv, so the 8-token rows they supersede stay on disk and
+# nothing is silently overwritten.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: true
+  max_new_tokens: 8
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+QUALITY_FIX_128K:
+  name: quality_fix_128k
+  factor: context_length
+  levels:
+  - id: QFIX_128K
+    context_length: 4096
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    notes: 'ppl of the final 1024 tokens, 128k context, aligned to the 1M continuation'
+QUALITY_FIX_1M:
+  name: quality_fix_1m
+  factor: context_length
+  levels:
+  - id: QFIX_1M
+    context_length: 8192
+    documents: [pg19_train_0]
+    prompt_documents_json: data/processed/pg19_1m/documents.json
+    checkpoint_every: 0
+    notes: 'ppl of the SAME final 1024 tokens, 1M context'

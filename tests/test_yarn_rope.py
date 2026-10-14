@@ -13,6 +13,7 @@ pod-side validation gate. Locally we test the **wiring**:
 """
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from unittest.mock import patch
@@ -191,3 +192,45 @@ class TestRunExperimentWiring:
             "C2b regression: rope_type not propagated from run dict to "
             "RASDConfig in _run_single_worker"
         )
+
+
+# ---------------------------------------------------------------------------
+# MLSys Phase A — ARM4 extrapolation ladder
+# ---------------------------------------------------------------------------
+
+class TestArm4ExtrapolationLadder:
+    """The ARM4 ladder pushes Llama-3.1-8B past its own 131072 window.
+
+    ``native_max`` must come from the LOADED model, not a constant. If it
+    were hardcoded to 4096 (Llama-2's window) then every Llama-3 cell would
+    be scaled by the wrong factor and the whole Phase-A result would be
+    silently meaningless — which is exactly what the CPU pre-flight
+    scripts/mlsys_check_arm4_rope.py exists to catch.
+    """
+
+    LLAMA3_NATIVE = 131072
+
+    @pytest.mark.parametrize("ctx,factor", [
+        (262144, 2.0),
+        (524288, 4.0),
+        (1048576, 8.0),
+    ])
+    def test_factor_is_context_over_native_window(self, ctx, factor):
+        d = _build_rope_scaling_dict(
+            "yarn", float(math.ceil(ctx / self.LLAMA3_NATIVE)),
+            self.LLAMA3_NATIVE,
+        )
+        assert d["factor"] == factor
+        assert d["original_max_position_embeddings"] == self.LLAMA3_NATIVE
+
+    def test_base_is_the_native_window_not_4096(self):
+        """A 4096 base would be wrong by 32x for Llama-3.1."""
+        d = _build_rope_scaling_dict("yarn", 2.0, self.LLAMA3_NATIVE)
+        assert d["original_max_position_embeddings"] == 131072
+        assert d["original_max_position_embeddings"] != 4096
+
+    def test_llama2_window_still_scales_by_32_at_128k(self):
+        """The arm-1 (Llama-2) behaviour is unchanged by the ARM4 work."""
+        d = _build_rope_scaling_dict("yarn", float(131072 // 4096), 4096)
+        assert d["factor"] == 32.0
+        assert d["original_max_position_embeddings"] == 4096

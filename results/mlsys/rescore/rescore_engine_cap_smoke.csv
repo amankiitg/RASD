@@ -1,0 +1,10 @@
+run_id,criterion,old,new,changed,note
+CAPS_prefix64_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+CAPS_prefix64_pg19_train_1_s42,acceptance,0.2759,0.3,True,1/1 non-degenerate windows
+CAPS_prefix64_targetonly_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field
+CAPS_prefix1024_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 379-token span repeats verbatim >= 128 absolute; 92% of tokens inside a repeated 16-gram > 60% absolute,False,stage CSV carries no pass field
+CAPS_prefix1024_pg19_train_1_s42,acceptance,0.8609,0.8599,False,5/8 non-degenerate windows
+CAPS_prefix1024_targetonly_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: a 512-token span repeats verbatim >= 128 absolute; 80% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 62% of the row (period 46) > 50% absolute,False,stage CSV carries no pass field
+CAPS_prefix64_bf16_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",FAIL: periodic tail 52% of the row (period 12) > 50% absolute,False,stage CSV carries no pass field
+CAPS_prefix64_bf16_pg19_train_1_s42,acceptance,0.3269,none (every window is degenerate),True,0/1 windows survive; the reported number is a loop
+CAPS_prefix64_bf16_targetonly_pg19_train_1_s42,absolute_repetition,"pass (no absolute rule; ratio n/a, share n/a)",pass,False,stage CSV carries no pass field

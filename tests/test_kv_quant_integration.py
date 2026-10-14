@@ -187,20 +187,37 @@ class TestNF4DynamicCacheWired:
         )
 
     def test_nf4_cache_constructed_under_kv_quant_flag(self):
-        """generate() must construct an NF4DynamicCache only when
-        cfg.kv_quant=True. Default off must leave initial_cache=None
-        so HF creates its own bf16 DynamicCache."""
+        """An NF4DynamicCache is constructed only when cfg.kv_quant=True, and
+        the default-off path leaves None so HF creates its own bf16
+        DynamicCache.
+
+        The construction moved into `RASDInference._make_initial_cache` (2026-10-08)
+        so the teacher-forced probe cannot build a DIFFERENT cache than the run it
+        judges -- the cache has to be passed INTO the model, and a second
+        construction site is a second chance to get that wrong. The gate is now
+        an inverted guard with an early return, which is the same semantics, so
+        this asserts the semantics rather than one spelling of them.
+        """
         from pathlib import Path
         rasd_inf = (Path(__file__).resolve().parent.parent
                     / "src" / "models" / "rasd_inference.py").read_text()
-        # Look for the gated construction (allow generous whitespace
-        # for the outlier-keep comment block added 2026-05-10).
-        assert re.search(
-            r"if cfg\.kv_quant:[\s\S]{0,800}NF4DynamicCache\(",
-            rasd_inf,
-        ), (
-            "C11 (b) regression: NF4DynamicCache construction not gated "
-            "by `if cfg.kv_quant:`"
+        assert "def _make_initial_cache" in rasd_inf, (
+            "C11 (b) regression: the single cache-construction site is gone"
+        )
+        body = rasd_inf.split("def _make_initial_cache", 1)[1].split(
+            "def teacher_forced_probe", 1)[0]
+        assert re.search(r"if not cfg\.kv_quant:[\s\S]{0,80}return None", body), (
+            "C11 (b) regression: the default-off path must return None so HF "
+            "builds its own bf16 DynamicCache"
+        )
+        assert "NF4DynamicCache(" in body, (
+            "C11 (b) regression: the cache is not constructed under kv_quant"
+        )
+        # ...and generate() must go through that site, or a run could still
+        # build a plain bf16 cache while the probe measured the NF4 one.
+        assert "self._make_initial_cache(cfg)" in rasd_inf, (
+            "C11 (b) regression: generate() no longer uses the shared "
+            "cache-construction site"
         )
 
     def test_initial_cache_passed_to_target_model(self):
@@ -322,11 +339,11 @@ class TestTargetOnlyBaseline:
             "Target-only baseline branch missing"
         )
         # The branch must early-return so the spec-decoding while loop
-        # below it is bypassed cleanly.
-        assert re.search(
-            r"if cfg\.spec_steps == 0:[\s\S]{0,4000}return generated_ids, metrics",
-            RASD_INF_SRC,
-        ), (
+        # below it is bypassed cleanly. Asserted by position rather than by a
+        # character budget: the property is ordering, and a budget reports a
+        # regression whenever an unrelated line is added in between.
+        from tests.source_guard_utils import target_only_branch_returns_before_spec_loop
+        assert target_only_branch_returns_before_spec_loop(RASD_INF_SRC), (
             "Target-only branch must early-return generated_ids+metrics "
             "before reaching the spec-decoding loop"
         )
@@ -335,9 +352,12 @@ class TestTargetOnlyBaseline:
         """The metrics dict in the target-only branch must record
         acceptance_rate=0.0 and spec_steps=0 (not cfg.spec_steps,
         though that's also 0). Reviewers will sanity-check these."""
-        # Find the target-only metrics dict
+        # Find the target-only metrics dict. The window is generous on purpose:
+        # it is a fixed character budget, so a comment added anywhere in the
+        # branch used to push the dict out of range and fail this test for a
+        # reason that has nothing to do with what it checks.
         m = re.search(
-            r"if cfg\.spec_steps == 0:[\s\S]{0,2500}metrics\s*=\s*\{([\s\S]{0,1000}?)\}",
+            r"if cfg\.spec_steps == 0:[\s\S]{0,6000}?metrics\s*=\s*\{([\s\S]{0,2000}?)\}",
             RASD_INF_SRC,
         )
         assert m is not None, "Couldn't locate target-only metrics dict"

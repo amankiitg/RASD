@@ -1,0 +1,407 @@
+{
+  "tokenizer": "meta-llama/Llama-3.1-8B",
+  "split": "validation",
+  "dataset": "emozilla/pg19",
+  "books": [
+    {
+      "index": 0,
+      "title": "Walking by Henry David Thoreau",
+      "url": "http://www.gutenberg.org/ebooks/1022",
+      "publication_date": 1862,
+      "chars": 67807,
+      "tokens": 16117
+    },
+    {
+      "index": 1,
+      "title": "The Atlantic Monthly Vol. 7 No. 42 April 1861 by Various",
+      "url": "http://www.gutenberg.org/ebooks/11155",
+      "publication_date": 1861,
+      "chars": 493303,
+      "tokens": 119590
+    },
+    {
+      "index": 2,
+      "title": "The Making of Arguments by J. H. Gardiner",
+      "url": "http://www.gutenberg.org/ebooks/13089",
+      "publication_date": 1912,
+      "chars": 566866,
+      "tokens": 125276
+    },
+    {
+      "index": 3,
+      "title": "'Way Down East by Joseph R. Grismer",
+      "url": "http://www.gutenberg.org/ebooks/16959",
+      "publication_date": 1900,
+      "chars": 184789,
+      "tokens": 45738
+    },
+    {
+      "index": 4,
+      "title": "Droll Stories Vol. 1 by Honore de Balzac",
+      "url": "http://www.gutenberg.org/ebooks/1925",
+      "publication_date": 1837,
+      "chars": 319701,
+      "tokens": 78596
+    },
+    {
+      "index": 5,
+      "title": "Canterbury Tales and Other Poems by Geoffrey Chaucer",
+      "url": "http://www.gutenberg.org/ebooks/2383",
+      "publication_date": 1483,
+      "chars": 1665152,
+      "tokens": 429038
+    },
+    {
+      "index": 6,
+      "title": "Anti-Slavery Opinions before the Year 1800 by Poole and Buchanan",
+      "url": "http://www.gutenberg.org/ebooks/23956",
+      "publication_date": 1800,
+      "chars": 168969,
+      "tokens": 39656
+    },
+    {
+      "index": 7,
+      "title": "The Life of Napoleon Bonaparte Vol. I by William Milligan Sloane",
+      "url": "http://www.gutenberg.org/ebooks/24360",
+      "publication_date": 1910,
+      "chars": 841329,
+      "tokens": 191821
+    },
+    {
+      "index": 8,
+      "title": "Blackwood's Edinburgh Magazine Vol. 56 No. 348 October 1844",
+      "url": "http://www.gutenberg.org/ebooks/25066",
+      "publication_date": 1844,
+      "chars": 544652,
+      "tokens": 129762
+    },
+    {
+      "index": 9,
+      "title": "A Hundred Years by Post by J. Wilson Hyde",
+      "url": "http://www.gutenberg.org/ebooks/27688",
+      "publication_date": 1891,
+      "chars": 141131,
+      "tokens": 33276
+    },
+    {
+      "index": 10,
+      "title": "Harper's Young People November 25 1879 by Various",
+      "url": "http://www.gutenberg.org/ebooks/28213",
+      "publication_date": 1879,
+      "chars": 49951,
+      "tokens": 12342
+    },
+    {
+      "index": 11,
+      "title": "Stuyvesant by Jacob Abbott",
+      "url": "http://www.gutenberg.org/ebooks/28776",
+      "publication_date": 1904,
+      "chars": 189856,
+      "tokens": 47972
+    },
+    {
+      "index": 12,
+      "title": "The Truth About Woman by C. Gasquoine Hartley",
+      "url": "http://www.gutenberg.org/ebooks/29981",
+      "publication_date": 1914,
+      "chars": 683763,
+      "tokens": 161576
+    },
+    {
+      "index": 13,
+      "title": "Punch or the London Charivari Volume 93 July 9 1887 by Various",
+      "url": "http://www.gutenberg.org/ebooks/32629",
+      "publication_date": 1887,
+      "chars": 53313,
+      "tokens": 14227
+    },
+    {
+      "index": 14,
+      "title": "Unc' Edinburg by Thomas Nelson Page",
+      "url": "http://www.gutenberg.org/ebooks/34016",
+      "publication_date": 1895,
+      "chars": 55789,
+      "tokens": 17878
+    },
+    {
+      "index": 15,
+      "title": "Remarks on some fossil impressions in the sandstone rocks",
+      "url": "http://www.gutenberg.org/ebooks/34056",
+      "publication_date": 1854,
+      "chars": 60613,
+      "tokens": 14251
+    },
+    {
+      "index": 16,
+      "title": "Lefty Locke Pitcher-Manager by Burt L. Standish",
+      "url": "http://www.gutenberg.org/ebooks/34100",
+      "publication_date": 1916,
+      "chars": 350262,
+      "tokens": 85401
+    },
+    {
+      "index": 17,
+      "title": "Beyond the City by Arthur Conan Doyle",
+      "url": "http://www.gutenberg.org/ebooks/356",
+      "publication_date": 1892,
+      "chars": 213274,
+      "tokens": 52546
+    },
+    {
+      "index": 18,
+      "title": "The Philippine Agricultural Review by Various",
+      "url": "http://www.gutenberg.org/ebooks/35816",
+      "publication_date": 1915,
+      "chars": 152888,
+      "tokens": 37435
+    },
+    {
+      "index": 19,
+      "title": "On Union with God by Albertus Magnus",
+      "url": "http://www.gutenberg.org/ebooks/36402",
+      "publication_date": 1911,
+      "chars": 77294,
+      "tokens": 18879
+    },
+    {
+      "index": 20,
+      "title": "The Danes Sketched by Themselves. Vol. III (of 3) by Various",
+      "url": "http://www.gutenberg.org/ebooks/37833",
+      "publication_date": 1864,
+      "chars": 336815,
+      "tokens": 81223
+    },
+    {
+      "index": 21,
+      "title": "Letters of Lord Acton by Lord Acton",
+      "url": "http://www.gutenberg.org/ebooks/38214",
+      "publication_date": 1898,
+      "chars": 554238,
+      "tokens": 140921
+    },
+    {
+      "index": 22,
+      "title": "Scientific American Supplement No. 648 June 2 1888 by Various",
+      "url": "http://www.gutenberg.org/ebooks/38403",
+      "publication_date": 1888,
+      "chars": 262281,
+      "tokens": 60544
+    },
+    {
+      "index": 23,
+      "title": "The Man of Destiny by George Bernard Shaw",
+      "url": "http://www.gutenberg.org/ebooks/4024",
+      "publication_date": 1898,
+      "chars": 91400,
+      "tokens": 23944
+    },
+    {
+      "index": 24,
+      "title": "Ruins and Old Trees Associated with Memorable Events in",
+      "url": "http://www.gutenberg.org/ebooks/41074",
+      "publication_date": 1844,
+      "chars": 333755,
+      "tokens": 79883
+    },
+    {
+      "index": 25,
+      "title": "The Golden Bough Third Edition Vol. 7 of 12 by James George Frazer",
+      "url": "http://www.gutenberg.org/ebooks/42067",
+      "publication_date": 1912,
+      "chars": 911712,
+      "tokens": 246054
+    },
+    {
+      "index": 26,
+      "title": "A Young Inventor's Pluck by Arthur M. Winfield",
+      "url": "http://www.gutenberg.org/ebooks/42142",
+      "publication_date": 1901,
+      "chars": 227298,
+      "tokens": 57013
+    },
+    {
+      "index": 27,
+      "title": "The Calendar and Other Verses by Irving Sidney Dix",
+      "url": "http://www.gutenberg.org/ebooks/42306",
+      "publication_date": 1913,
+      "chars": 43638,
+      "tokens": 10351
+    },
+    {
+      "index": 28,
+      "title": "Old Mole by Gilbert Cannan",
+      "url": "http://www.gutenberg.org/ebooks/43423",
+      "publication_date": 1914,
+      "chars": 493562,
+      "tokens": 119643
+    },
+    {
+      "index": 29,
+      "title": "The Autobiography of Parley Parker Pratt by Parley Parker Pratt",
+      "url": "http://www.gutenberg.org/ebooks/44896",
+      "publication_date": 1888,
+      "chars": 896500,
+      "tokens": 213314
+    },
+    {
+      "index": 30,
+      "title": "Private Papers of William Wilberforce by William Wilberforce",
+      "url": "http://www.gutenberg.org/ebooks/44912",
+      "publication_date": 1897,
+      "chars": 364497,
+      "tokens": 86073
+    },
+    {
+      "index": 31,
+      "title": "The Hermit And The Wild Woman by Edith Wharton",
+      "url": "http://www.gutenberg.org/ebooks/4533",
+      "publication_date": 1908,
+      "chars": 352096,
+      "tokens": 85902
+    },
+    {
+      "index": 32,
+      "title": "The Fall of a Nation by Thomas Dixon",
+      "url": "http://www.gutenberg.org/ebooks/48089",
+      "publication_date": 1916,
+      "chars": 398911,
+      "tokens": 91982
+    },
+    {
+      "index": 33,
+      "title": "Husks by Marion Harland",
+      "url": "http://www.gutenberg.org/ebooks/48461",
+      "publication_date": 1863,
+      "chars": 403447,
+      "tokens": 96223
+    },
+    {
+      "index": 34,
+      "title": "A Year with the Birds by W. Warde Fowler",
+      "url": "http://www.gutenberg.org/ebooks/48677",
+      "publication_date": 1891,
+      "chars": 320497,
+      "tokens": 79227
+    },
+    {
+      "index": 35,
+      "title": "The Man of Galilee by Atticus G. Haygood",
+      "url": "http://www.gutenberg.org/ebooks/49091",
+      "publication_date": 1889,
+      "chars": 179652,
+      "tokens": 42120
+    },
+    {
+      "index": 36,
+      "title": "Titan of Chasms by C. A. Higgins John Wesley Powll",
+      "url": "http://www.gutenberg.org/ebooks/50355",
+      "publication_date": 1899,
+      "chars": 78767,
+      "tokens": 18125
+    },
+    {
+      "index": 37,
+      "title": "Bruno by Jacob Abbott",
+      "url": "http://www.gutenberg.org/ebooks/51859",
+      "publication_date": 1854,
+      "chars": 221403,
+      "tokens": 54028
+    },
+    {
+      "index": 38,
+      "title": "Cape Cod Stories by Joseph C. Lincoln",
+      "url": "http://www.gutenberg.org/ebooks/5195",
+      "publication_date": 1907,
+      "chars": 302531,
+      "tokens": 80643
+    },
+    {
+      "index": 39,
+      "title": "Concerning the Spiritual in Art by Wassily Kandinsky",
+      "url": "http://www.gutenberg.org/ebooks/5321",
+      "publication_date": 1911,
+      "chars": 157275,
+      "tokens": 35788
+    },
+    {
+      "index": 40,
+      "title": "Gallipoli by John Masefield",
+      "url": "http://www.gutenberg.org/ebooks/53682",
+      "publication_date": 1916,
+      "chars": 256007,
+      "tokens": 61144
+    },
+    {
+      "index": 41,
+      "title": "The Light that Lies by George Barr McCutcheon",
+      "url": "http://www.gutenberg.org/ebooks/54098",
+      "publication_date": 1916,
+      "chars": 148832,
+      "tokens": 35849
+    },
+    {
+      "index": 42,
+      "title": "The Unbearable Bassington by Saki",
+      "url": "http://www.gutenberg.org/ebooks/555",
+      "publication_date": 1913,
+      "chars": 280902,
+      "tokens": 65561
+    },
+    {
+      "index": 43,
+      "title": "The Horse In History by Basil Tozer",
+      "url": "http://www.gutenberg.org/ebooks/55658",
+      "publication_date": 1908,
+      "chars": 422985,
+      "tokens": 102683
+    },
+    {
+      "index": 44,
+      "title": "Mimi's Marriage by Lidia Ivanovna Veselitskaya",
+      "url": "http://www.gutenberg.org/ebooks/56719",
+      "publication_date": 1915,
+      "chars": 256754,
+      "tokens": 63481
+    },
+    {
+      "index": 45,
+      "title": "Harper's Round Table May 19 1896 by Various",
+      "url": "http://www.gutenberg.org/ebooks/57843",
+      "publication_date": 1896,
+      "chars": 149831,
+      "tokens": 36989
+    },
+    {
+      "index": 46,
+      "title": "Round the Sofa Vol. 2 by Elizabeth C. Gaskell",
+      "url": "http://www.gutenberg.org/ebooks/58093",
+      "publication_date": 1859,
+      "chars": 399599,
+      "tokens": 100072
+    },
+    {
+      "index": 47,
+      "title": "More Pages from a Journal by Mark Rutherford",
+      "url": "http://www.gutenberg.org/ebooks/6404",
+      "publication_date": 1910,
+      "chars": 334248,
+      "tokens": 81322
+    },
+    {
+      "index": 48,
+      "title": "Keith of the Border by Randall Parrish",
+      "url": "http://www.gutenberg.org/ebooks/7510",
+      "publication_date": 1910,
+      "chars": 415763,
+      "tokens": 100624
+    },
+    {
+      "index": 49,
+      "title": "Amiel's Journal by Henri Frederic Amiel",
+      "url": "http://www.gutenberg.org/ebooks/8545",
+      "publication_date": 1853,
+      "chars": 890696,
+      "tokens": 211479
+    }
+  ]
+}

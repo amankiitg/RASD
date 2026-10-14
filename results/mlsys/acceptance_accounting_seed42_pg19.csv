@@ -1,0 +1,9 @@
+run_id,csv_acceptance_rate,trace_alpha_round,alpha_iid,abs_diff,ok,note
+RASD_ctx4k_pg19_phaseD_s42,0.7059,0.7058823529411765,0.8654293820188321,1.764705882345563e-05,True,
+RASD_ctx8k_pg19_phaseD_s42,0.2581,0.25806451612903225,0.5281595698114443,3.548387096774519e-05,True,
+TARGET_ctx4k_pg19_phaseD_s42,0.0,,,,,no trace (target-only run?)
+TARGET_ctx8k_pg19_phaseD_s42,0.0,,,,,no trace (target-only run?)
+RASD_ctx128k_phaseD_s42,,,,,,"trace present, no CSV row"
+RASD_ctx1M_phaseD_s42,,,,,,"trace present, no CSV row"
+RASD_ctx256k_phaseD_s42,,,,,,"trace present, no CSV row"
+RASD_ctx512k_phaseD_s42,,,,,,"trace present, no CSV row"

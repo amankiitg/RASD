@@ -1,0 +1,519 @@
+"""Per-round acceptance accounting (MLSys Phase 4, reviewer AbH52 #1).
+
+Two different quantities get called "acceptance rate" in the
+speculative-decoding literature, and conflating them is what the
+reviewer flagged:
+
+  alpha_round = (1/R) * SUM_r (n_acc_r / gamma)          <-- per-round
+      The mean fraction of the gamma = spec_steps proposed tokens that
+      form a *prefix* that is accepted, averaged over the R verify
+      rounds. This is what the RASD tables report (`acceptance_rate` in
+      rasd_inference.generate(): SUM n_acc / (R * gamma)) and the
+      quantity the MLSys tables must keep reporting.
+
+      Note it is algebraically identical to
+      (total accepted draft tokens) / (total proposed draft tokens),
+      i.e. SUM n_acc / SUM gamma, since gamma is constant. The
+      "per-round" and "per-proposed-token" ratios are the SAME number.
+      They are NOT, however, the i.i.d. parameter below.
+
+  alpha_iid                                                    <-- i.i.d.
+      The single per-token acceptance probability alpha of the
+      memoryless model of Leviathan et al. (2023). Under that model the
+      number of consecutively accepted tokens N has
+          P(N=j) = (1-alpha) alpha^j   for j = 0..gamma-1
+          P(N=gamma) = alpha^gamma
+      with E[N] = alpha + alpha^2 + ... + alpha^gamma.
+      Unlike alpha_round, alpha_iid is a *derived model parameter*: the
+      alpha you would have to assume for the i.i.d. formula to reproduce
+      the observed mean n_acc.
+
+The point of this module is that alpha_round and alpha_iid are equal
+ONLY under memorylessness. `summarize_trace()` reports both, plus a KS
+distance between the empirical n_acc distribution and the fitted
+geometric one, so the i.i.d. assumption can be rejected explicitly
+instead of silently inherited.
+
+`verify_csv_acceptance()` recomputes alpha_round from the C13 per-round
+traces and asserts it matches the scalar CSV column, so no table can
+silently start reporting the derived i.i.d. parameter instead.
+
+Trace schema (one JSON object per line, written by run_experiment.py
+under --log-per-token; see `_build_per_token_record` in rasd_inference.py):
+
+    {"round_idx": int, "global_pos_start": int, "spec_steps": int,
+     "n_acc": int, "draft_tokens": [int, ...], "accepted": [bool, ...]}
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Iterable, Optional
+
+import numpy as np
+import pandas as pd
+
+# Matches the run-id dialects used in this repo: the M4 matrix
+# ("M4_ctx128k_s42") and the Phase D / PG-19 runs
+# ("RASD_ctx4k_pg19_phaseD_s42", "P35D_ctx1M_pg19_s42").
+_CTX_RE = re.compile(r"ctx(\d+)([kM])", re.IGNORECASE)
+# Phase-1 / Phase-A arm run ids carry the context as a bare `_<N>k_` /
+# `_<N>M_` token instead of a `ctx<N>` token, e.g.
+#   ARM1_llama2_yarn_128k_s42
+#   ARM2_llama3_native_128k_cap4k_s42
+#   ARM3_llama3_native_128k_nativedraft_s42
+#   ARM4_llama3_yarn_256k_s123
+# Without this second pattern those traces silently parsed to (None, None)
+# and were dropped from every by-context aggregate, so the 131072 row
+# reported the M4 matrix while appearing to cover the arms too.
+#
+# Anchoring on `_` before the digits and `_`/end after the unit is what
+# keeps it from mis-reading a draft-cap suffix: in
+# "ARM2_llama3_native_128k_cap4k_s42" the `4k` is preceded by "cap", not
+# by an underscore, so only the intended `_128k_` matches.
+_CTX_TRAILING_RE = re.compile(r"_(\d+)([kM])(?=_|$)", re.IGNORECASE)
+_SEED_RE = re.compile(r"_s(\d+)$", re.IGNORECASE)
+
+# Experiment family, so arm runs are never pooled with the M4
+# dose-response cells that happen to share a context length.
+_ARM_RE = re.compile(r"^ARM(\d+)", re.IGNORECASE)
+
+
+def run_family(run_id: str) -> str:
+    """Group a run_id into an experiment family.
+
+    "arm1".."armN" for the native-vs-YaRN arms; "matrix" for the M4
+    dose-response / Phase-D / PG-19 cells. Arms and matrix cells at the
+    SAME context length are different experiments and must be aggregated
+    separately.
+    """
+    m = _ARM_RE.match(run_id)
+    if m:
+        return f"arm{int(m.group(1))}"
+    return "matrix"
+
+
+def run_labels(run_id: str) -> dict:
+    """Prompt source and draft precision for a run_id (A2).
+
+    The dip statistic is a property of a DISTRIBUTION, so two runs may only
+    share a row if their treatment is identical. NF4/FP4 and bf16 drafts have
+    different acceptance distributions, and PG-19 narrative prompts behave
+    differently from the synthetic repeated-paragraph prompt — pooling either
+    pair would average distinct treatments into one meaningless number.
+
+    Labels are derived from the run_id rather than passed in, so a trace
+    loaded from disk still lands in the right bucket even when no config
+    accompanies it.
+    """
+    rid = run_id.lower()
+    prompt_source = "pg19" if "pg19" in rid else "synthetic"
+    if "bf16" in rid:
+        draft_precision = "bf16"
+    elif "fp4" in rid or "nf4" in rid:
+        draft_precision = "fp4"
+    else:
+        draft_precision = "default"
+    return {"prompt_source": prompt_source,
+            "draft_precision": draft_precision}
+
+
+def parse_run_id(run_id: str) -> tuple[Optional[int], Optional[int]]:
+    """Extract (context_length_tokens, seed) from a run_id.
+
+    "ctx128k" -> 131072, "ctx1M" -> 1048576, and the arm dialect
+    "_128k_" -> 131072. Returns (None, None) for pieces that are absent
+    (canary rows carry no context).
+    """
+    ctx: Optional[int] = None
+    m = _CTX_RE.search(run_id) or _CTX_TRAILING_RE.search(run_id)
+    if m:
+        magnitude = 1024 if m.group(2).lower() == "k" else 1024 * 1024
+        ctx = int(m.group(1)) * magnitude
+    s = _SEED_RE.search(run_id)
+    seed = int(s.group(1)) if s else None
+    return ctx, seed
+
+
+def load_trace(path: str | Path) -> list[dict]:
+    """Read one .jsonl per-round trace. Missing file -> empty list."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    records = []
+    with p.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
+
+
+def load_trace_dir(trace_dir: str | Path) -> dict[str, list[dict]]:
+    """Load every .jsonl in a directory, keyed by run_id (the file stem)."""
+    d = Path(trace_dir)
+    if not d.is_dir():
+        return {}
+    return {p.stem: load_trace(p) for p in sorted(d.glob("*.jsonl"))}
+
+
+def per_round_alpha(trace: Iterable[dict]) -> np.ndarray:
+    """Per-round alpha_r = n_acc_r / gamma, one value per verify round.
+
+    This is the sample the dip test and the bimodality analysis consume.
+
+    Skipped:
+      * rounds with gamma == 0 (target-only runs carry no acceptance signal);
+      * rounds flagged `round_truncated`, i.e. cut short by the generation cap.
+        Such a round had its accepted prefix verified but only partially
+        emitted, so its n_acc/gamma is not a draw from the same distribution as
+        the rest and averaging it in biases the primary metric. The engine
+        excludes the same rounds when it writes the CSV `acceptance_rate`, so
+        the CSV and everything computed here agree on one estimator.
+    """
+    return np.asarray([int(rec["n_acc"]) / int(rec["spec_steps"])
+                       for rec in included_rounds(trace)], dtype=float)
+
+
+def iid_alpha_for_mean(mean_n_acc: float, gamma: int) -> float:
+    """Solve E[N] = mean_n_acc for alpha under the memoryless model.
+
+    Under i.i.d. per-token acceptance with probability alpha, the number
+    of consecutively accepted tokens N is min(Geometric(alpha), gamma),
+    whose pmf is in `_iid_pmf` and whose mean is
+        E[N] = alpha + alpha^2 + ... + alpha^gamma
+    (since P(N >= i) = alpha^i). E[N] is strictly increasing on [0, 1],
+    so bisection is exact to machine tolerance.
+
+    The expectation is evaluated from the pmf itself rather than a closed
+    form, so this function and `_iid_pmf` cannot drift apart.
+
+    Returns nan when the mean is outside the achievable range.
+    """
+    if gamma < 1 or not np.isfinite(mean_n_acc):
+        return float("nan")
+    if mean_n_acc <= 0.0:
+        return 0.0
+    if mean_n_acc >= gamma:
+        return 1.0
+
+    j = np.arange(gamma + 1, dtype=float)
+
+    def expected(a: float) -> float:
+        return float((_iid_pmf(a, gamma) * j).sum())
+
+    lo, hi = 0.0, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if expected(mid) < mean_n_acc:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def _iid_pmf(alpha: float, gamma: int) -> np.ndarray:
+    """P(N = j) for j = 0..gamma under the memoryless model."""
+    if not np.isfinite(alpha) or gamma < 1:
+        return np.full(gamma + 1, np.nan)
+    pmf = np.empty(gamma + 1)
+    pmf[:gamma] = (1.0 - alpha) * alpha ** np.arange(gamma)
+    pmf[gamma] = alpha ** gamma
+    return pmf
+
+
+def iid_ks_distance(n_acc: np.ndarray, gamma: int) -> float:
+    """One-sample KS distance between empirical n_acc and the fitted
+    geometric law. Large values reject the i.i.d./memoryless model."""
+    if n_acc.size == 0 or gamma < 1:
+        return float("nan")
+    alpha = iid_alpha_for_mean(float(n_acc.mean()), gamma)
+    model = np.cumsum(_iid_pmf(alpha, gamma))
+    counts = np.bincount(n_acc.astype(int), minlength=gamma + 1)[: gamma + 1]
+    empirical = np.cumsum(counts) / n_acc.size
+    return float(np.max(np.abs(empirical - model)))
+
+
+def truncated_geometric_gof(n_acc, gamma: int, alpha_hat: float,
+                            min_expected: float = 5.0) -> dict:
+    """Goodness-of-fit of the i.i.d. acceptance model to observed n_acc.
+
+    This is the test the reviewer's objection actually calls for. "Bimodal"
+    was previously argued from a zero/nonzero split, but a single geometric
+    with a large zero mass produces exactly that split, so the split cannot
+    distinguish the two explanations. Here the i.i.d. model is FITTED (a_iid
+    chosen to match the observed mean) and then the observed accepted-length
+    counts are tested against its truncated-geometric pmf.
+
+    A small p-value therefore means "the i.i.d. model is insufficient", which
+    is evidence for round-to-round heterogeneity — the honest version of the
+    bimodality claim.
+
+    pmf (cap absorbs all-accepted rounds, so it sums to exactly 1):
+        P(N=k) = a^k (1-a)   for k = 0 .. gamma-1
+        P(N=gamma) = a^gamma
+    """
+    n = int(len(n_acc))
+    counts = np.bincount(np.asarray(n_acc, dtype=int), minlength=gamma + 1)
+    counts = counts[:gamma + 1].astype(float)
+    a = float(alpha_hat)
+
+    probs = np.array([a ** k * (1.0 - a) for k in range(gamma)], dtype=float)
+    probs = np.append(probs, a ** gamma)
+    probs = np.clip(probs, 0.0, None)
+    total = probs.sum()
+    if not np.isfinite(total) or total <= 0:
+        return {"gof_stat": float("nan"), "gof_df": 0,
+                "gof_p_value": float("nan"), "gof_method": "degenerate"}
+    probs = probs / total
+
+    expected = n * probs
+    # Pool adjacent categories so every expected count clears min_expected;
+    # a chi-square on bins with expected<5 is not trustworthy, and pooling is
+    # preferable to silently reporting the invalid statistic. The all-accepted
+    # bin is kept as the final category rather than dropped.
+    obs_bins, exp_bins = [], []
+    o_run = e_run = 0.0
+    for o, e in zip(counts, expected):
+        o_run += o
+        e_run += e
+        if e_run >= min_expected:
+            obs_bins.append(o_run)
+            exp_bins.append(e_run)
+            o_run = e_run = 0.0
+    if e_run > 0:
+        if obs_bins:
+            obs_bins[-1] += o_run
+            exp_bins[-1] += e_run
+        else:
+            obs_bins.append(o_run)
+            exp_bins.append(e_run)
+
+    if len(obs_bins) < 2:
+        # Only one usable bin leaves no residual degrees of freedom; the test
+        # is uninformative rather than passing. Say so instead of returning a
+        # p-value that would look like evidence.
+        return {"gof_stat": float("nan"), "gof_df": 0,
+                "gof_p_value": float("nan"), "gof_method": "insufficient_bins"}
+
+    stat = float(((np.asarray(obs_bins) - np.asarray(exp_bins)) ** 2
+                  / np.asarray(exp_bins)).sum())
+    df = len(obs_bins) - 1 - 1          # categories - 1 - 1 fitted parameter
+    df = max(df, 1)
+
+    if n < 50:
+        # Chi-square is unreliable this small; use the exact multinomial
+        # probability of a statistic at least as extreme.
+        p = _multinomial_gof_pvalue(np.asarray(obs_bins, dtype=float), probs,
+                                   n, stat, len(obs_bins))
+        method = "exact_multinomial"
+    else:
+        from scipy import stats as _st
+        p = float(_st.chi2.sf(stat, df))
+        method = "chi2"
+
+    return {"gof_stat": stat, "gof_df": int(df),
+            "gof_p_value": float(p), "gof_method": method}
+
+
+def _multinomial_gof_pvalue(obs, probs, n, stat, n_bins, n_draw=20000,
+                            seed=0) -> float:
+    """Monte-Carlo multinomial p-value for small n."""
+    rng = np.random.default_rng(seed)
+    # Re-derive pooled probabilities matching the pooled observed bins.
+    pooled = np.asarray(probs, dtype=float)
+    if pooled.size != n_bins:
+        # Pool probs the same way the observed bins were pooled: greedily by
+        # equal split is wrong, so fall back to proportional rescaling.
+        pooled = pooled / pooled.sum()
+        pooled = np.array([pooled[:n_bins].sum()] * n_bins) / n_bins
+    exp = n * pooled / pooled.sum()
+    hits = 0
+    for _ in range(n_draw):
+        draw = rng.multinomial(n, pooled / pooled.sum())
+        s = float((((draw - exp) ** 2) / np.where(exp > 0, exp, 1.0)).sum())
+        if s >= stat - 1e-12:
+            hits += 1
+    return (hits + 1) / (n_draw + 1)
+
+
+def included_rounds(trace: Iterable[dict]) -> list[dict]:
+    """The rounds that carry an acceptance signal.
+
+    ONE definition, used by every acceptance quantity: `per_round_alpha`, the
+    trace summariser (so alpha_round, alpha_iid, the GOF and the total/proposed
+    identity all rest on the same sample), the cluster bootstrap and the dip
+    test. When the sample differed between them, `alpha_iid` and `alpha_round`
+    were computed over different sets of rounds and the CSV matched only one of
+    them.
+
+    Excluded: rounds with gamma == 0 (target-only runs), and rounds flagged
+    `round_truncated` -- cut short by the generation cap, so their accepted
+    prefix was verified but only partly emitted and their n_acc/gamma is not a
+    draw from the same distribution as the rest.
+    """
+    return [r for r in trace
+            if not r.get("round_truncated") and int(r.get("spec_steps", 0)) > 0]
+
+
+def summarize_trace(trace: list[dict]) -> dict:
+    """Both acceptance conventions plus the round / zero structure.
+
+    Every field is computed from `included_rounds(trace)`, so the row describes
+    one sample. Target-only runs have no rounds; every field is then nan / 0 so
+    the row stays visible in an aggregate rather than being dropped.
+    """
+    rows = included_rounds(trace)
+    alpha_r = np.asarray([int(r["n_acc"]) / int(r["spec_steps"]) for r in rows],
+                         dtype=float)
+    n_rounds = int(alpha_r.size)
+    if n_rounds == 0:
+        return {
+            "n_rounds": 0, "gamma": 0,
+            "alpha_round": float("nan"), "alpha_round_sem": float("nan"),
+            "alpha_iid": float("nan"), "iid_ks": float("nan"),
+            "mean_n_acc": float("nan"), "p_zero": float("nan"),
+            "frac_full_accept": float("nan"),
+            "total_accepted": 0, "total_proposed": 0,
+            "gof_stat": float("nan"), "gof_df": 0,
+            "gof_p_value": float("nan"), "gof_method": "no_rounds",
+        }
+
+    gamma = int(rows[0]["spec_steps"])
+    n_acc = np.asarray([int(r["n_acc"]) for r in rows], dtype=float)
+    a_iid = iid_alpha_for_mean(float(n_acc.mean()), gamma)
+    gof = truncated_geometric_gof(n_acc, gamma, a_iid)
+
+    return {
+        "n_rounds":            n_rounds,
+        "gamma":               gamma,
+        # the reported quantity: mean per-round accepted-prefix / gamma
+        "alpha_round":         float(alpha_r.mean()),
+        # stderr of the per-round mean — basis of the 3-seed CIs
+        "alpha_round_sem":     float(alpha_r.std(ddof=1) / np.sqrt(n_rounds))
+                               if n_rounds > 1 else 0.0,
+        # the DERIVED i.i.d. parameter, not a separate estimator
+        "alpha_iid":           a_iid,
+        # distance to the memoryless model; large => i.i.d. rejected
+        "iid_ks":              iid_ks_distance(n_acc, gamma),
+        "mean_n_acc":          float(n_acc.mean()),
+        "p_zero":              float((alpha_r == 0).mean()),
+        "frac_full_accept":    float((alpha_r == 1).mean()),
+        "total_accepted":      int(n_acc.sum()),
+        # denominator that makes alpha_round = total_accepted / total_proposed
+        "total_proposed":      gamma * n_rounds,
+        # how many rounds this row dropped and why, so a reader can see the
+        # sample the rest of the row was computed over
+        "n_excluded_truncated": sum(1 for r in trace if r.get("round_truncated")),
+        # A3: formal GOF of the fitted i.i.d. model. Small p => the i.i.d.
+        # geometric cannot explain the accepted-length distribution, which is
+        # the defensible form of "bimodal" (see truncated_geometric_gof).
+        "gof_stat":            gof["gof_stat"],
+        "gof_df":              gof["gof_df"],
+        "gof_p_value":         gof["gof_p_value"],
+        "gof_method":          gof["gof_method"],
+    }
+
+
+def summarize_trace_dir(trace_dir: str | Path) -> pd.DataFrame:
+    """One row per trace file: alpha_round, alpha_iid, iid_ks, p_zero, ..."""
+    rows = []
+    for run_id, trace in load_trace_dir(trace_dir).items():
+        ctx, seed = parse_run_id(run_id)
+        rec = summarize_trace(trace)
+        rec.update({"run_id": run_id, "context_length": ctx, "seed": seed})
+        rows.append(rec)
+    if not rows:
+        return pd.DataFrame(
+            columns=["run_id", "context_length", "seed", "n_rounds", "gamma",
+                     "alpha_round", "alpha_iid", "iid_ks", "p_zero",
+                     "frac_full_accept"]
+        )
+    return (pd.DataFrame(rows)
+            .sort_values(["context_length", "seed"])
+            .reset_index(drop=True))
+
+
+def verify_csv_acceptance(csv_path: str | Path, trace_dir: str | Path,
+                          tol: float = 1e-4) -> pd.DataFrame:
+    """Assert the CSV `acceptance_rate` equals the per-round alpha.
+
+    Recomputes SUM(n_acc) / (n_rounds * gamma) straight from the traces
+    and compares it to the scalar column. `ok=True` means the table is
+    reporting the per-round accepted-prefix/gamma quantity.
+
+    `tol` defaults to 1e-4, NOT a tight numerical tolerance, because
+    run_experiment.py writes `acceptance_rate` rounded to 4 decimal
+    places (see the round(..., 4) in the CSV row builder). Storage alone
+    can therefore differ by up to 5e-5, so an exact comparison would flag
+    every correctly-accounted row. The default is 2x that bound — still
+    far below a genuine mix-up (reporting alpha_iid instead differs by
+    0.1-0.3 on the committed traces), so real errors are still caught.
+
+    Rows that exist in only one of the two sources get ok=None (with a
+    note) so they are visibly unverified rather than silently dropped.
+
+    A4 — matching is by EXACT run_id and nothing else. `traces` is a dict
+    keyed on the exact string, so there is no prefix or normalized fallback
+    that could pair a CSV row with a different run's trace. A row whose
+    trace does not exist is reported `unverifiable_no_trace`, which means
+    "we could not check this", NOT "this checked out" and NOT "this
+    mismatched". The three states are distinct in the `verdict` column so a
+    reader cannot mistake absence of evidence for a pass.
+    """
+    csv_path, trace_dir = Path(csv_path), Path(trace_dir)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"no such results CSV: {csv_path}")
+
+    df = pd.read_csv(csv_path)
+    traces = load_trace_dir(trace_dir)
+
+    rows = []
+    seen = set()
+    if "run_id" in df.columns:
+        for _, r in df.iterrows():
+            run_id = str(r["run_id"])
+            seen.add(run_id)
+            csv_val = _as_float(r.get("acceptance_rate"))
+            # Exact-key lookup only. A missing trace is reported as such and
+            # is never substituted with a near-match.
+            if run_id not in traces:
+                rows.append({"run_id": run_id,
+                             "csv_acceptance_rate": csv_val,
+                             "trace_alpha_round": float("nan"),
+                             "alpha_iid": float("nan"),
+                             "abs_diff": float("nan"), "ok": None,
+                             "verdict": "unverifiable_no_trace",
+                             "note": "no trace exists for this exact run_id"})
+                continue
+            summary = summarize_trace(traces[run_id])
+            trace_val = summary["alpha_round"]
+            diff = abs(csv_val - trace_val) if np.isfinite(csv_val) else float("nan")
+            ok = bool(diff <= tol) if np.isfinite(diff) else None
+            rows.append({
+                "run_id":              run_id,
+                "csv_acceptance_rate": csv_val,
+                "trace_alpha_round":   trace_val,
+                "alpha_iid":           summary["alpha_iid"],
+                "abs_diff":            diff,
+                "ok":                  ok,
+                "verdict":             ("match" if ok else
+                                        "mismatch" if ok is False else
+                                        "unverifiable_no_csv_value"),
+                "note":                "",
+            })
+    for run_id in sorted(set(traces) - seen):
+        rows.append({"run_id": run_id, "csv_acceptance_rate": float("nan"),
+                     "trace_alpha_round": float("nan"), "alpha_iid": float("nan"),
+                     "abs_diff": float("nan"), "ok": None,
+                     "verdict": "unverifiable_no_csv_row",
+                     "note": "trace exists but no CSV row references this run_id"})
+    return pd.DataFrame(rows)
+
+
+def _as_float(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")

@@ -1,0 +1,10 @@
+run_id,criterion,old,new,changed,note
+P1_native_32k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.0075)",pass,False,
+P2_declared_shipped_64k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.1273)",pass,False,
+P3_native_128k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.029)",pass,False,
+B_native_32k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.0075)",pass,False,
+B_native_64k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.1273)",pass,False,
+B_native_128k,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.029)",pass,False,
+B_llama2_yarn8_32k_correct,absolute_repetition,"pass (no absolute rule; ratio 1.0, share 0.0381)",pass,False,
+N1_arm4_f2_construction,absolute_repetition,"pass (no absolute rule; ratio 0.0, share 0.0)",pass,False,
+N2_llama2_misanchored,absolute_repetition,"pass (no absolute rule; ratio 0.0, share 0.0)",pass,False,

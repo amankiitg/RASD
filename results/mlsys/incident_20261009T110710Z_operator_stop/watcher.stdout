@@ -1,0 +1,266 @@
+===== ARMING 2026-10-09T02:13:08Z =====
+2026-10-09T02:13:08Z HF token: present (37 chars, not shown)
+2026-10-09T02:13:08Z instance watchdog = campaign clock = 40h
+2026-10-09T02:13:08Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-09T02:13:08Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-09T02:13:08Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-09T02:13:08Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-09T02:13:08Z capacity wait bounded until epoch=1791771188 (+72h)
+2026-10-09T02:13:10Z attempt=1 regions=none capacity=no next_sleep=78s
+2026-10-09T02:14:29Z attempt=2 regions=none capacity=no next_sleep=78s
+2026-10-09T02:15:48Z attempt=3 regions=none capacity=no next_sleep=47s
+2026-10-09T02:16:36Z attempt=4 regions=none capacity=no next_sleep=42s
+2026-10-09T02:17:18Z attempt=5 regions=none capacity=no next_sleep=45s
+2026-10-09T02:18:04Z attempt=6 regions=none capacity=no next_sleep=44s
+2026-10-09T02:18:49Z attempt=7 regions=none capacity=no next_sleep=54s
+2026-10-09T02:19:44Z attempt=8 regions=none capacity=no next_sleep=68s
+2026-10-09T02:20:53Z attempt=9 regions=none capacity=no next_sleep=50s
+2026-10-09T02:21:44Z attempt=10 regions=none capacity=no next_sleep=66s
+2026-10-09T02:22:50Z attempt=11 regions=none capacity=no next_sleep=63s
+2026-10-09T02:23:54Z attempt=12 regions=none capacity=no next_sleep=70s
+2026-10-09T02:25:05Z attempt=13 regions=none capacity=no next_sleep=77s
+2026-10-09T02:26:23Z attempt=14 regions=none capacity=no next_sleep=72s
+2026-10-09T02:27:36Z attempt=15 regions=none capacity=no next_sleep=68s
+2026-10-09T02:28:45Z attempt=16 regions=none capacity=no next_sleep=80s
+2026-10-09T02:30:05Z attempt=17 regions=none capacity=no next_sleep=65s
+2026-10-09T02:31:11Z attempt=18 regions=none capacity=no next_sleep=72s
+2026-10-09T02:32:24Z attempt=19 regions=none capacity=no next_sleep=73s
+2026-10-09T02:33:38Z attempt=20 regions=none capacity=no next_sleep=53s
+2026-10-09T02:34:32Z attempt=21 regions=none capacity=no next_sleep=40s
+2026-10-09T02:35:13Z attempt=22 regions=none capacity=no next_sleep=64s
+2026-10-09T02:36:17Z attempt=23 regions=none capacity=no next_sleep=65s
+2026-10-09T02:37:23Z attempt=24 regions=none capacity=no next_sleep=54s
+2026-10-09T02:38:18Z attempt=25 regions=none capacity=no next_sleep=41s
+2026-10-09T02:39:00Z attempt=26 regions=none capacity=no next_sleep=67s
+2026-10-09T02:40:08Z attempt=27 regions=none capacity=no next_sleep=59s
+2026-10-09T02:41:07Z attempt=28 regions=none capacity=no next_sleep=79s
+2026-10-09T02:42:27Z attempt=29 regions=none capacity=no next_sleep=47s
+2026-10-09T02:43:15Z attempt=30 regions=none capacity=no next_sleep=60s
+2026-10-09T02:44:16Z attempt=31 regions=none capacity=no next_sleep=45s
+2026-10-09T02:45:02Z attempt=32 regions=none capacity=no next_sleep=67s
+2026-10-09T02:46:10Z attempt=33 regions=none capacity=no next_sleep=56s
+2026-10-09T02:47:10Z attempt=34 regions=none capacity=no next_sleep=52s
+2026-10-09T02:48:02Z attempt=35 regions=none capacity=no next_sleep=76s
+2026-10-09T02:49:19Z attempt=36 regions=none capacity=no next_sleep=61s
+2026-10-09T02:50:21Z attempt=37 regions=none capacity=no next_sleep=45s
+2026-10-09T02:51:07Z attempt=38 regions=none capacity=no next_sleep=80s
+2026-10-09T02:52:28Z attempt=39 regions=none capacity=no next_sleep=56s
+2026-10-09T02:53:25Z attempt=40 regions=none capacity=no next_sleep=56s
+2026-10-09T02:54:22Z attempt=41 regions=none capacity=no next_sleep=74s
+2026-10-09T02:55:37Z attempt=42 regions=none capacity=no next_sleep=43s
+2026-10-09T02:56:21Z attempt=43 regions=none capacity=no next_sleep=49s
+2026-10-09T02:57:11Z attempt=44 regions=none capacity=no next_sleep=52s
+2026-10-09T02:58:04Z attempt=45 regions=none capacity=no next_sleep=49s
+2026-10-09T02:58:54Z attempt=46 regions=none capacity=no next_sleep=79s
+2026-10-09T03:00:14Z attempt=47 regions=none capacity=no next_sleep=72s
+2026-10-09T03:01:27Z attempt=48 regions=none capacity=no next_sleep=46s
+2026-10-09T03:02:14Z attempt=49 regions=none capacity=no next_sleep=79s
+2026-10-09T03:03:34Z attempt=50 regions=none capacity=no next_sleep=53s
+2026-10-09T03:04:28Z attempt=51 regions=none capacity=no next_sleep=40s
+2026-10-09T03:05:09Z attempt=52 regions=none capacity=no next_sleep=74s
+2026-10-09T03:06:24Z attempt=53 regions=none capacity=no next_sleep=72s
+2026-10-09T03:07:37Z attempt=54 regions=none capacity=no next_sleep=68s
+2026-10-09T03:08:46Z attempt=55 regions=none capacity=no next_sleep=78s
+2026-10-09T03:10:05Z attempt=56 regions=none capacity=no next_sleep=54s
+2026-10-09T03:11:00Z attempt=57 regions=none capacity=no next_sleep=68s
+2026-10-09T03:12:09Z attempt=58 regions=none capacity=no next_sleep=69s
+2026-10-09T03:13:19Z attempt=59 regions=none capacity=no next_sleep=55s
+2026-10-09T03:14:14Z attempt=60 regions=us-east-1 capacity=yes next_sleep=75s
+2026-10-09T03:14:21Z LAUNCHED 482d3e01d5ca4d54a643fd251f07d63e in us-east-1 (reason=detected)
+2026-10-09T03:14:21Z campaign clock starts NOW: 2026-10-10T19:14:21Z (+40h, sized to the campaign)
+2026-10-09T03:20:47Z instance active at 150.136.70.148
+2026-10-09T03:20:48Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-09T03:20:52Z   repo staged
+2026-10-09T03:20:52Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+      accelerate           0.33.0
+      bitsandbytes         0.49.2
+      datasets             4.8.5
+      diptest              ok
+      flash_attn           ok
+      hf:Llama-2-7b-hf     accessible
+      hf:Llama-3.1-8B      accessible
+      jsonlines            ok
+      numpy                1.26.4
+      scipy                1.15.3
+      src.models.rasd_inference ok
+      tokenizers           0.20.3
+      torch                2.5.1+cu124
+      transformers         4.46.3
+      yaml                 ok
+      cuda available   True (8 devices)
+      0, 4 MiB, 81920 MiB
+      1, 4 MiB, 81920 MiB
+      2, 4 MiB, 81920 MiB
+      3, 4 MiB, 81920 MiB
+      4, 4 MiB, 81920 MiB
+      5, 4 MiB, 81920 MiB
+      6, 4 MiB, 81920 MiB
+      7, 4 MiB, 81920 MiB
+2026-10-09T03:24:26Z   interpreter: /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python
+2026-10-09T03:24:38Z   data/processed/pg19_docs verified
+2026-10-09T03:24:39Z   data/processed/pg19_docs_diverse verified
+2026-10-09T03:24:40Z   data/processed/pg19_llama3 verified
+2026-10-09T03:24:41Z   data/processed/pg19 verified
+2026-10-09T03:27:22Z   vLLM venv provisioning started (log: ~/vllm_venv.log)
+2026-10-09T03:27:22Z starting the manifest
+===== ARMING 2026-10-09T07:59:59Z =====
+/bin/bash: setsid: command not found
+2026-10-09T08:00:12Z HF token: present (37 chars, not shown)
+2026-10-09T08:00:12Z instance watchdog = campaign clock = 40h
+2026-10-09T08:00:12Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-09T08:00:12Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-09T08:00:12Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-09T08:00:12Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-09T08:00:12Z capacity wait bounded until epoch=1791792012 (+72h)
+2026-10-09T08:00:13Z attempt=1 regions=none capacity=no next_sleep=47s
+2026-10-09T08:01:01Z attempt=2 regions=none capacity=no next_sleep=43s
+2026-10-09T08:01:45Z attempt=3 regions=none capacity=no next_sleep=42s
+2026-10-09T08:02:28Z attempt=4 regions=none capacity=no next_sleep=67s
+2026-10-09T08:03:36Z attempt=5 regions=none capacity=no next_sleep=62s
+2026-10-09T08:04:39Z attempt=6 regions=none capacity=no next_sleep=57s
+2026-10-09T08:05:37Z attempt=7 regions=none capacity=no next_sleep=48s
+2026-10-09T08:06:26Z attempt=8 regions=none capacity=no next_sleep=64s
+2026-10-09T08:07:30Z attempt=9 regions=none capacity=no next_sleep=78s
+2026-10-09T08:08:49Z attempt=10 regions=none capacity=no next_sleep=51s
+2026-10-09T08:09:41Z attempt=11 regions=none capacity=no next_sleep=69s
+2026-10-09T08:10:51Z attempt=12 regions=none capacity=no next_sleep=47s
+2026-10-09T08:11:39Z attempt=13 regions=none capacity=no next_sleep=66s
+2026-10-09T08:12:46Z attempt=14 regions=none capacity=no next_sleep=73s
+2026-10-09T08:14:00Z attempt=15 regions=none capacity=no next_sleep=59s
+2026-10-09T08:15:00Z attempt=16 regions=none capacity=no next_sleep=69s
+2026-10-09T08:16:10Z attempt=17 regions=none capacity=no next_sleep=57s
+2026-10-09T08:17:08Z attempt=18 regions=none capacity=no next_sleep=41s
+2026-10-09T08:17:50Z attempt=19 regions=none capacity=no next_sleep=75s
+2026-10-09T08:19:06Z attempt=20 regions=none capacity=no next_sleep=78s
+2026-10-09T08:20:25Z attempt=21 regions=none capacity=no next_sleep=78s
+2026-10-09T08:21:44Z attempt=22 regions=none capacity=no next_sleep=78s
+2026-10-09T08:23:03Z attempt=23 regions=none capacity=no next_sleep=80s
+2026-10-09T08:24:24Z attempt=24 regions=none capacity=no next_sleep=63s
+2026-10-09T08:25:28Z attempt=25 regions=none capacity=no next_sleep=64s
+2026-10-09T08:26:33Z attempt=26 regions=none capacity=no next_sleep=46s
+2026-10-09T08:27:20Z attempt=27 regions=none capacity=no next_sleep=45s
+2026-10-09T08:28:06Z attempt=28 regions=none capacity=no next_sleep=80s
+2026-10-09T08:29:27Z attempt=29 regions=none capacity=no next_sleep=55s
+2026-10-09T08:30:22Z attempt=30 regions=none capacity=no next_sleep=63s
+2026-10-09T08:31:26Z attempt=31 regions=none capacity=no next_sleep=54s
+2026-10-09T08:32:22Z attempt=32 regions=none capacity=no next_sleep=42s
+2026-10-09T08:33:05Z attempt=33 regions=none capacity=no next_sleep=47s
+2026-10-09T08:33:53Z attempt=34 regions=none capacity=no next_sleep=52s
+2026-10-09T08:34:45Z attempt=35 regions=none capacity=no next_sleep=76s
+2026-10-09T08:36:02Z attempt=36 regions=none capacity=no next_sleep=62s
+2026-10-09T08:37:05Z attempt=37 regions=none capacity=no next_sleep=49s
+2026-10-09T08:37:55Z attempt=38 regions=none capacity=no next_sleep=70s
+2026-10-09T08:39:06Z attempt=39 regions=none capacity=no next_sleep=68s
+2026-10-09T08:40:15Z attempt=40 regions=none capacity=no next_sleep=72s
+2026-10-09T08:41:28Z attempt=41 regions=none capacity=no next_sleep=64s
+2026-10-09T08:42:33Z attempt=42 regions=none capacity=no next_sleep=56s
+2026-10-09T08:43:30Z attempt=43 regions=none capacity=no next_sleep=62s
+2026-10-09T08:44:33Z attempt=44 regions=none capacity=no next_sleep=53s
+2026-10-09T08:45:27Z attempt=45 regions=none capacity=no next_sleep=42s
+2026-10-09T08:46:10Z attempt=46 regions=none capacity=no next_sleep=53s
+2026-10-09T08:47:04Z attempt=47 regions=none capacity=no next_sleep=49s
+2026-10-09T08:47:54Z attempt=48 regions=none capacity=no next_sleep=58s
+2026-10-09T08:48:53Z attempt=49 regions=none capacity=no next_sleep=54s
+2026-10-09T08:49:48Z attempt=50 regions=none capacity=no next_sleep=62s
+2026-10-09T08:50:51Z attempt=51 regions=none capacity=no next_sleep=40s
+2026-10-09T08:51:32Z attempt=52 regions=none capacity=no next_sleep=55s
+2026-10-09T08:52:28Z attempt=53 regions=none capacity=no next_sleep=67s
+2026-10-09T08:53:36Z attempt=54 regions=none capacity=no next_sleep=45s
+2026-10-09T08:54:22Z attempt=55 regions=none capacity=no next_sleep=59s
+2026-10-09T08:55:22Z attempt=56 regions=none capacity=no next_sleep=45s
+2026-10-09T08:56:08Z attempt=57 regions=none capacity=no next_sleep=45s
+2026-10-09T08:56:54Z attempt=58 regions=none capacity=no next_sleep=70s
+2026-10-09T08:58:05Z attempt=59 regions=none capacity=no next_sleep=70s
+2026-10-09T08:59:16Z attempt=60 regions=none capacity=no next_sleep=56s
+2026-10-09T09:00:12Z attempt=61 regions=none capacity=no next_sleep=50s
+2026-10-09T09:01:03Z attempt=62 regions=none capacity=no next_sleep=79s
+2026-10-09T09:02:23Z attempt=63 regions=none capacity=no next_sleep=49s
+2026-10-09T09:03:13Z attempt=64 regions=none capacity=no next_sleep=45s
+2026-10-09T09:03:59Z attempt=65 regions=none capacity=no next_sleep=64s
+2026-10-09T09:05:04Z attempt=66 regions=none capacity=no next_sleep=57s
+2026-10-09T09:06:02Z attempt=67 regions=none capacity=no next_sleep=65s
+2026-10-09T09:07:08Z attempt=68 regions=none capacity=no next_sleep=52s
+2026-10-09T09:08:01Z attempt=69 regions=none capacity=no next_sleep=79s
+2026-10-09T09:09:21Z attempt=70 regions=none capacity=no next_sleep=45s
+2026-10-09T09:10:07Z attempt=71 regions=none capacity=no next_sleep=61s
+2026-10-09T09:11:09Z attempt=72 regions=none capacity=no next_sleep=52s
+2026-10-09T09:12:02Z attempt=73 regions=none capacity=no next_sleep=68s
+2026-10-09T09:13:11Z attempt=74 regions=none capacity=no next_sleep=63s
+2026-10-09T09:14:14Z attempt=75 regions=none capacity=no next_sleep=73s
+2026-10-09T09:15:28Z attempt=76 regions=none capacity=no next_sleep=41s
+2026-10-09T09:16:10Z attempt=77 regions=none capacity=no next_sleep=59s
+2026-10-09T09:17:10Z attempt=78 regions=none capacity=no next_sleep=61s
+2026-10-09T09:18:12Z attempt=79 regions=none capacity=no next_sleep=71s
+2026-10-09T09:19:24Z attempt=80 regions=none capacity=no next_sleep=76s
+2026-10-09T09:20:41Z attempt=81 regions=none capacity=no next_sleep=45s
+2026-10-09T09:21:27Z attempt=82 regions=none capacity=no next_sleep=78s
+2026-10-09T09:22:46Z attempt=83 regions=none capacity=no next_sleep=48s
+2026-10-09T09:23:35Z attempt=84 regions=none capacity=no next_sleep=52s
+2026-10-09T09:24:28Z attempt=85 regions=none capacity=no next_sleep=59s
+2026-10-09T09:25:28Z attempt=86 regions=none capacity=no next_sleep=44s
+2026-10-09T09:26:13Z attempt=87 regions=none capacity=no next_sleep=40s
+2026-10-09T09:26:54Z attempt=88 regions=none capacity=no next_sleep=58s
+2026-10-09T09:27:53Z attempt=89 regions=none capacity=no next_sleep=53s
+2026-10-09T09:28:47Z attempt=90 regions=none capacity=no next_sleep=59s
+2026-10-09T09:29:47Z attempt=91 regions=none capacity=no next_sleep=50s
+2026-10-09T09:30:38Z attempt=92 regions=none capacity=no next_sleep=50s
+2026-10-09T09:31:29Z attempt=93 regions=none capacity=no next_sleep=69s
+2026-10-09T09:32:39Z attempt=94 regions=none capacity=no next_sleep=47s
+2026-10-09T09:33:27Z attempt=95 regions=none capacity=no next_sleep=76s
+2026-10-09T09:34:44Z attempt=96 regions=none capacity=no next_sleep=58s
+2026-10-09T09:35:43Z attempt=97 regions=none capacity=no next_sleep=45s
+2026-10-09T09:36:29Z attempt=98 regions=none capacity=no next_sleep=43s
+2026-10-09T09:37:13Z attempt=99 regions=none capacity=no next_sleep=64s
+2026-10-09T09:38:18Z attempt=100 regions=none capacity=no next_sleep=66s
+2026-10-09T09:39:25Z attempt=101 regions=none capacity=no next_sleep=67s
+2026-10-09T09:40:33Z attempt=102 regions=none capacity=no next_sleep=62s
+2026-10-09T09:41:36Z attempt=103 regions=none capacity=no next_sleep=54s
+2026-10-09T09:42:31Z attempt=104 regions=none capacity=no next_sleep=50s
+2026-10-09T09:43:22Z attempt=105 regions=none capacity=no next_sleep=74s
+2026-10-09T09:44:37Z attempt=106 regions=none capacity=no next_sleep=75s
+2026-10-09T09:45:53Z attempt=107 regions=none capacity=no next_sleep=58s
+2026-10-09T09:46:52Z attempt=108 regions=none capacity=no next_sleep=66s
+2026-10-09T09:47:59Z attempt=109 regions=none capacity=no next_sleep=54s
+2026-10-09T09:48:54Z attempt=110 regions=none capacity=no next_sleep=56s
+2026-10-09T09:49:51Z attempt=111 regions=none capacity=no next_sleep=53s
+2026-10-09T09:50:45Z attempt=112 regions=none capacity=no next_sleep=55s
+2026-10-09T09:51:41Z attempt=113 regions=none capacity=no next_sleep=40s
+2026-10-09T09:52:21Z attempt=114 regions=none capacity=no next_sleep=66s
+2026-10-09T09:53:28Z attempt=115 regions=us-east-1 capacity=yes next_sleep=58s
+2026-10-09T09:53:35Z LAUNCHED d2e1825003d041ef887996efff29f2da in us-east-1 (reason=detected)
+2026-10-09T09:53:35Z campaign clock starts NOW: 2026-10-11T01:53:35Z (+40h, sized to the campaign)
+2026-10-09T10:01:23Z instance active at 129.213.87.10
+2026-10-09T10:01:24Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-09T10:01:29Z   repo staged
+2026-10-09T10:01:29Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+      accelerate           0.33.0
+      bitsandbytes         0.49.2
+      datasets             4.8.5
+      diptest              ok
+      flash_attn           ok
+      hf:Llama-2-7b-hf     accessible
+      hf:Llama-3.1-8B      accessible
+      jsonlines            ok
+      numpy                1.26.4
+      scipy                1.15.3
+      src.models.rasd_inference ok
+      tokenizers           0.20.3
+      torch                2.5.1+cu124
+      transformers         4.46.3
+      yaml                 ok
+      cuda available   True (8 devices)
+      0, 4 MiB, 81920 MiB
+      1, 4 MiB, 81920 MiB
+      2, 4 MiB, 81920 MiB
+      3, 4 MiB, 81920 MiB
+      4, 4 MiB, 81920 MiB
+      5, 4 MiB, 81920 MiB
+      6, 4 MiB, 81920 MiB
+      7, 4 MiB, 81920 MiB
+2026-10-09T10:04:44Z   interpreter: /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python
+2026-10-09T10:04:56Z   data/processed/pg19_docs verified
+2026-10-09T10:04:57Z   data/processed/pg19_docs_diverse verified
+2026-10-09T10:04:58Z   data/processed/pg19_llama3 verified
+2026-10-09T10:04:59Z   data/processed/pg19 verified
+2026-10-09T10:07:07Z   vLLM venv provisioning started (log: ~/vllm_venv.log)
+2026-10-09T10:07:07Z starting the manifest

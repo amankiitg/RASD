@@ -91,6 +91,8 @@ def _ring_llama_attention_forward(
     world_size = self._ring_world_size
     chunk_size     = getattr(self, "_ring_chunk_size", None)
     prefetch_depth = getattr(self, "_ring_prefetch_depth", 0)
+    decode_mode    = getattr(self, "_ring_decode_mode", "ring")
+    expand_after_rotation = bool(getattr(self, "_ring_expand_after_rotation", False))
 
     bsz, q_len, _ = hidden_states.size()
     head_dim = self.head_dim
@@ -130,9 +132,17 @@ def _ring_llama_attention_forward(
     # benefit. The _ring_kv_quant attribute is now unused for the
     # forward path but kept on the module for backward-compat.
 
-    # 4. GQA expansion (no-op for Llama-2 where num_kv_heads == num_heads)
-    k_full = repeat_kv(k_full, num_kv_groups)
-    v_full = repeat_kv(v_full, num_kv_groups)
+    # 4. GQA expansion (no-op for Llama-2 where num_kv_heads == num_heads).
+    #    DECODE-DIAGNOSIS: with `_ring_expand_after_rotation` the expansion is DEFERRED to
+    #    the receiving side of the rotation (kernel `kv_groups`), so the ring ships
+    #    num_kv_heads instead of num_heads copies of every head — 4x fewer bytes at 128k.
+    #    Decode only: prefill's Q is sequence-sharded, so it keeps the eager expansion.
+    kv_groups = 1
+    if not (expand_after_rotation and not is_prefill):
+        k_full = repeat_kv(k_full, num_kv_groups)
+        v_full = repeat_kv(v_full, num_kv_groups)
+    else:
+        kv_groups = num_kv_groups
 
     # 5. Ring attention
     scale = 1.0 / math.sqrt(head_dim)
@@ -153,6 +163,8 @@ def _ring_llama_attention_forward(
             rank=rank, world_size=world_size,
             tail_count=tail_count, scale=scale,
             chunk_size=chunk_size, prefetch_depth=prefetch_depth,
+            split_kv=(decode_mode == "split_kv"),
+            kv_groups=kv_groups,
         )
 
     # 6. Output projection
@@ -257,6 +269,8 @@ def install_ring_attention(
     chunk_size: Optional[int] = None,
     prefetch_depth: int = 0,
     kv_quant: bool = False,
+    decode_mode: str = "ring",
+    expand_after_rotation: bool = False,
 ) -> int:
     """Replace each LlamaAttention.forward with the ring-aware version.
 
@@ -304,6 +318,11 @@ def install_ring_attention(
         attn._ring_chunk_size = chunk_size
         attn._ring_prefetch_depth = prefetch_depth
         attn._ring_kv_quant = bool(kv_quant)
+        # DECODE-DIAGNOSIS: "ring" (default, unchanged) or "split_kv" (the counterfactual).
+        attn._ring_decode_mode = decode_mode
+        # DECODE-DIAGNOSIS: when True the GQA repeat_kv happens after the ring receive
+        # (4x less wire payload), instead of before it.
+        attn._ring_expand_after_rotation = bool(expand_after_rotation)
         attn._ring_original_forward = attn.forward
         attn.forward = MethodType(_ring_llama_attention_forward, attn)
         n_patched += 1

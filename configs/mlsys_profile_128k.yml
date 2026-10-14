@@ -1,0 +1,50 @@
+# PROFILE config: target-only decode at 128k, 8 ranks, for the C7 --profile sidecar.
+#
+# TWO ROWS, AND WHY. The runner's --profile wraps the WHOLE generate() call, so there is no
+# way to profile "3 warm-up steps then 20 measured steps" without engine changes, and engine
+# changes are forbidden in this plan because they would invalidate every timing already
+# measured. Warm-up is therefore done at ROW granularity: PROF_WARM (8 tokens) runs first
+# and warms the CUDA context, the allocator and the kernels; PROF_MAIN (24 tokens) is the
+# row whose numbers are reported. Both are target-only (spec_steps 0) so no draft model is
+# involved. State this limitation wherever the numbers are quoted.
+#
+# 24 tokens and not 128: the point is to profile the steady-state decode step, not to
+# reproduce the headline, and a shorter row is cheaper to re-run if it needs repeating.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 0
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  temperature: 0.0
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+PROFILES:
+  name: profile_targetonly_128k
+  factor: context_length
+  levels:
+  - id: PROF_WARM
+    context_length: 131072
+    documents: [pg19_train_0]
+    max_new_tokens: 8
+    checkpoint_every: 0
+    notes: 'warm-up row: warms CUDA/allocator/kernels; not reported as a measurement'
+  - id: PROF_MAIN
+    context_length: 131072
+    documents: [pg19_train_0]
+    max_new_tokens: 24
+    checkpoint_every: 0
+    notes: 'the measured row: steady-state target-only decode at 128k'

@@ -1,0 +1,16 @@
+{
+  "chunks": [
+    {
+      "file": "data/processed/pg19_llama3/pg19_validation_chunk_0.dat",
+      "length": 1000000
+    },
+    {
+      "file": "data/processed/pg19_llama3/pg19_validation_chunk_1.dat",
+      "length": 1000000
+    },
+    {
+      "file": "data/processed/pg19_llama3/pg19_validation_chunk_2.dat",
+      "length": 57892
+    }
+  ]
+}

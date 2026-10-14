@@ -1,0 +1,54 @@
+# MLSys SHAKEDOWN — single smallest cell (1x A100, nproc=1)
+#
+# Purpose: prove the END-TO-END harness works (model load -> NF4 -> spec
+# decode -> metrics CSV -> per-token trace) before paying for the 8xA100
+# run. Seven prior 8xA100 attempts died on harness bugs and produced
+# nothing; this exercises the same code path for ~$0.50.
+#
+# Deliberately the cheapest real cell:
+#   * 4k context = Llama-2-7B's NATIVE window, so rope_type="yarn" applies
+#     no scaling and the YaRN path is not under test here (arm 1 covers
+#     that at 128k).
+#   * 1 seed (42), 64 new tokens, k=4.
+#   * nproc=1 -> ring attention is the documented world_size=1
+#     fall-through. That is intentional for a shakedown: it isolates
+#     "does the pipeline produce a real result cell" from multi-rank
+#     correctness, which needs the 8x box.
+#
+# Launch:
+#   NPROC=1 python run_experiment.py --config configs/mlsys_shakedown.yml \
+#     --output results/mlsys/shakedown.csv --log-per-token
+#
+# Success criterion for escalating to 8xA100: a row with status=ok and a
+# real non-null acceptance_rate/throughput_tps in shakedown.csv.
+
+canary:
+  id:   "shakedown_canary_s42"
+  seed: 42
+  max_new_tokens: 16
+
+defaults:
+  target_model_name: "meta-llama/Llama-2-7b-hf"
+  draft_model_name:  "princeton-nlp/Sheared-LLaMA-1.3B"
+  target_revision:   null
+  draft_revision:    "a4b76938edbf571ea7d7d9904861cbdca08809b4"
+  spec_steps:        4
+  kv_block_size:     2048
+  prefetch_depth:    1
+  rope_type:         "yarn"
+  kv_quant:          true
+  max_new_tokens:    64
+  dtype:             "bfloat16"
+  quantize_draft:    true
+  quantize_target:   true
+  temperature:       1.0
+  top_p:             1.0
+  seeds:             [42]
+
+SHAKEDOWN:
+  name:   "mlsys_shakedown"
+  factor: "context_length"
+  levels:
+    - id: "SHAKEDOWN_ctx4k"
+      context_length: 4096
+      notes: "smallest real cell — 4k native, 1 seed, nproc=1"

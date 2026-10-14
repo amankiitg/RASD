@@ -1,0 +1,116 @@
+# REHEARSAL TWIN of configs/mlsys_followup_sampling_n5.yml. Same five group names,
+# same ORDER, same level ids, same pools, same models, same flags; only sizes differ
+# (4096/8192 context instead of 131072/524288, 8 new tokens instead of 128). Runs
+# with SESSION_TAG=n5_rehearsal so its pulled CSVs cannot land in the real run's
+# directory (the pull dir is cleared per session AND separated by the tag, because
+# rsync here has no --delete and a rehearsal row has already masqueraded as a result
+# once, on 2026-10-11).
+#
+# NOTE: this header is a YAML comment and NOT a top-level "_comment" key. The remote
+# script derives its stage list from this file's keys (skipping only "defaults" and
+# "canary"), so a metadata KEY would be executed as a stage named "_comment".
+#
+# WHY THE SAME FIVE GROUP NAMES: the rehearsal's job is to prove that the REAL run's
+# exact code path -- same stage names, same pools, same documents, same rope dicts --
+# works end to end. Different names would rehearse a different file.
+#
+# prompt_gen_tokens stays 1024 even though only 8 tokens are generated: the scored
+# continuation is what contiguity depends on, so the tiny run exercises the same
+# window arithmetic (prompt_len = ctx - 1024 - 1) as the real one.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  rope_type: "none"
+  kv_quant: true
+  dtype: bfloat16
+  quantize_draft: true
+  quantize_target: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  seeds: [42]
+  log_per_token: true
+  save_generated_tokens: true
+  temperature: 0.7
+  max_new_tokens: 8
+  measure_target_ppl: false
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+SAMP_EXT_ALIGNED_512K_SPEC:
+  name: samp_ext_aligned_512k
+  factor: context_length
+  levels:
+  - id: SAMP_EXT_ALIGNED_512K_SPEC
+    context_length: 8192
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_512kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    notes: 'rehearsal twin: 8192 instead of 524288'
+SAMP_EXT_ALIGNED_128K_SPEC:
+  name: samp_ext_aligned_128k
+  factor: context_length
+  levels:
+  - id: SAMP_EXT_ALIGNED_128K_SPEC
+    context_length: 4096
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    notes: 'rehearsal twin: 4096 instead of 131072'
+ROPE_EXT_SAMP_NATIVE_SPEC:
+  name: rope_ext_samp_native
+  factor: context_length
+  levels:
+  - id: ROPE_EXT_SAMP_NATIVE_SPEC
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 4096
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    rope_type: "none"
+    notes: 'rehearsal twin: native control at 4096'
+ROPE_EXT_SAMP_F16_SPEC:
+  name: rope_ext_samp_f16
+  factor: context_length
+  levels:
+  - id: ROPE_EXT_SAMP_F16_SPEC
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 4096
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    rope_type: llama3
+    rope_factor: 16
+    rope_anchor_base: 8192
+    notes: 'rehearsal twin: llama3 dict, factor 16, at 4096'
+ROPE_EXT_SAMP_F32_SPEC:
+  name: rope_ext_samp_f32
+  factor: context_length
+  levels:
+  - id: ROPE_EXT_SAMP_F32_SPEC
+    target_model_name: meta-llama/Llama-3.1-8B
+    target_revision: d04e592bb4f6aa9cfee91e2e20afa771667e1d4b
+    context_length: 4096
+    documents: [pg19_train_2204, pg19_train_2768]
+    prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+    checkpoint_every: 0
+    temperature: 0.7
+    max_new_tokens: 8
+    rope_type: llama3
+    rope_factor: 32
+    rope_anchor_base: 8192
+    notes: 'rehearsal twin: llama3 dict, factor 32, at 4096'

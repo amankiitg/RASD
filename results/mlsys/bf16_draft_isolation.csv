@@ -1,0 +1,8 @@
+run_id,group,level_id,seed,target_model_name,draft_model_name,spec_steps,kv_block_size,prefetch_depth,context_length,dtype,tokens_generated,time_sec,throughput_tps,acceptance_rate,mean_latency_ms,ttft_ms,gpu_peak_mem_mb,n_rounds,status,error,draft_window_cap,draft_dtype
+mlsys_bf16_draft_canary_s42,canary,mlsys_bf16_draft_canary_s42,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,,bfloat16,17,31.9053,0.53,0.0833,1876.782,10946.453,9495.2,12,ok,,,
+BFTD_ctx64k_draftnf4_s42,DRAFT_NF4,BFTD_ctx64k_draftnf4,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,65536,bfloat16,64,120.8477,0.53,0.0851,1888.245,8552.845,9529.7,47,ok,,,nf4
+BFTD_ctx64k_draftnf4_s123,DRAFT_NF4,BFTD_ctx64k_draftnf4,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,65536,bfloat16,64,114.0368,0.56,0.1,1781.825,8190.309,9529.3,45,ok,,,nf4
+BFTD_ctx64k_draftnf4_s456,DRAFT_NF4,BFTD_ctx64k_draftnf4,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,65536,bfloat16,64,111.2137,0.58,0.1,1737.714,12454.52,9529.7,45,ok,,,nf4
+BFTD_ctx64k_draftbf16_s42,DRAFT_BF16,BFTD_ctx64k_draftbf16,42,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,65536,bfloat16,64,111.2636,0.58,0.0924,1738.494,4955.167,11194.0,46,ok,,,bf16
+BFTD_ctx64k_draftbf16_s123,DRAFT_BF16,BFTD_ctx64k_draftbf16,123,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,65536,bfloat16,64,112.5734,0.57,0.0924,1758.959,4957.986,11194.2,46,ok,,,bf16
+BFTD_ctx64k_draftbf16_s456,DRAFT_BF16,BFTD_ctx64k_draftbf16,456,meta-llama/Llama-2-7b-hf,princeton-nlp/Sheared-LLaMA-1.3B,4,2048,1,65536,bfloat16,65,108.2164,0.6,0.1056,1664.868,5078.37,11194.2,45,ok,,,bf16

@@ -1,0 +1,13 @@
+{"round_idx": 0, "global_pos_start": 125360, "spec_steps": 4, "n_acc": 0, "draft_tokens": [12206, 338, 263, 13173], "accepted": [false, false, false, false]}
+{"round_idx": 1, "global_pos_start": 125361, "spec_steps": 4, "n_acc": 0, "draft_tokens": [5953, 837, 457, 13879], "accepted": [false, false, false, false]}
+{"round_idx": 2, "global_pos_start": 125362, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29923, 29941, 498, 7532], "accepted": [true, false, true, false]}
+{"round_idx": 3, "global_pos_start": 125364, "spec_steps": 4, "n_acc": 0, "draft_tokens": [395, 395, 8741, 718], "accepted": [false, false, false, false]}
+{"round_idx": 4, "global_pos_start": 125365, "spec_steps": 4, "n_acc": 0, "draft_tokens": [317, 365, 7858, 29954], "accepted": [false, false, true, false]}
+{"round_idx": 5, "global_pos_start": 125366, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29888, 5019, 671, 701], "accepted": [true, false, false, false]}
+{"round_idx": 6, "global_pos_start": 125368, "spec_steps": 4, "n_acc": 1, "draft_tokens": [509, 3, 8446, 29889], "accepted": [true, false, true, false]}
+{"round_idx": 7, "global_pos_start": 125370, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29909, 558, 355, 29983], "accepted": [true, false, false, false]}
+{"round_idx": 8, "global_pos_start": 125372, "spec_steps": 4, "n_acc": 0, "draft_tokens": [628, 29039, 316, 1869], "accepted": [false, false, false, false]}
+{"round_idx": 9, "global_pos_start": 125373, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29871, 29947, 29900, 29662], "accepted": [true, false, false, false]}
+{"round_idx": 10, "global_pos_start": 125375, "spec_steps": 4, "n_acc": 0, "draft_tokens": [1372, 8020, 413, 5422], "accepted": [false, false, false, false]}
+{"round_idx": 11, "global_pos_start": 125376, "spec_steps": 4, "n_acc": 0, "draft_tokens": [29874, 432, 888, 808], "accepted": [false, false, false, true]}
+{"round_idx": 12, "global_pos_start": 125377, "spec_steps": 4, "n_acc": 1, "draft_tokens": [29947, 29890, 29871, 30143], "accepted": [true, false, false, false]}

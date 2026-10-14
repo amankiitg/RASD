@@ -1,0 +1,547 @@
+2026-10-09T03:27:23Z === MANIFEST START rate=$22.32 ask_over=$300 watchdog=40h only='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' approved='gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder' ===
+spend before manifest: $78.12
+2026-10-09T03:27:23Z STALL_WATCHDOG started pid=9438 default=20min thresholds=/home/ubuntu/RASD/configs/mlsys_stall_thresholds.json
+=== stage gate_calibration (projected $22, 1.0h; watchdog 40h) ===
+2026-10-09T03:27:24Z STAGE_START name=gate_calibration timeout=14400s
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:  25%|██▌       | 1/4 [00:08<00:25,  8.55s/it]Downloading shards:  50%|█████     | 2/4 [00:15<00:15,  7.80s/it]Downloading shards:  75%|███████▌  | 3/4 [00:23<00:07,  7.82s/it]Downloading shards: 100%|██████████| 4/4 [00:26<00:00,  6.00s/it]Downloading shards: 100%|██████████| 4/4 [00:26<00:00,  6.72s/it]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.43s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.18s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.08s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.30it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.08it/s]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:590: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.6` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:595: UserWarning: `do_sample` is set to `False`. However, `top_p` is set to `0.9` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_p`.
+  warnings.warn(
+The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 11618.57it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.42s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.17s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.08s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.30it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.09it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13127.71it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.57s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.23s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.11s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.26it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.04it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12729.30it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.81s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.33s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.17s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.21it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.02s/it]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13486.51it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.43s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.17s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.08s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.29it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.08it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13640.01it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.56s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.23s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.11s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.26it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:03<00:00,  1.05it/s]
+Downloading shards:   0%|          | 0/2 [00:00<?, ?it/s]Downloading shards:  50%|█████     | 1/2 [00:15<00:15, 15.54s/it]Downloading shards: 100%|██████████| 2/2 [00:21<00:00,  9.67s/it]Downloading shards: 100%|██████████| 2/2 [00:21<00:00, 10.55s/it]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:04<00:04,  4.84s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.06s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.33s/it]
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (4096). Depending on the model, you may observe exceptions, performance degradation, or nothing at all.
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 13005.59it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.60s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.36s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:03<00:01,  1.27s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.09it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.08s/it]
+Downloading shards:   0%|          | 0/2 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 2/2 [00:00<00:00, 10356.31it/s]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:05<00:05,  5.18s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.10s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:06<00:00,  3.41s/it]
+
+  candidate                    ctx     anchor        ppl   ratio   blank    rep   eos  gate
+  P1_native_32k              32768   declared     1.0325     1.0  0.1667 0.0075    no  PASS
+  P2_declared_shipped_64k    65536   declared     1.0302     1.0  0.3158 0.1273    no  PASS
+  P3_native_128k            131072   declared     1.0458     1.0  0.1875  0.029    no  PASS
+  B_native_32k               32768   declared     1.0325     1.0  0.1667 0.0075    no  PASS
+  B_native_64k               65536   declared     1.0302     1.0  0.3158 0.1273    no  PASS
+  B_native_128k             131072   declared     1.0458     1.0  0.1875  0.029    no  PASS
+  B_llama2_yarn8_32k_correct   32768   declared     7.0155     1.0  0.3889 0.0381    no  PASS
+  N1_arm4_f2_construction   131072 anchor_on_context   372.9072 356.576     0.0    0.0   YES  FAIL
+      -> ppl 356.58x native > 1.5x; EOS at token 5 = degenerate (< 10); rope mismatch: built anchor_on_context (err 0), not the intended config
+  N2_llama2_misanchored      32768 anchor_on_context 53107.2525 7569.9882  0.9848    0.0    no  FAIL
+      -> ppl 7569.99x native > 1.5x; blank lines 98% = degenerate (> 90% absolute); blank lines 98% = 2.53x the baseline's 39% > 2.0x; rope mismatch: built anchor_on_context (err 0), not the intended config
+
+  wrote results/mlsys/gate_calibration.csv
+2026-10-09T03:38:39Z STAGE_OK name=gate_calibration wall=675s cost=$4.19 cumulative=$82.31
+--- gate_calibration rc=0 wall=675s cost=$4.19 cumulative=$82.31
+  positive P1_native_32k                want=pass  got=pass  ppl=1.0325       baseline=1.0325       ratio=1.0
+  positive P2_declared_shipped_64k      want=pass  got=pass  ppl=1.0302       baseline=1.0302       ratio=1.0
+  positive P3_native_128k               want=pass  got=pass  ppl=1.0458       baseline=1.0458       ratio=1.0
+  positive B_native_32k                 want=pass  got=pass  ppl=1.0325       baseline=1.0325       ratio=1.0
+  positive B_native_64k                 want=pass  got=pass  ppl=1.0302       baseline=1.0302       ratio=1.0
+  positive B_native_128k                want=pass  got=pass  ppl=1.0458       baseline=1.0458       ratio=1.0
+  positive B_llama2_yarn8_32k_correct   want=pass  got=pass  ppl=7.0155       baseline=7.0155       ratio=1.0
+  negative N1_arm4_f2_construction      want=fail  got=fail  ppl=372.9072     baseline=1.0458       ratio=356.576
+  negative N2_llama2_misanchored        want=fail  got=fail  ppl=53107.2525   baseline=7.0155       ratio=7569.9882
+  positive-control ppl spread max/min = 6.8098  (informational: the tolerance is FIXED at 1.5x by the plan revision; this is the evidence the measurement sits well inside it)
+
+CALIBRATION OK: every control matched its expected verdict.
+=== stage engine_cap_smoke (projected $34, 1.5h; watchdog 40h) ===
+2026-10-09T03:38:40Z STAGE_START name=engine_cap_smoke timeout=21600s
+03:38:41  INFO      Total runs: 6
+03:38:41  INFO      Running 6 jobs → results/mlsys/engine_cap_smoke.csv
+03:38:41  INFO      [1/6]
+03:38:41  INFO      ▶  CAPS_prefix64_pg19_train_1_s42  (seed=42, nproc=8, timeout=9000s)
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+[W1009 03:38:48.215425903 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.859363603 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.201138208 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.278030064 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.344189968 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.469810601 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.479162639 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:38:49.500235218 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+03:38:52  INFO      Device: cuda:1 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:1]
+03:38:52  INFO      Device: cuda:4 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:4]
+03:38:52  INFO      Device: cuda:3 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:3]
+03:38:52  INFO      Device: cuda:5 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Device: cuda:2 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:5]
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:2]
+03:38:52  INFO      Device: cuda:6 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:6]
+03:38:52  INFO      Device: cuda:7 (CUDA — RunPod mode, all features enabled)
+03:38:52  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:7]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+03:38:53  INFO      Device: cuda:0 (CUDA — RunPod mode, all features enabled)
+03:38:53  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:0]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12604.97it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12690.78it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 10873.11it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 8073.73it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12455.25it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 9956.80it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 10305.42it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.20s/it]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 11162.49it/s]
+Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.37s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.29s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.32s/it]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.48s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.47s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.45s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.64s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.68s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:02<00:06,  2.02s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.85s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.72s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.86s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.94s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.44s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:04,  2.06s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.48s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.55s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.18s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.46s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.06s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.23s/it]
+03:38:59  INFO      [ring] patched 32 LlamaAttention layers (rank=6, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:39:00  INFO      [ring] patched 32 LlamaAttention layers (rank=4, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.65s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.05s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.23s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.73s/it]03:39:00  INFO      [ring] patched 32 LlamaAttention layers (rank=1, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:39:00  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:6]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.82s/it]03:39:00  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:4]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.16s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.36s/it]
+03:39:00  INFO      [ring] patched 32 LlamaAttention layers (rank=5, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:39:00  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:1]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.32s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.25s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.41s/it]
+03:39:01  INFO      [ring] patched 32 LlamaAttention layers (rank=2, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.32s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.47s/it]
+03:39:01  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:5]
+03:39:01  INFO      [ring] patched 32 LlamaAttention layers (rank=3, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.02it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.19s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.98s/it]03:39:01  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:2]
+03:39:01  INFO      [ring] patched 32 LlamaAttention layers (rank=0, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.39s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.57s/it]
+03:39:01  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:3]
+03:39:02  INFO      [ring] patched 32 LlamaAttention layers (rank=7, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:39:02  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:0]
+03:39:02  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:7]
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:39:06  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+[TRACE rank=4] generate() start, S=131008, block_size=2048
+[TRACE rank=3] generate() start, S=131008, block_size=2048
+[TRACE rank=7] generate() start, S=131008, block_size=2048
+[TRACE rank=5] generate() start, S=131008, block_size=2048
+[TRACE rank=2] generate() start, S=131008, block_size=2048
+[TRACE rank=1] generate() start, S=131008, block_size=2048
+[TRACE rank=6] generate() start, S=131008, block_size=2048
+[TRACE rank=0] generate() start, S=131008, block_size=2048
+[TRACE rank=7] target prefill done, past_kv layers=32
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=7] calling draft prefill, draft_S=4096
+[TRACE rank=4] target prefill done, past_kv layers=32
+[TRACE rank=3] target prefill done, past_kv layers=32
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=4] calling draft prefill, draft_S=4096
+[TRACE rank=1] target prefill done, past_kv layers=32
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=0] target prefill done, past_kv layers=32[TRACE rank=3] calling draft prefill, draft_S=4096
+
+[TRACE rank=2] target prefill done, past_kv layers=32
+[TRACE rank=5] target prefill done, past_kv layers=32
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=1] calling draft prefill, draft_S=4096
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=0] calling draft prefill, draft_S=4096
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=5] calling draft prefill, draft_S=4096
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=2] calling draft prefill, draft_S=4096
+[TRACE rank=6] target prefill done, past_kv layers=32
+03:39:19  INFO      [draft-window] draft prefill over 4096 of 131008 prompt tokens (window=4096)
+[TRACE rank=6] calling draft prefill, draft_S=4096
+[TRACE rank=7] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+[TRACE rank=1] draft prefill done
+[TRACE rank=2] draft prefill done
+[TRACE rank=0] draft prefill done
+[TRACE rank=3] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+[TRACE rank=6] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+[TRACE rank=4] draft prefill done
+[TRACE rank=5] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+03:41:12  INFO      Wrote generated token ids: /home/ubuntu/RASD/results/mlsys/tokens/CAPS_prefix64_pg19_train_1_s42.json (64 tokens)
+03:41:12  INFO      Wrote per-position trace: /home/ubuntu/RASD/results/mlsys/per_token/CAPS_prefix64_pg19_train_1_s42.jsonl (30 records)
+03:41:18  INFO      ✓  CAPS_prefix64_pg19_train_1_s42  tps=0.5  accept=0.276  mem=10118 MB
+03:41:23  INFO      [2/6]
+03:41:23  INFO      ▶  CAPS_prefix64_targetonly_pg19_train_1_s42  (seed=42, nproc=8, timeout=9000s)
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+[W1009 03:41:30.293386800 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.682872611 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.029964333 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.171439339 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.257586154 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.394027232 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.453285499 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:41:31.497082733 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+03:41:34  INFO      Device: cuda:1 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:1]
+03:41:34  INFO      Device: cuda:7 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:7]
+03:41:34  INFO      Device: cuda:6 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Device: cuda:3 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Device: cuda:4 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:6]
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:3]
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:4]
+03:41:34  INFO      Device: cuda:2 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:2]
+03:41:34  INFO      Device: cuda:5 (CUDA — RunPod mode, all features enabled)
+03:41:34  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:5]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+03:41:35  INFO      Device: cuda:0 (CUDA — RunPod mode, all features enabled)
+03:41:35  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:0]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12710.01it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 7966.39it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12363.46it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 10699.76it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 9132.94it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12719.65it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 10076.41it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 10440.08it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.26s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.61s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.95s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.65s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.92s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.76s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:02<00:06,  2.01s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.56s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.70s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:02<00:06,  2.14s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.64s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.71s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.66s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.76s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.85s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.38s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.38s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.34s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.03it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.18s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.43s/it]03:41:41  INFO      [ring] patched 32 LlamaAttention layers (rank=1, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.05it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.18s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.37s/it]03:41:42  INFO      [ring] patched 32 LlamaAttention layers (rank=4, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.15s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.25s/it]
+03:41:42  INFO      [ring] patched 32 LlamaAttention layers (rank=7, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:41:42  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.04s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.25s/it]
+Loading checkpoint shards:  50%|█████     | 2/4 [00:04<00:04,  2.02s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.21s/it]
+03:41:42  INFO      [ring] patched 32 LlamaAttention layers (rank=3, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:41:42  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+03:41:42  INFO      [ring] patched 32 LlamaAttention layers (rank=6, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.67s/it]03:41:42  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.76s/it]03:41:42  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+03:41:43  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.19s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.40s/it]
+03:41:43  INFO      [ring] patched 32 LlamaAttention layers (rank=5, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.30s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.46s/it]
+03:41:43  INFO      [ring] patched 32 LlamaAttention layers (rank=2, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:41:43  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.84s/it]03:41:44  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.31s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.55s/it]
+03:41:44  INFO      [ring] patched 32 LlamaAttention layers (rank=0, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:41:45  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+[TRACE rank=1] generate() start, S=131008, block_size=2048
+[TRACE rank=4] generate() start, S=131008, block_size=2048
+[TRACE rank=7] generate() start, S=131008, block_size=2048
+[TRACE rank=3] generate() start, S=131008, block_size=2048
+[TRACE rank=6] generate() start, S=131008, block_size=2048
+[TRACE rank=5] generate() start, S=131008, block_size=2048
+[TRACE rank=2] generate() start, S=131008, block_size=2048
+[TRACE rank=0] generate() start, S=131008, block_size=2048
+[TRACE rank=7] target prefill done, past_kv layers=32
+[TRACE rank=7] target-only mode — skipping draft prefill
+[TRACE rank=4] target prefill done, past_kv layers=32
+[TRACE rank=4] target-only mode — skipping draft prefill
+[TRACE rank=3] target prefill done, past_kv layers=32
+[TRACE rank=6] target prefill done, past_kv layers=32
+[TRACE rank=3] target-only mode — skipping draft prefill
+[TRACE rank=6] target-only mode — skipping draft prefill
+[TRACE rank=2] target prefill done, past_kv layers=32
+[TRACE rank=2] target-only mode — skipping draft prefill
+[TRACE rank=5] target prefill done, past_kv layers=32
+[TRACE rank=5] target-only mode — skipping draft prefill
+[TRACE rank=1] target prefill done, past_kv layers=32
+[TRACE rank=1] target-only mode — skipping draft prefill
+[TRACE rank=0] target prefill done, past_kv layers=32
+[TRACE rank=0] target-only mode — skipping draft prefill
+03:45:43  INFO      Wrote generated token ids: /home/ubuntu/RASD/results/mlsys/tokens/CAPS_prefix64_targetonly_pg19_train_1_s42.json (64 tokens)
+03:45:49  INFO      ✓  CAPS_prefix64_targetonly_pg19_train_1_s42  tps=0.3  accept=0.000  mem=8275 MB
+03:45:54  INFO      [3/6]
+03:45:54  INFO      ▶  CAPS_prefix1024_pg19_train_1_s42  (seed=42, nproc=8, timeout=9000s)
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+[W1009 03:46:00.487166863 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:01.368607607 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:01.606151680 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:02.724532476 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:02.751193722 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:02.919371463 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:02.939686688 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 03:46:02.039726698 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+03:46:04  INFO      Device: cuda:7 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Device: cuda:6 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:7]
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:6]
+03:46:04  INFO      Device: cuda:5 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:5]
+03:46:04  INFO      Device: cuda:2 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:2]
+03:46:04  INFO      Device: cuda:4 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:4]
+03:46:04  INFO      Device: cuda:3 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:3]
+03:46:04  INFO      Device: cuda:1 (CUDA — RunPod mode, all features enabled)
+03:46:04  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:1]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+03:46:06  INFO      Device: cuda:0 (CUDA — RunPod mode, all features enabled)
+03:46:06  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:0]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12915.49it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12446.01it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 8546.72it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 8701.88it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 11578.48it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12539.03it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 7127.11it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.26s/it]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.56s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.42s/it]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 6895.69it/s]
+Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.63s/it]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.80s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.43s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.85s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.46s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.75s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:02<00:02,  1.47s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.79s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.43s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.48s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.85s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.80s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.79s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.48s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.15s/it]
+Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.69s/it]03:46:12  INFO      [ring] patched 32 LlamaAttention layers (rank=5, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.05s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.21s/it]
+03:46:12  INFO      [ring] patched 32 LlamaAttention layers (rank=6, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.06s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.21s/it]
+03:46:12  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:5]
+03:46:12  INFO      [ring] patched 32 LlamaAttention layers (rank=7, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:46:13  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:6]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.55s/it]03:46:13  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:7]
+Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.54s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.09s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.29s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.46s/it]03:46:13  INFO      [ring] patched 32 LlamaAttention layers (rank=2, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.63s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.69s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.05s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.25s/it]
+03:46:14  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:14  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:2]
+03:46:14  INFO      [ring] patched 32 LlamaAttention layers (rank=3, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.18s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.38s/it]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.20s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.40s/it]
+03:46:14  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:14  INFO      [ring] patched 32 LlamaAttention layers (rank=1, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:46:14  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:14  INFO      [ring] patched 32 LlamaAttention layers (rank=4, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:46:14  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:3]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.44s/it]03:46:14  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:1]
+03:46:15  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:4]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.04s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.23s/it]
+03:46:15  INFO      [ring] patched 32 LlamaAttention layers (rank=0, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+03:46:15  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:15  INFO      Loading draft model: meta-llama/Llama-3.2-1B  [device=cuda:0]
+03:46:15  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:16  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:16  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+03:46:17  INFO      [draft-window] cap=4096 tokens, native=131072 → effective=4096
+[TRACE rank=5] generate() start, S=130048, block_size=2048
+[TRACE rank=6] generate() start, S=130048, block_size=2048
+[TRACE rank=7] generate() start, S=130048, block_size=2048
+[TRACE rank=2] generate() start, S=130048, block_size=2048
+[TRACE rank=3] generate() start, S=130048, block_size=2048
+[TRACE rank=0] generate() start, S=130048, block_size=2048
+[TRACE rank=1] generate() start, S=130048, block_size=2048
+[TRACE rank=4] generate() start, S=130048, block_size=2048
+[TRACE rank=7] target prefill done, past_kv layers=32
+[TRACE rank=0] target prefill done, past_kv layers=32[TRACE rank=2] target prefill done, past_kv layers=32
+[TRACE rank=1] target prefill done, past_kv layers=32
+
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=7] calling draft prefill, draft_S=4096
+[TRACE rank=5] target prefill done, past_kv layers=32
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=2] calling draft prefill, draft_S=4096
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=0] calling draft prefill, draft_S=4096
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=5] calling draft prefill, draft_S=4096
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=1] calling draft prefill, draft_S=4096
+[TRACE rank=3] target prefill done, past_kv layers=32
+[TRACE rank=4] target prefill done, past_kv layers=32
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=3] calling draft prefill, draft_S=4096
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=4] calling draft prefill, draft_S=4096
+[TRACE rank=6] target prefill done, past_kv layers=32
+03:46:30  INFO      [draft-window] draft prefill over 4096 of 130048 prompt tokens (window=4096)
+[TRACE rank=6] calling draft prefill, draft_S=4096
+[TRACE rank=7] draft prefill done
+[TRACE rank=5] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+[TRACE rank=2] draft prefill done
+[TRACE rank=3] draft prefill done
+[TRACE rank=1] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+[TRACE rank=6] draft prefill done
+[TRACE rank=4] draft prefill done
+[TRACE rank=0] draft prefill done
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+We detected that you are passing `past_key_values` as a tuple of tuples. This is deprecated and will be removed in v4.47. Please convert your cache or use an appropriate `Cache` class (https://huggingface.co/docs/transformers/kv_cache#legacy-cache-format)
+2026-10-09T04:02:27Z STALL_ABORT name=engine_cap_smoke limit=15min idle=902s reason=manifest.log-not-growing
+STALL: manifest.log has not grown for 902s (limit 15min) in stage 'engine_cap_smoke'
+STALL: stopping the manifest; the watcher pulls logs and terminates.
+04:02:33  INFO      Wrote generated token ids: /home/ubuntu/RASD/results/mlsys/tokens/CAPS_prefix1024_pg19_train_1_s42.json (1024 tokens)
+04:02:33  INFO      Wrote per-position trace: /home/ubuntu/RASD/results/mlsys/per_token/CAPS_prefix1024_pg19_train_1_s42.jsonl (231 records)
+04:02:39  INFO      ✓  CAPS_prefix1024_pg19_train_1_s42  tps=1.1  accept=0.861  mem=10217 MB
+04:02:44  INFO      [4/6]
+04:02:44  INFO      ▶  CAPS_prefix1024_targetonly_pg19_train_1_s42  (seed=42, nproc=8, timeout=9000s)
+WARNING:__main__:
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+[W1009 04:02:51.230218810 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.880759321 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.941906918 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.281891475 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.295638792 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.349120931 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.381398697 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+[W1009 04:02:52.487292861 CUDAAllocatorConfig.h:28] Warning: expandable_segments not supported on this platform (function operator())
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+04:02:54  INFO      Device: cuda:2 (CUDA — RunPod mode, all features enabled)
+04:02:54  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:2]
+04:02:54  INFO      Device: cuda:7 (CUDA — RunPod mode, all features enabled)
+04:02:54  INFO      Device: cuda:6 (CUDA — RunPod mode, all features enabled)
+04:02:54  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:7]
+04:02:54  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:6]
+04:02:55  INFO      Device: cuda:1 (CUDA — RunPod mode, all features enabled)
+04:02:55  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:1]
+04:02:55  INFO      Device: cuda:4 (CUDA — RunPod mode, all features enabled)
+04:02:55  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:4]
+04:02:55  INFO      Device: cuda:5 (CUDA — RunPod mode, all features enabled)
+04:02:55  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:5]
+04:02:55  INFO      Device: cuda:3 (CUDA — RunPod mode, all features enabled)
+04:02:55  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:3]
+/home/ubuntu/miniconda3/envs/rasd-gpu/lib/python3.10/site-packages/transformers/utils/hub.py:128: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+04:02:55  INFO      Device: cuda:0 (CUDA — RunPod mode, all features enabled)
+04:02:55  INFO      Loading target model: meta-llama/Llama-3.1-8B  [device=cuda:0]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12642.97it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 11594.48it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12381.71it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 12300.01it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 8991.01it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 7966.39it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 7358.43it/s]
+Downloading shards:   0%|          | 0/4 [00:00<?, ?it/s]Downloading shards: 100%|██████████| 4/4 [00:00<00:00, 11715.93it/s]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.28s/it]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.47s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:03,  1.33s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.56s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.70s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.57s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.97s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.59s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.55s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.91s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.96s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.61s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.64s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.40s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.39s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.37s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.17s/it]
+Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.01it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.17s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.43s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.63s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.04it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.15s/it]
+04:03:02  INFO      [ring] patched 32 LlamaAttention layers (rank=1, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+04:03:02  INFO      [ring] patched 32 LlamaAttention layers (rank=2, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+04:03:02  INFO      [ring] patched 32 LlamaAttention layers (rank=7, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.93s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.04s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:04<00:00,  1.23s/it]
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.64s/it]04:03:03  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.92s/it]04:03:03  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+04:03:03  INFO      [ring] patched 32 LlamaAttention layers (rank=6, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+04:03:03  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+04:03:03  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.22s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.34s/it]
+04:03:03  INFO      [ring] patched 32 LlamaAttention layers (rank=4, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.46s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.05s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:05<00:00,  1.25s/it]
+04:03:04  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+04:03:04  INFO      [ring] patched 32 LlamaAttention layers (rank=5, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.78s/it]04:03:04  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+Loading checkpoint shards:  75%|███████▌  | 3/4 [00:05<00:01,  1.84s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.29s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.50s/it]
+04:03:05  INFO      [ring] patched 32 LlamaAttention layers (rank=0, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.31s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.52s/it]
+04:03:05  INFO      [ring] patched 32 LlamaAttention layers (rank=3, world_size=8, chunk_size=2048, prefetch_depth=1, kv_quant=True)
+04:03:05  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+04:03:06  INFO      [target-only] cfg.spec_steps=0 — skipping draft model load. Forward pass will run autoregressive decode via target only.
+[TRACE rank=1] generate() start, S=130048, block_size=2048
+[TRACE rank=2] generate() start, S=130048, block_size=2048
+[TRACE rank=7] generate() start, S=130048, block_size=2048
+[TRACE rank=6] generate() start, S=130048, block_size=2048
+[TRACE rank=4] generate() start, S=130048, block_size=2048
+[TRACE rank=5] generate() start, S=130048, block_size=2048
+[TRACE rank=0] generate() start, S=130048, block_size=2048
+[TRACE rank=3] generate() start, S=130048, block_size=2048
+[TRACE rank=7] target prefill done, past_kv layers=32
+[TRACE rank=7] target-only mode — skipping draft prefill
+[TRACE rank=5] target prefill done, past_kv layers=32
+[TRACE rank=5] target-only mode — skipping draft prefill
+[TRACE rank=3] target prefill done, past_kv layers=32
+[TRACE rank=3] target-only mode — skipping draft prefill
+[TRACE rank=4] target prefill done, past_kv layers=32
+[TRACE rank=4] target-only mode — skipping draft prefill
+[TRACE rank=1] target prefill done, past_kv layers=32
+[TRACE rank=1] target-only mode — skipping draft prefill
+[TRACE rank=6] target prefill done, past_kv layers=32
+[TRACE rank=6] target-only mode — skipping draft prefill
+[TRACE rank=2] target prefill done, past_kv layers=32
+[TRACE rank=2] target-only mode — skipping draft prefill
+[TRACE rank=0] target prefill done, past_kv layers=32
+[TRACE rank=0] target-only mode — skipping draft prefill

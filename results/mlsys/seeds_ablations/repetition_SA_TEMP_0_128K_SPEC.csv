@@ -1,0 +1,6 @@
+run_id,doc_id,spec_steps,context_length,tokens_generated,acceptance_rate,acceptance_reported,rep_repeat_share,rep_tok_repeat_share,rep_tokens_in_repeat,rep_longest_repeat_span,rep_period,rep_period_agreement,rep_first_periodic_token,rep_periodic_tail_share,rep_degenerate,rep_reasons,windows_total,windows_used,windows_dropped,windows_dropped_list,acceptance_nondegenerate,status,error
+SA_TEMP_0_128K_SPEC_pg19_train_0_s42,pg19_train_0,4,131072,128,0.2621,0.2621,0.0,0.0,0.0,7,63,0.1077,128,0.0,False,,1,1,0,,0.2621,ok,
+SA_TEMP_0_128K_SPEC_pg19_train_1_s42,pg19_train_1,4,131072,128,0.4255,0.4255,0.0,0.2301,0.4219,41,13,0.3739,74,0.4219,False,,1,1,0,,0.4255,ok,
+SA_TEMP_0_128K_SPEC_pg19_train_915_s42,pg19_train_915,4,131072,128,0.775,,0.0,0.5133,0.6875,64,15,0.7611,40,0.6875,True,69% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 69% of the row (period 15) > 50% absolute,1,0,1,0,,ok,
+SA_TEMP_0_128K_SPEC_pg19_train_2204_s42,pg19_train_2204,4,131072,128,0.5,0.5116,0.0,0.0,0.0,14,29,0.1616,96,0.25,False,,1,1,0,,0.5116,ok,
+SA_TEMP_0_128K_SPEC_pg19_train_2768_s42,pg19_train_2768,4,131072,128,0.3396,0.3519,0.0,0.0796,0.375,24,25,0.2816,128,0.0,False,,1,1,0,,0.3519,ok,

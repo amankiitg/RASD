@@ -1,0 +1,141 @@
+2026-10-08T14:06:00Z HF token: present (37 chars, not shown)
+2026-10-08T14:06:00Z instance watchdog = campaign clock = 40h
+2026-10-08T14:06:00Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-08T14:06:00Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T14:06:00Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T14:06:00Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-08T14:06:00Z capacity wait bounded until epoch=1791727560 (+72h)
+2026-10-08T14:06:01Z attempt=1 regions=none capacity=no next_sleep=73s
+2026-10-08T14:07:15Z attempt=2 regions=none capacity=no next_sleep=79s
+2026-10-08T14:08:35Z attempt=3 regions=none capacity=no next_sleep=43s
+2026-10-08T14:09:19Z attempt=4 regions=none capacity=no next_sleep=57s
+2026-10-08T14:10:17Z attempt=5 regions=us-east-1 capacity=yes next_sleep=78s
+2026-10-08T14:10:22Z LAUNCHED 238e8d3534b740f7b2bdc2f1bba550b5 in us-east-1 (reason=detected)
+2026-10-08T14:10:22Z campaign clock starts NOW: 2026-10-10T06:10:22Z (+40h, sized to the campaign)
+2026-10-08T14:17:50Z instance active at 132.145.192.145
+2026-10-08T14:17:51Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-08T14:17:55Z   repo staged
+2026-10-08T14:17:55Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+      accelerate           0.33.0
+      bitsandbytes         0.49.2
+      datasets             4.8.5
+      diptest              ok
+      flash_attn           ok
+      hf:Llama-2-7b-hf     accessible
+      hf:Llama-3.1-8B      accessible
+      jsonlines            ok
+      numpy                1.26.4
+      scipy                1.15.3
+      src.models.rasd_inference ok
+      tokenizers           0.20.3
+      torch                2.5.1+cu124
+      transformers         4.46.3
+      yaml                 ok
+      cuda available   True (8 devices)
+      0, 4 MiB, 81920 MiB
+      1, 4 MiB, 81920 MiB
+      2, 4 MiB, 81920 MiB
+      3, 4 MiB, 81920 MiB
+      4, 4 MiB, 81920 MiB
+      5, 4 MiB, 81920 MiB
+      6, 4 MiB, 81920 MiB
+      7, 4 MiB, 81920 MiB
+2026-10-08T14:21:11Z   interpreter: /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python
+  torch 2.5.1+cu124 | transformers 4.46.3 | cuda True 8 devices
+  data/processed/pg19_docs: 10 files, 0 unresolved
+2026-10-08T14:21:23Z   data/processed/pg19_docs verified
+  data/processed/pg19_docs_diverse: 10 files, 0 unresolved
+2026-10-08T14:21:24Z   data/processed/pg19_docs_diverse verified
+  data/processed/pg19_llama3: 3 files, 0 unresolved
+2026-10-08T14:21:25Z   data/processed/pg19_llama3 verified
+  data/processed/pg19: 29 files, 0 unresolved
+2026-10-08T14:21:26Z   data/processed/pg19 verified
+started
+2026-10-08T14:23:32Z   vLLM venv provisioning started (log: ~/vllm_venv.log)
+2026-10-08T14:23:32Z starting the manifest
+started
+2026-10-08T14:36:27Z manifest finished rc=1 — ABORTED
+2026-10-08T14:36:27Z INCIDENT (manifest aborted rc=1): logs -> /Users/amankesarwani/PycharmProjects/RASD/results/mlsys/incident_20261008T143627Z
+2026-10-08T14:36:28Z   pulled ~/manifest.log (70 lines)
+2026-10-08T14:36:29Z   pulled ~/manifest.rc (1 lines)
+2026-10-08T14:36:30Z   pulled ~/pod_env.log (54 lines)
+2026-10-08T14:36:31Z   pulled ~/vllm_venv.log (10 lines)
+2026-10-08T14:36:31Z   ~/manifest_watchdog.log not present
+2026-10-08T14:36:32Z   pulled RUN_LOG.txt
+2026-10-08T14:36:32Z INCIDENT captured at /Users/amankesarwani/PycharmProjects/RASD/results/mlsys/incident_20261008T143627Z
+2026-10-08T14:36:32Z terminating the instance and stopping: the campaign did not complete
+2026-10-08T14:36:32Z TERMINATING 238e8d3534b740f7b2bdc2f1bba550b5
+{"data": {"terminated_instances":[{"id":"238e8d3534b740f7b2bdc2f1bba550b5","name":"rasd-mlsys","ip":"132.145.192.145","private_ip":"10.19.92.3","status":"terminating","ssh_key_names":["rasd-amank"],"file_system_names":[],"region":{"name":"us-east-1","description":"Virginia, USA"},"instance_type":{"name":"gpu_8x_a100_80gb_sxm4","description":"8x A100 (80 GB SXM4)","gpu_description":"A100 (80 GB SXM4)","price_cents_per_hour":2232,"specs":{"vcpus":240,"memory_gib":1800,"storage_gib":20480,"gpus":8},"architecture":"x86_64"},"workspace_id":"8b1934768e734777ac3e4f029a8cc15b","hostname":"132-145-192-145","jupyter_token":"83e59dd3a2a14d579c3f4bd09386c382","jupyter_url":"https://909857dba976481794d7c246fe636eeb-0.lambdaspaces.com/?token=83e59dd3a2a14d579c3f4bd09386c382","is_reserved":false,"first_healthy":"2026-10-08T14:17:27.857110Z","actions":{"migrate":{"available":true},"rebuild":{"available":true},"restart":{"available":true},"cold_reboot":{"available":true},"power_cycle":{"available":true},"terminate":{"available":true}},"tags":[],"firewall_rulesets":[]}]}}2026-10-08T14:36:38Z confirming termination by polling to ZERO instances (stderr visible)
+2026-10-08T14:36:38Z   attempt 1.1: instances=1
+2026-10-08T14:36:54Z   attempt 1.2: instances=1
+2026-10-08T14:37:09Z   attempt 1.3: instances=1
+2026-10-08T14:37:24Z   attempt 1.4: instances=1
+2026-10-08T14:37:40Z   attempt 1.5: instances=1
+2026-10-08T14:37:56Z   attempt 1.6: instances=1
+2026-10-08T14:38:11Z   attempt 1.7: instances=1
+2026-10-08T14:38:27Z   attempt 1.8: instances=1
+2026-10-08T14:38:42Z   attempt 1.9: instances=0
+2026-10-08T14:38:42Z CONFIRMED TERMINATED (0 instances)
+2026-10-08T15:04:08Z HF token: present (37 chars, not shown)
+2026-10-08T15:04:08Z instance watchdog = campaign clock = 40h
+2026-10-08T15:04:08Z target=gpu_8x_a100_80gb_sxm4  per-stage approval threshold=$300 @ $22.32/hr
+2026-10-08T15:04:08Z approved stages: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T15:04:08Z allowlist: gate_calibration,engine_cap_smoke,coherence_gate,correction_note_evidence,natural_f1_128k,impl_validation,rope_intervention_128k,natural_spec_gated_256k,vllm_ladder
+2026-10-08T15:04:08Z campaign deadline is set when the instance is acquired (+40h)
+2026-10-08T15:04:08Z capacity wait bounded until epoch=1791731048 (+72h)
+2026-10-08T15:04:09Z attempt=1 regions=us-midwest-1 capacity=yes next_sleep=79s
+2026-10-08T15:04:15Z LAUNCHED a651b11d4ed146f2999bd6fcac2f1517 in us-midwest-1 (reason=detected)
+2026-10-08T15:04:15Z campaign clock starts NOW: 2026-10-10T07:04:15Z (+40h, sized to the campaign)
+2026-10-08T15:11:43Z instance active at 147.224.222.154
+2026-10-08T15:11:44Z staging repository + PG-19 data (metadata AND the chunks it names)
+2026-10-08T15:11:49Z   repo staged
+2026-10-08T15:11:49Z provisioning the campaign environment on the pod (setup log: ~/pod_env.log)
+      accelerate           0.33.0
+      bitsandbytes         0.49.2
+      datasets             4.8.5
+      diptest              ok
+      flash_attn           ok
+      hf:Llama-2-7b-hf     accessible
+      hf:Llama-3.1-8B      accessible
+      jsonlines            ok
+      numpy                1.26.4
+      scipy                1.15.3
+      src.models.rasd_inference ok
+      tokenizers           0.20.3
+      torch                2.5.1+cu124
+      transformers         4.46.3
+      yaml                 ok
+      cuda available   True (8 devices)
+      0, 4 MiB, 81920 MiB
+      1, 4 MiB, 81920 MiB
+      2, 4 MiB, 81920 MiB
+      3, 4 MiB, 81920 MiB
+      4, 4 MiB, 81920 MiB
+      5, 4 MiB, 81920 MiB
+      6, 4 MiB, 81920 MiB
+      7, 4 MiB, 81920 MiB
+2026-10-08T15:15:13Z   interpreter: /home/ubuntu/miniconda3/envs/rasd-gpu/bin/python
+  torch 2.5.1+cu124 | transformers 4.46.3 | cuda True 8 devices
+  data/processed/pg19_docs: 10 files, 0 unresolved
+2026-10-08T15:15:25Z   data/processed/pg19_docs verified
+  data/processed/pg19_docs_diverse: 10 files, 0 unresolved
+2026-10-08T15:15:26Z   data/processed/pg19_docs_diverse verified
+  data/processed/pg19_llama3: 3 files, 0 unresolved
+2026-10-08T15:15:28Z   data/processed/pg19_llama3 verified
+  data/processed/pg19: 29 files, 0 unresolved
+2026-10-08T15:15:30Z   data/processed/pg19 verified
+started
+2026-10-08T15:17:42Z   vLLM venv provisioning started (log: ~/vllm_venv.log)
+2026-10-08T15:17:42Z starting the manifest
+started
+2026-10-08T15:30:23Z manifest finished rc=1 — ABORTED
+2026-10-08T15:30:23Z INCIDENT (manifest aborted rc=1): logs + results -> /Users/amankesarwani/PycharmProjects/RASD/results/mlsys/incident_20261008T153023Z
+2026-10-08T15:30:24Z   pulled ~/manifest.log (179 lines)
+2026-10-08T15:30:25Z   pulled ~/manifest.rc (1 lines)
+2026-10-08T15:30:26Z   pulled ~/pod_env.log (54 lines)
+2026-10-08T15:30:28Z   pulled ~/vllm_venv.log (10 lines)
+2026-10-08T15:30:28Z   ~/manifest_watchdog.log not present
+2026-10-08T15:30:29Z   pulled RUN_LOG.txt
+2026-10-08T15:30:30Z   pulled results/mlsys (3 csv, 1 generated-text dir(s))
+2026-10-08T15:30:30Z   ledger merge: {"appended": 2, "local_rows": 5, "status": "merged", "total_rows": 7}
+2026-10-08T15:30:30Z   3 path(s) newly copied into results/mlsys, 0 already present locally (pod copy kept in /Users/amankesarwani/PycharmProjects/RASD/results/mlsys/incident_20261008T153023Z/pod_results)

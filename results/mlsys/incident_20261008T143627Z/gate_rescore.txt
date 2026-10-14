@@ -1,0 +1,23 @@
+re-score of results/mlsys/incident_20261008T143627Z/manifest.log
+controls file: configs/mlsys_gate_controls.json
+rule: ppl <= 1.5x baseline; blank/repeat <= 2.0x the baseline's share; absolute ceilings only for degeneration (blank > 0.90, EOS before token 10)
+
+  candidate                    expect old   new   ppl_ratio   blank   b/base     rep  r/base  eos  reason
+ok  P1_native_32k                pass  PASS  PASS        1.0  0.1667   0.1667  0.0075     1.0   no  pass
+ok  P2_native_64k                pass  FAIL  PASS        1.0  0.3158   0.3158  0.1273     1.0   no  pass
+ok  P3_native_128k               pass  PASS  PASS        1.0  0.1875   0.1875   0.029     1.0   no  pass
+ok  B_native_32k                 pass  PASS  PASS        1.0  0.1667   0.1667  0.0075     1.0   no  pass
+ok  B_native_64k                 pass  FAIL  PASS        1.0  0.3158   0.3158  0.1273     1.0   no  pass
+ok  B_native_128k                pass  PASS  PASS        1.0  0.1875   0.1875   0.029     1.0   no  pass
+ok  B_llama2_yarn8_32k_correct   pass  FAIL  PASS        1.0  0.3889   0.3889  0.0381     1.0   no  pass
+ok  N1_arm4_f2_construction      fail  FAIL  FAIL    356.576     0.0   0.1875     0.0     0.0  YES  ppl 356.58x native > 1.5x; EOS at token 5 = degenerate (< 10); rope mismatch: built anchor_on_co
+ok  N2_llama2_misanchored        fail  FAIL  FAIL  7569.9882  0.9848   0.3889     0.0     0.0   no  ppl 7569.99x native > 1.5x; blank lines 98% = degenerate (> 90% absolute); blank lines 98% = 2.5
+
+  old reason | P2_native_64k: blank lines 32%
+  old reason | B_native_64k: blank lines 32%
+  old reason | B_llama2_yarn8_32k_correct: blank lines 39%
+  old reason | N1_arm4_f2_construction: ppl 356.58x native > 1.5x; EOS at token 5; rope mismatch: built anchor_on_context (err 0), not the intended config
+  old reason | N2_llama2_misanchored: ppl 7569.99x native > 1.5x; blank lines 98%; rope mismatch: built anchor_on_context (err 0), not the intended config
+
+  7 positives declared pass, 2 negatives declared fail
+  CALIBRATION PASSES: every control has its declared verdict under the new rule
