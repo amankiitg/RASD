@@ -113,7 +113,7 @@ decode step was therefore latency per round, not bandwidth.
 Removing the rotation with split-KV --- prior work, Meta's pass-Q/pass-KV
 and vLLM's Decode Context Parallelism --- is worth $2.8$--$5.3\times$
 in decode time per token, and speculative decoding still pays
-$2.0$--$2.5\times$ on top of it. The measurement also withdraws the
+$2.0$--$2.3\times$ on top of it. The measurement also withdraws the
 reviewed version's two systems claims, that ring communication was
 ${\leq}1.2\%$ of wall time and that the speedup regressed at
 512\,k/1\,M.
@@ -240,12 +240,13 @@ variation. The decode step was latency per round, not bandwidth.
 Removing the rotation (split-KV; prior work) is worth
 $2.8$--$5.3\times$ in decode time per token, rising with context.
 % SRC: results/mlsys/decode_df/ring_bench/ringbench.csv; RESULTS_OCT.md 10.2b
-\emph{(F5) Speculation still pays on top of the fix}: $1.97\times$ /
-$2.50\times$ / $2.25\times$ decode-only at 128\,k / 512\,k / 1\,M
-over the same engine's target-only path ($1.91\times$ / $1.88\times$ /
-$1.42\times$ end-to-end --- the 1\,M end-to-end figure is smaller
-because 1\,M prefill is now the long pole).
-% SRC: results/mlsys/RESULTS_OCT.md section 10.2
+\emph{(F5) Speculation still pays on top of the fix}: $2.01\times$ /
+$2.29\times$ / $2.20\times$ decode-only at 128\,k / 512\,k / 1\,M
+over the same engine's target-only path ($1.95\times$ / $1.76\times$ /
+$1.41\times$ end-to-end --- the 1\,M end-to-end figure is smaller
+because 1\,M prefill is now the long pole), on three, three and five
+books per arm.
+% SRC: results/mlsys/RESULTS_OCT.md sections 10.2 and 10.7
 
 Two claims from the reviewed version are \textbf{withdrawn} and are
 not reported again: that ring communication was $\leq 1.2\%$ of wall
@@ -1440,9 +1441,14 @@ ratio improves. That is the mechanistic claim, and it is why the
 bare-primitive benchmark matters more than the end-to-end ratio.
 % SRC: results/mlsys/RESULTS_OCT.md section 10.2b; results/mlsys/rerun_r1|r2/session_a_*.csv
 
-Two caveats we state rather than bury. The 512\,k and 1\,M
-\emph{target-only} denominators are n=1 and n=2 books; the spec rows
-are n=3 and n=15. And the four arms in the diagnostic that isolated
+Three caveats we state rather than bury. The matched
+\emph{old-against-new} comparison is one cell at 512\,k and two at
+1\,M, because that is how many books the old engine measured there;
+the candidate engine's own target-only denominator is wider --- n=3
+books at 512\,k and n=5 at 1\,M after the top-up run of
+\S\ref{sec:results-spec} --- which is why the speculation-still-pays
+ratios in that subsection are three- and five-book figures while the
+speedups in this table remain one- and two-cell ones. And the four arms in the diagnostic that isolated
 the mechanism --- \texttt{kv\_block\_size} 32768 ($1.24\times$,
 bit-identical token stream) and \texttt{repeat\_kv} after the
 rotation ($+2.7\%$, bit-identical) --- are \emph{inert} under
@@ -1457,15 +1463,31 @@ was removed.
 With the rotation gone, the question the paper started from --- does
 speculation still pay at long context? --- can be asked on an engine
 whose decode step is no longer dominated by a collective. The answer
-is yes: \textbf{$1.97\times$ / $2.50\times$ / $2.25\times$}
+is yes: \textbf{$2.01\times$ / $2.29\times$ / $2.20\times$}
 decode-only at 128\,k / 512\,k / 1\,M over the same engine's own
-target-only path.
-% SRC: results/mlsys/RESULTS_OCT.md section 10.2
+target-only path, with three books in the 128\,k spec arm against one
+in its target arm, three against three at 512\,k, and five against
+five at 1\,M.
+% SRC: results/mlsys/RESULTS_OCT.md sections 10.2 and 10.7
+
+The two thinnest denominators were topped up after the confirmatory
+run, because a speedup whose denominator is one book is a ratio of
+one row to another. A dedicated session recorded the three missing
+1\,M books (\texttt{train\_915}, \texttt{2204}, \texttt{2768}) and
+the two missing 512\,k books (\texttt{train\_1}, \texttt{915}) on the
+candidate engine, with the same provenance columns as every other
+row. Its 512\,k target-only mean is $2.148$\,s/token over three books
+against the $2.346$ single-book value it replaces, and its 1\,M mean
+is $3.155$ over five against $3.211$ over two. Both moves are small
+and both are downward, so the ratios above are \emph{lower} than the
+single-book ones --- which is the direction a thin denominator is
+most likely to be flattering in.
+% SRC: results/mlsys/rerun_topup/session_a_TP_*.csv; results/mlsys/RESULTS_OCT.md section 10.7
 
 End-to-end, where prefill is included, the same comparison reads
-$1.91\times$ / $1.88\times$ / $1.42\times$: at 1\,M a row is
-$570$\,s of which $335$\,s is prefill, so prefill is now the long
-pole. Any statement about 1\,M throughput has to say which of the
+$1.95\times$ / $1.76\times$ / $1.41\times$: at 1\,M a row is
+$570$\,s of which ${\sim}340$\,s is prefill, so prefill is now the
+long pole. Any statement about 1\,M throughput has to say which of the
 two it means, and we quote decode-only for the speculation claim.
 % SRC: results/mlsys/RESULTS_OCT.md section 10.2; results/mlsys/rerun_r1/session_a_RR_1M_*.csv
 
@@ -2004,8 +2026,11 @@ is the consistency property we wanted to confirm.
 \label{sec:limitations}
 
 \paragraph{Sample size per cell is small and we state it everywhere.}
-The 128\,k arm has 3 matched spec cells and 1 target-only cell; 512\,k
-has 3 and 1; 1\,M has 13 and 2. Speeds are quoted decode-only for the
+The 128\,k arm has 3 matched spec cells and 1 target-only cell;
+512\,k has 3 and 1; 1\,M has 13 and 2. Those are the \emph{matched}
+old-against-new cells. Within the candidate engine, where nothing has
+to be matched, the target-only arms are 1, 3 and 5 books at 128\,k,
+512\,k and 1\,M. Speeds are quoted decode-only for the
 comparisons that move through the decode path and end-to-end where
 prefill is what dominates. Where a cell has $n=5$ the five units are
 books, not seeds: the book-to-book spread (2.3$\times$ in decode rate;
@@ -2109,7 +2134,9 @@ token and is worth \textbf{2.80$\times$ / 3.77$\times$ / 4.37$\times$}
 decode-only with speculation and \textbf{3.30$\times$ / 4.26$\times$ /
 5.32$\times$} without it, growing with context as a
 context-independent per-round cost predicts. Speculation still pays
-$2.0$--$2.5\times$ on top.
+$2.0$--$2.3\times$ on top, and widening the two thinnest
+target-only denominators from one and two books to three and five
+moved that figure by less than the book-to-book spread.
 
 The same measurement disciplines the comparison that matters most
 honestly: against vLLM at bf16 and greedy decoding, our prefill beats

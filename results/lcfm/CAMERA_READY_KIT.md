@@ -65,7 +65,7 @@ old-engine only, it says so.
 |---|---|
 | **exact wording** | At 128k on 8x A100-80GB the decode step was dominated by the ring's per-token K/V rotation: **256 rounds per token** (8 rotations x 32 layers) at a **measured 10.3 ms per round that does not depend on payload** (10.3124 ms for 4 KB, 10.3462 ms for 266 MB — a 66,000x payload range, 0.4% variation, worst rank spread 0.056 ms over eight ranks). Removing the rotation with split-KV (prior work: Meta pass-Q/pass-KV, vLLM Decode Context Parallelism) is worth **2.8-5.3x**. |
 | **numbers** | see the table below |
-| **n** | 6 spec and 4 target-only rows at 128k; 3 spec and 1 target-only at 512k; 15 spec and 2 target-only at 1M; plus 3 seeds x 5 books at 1M |
+| **n** | 6 spec and 4 target-only rows at 128k; 3 spec and 1 target-only at 512k; 15 spec and 2 target-only at 1M; plus 3 seeds x 5 books at 1M. **Top-up (this run): the two thin target-only arms are now n=3 books at 512k and n=5 at 1M** (`results/mlsys/rerun_topup/`, section 10.7); the matched old-against-new cells are unchanged at 1 / 1 / 2 |
 | **seeds** | 42 in R1; 42 / 123 / 456 at 1M |
 | **engine** | **candidate**, against the old engine measured in the same session or the same protocol |
 | **precision** | FP4 weights + NF4 KV |
@@ -94,8 +94,8 @@ node, one region, A100-80GB SXM4 only.
 | field | value |
 |---|---|
 | **exact wording** | With the rotation removed, speculation remains worth **~2-2.5x** over the same engine's own target-only path. |
-| **numbers** | decode-only **1.97x / 2.50x / 2.25x** at 128k / 512k / 1M; end-to-end **1.91x / 1.88x / 1.42x** |
-| **n** | 6 spec vs 4 target-only (128k); 3 vs 1 (512k); 15 vs 2 (1M) |
+| **numbers** | decode-only **2.01x / 2.29x / 2.20x** at 128k / 512k / 1M; end-to-end **1.95x / 1.76x / 1.41x**. Recomputed after the Part 2 top-up widened the target-only arms from 1 and 2 books to 3 and 5 (RESULTS_OCT 10.7); the 512k ratio FELL from 2.50x because the single-book denominator was the slowest book |
+| **n** | candidate engine, seed 42: 3 spec books vs 1 target-only (128k); 3 vs 3 (512k); 5 vs 5 (1M). The 512k and 1M target-only arms are n=3 and n=5 after the Part 2 top-up |
 | **seeds** | 42 (and 123/456 at 1M) |
 | **engine** | **candidate** |
 | **precision** | FP4 weights + NF4 KV |
@@ -234,7 +234,7 @@ reported side by side and **no ratio is claimed**.
 
 ## 3e. LIMITATIONS
 
-1. **n per cell.** 128k spec n=6 and target n=4; 512k spec n=3 and **target n=1**; 1M spec n=15
+1. **n per cell.** 128k spec n=6 and target n=4; 512k spec n=3 and target **n=3 books** (was n=1, top-up 10.7); 1M spec n=15
    (3 seeds x 5 books) and **target n=2**. The 512k and 1M target-only figures are the
    **denominators** of the 4.26x and 5.32x speedups. Part 2 of this run tops them up to n=3 and
    n=5 if 8x capacity appears before Wed 10:00 ET; if it does not, **say n=1 and n=2 in the

@@ -1025,6 +1025,43 @@ Against the pooled 10.2 table the only rows that move are 128k (2.41x -> 2.80x s
 no ordering changes**; the fastest-to-slowest ordering of the six cells is identical in both
 tables.
 
+### 10.7 The top-up: widening the two thinnest denominators
+
+The 512\,k and 1\,M **target-only** arms were n=1 and n=2 books, and they are the
+denominators of the 4.26x and 5.32x speedups. A dedicated session on the candidate engine
+recorded the missing books (`configs/mlsys_rerun_topup.yml`, stages `TP_*`), same protocol,
+seed 42, provenance recorded per row like every other row.
+
+| stage | rows | ok | what it added |
+|---|---|---|---|
+| `TP_GATE_128K_TARGET` | 1 | 1 | the provenance gate at 128k: `ring_decode_mode=split_kv`, `ring_layers_patched=32`, `git_commit` present |
+| `TP_1M_TARGET` | 3 | 3 | `train_915` 2.826, `train_2204` 3.126, `train_2768` 3.402 s/token |
+| `TP_512K_TARGET` | 2 | 2 | `train_1` 1.847, `train_915` 2.251 s/token |
+
+**What moved, and what did not.**
+
+| context | target-only before | after | spec / target-only (decode-only) before -> after |
+|---|---|---|---|
+| 128k | 1.0596 (n=1) | 1.0596 (n=1) | 1.97x -> **2.01x** |
+| 512k | 2.3460 (**n=1**) | **2.1480 (n=3)** | 2.50x -> **2.29x** |
+| 1M | 3.2107 (**n=2**) | **3.1553 (n=5)** | 2.25x -> **2.20x** |
+
+The per-context old-against-new speedups are **unchanged** (3.30x / 4.26x / 5.32x on
+target-only, 2.80x / 3.77x / 4.37x on spec): those are matched-cell figures, and the new
+books have no old-engine counterpart, so the matched sets stay at 1 / 1 / 2 cells. What the
+top-up buys is (i) a target-only denominator that is not one or two rows, (ii) the
+book-to-book spread inside the candidate engine --- 1.27x at 512k, 1.30x at 1M, which is
+wider than the seed spread of 1.04x --- and (iii) a **lower** spec-to-target ratio at two of
+the three rungs, i.e. the thin denominator was flattering. Book-0-only values would have
+kept the old numbers; the three- and five-book means are the ones to quote.
+
+**Cost and state.** Two sessions: the first ($9.06) was stopped by the gate check, which
+demanded `acceptance in (0,1]` and `spec_steps >= 1` and therefore failed a target-only gate
+row --- fixed in `4db9593` with two regression tests; the second ran all six rows in 1.27 h
+for **$28.32**. Part 2 total **$37.38**, inside its $50 projection. 0 instances and no timers
+afterwards, confirmed through the API.
+% SRC: results/mlsys/rerun_topup/session_a_TP_*.csv; results/mlsys/RESULTS_OCT.md
+
 ### 10.3 The seed spread at 1M — CORRECTED, and the old-engine baseline it needs
 
 **This subsection was wrong when first written, and the error is worth stating because it is a

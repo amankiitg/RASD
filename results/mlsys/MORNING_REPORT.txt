@@ -5166,3 +5166,51 @@ states what the redo must show: 1M vs 128k perplexity per document over the SAME
 #   - RR_SEEDS_1M_SPEC: rows=10 ok=10 median_row_s=528.7 max_row_s=592.4 tps=0.246 accept=0.4835
 #   - sanity: rows=2 ok=2 median_row_s=154.7 max_row_s=154.7 tps=1.200 accept=0.1466
 #   - measured row time total 5466.1s = 1.52h over 12 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T22:21:19Z
+#   ### progress 2026-10-13T22:19:19Z
+#   - sanity: rows=2 ok=2 median_row_s=154.4 max_row_s=154.4 tps=1.065 accept=0.1466
+#   - measured row time total 252.7s = 0.07h over 2 rows
+#   ### progress 2026-10-13T22:19:19Z
+#   - sanity: rows=2 ok=2 median_row_s=154.4 max_row_s=154.4 tps=1.065 accept=0.1466
+#   - measured row time total 252.7s = 0.07h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T23:12:51Z
+#   ### progress 2026-10-13T23:10:33Z
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 235.1s = 0.07h over 2 rows
+#   ### progress 2026-10-13T23:10:33Z
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 235.1s = 0.07h over 2 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T23:16:52Z
+#   ### progress 2026-10-13T23:10:33Z
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 235.1s = 0.07h over 2 rows
+#   ### progress 2026-10-13T23:10:33Z
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 235.1s = 0.07h over 2 rows
+#   ### progress 2026-10-13T23:13:31Z
+#   - TP_GATE_128K_TARGET: rows=1 ok=1 median_row_s=142.6 max_row_s=142.6 tps=0.900 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 377.6s = 0.10h over 3 rows
+#   ### progress 2026-10-13T23:13:31Z
+#   - TP_GATE_128K_TARGET: rows=1 ok=1 median_row_s=142.6 max_row_s=142.6 tps=0.900 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 377.6s = 0.10h over 3 rows
+
+# SESSION PROGRESS (folded from the pod after a pull) 2026-10-13T23:57:01Z
+#   ### progress 2026-10-13T23:13:31Z
+#   - TP_GATE_128K_TARGET: rows=1 ok=1 median_row_s=142.6 max_row_s=142.6 tps=0.900 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 377.6s = 0.10h over 3 rows
+#   ### progress 2026-10-13T23:53:47Z
+#   - TP_1M_TARGET: rows=3 ok=3 median_row_s=735.8 max_row_s=778.2 tps=0.170 accept=0.0000
+#   - TP_GATE_128K_TARGET: rows=1 ok=1 median_row_s=142.6 max_row_s=142.6 tps=0.900 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 2589.0s = 0.72h over 6 rows
+#   ### progress 2026-10-13T23:53:47Z
+#   - TP_1M_TARGET: rows=3 ok=3 median_row_s=735.8 max_row_s=778.2 tps=0.170 accept=0.0000
+#   - TP_GATE_128K_TARGET: rows=1 ok=1 median_row_s=142.6 max_row_s=142.6 tps=0.900 accept=0.0000
+#   - sanity: rows=2 ok=2 median_row_s=148.5 max_row_s=148.5 tps=1.170 accept=0.1466
+#   - measured row time total 2589.0s = 0.72h over 6 rows
