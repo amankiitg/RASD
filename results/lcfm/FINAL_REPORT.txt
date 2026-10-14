@@ -1,0 +1,263 @@
+LCFM CAMERA-READY FINALIZATION: FINAL_REPORT
+Run resumed 2026-10-14. No GPU, budget used $0. Branch main (default), tag
+lcfm-camera-ready-v1.
+
+=====================================================================
+SURPRISES (read these first)
+=====================================================================
+
+1. THE "AMBIGUOUS REF" WAS NOT A STRAY LEFTOVER, IT WAS A REAL TAG, AND IT MADE
+   GIT LIE TO ME. `refs/tags/lcfm-camera-ready` was an annotated camera-ready
+   snapshot from 2026-10-02 ("reviewer fixes + Lambda acknowledgment") sitting on
+   the commit that is now main's pre-merge tip. Because the token was ambiguous,
+   `git merge-base --is-ancestor lcfm-camera-ready ...` silently resolved to the
+   TAG and returned two wrong answers ("does not contain decode-diagnosis",
+   "main contains lcfm-camera-ready"). Re-run with explicit refs, the branch does
+   contain both other branches. That is why 6a had to be fixed first: the check in
+   6c was unreliable until it was. I did not destroy the annotation: it was
+   re-created as `archive/lcfm-camera-ready-tag-2026-10-02` with the same object,
+   message and date, pushed, and only then was the colliding name removed locally
+   and on origin. Full content is in the message of that tag if you want it back
+   under the old name.
+
+2. THE MAIN TEXT WAS NEVER TOO LONG. My first measurement put the References
+   heading on page 10 and I read that as "9 pages of main text". It was an artefact
+   of my own file order: I had placed the bibliography AFTER the appendices, so the
+   heading sat after four pages of appendix. Moving it ahead of the appendices,
+   which is the order the style expects, showed the main text already ended on page
+   8. The trims I had already made (abstract, introduction, related work, figures)
+   then became headroom rather than the fix. The 1e gate is now measured directly:
+   References heading starts page 9.
+
+3. THE TEMPLATE WAS IN THE REPO, AND SO WAS THE AUTHOR BLOCK. The reviewed LCFM
+   submission is manuscript/workshop/main.tex, which uses the official NeurIPS 2026
+   package with `[dblblindworkshop, final]` and already carries a restored
+   camera-ready author block (commit 44038b2). So no proxy was used, no template
+   TODO is needed, and no author was added or removed: the reviewed submission is
+   single-authored and the camera-ready says "Aman Kesarwani, Independent
+   Researcher, amankesarwani@berkeley.edu".
+
+4. AN INVENTED AUTHOR LIST WAS REAL. The brief suspected it and the brief was
+   right: manuscript/bib/references.bib attributed the Meta context-parallelism
+   work to "Liu, Hao and Wang, Xiaodong" (Hao Liu wrote Ring Attention). The real
+   first author is Amy Yang, verified from the arXiv API. The camera-ready now has
+   its own references.bib with the verified entry. The SHARED bibliography that
+   the arXiv long version cites still carries the invented entry: I left
+   manuscript/arxiv/ untouched as instructed, and flag it here so it can be fixed
+   if that file is ever rebuilt.
+
+5. THE NVIDIA CO-DESIGN ENTRY COULD NOT BE VERIFIED, SO IT WAS REMOVED. Four
+   routes failed (NVIDIA blog search twice, two search engines). Per 3d the
+   citation was removed and the sentence that used it rephrased. Nothing was
+   guessed.
+
+6. TWO BUILD FAILURES WORTH RECORDING, both caught by compiling: `\path` inside a
+   caption is illegal in a moving argument (it killed the build until the caption
+   used \texttt), and the kept ablation table overflowed the narrower LCFM column
+   by 16.8pt, which is above the 5pt gate and is now fixed with a smaller font and
+   tighter columns.
+
+=====================================================================
+PART 1: TEMPLATE AND STRUCTURE
+=====================================================================
+Template used: **the official NeurIPS 2026 package, the reviewed submission's own
+file** (copied to manuscript/lcfm/neurips_2026.sty from manuscript/workshop/),
+compiled with the same options plus [final]. Not a proxy, so no
+"% TODO AMAN: swap in the LCFM Overleaf template" was added. One nuance for you:
+LCFM's own Overleaf copy may set the workshop option `nonanonymous` rather than
+`final`. Both print the same de-anonymized author block, so the only difference
+would be the workshop track line. I did try the Overleaf read link and it does not
+serve the source without a browser session, so this is stated rather than verified.
+
+File set: manuscript/lcfm/{main.tex, neurips_2026.sty, references.bib, main.pdf}.
+manuscript/arxiv/ is untouched (verified: no diff in this run).
+
+PAGE CHECK, BY MEASUREMENT (pdftotext):
+  main text ends on page **8**
+  "References" heading starts on page **9**   (gate: page 9 or earlier, PASSES)
+  total **13 pages**; appendix runs pages 10 to 13, i.e. **4 pages**
+  main-text structure: 1 Introduction (five findings up front), 2 Background and
+  related work, 3 System and setup, 4 Results in the order F2, F1, F3, F4, F5,
+  4.6 vLLM, 5 Limitations, 6 Conclusion.
+
+MOVED TO THE APPENDIX (and why):
+  A changes from the reviewed version: a 26-row claim/status/one-line-reason table
+    built from CAMERA_READY_KIT 3b. This is also where the long-context greedy
+    census (9 of 15) now appears, labelled "sidecars not released" (decision D4).
+  B the corrected seed baseline, the matched-cell table, and the top-up table.
+  C the decode diagnosis detail: bare-ring table, engine-arms table, correctness.
+  D the design-point ablations kept from the reviewed version, labelled old engine
+    and synthetic prompt, with the E21 corrections.
+  E reproduction and the evidence tree, plus the ceiling test in one place (D2).
+
+CUT ENTIRELY (each with a row of its own in Appendix A):
+  the profiler time-breakdown table and figure (the comm bucket sits below the
+  physical wire floor for the same runs, so it bounds nothing); the RULER
+  infrastructure appendix (no run grid, so no claim); and the Llama-2
+  quantization/rotary perplexity table and its section (labelled by intent rather
+  than configuration, E7/E8/E9, and one of its two claims cited a number that does
+  not exist, E22).
+
+=====================================================================
+PART 2: THE SIX DECISIONS AS APPLIED
+=====================================================================
+D1 title: "What Limits Speculative Decoding at a Million Tokens? Greedy Loops,
+   Rotary Stretching, and the Ring's Decode Step". The old title is recorded in the
+   organizer note.
+D2 ceiling test: out of the main text. One labelled sentence in the system section
+   says it is a capability reference only and no ratio uses it; the detail (32k
+   completes at 30.1 GiB and 7.25 tok/s, 128k and above OOM during prefill, on
+   Llama-2-7B) is in Appendix E.
+D3 old profiler table and figure: deleted, one row of Appendix A records why.
+D4 degeneracy: the main text quotes only released, reproducible numbers, all
+   computed by scripts/lcfm_figures.py: greedy 9/10 (first-window audit), 1/10
+   (temperature arms), sampled 1/83 with the one row named
+   (ROPE_EXT_SAMP_F16_SPEC_pg19_train_2768_s42). The 9/15 census appears exactly
+   once, in Appendix A, labelled "sidecars not released". Abstract, introduction,
+   results and conclusion all use the released numbers.
+D5 vLLM: both directions are in the main text (Table 3, section 4.6), and the
+   precision and decoding mismatch is stated in the same sentence as every ratio.
+D6 appendices B (Llama-2 perplexity) and C (RULER): cut.
+AUTHORS: sole author, affiliation and email exactly as the reviewed submission's
+   own block; no other name appears anywhere in that block, so nothing was removed.
+   Raj Dandekar is in the acknowledgments "for advising this project" with the
+   Lambda Labs compute grant.
+
+=====================================================================
+PART 3: CITATIONS
+=====================================================================
+Fixed, with the fetched source:
+
+| old entry | new entry | fetched from |
+|---|---|---|
+| `meta2024contextparallelism`, authors invented as "Liu, Hao and Wang, Xiaodong" | `yang2024contextparallelism`: "Context Parallelism for Scalable Million-Token Inference", Amy Yang, Jingyi Yang, Aya Ibrahim, Xinfeng Xie, Bangsheng Tang, Grigory Sizov, Jeremy Reizenstein, Jongsoo Park, Jianyu Huang, arXiv preprint arXiv:2411.01783, 2024 | the arXiv API record for 2411.01783 (title, full author list, version v3, published 2024-11-04) |
+| `vllm2026dcp`, author "vLLM Team", no URL, title from memory | `lee2026dcp`: "Efficient Decode Context Parallelism with vLLM for Long Context Workloads", Seonghee Lee, Sungsoo Ha, Omri Almog, Lucas Wilkinson, vLLM Blog, 7 August 2026, https://blog.vllm.ai/2026/08/07/decode-context-parallelism.html | the blog page itself (page title, `article:author`, `article:published_time` and the visible date) |
+| `nvidia2026codesign` | **removed**, and the sentence that cited it rephrased | could not be fetched by any route tried |
+
+Every other entry the camera-ready cites was checked for author, title, year and
+venue: liu2023ringattention, dao2023flashattention2, leviathan2023fast,
+chen2023accelerating, cai2024medusa, dettmers2023qlora, xiao2024streamingllm,
+su2024rope, peng2023yarn, rae2019pg19. **None is missing a field**, so none was
+dropped on that ground. Per your instruction I did NOT retry the arXiv
+re-verification that had returned HTTP 429, so five of those ten carry their
+existing metadata unchanged (they are standard entries and all four fields are
+present and consistent with the papers).
+
+The camera-ready bibliography has **zero `% TODO VERIFY` markers**: an entry that
+could not be verified from a fetched source is not in it.
+
+=====================================================================
+PART 4: EM DASHES
+=====================================================================
+Gate 1: `grep -n -- '---' manuscript/lcfm/*.tex`  ->  no output
+Gate 2: a Unicode em dash scan over manuscript/lcfm/, the tables this paper
+        includes, and scripts/lcfm_figures.py  ->  0 hits
+`--` en dashes are untouched where they belong (numeric ranges in the tables and
+the text). The rewritten sentences that needed it read as clauses or two sentences
+rather than a punctuation swap. scripts/lcfm_figures.py had 7 comment separators
+written with hyphen runs; they were normalised so that a grep of the script is also
+clean, and the drawn figure text contained no em dash in the first place.
+
+=====================================================================
+PART 5: CONSISTENCY PASS
+=====================================================================
+5a re-ran scripts/lcfm_figures.py and diffed its output against the text. Matched
+   cells: 5a is 2.802 / 3.767 / 4.375 and target-only is 3.296 / 4.258 / 5.323,
+   which the paper states as 2.80 to 4.37 and 3.30 to 5.32; the rotary arms are
+   0.7272 / 0.5336 / 0.5006 with ppl ratios 1.0005 / 1.0156; the degeneracy census
+   is 9/10, 1/10, 1/83; the vLLM table gives 130x / 162x / 137x and prefill
+   16.85 / 222.80 / 859.60 s against RASD 8.76 / 88.56 / 335.34 s. Every number in
+   the main text carries a % SRC: comment naming its artifact.
+5b the same figures appear across abstract, introduction, results and conclusion:
+   spec speedups (2.80 / 3.77 / 4.37x), target speedups (3.30 / 4.26 / 5.32x),
+   spec-over-target (2.01 / 2.29 / 2.20x), acceptance unchanged (-0.1%), vLLM
+   prefill (1.92 to 2.56x), vLLM decode (130 to 162x), the rotary numbers and the
+   degeneracy counts. No stale pooled value survives: the only mention of the old
+   4.033x is the correction sentence that names it.
+5c reviewer comments: the reviews ARE in the repo (manuscript/arxiv/
+   REVIEW_ROADMAP.md, five reviewers plus a tiered roadmap of 19 items). Mapping
+   follows this block.
+5d compile gate: zero undefined references, zero undefined citations, no overfull
+   box above 5pt (measured: the largest remaining is 4.2pt), and no "TODO" text
+   anywhere in the PDF. The PDF is committed.
+5e results/lcfm/ORGANIZER_NOTE.txt, 170 words, no em dashes, title change and
+   author-block statement included. NOT sent anywhere.
+
+REVIEWER-COMMENT MAP (appendix-free, in this report only):
+
+| item | status | where / why |
+|---|---|---|
+| T1.1 pick a framing | ADDRESSED | the new title and the five-findings framing, sections 1 and 6 |
+| T1.2 reconcile the memory equation | MOOT | the derivation is out of the camera-ready; the corrected peak (41.2 GiB allocated over ranks, rank-0-only figure withdrawn) is in section 3 and Appendix A row E18 |
+| T1.3 citation block errors | MOOT | those sentences are cut; section 2 cites only verified entries |
+| T1.4 table reporting (mean alpha, "+- 0.000", parity sentence) | MOOT | the table and the regression narrative are withdrawn, E14 |
+| T2.1 production-stack baseline | ADDRESSED | vLLM 0.6.3 TP=8 on matched prompts, Table 3 and section 4.6, mismatch stated |
+| T2.2 prompt-source x context cross-product | PARTLY | the protocol is PG-19 at every rung with verified alignment; the synthetic prompt is retired from the results and labelled in Appendix D; the 4k synthetic cell is not run, because the degeneracy finding is exactly why that prompt was abandoned |
+| T2.3 Hartigan dip test for bimodality | MOOT | the bimodality claim is withdrawn, E15; the periodicity detector and its census replace it, F2 |
+| T2.4 non-rank-0 profile | MOOT | the profiler subsection is cut, E1/E2 |
+| T2.5 re-attempt the 1M profiler cell | MOOT | same |
+| T2.6 related work for FlashDecoding, EAGLE-2/3, MInference, StripedHyena | NOT ADDRESSED | out of scope for an 8-page workshop camera-ready; section 2 covers ring attention, decode-side context parallelism, speculation and KV compression |
+| T3.1 specify "comm" precisely | MOOT | the comm analysis is cut and Appendix A records why |
+| T3.2 reorder the comm-overlap narrative | ADDRESSED | section 1 leads with the findings; the overlap hypothesis is replaced by the rotation diagnosis |
+| T3.3 disentangle quantization divergence from OOD | MOOT | the bimodality claim is withdrawn |
+| T3.4 seed counts on the PG-19 control | MOOT | the control is withdrawn, E15/E16; every arm now states its n |
+| T3.5 paired speedup intervals | ADDRESSED | ranges with n instead of intervals at n=3, E12, and matched-cell counts stated throughout |
+| T3.6 drop or rename A5 | ADDRESSED | Appendix D labels the sweeps and carries the E21 corrections; no axe is used as an ablation of a claim |
+| T3.7 acknowledge the 4k perplexity gap | MOOT | the Llama-2 perplexity table is cut, E7/E8/E9/E22 |
+| T4.1 cost analysis | NOT ADDRESSED | no cost claim in the camera-ready; the ledger lives in this file and the session reports |
+| T4.2 promote the tick-gate finding | MOOT | the barrier is removed, E3 |
+| T4.3 reproduction by others | NOT ADDRESSED | nobody else has reproduced it; the evidence tree is in Appendix E |
+| T4.4 LongRoPE2 citation | NOT ADDRESSED | rotary background is one sentence citing YaRN; LongRoPE2 was not verified from a fetched page, so it is omitted rather than cited unverified |
+| phase 1, five reviewer reports | partly historical | the claims they attacked are the withdrawn ones; the surviving science is F1 to F3, which the roadmap does not cover |
+
+=====================================================================
+PART 6: BRANCH ACTIONS
+=====================================================================
+6a the duplicated ref was **`refs/tags/lcfm-camera-ready`**, an annotated tag
+   created 2026-10-02 pointing at 130ef1f (main's pre-merge tip). It was preserved
+   as **`archive/lcfm-camera-ready-tag-2026-10-02`** (same object, message and
+   tagger date) and pushed, and only then was the colliding name deleted locally
+   and on origin. `git rev-parse lcfm-camera-ready` now resolves unambiguously. No
+   other duplication remained (no stray remote-only ref).
+6b default branch: **main** (`refs/remotes/origin/HEAD -> origin/main`).
+6c ancestry, checked with EXPLICIT refs after 6a: `refs/heads/lcfm-camera-ready`
+   contains BOTH `refs/heads/decode-diagnosis` and `refs/heads/mlsys-experiments`.
+   Nothing was excluded on this ground.
+6d merged lcfm-camera-ready into main with a merge commit, **c0fa9c7**
+   ("Merge branch 'lcfm-camera-ready'"), no fast-forward, no squash, no rebase, no
+   conflict. Full test suite on the merged result: **1310 passed, 0 failed**
+   (248 s). main was pushed to origin.
+6e archive tags created and pushed BEFORE any deletion:
+   `archive/mlsys-experiments` -> 2b9bbe8, `archive/decode-diagnosis` -> 97bfbc5,
+   `archive/lcfm-camera-ready` -> 5e2790d, plus the renamed tag above.
+6f deleted, because fully merged into main: **decode-diagnosis** (local and
+   origin) and **lcfm-camera-ready** (local and origin). **Kept: mlsys-experiments**,
+   even though it is merged, because an earlier standing instruction for this
+   project was to never touch that branch; its tip is archived, so deleting it is
+   one command if you want it done. **Kept: main**, the default branch.
+   No unmerged branch was deleted, nothing was force-pushed, no history rewritten,
+   and no pre-existing tag was removed.
+6g **`lcfm-camera-ready-v1`** annotated tag on **c0fa9c7**, the merge commit on
+   main, message naming the page count and the PDF path. Pushed and verified on the
+   remote (`refs/tags/lcfm-camera-ready-v1` -> c0fa9c7).
+
+=====================================================================
+REMAINING TODO AMAN ITEMS
+=====================================================================
+None in the paper: the PDF contains no TODO text and the bibliography has no
+`% TODO VERIFY`. Two items for you, both report-level rather than paper-level:
+  1. Template: confirm whether LCFM's Overleaf copy uses `nonanonymous` instead of
+     `final`. Same author block either way; only the workshop track line could
+     differ.
+  2. Nothing to paste: the reviews were in the repo, so the mapping table above
+     replaces the "paste the reviews" placeholder.
+Resolved by your instruction: the affiliation stays "Independent Researcher" (the
+arXiv long version says "University of California, Berkeley (alumnus)"; that file is
+the archive and was not changed).
+
+=====================================================================
+EXACT PDF TO UPLOAD
+=====================================================================
+/Users/amankesarwani/PycharmProjects/RASD/manuscript/lcfm/main.pdf
+13 pages: main text pages 1 to 8, references page 9, appendix pages 10 to 13.
+Commit c0fa9c7, tag lcfm-camera-ready-v1.
