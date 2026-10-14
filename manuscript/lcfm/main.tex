@@ -11,9 +11,10 @@
 % (commit 44038b2). See results/lcfm/FINAL_REPORT.txt for the one discrepancy with the
 % arXiv long version's affiliation line.
 %
-% EM DASHES. House style: none. Every `---` and every U+2014 was removed from this file;
-% `--` en dashes are kept for numeric ranges. Gate:
-%   grep -n -- '---' manuscript/lcfm/*.tex      -> nothing
+% EM DASHES. House style: none. Every em dash was removed from this file, whether written
+% as a run of three hyphens or as the Unicode character, and the same was done to the figure
+% script and to the tables this paper includes. En dashes are kept where they belong, in
+% numeric ranges.
 %
 % NUMBERS. Every number in the main text carries a % SRC: comment naming the artifact it
 % comes from, and all of them are generated from the CSVs by scripts/lcfm_figures.py.
@@ -59,27 +60,24 @@
 \begin{abstract}
 Speculative decoding's short-context speedups do not survive million-token inference, and the
 reason is not the mechanism the technique's own literature would predict. We report three
-scientific findings and two systems measurements, all on 8$\times$A100 80\,GB SXM4 with FP4
-weights and an NF4 KV cache. \emph{First}, the acceptance numbers this kind of campaign
-usually reports are measured on degenerate text: under greedy decoding, 9 of 10 long-context
-rows in the released first-window audit loop, and 1 of the 10 later temperature-arm rows does,
-against 1 of 83 sampled rows at $T{=}0.7$, which is a rotary-variant row we name. A greedy
-draft accepts a loop trivially, so a greedy acceptance number measures the text, not the
-draft. \emph{Second}, stretching the rotary basis of a model that ships the scaling dictionary
-costs a quarter of speculative acceptance for almost no perplexity: on
-\texttt{meta-llama/Llama-3.1-8B} at 128\,k, acceptance falls from $0.7272$ to $0.5336$ and
-$0.5006$ (a $27$ to $31\%$ relative loss) while the paired perplexity ratio moves by $+0.05\%$
-and $+1.56\%$. Acceptance is not a proxy for perplexity. \emph{Third}, a natively 1M-trained
-target stays coherent at 1\,M, within $9.5\%$ of its own 128\,k perplexity on the exactly
-aligned book. \emph{Fourth}, the decode bottleneck of our own ring-attention engine was the
-per-token key/value rotation: 256 rounds per token, each a fixed ${\sim}10.3$\,ms regardless
-of payload (4\,KB and 266\,MB within $0.4\%$), so the cost was per-round latency, not
-bandwidth. Removing the rotation is worth $2.80$ to $4.37\times$ decode-only with speculation
-and $3.30$ to $5.32\times$ without it. \emph{Fifth}, speculation still pays $2.01$ to $2.29\times$
-on top of that, and the matched 1\,M acceptance is unchanged ($-0.1\%$). Against vLLM at bf16
-with greedy decoding, which is not a precision-matched comparison, our prefill beats its
-entire run by $1.92$ to $2.56\times$ while its decode remains $130$ to $162\times$ faster per
-token than ours.
+scientific findings and two systems measurements on 8$\times$A100 80\,GB SXM4 with FP4 weights
+and an NF4 KV cache. \emph{First}, the acceptance such campaigns report is measured on
+degenerate text: under greedy decoding 9 of 10 rows in the released long-context first-window
+audit loop and 1 of 10 temperature-arm rows does, against 1 of 83 sampled rows at $T{=}0.7$. A
+greedy draft accepts a loop trivially, so a greedy acceptance number measures the text.
+\emph{Second}, stretching the rotary basis of a model that ships the scaling dictionary costs a
+quarter of speculative acceptance for almost no perplexity: at 128\,k, acceptance falls from
+$0.7272$ to $0.5336$ and $0.5006$ while the paired perplexity ratio moves by $+0.05\%$ and
+$+1.56\%$. Acceptance is not a proxy for perplexity. \emph{Third}, a natively 1M-trained target
+stays coherent at 1\,M, within $9.5\%$ of its own 128\,k perplexity on the exactly aligned
+book. \emph{Fourth}, our ring's decode bottleneck was the per-token key/value rotation: 256
+rounds per token at a fixed ${\sim}10.3$\,ms each regardless of payload, so per-round latency
+and not bandwidth. Removing it is worth $2.80$ to $4.37\times$ decode-only with speculation and
+$3.30$ to $5.32\times$ without. \emph{Fifth}, speculation still pays $2.01$ to $2.29\times$ on
+top, and the matched 1\,M acceptance is unchanged ($-0.1\%$). Against vLLM at bf16 with greedy
+decoding, which is not a precision-matched comparison, our prefill beats its entire run by
+$1.92$ to $2.56\times$ while its decode stays $130$ to $162\times$ faster per token than
+ours.
 \end{abstract}
 
 \section{Introduction}
@@ -94,31 +92,28 @@ tokens and verifying them with one target forward. Combining the two is the obvi
 move, and the interesting question is what happens to the second mechanism once the first is
 in place.
 
-This paper answers that question with measurements rather than expectations, and the answer
-arrived in a different order than we planned. We built \textbf{RASD}, a ring-attention
-inference engine with an NF4 KV cache, chunked updates, an attention-sink prefix, rotary
-position scaling where a target needs it, and speculative verification. We then asked whether
-speculation still pays at 1\,M, and the measurements kept saying that something else was
-wrong. Three of the findings are scientific, two are systems findings about our own engine.
+We built \textbf{RASD}, a ring-attention engine with an NF4 KV cache, chunked updates, an
+attention-sink prefix, rotary scaling where a target needs it, and speculative verification,
+and asked whether speculation still pays at 1\,M. The measurements kept saying that something
+else was wrong, so the findings below lead with the science and close on our own engine.
 
 \paragraph{F1. Acceptance and perplexity dissociate under rotary stretching.}
 On \texttt{meta-llama/Llama-3.1-8B}, a model that ships the \texttt{rope\_scaling} dictionary
 the intervention edits, stretching the rotary basis at 128\,k moves paired perplexity by
 $+0.05\%$ (factor 16) and $+1.56\%$ (factor 32) while speculative acceptance falls from
-$0.7272$ to $0.5336$ and $0.5006$. The three arms differ in nothing but \texttt{rope\_factor},
-and the direction holds on five books of five. Position scaling is normally judged by
-perplexity; here it is nearly free by that measure and expensive by the measure that matters
-to a speculative decoder.
+$0.7272$ to $0.5336$ and $0.5006$. The arms differ in nothing but \texttt{rope\_factor} and
+the direction holds on five books of five. Position scaling is judged by perplexity; here it
+is nearly free by that measure and expensive by the measure a speculative decoder cares
+about.
 % SRC: results/mlsys/sampling_session/session_a_ROPE_SAMP_{NATIVE,F16,F32}_SPEC.csv; session_a_rope_fix_gate.csv
 
 \paragraph{F2. Greedy acceptance numbers at long context are measured on degenerate text.}
 Under greedy decoding, 9 of 10 rows in the released long-context first-window audit degenerate
 into repetition, and 1 of 10 in the later temperature arms does, against 1 of 83 sampled rows
-at $T{=}0.7$. That single sampled row is a rotary-variant row and we name it
-(\S\ref{sec:res-degeneracy}). A greedy draft accepts a loop trivially, so a greedy acceptance
-number measures the degeneracy rather than the agreement between draft and target, which is
-why the campaign behind this paper moved to sampling and why every row here is checked for
-periodicity instead of assumed clean.
+at $T{=}0.7$; that one row is a rotary variant and \S\ref{sec:res-degeneracy} names it. A
+greedy acceptance number therefore measures the degeneracy and not the agreement between draft
+and target, which is why this campaign moved to sampling and why every row here carries an
+explicit periodicity verdict.
 % SRC: results/mlsys/natural_f1_128k_first_window.csv; seeds_ablations/repetition_SA_TEMP_{0,1_0}_128K_SPEC.csv; scripts/lcfm_figures.py Fig C census
 
 \paragraph{F3. A natively long-context target is coherent at 1\,M.}
@@ -130,14 +125,14 @@ speculation, which is what made the two systems findings below worth chasing.
 
 \paragraph{F4. Our ring's decode step was the key/value rotation.}
 At 128\,k each decode token needs 8 rotations over 32 layers, so 256 rounds of a
-\texttt{batch\_isend\_irecv} ring. A bare-process benchmark of that primitive, no model
-attached, shows every payload costs the same ${\sim}10.3$\,ms: 10.3124\,ms for 4\,KB and
-10.3462\,ms for 266\,MB, a 66{,}000$\times$ payload range with a $0.4\%$ spread and a worst
-rank-to-rank spread of 0.056\,ms. The cost is latency per round. Removing the rotation with
-decode-side context parallelism, which is prior work \citep{yang2024contextparallelism}, is
-worth \textbf{2.80$\times$ / 3.77$\times$ / 4.37$\times$} decode-only with speculation and
-\textbf{3.30$\times$ / 4.26$\times$ / 5.32$\times$} without it at 128\,k / 512\,k / 1\,M, on
-matched (seed, book) cells. The speedup grows with context, which is what a
+\texttt{batch\_isend\_irecv} ring. A bare-process benchmark of that primitive, with no model
+attached, shows every payload costs the same ${\sim}10.3$\,ms: 10.3124\,ms for 4\,KB against
+10.3462\,ms for 266\,MB, a 66{,}000$\times$ payload range with a $0.4\%$ spread. The cost is
+latency per round. Removing the rotation with decode-side context parallelism, which is prior
+work \citep{yang2024contextparallelism}, is worth
+\textbf{2.80$\times$ / 3.77$\times$ / 4.37$\times$} decode-only with speculation and
+\textbf{3.30$\times$ / 4.26$\times$ / 5.32$\times$} without it at 128\,k / 512\,k / 1\,M on
+matched (seed, book) cells, and the speedup grows with context, which is what a
 context-independent per-round cost predicts.
 % SRC: results/mlsys/decode_df/ring_bench/ringbench.csv; results/mlsys/RESULTS_OCT.md section 10.2b
 
@@ -150,87 +145,80 @@ ring's for twelve tokens before diverging where the baseline's own top-2 margin 
 the speedups are not bought with a different model.
 % SRC: results/mlsys/RESULTS_OCT.md sections 10.2, 10.3, 10.7
 
-\paragraph{What this paper does not claim.} The rotation-free decode kernel is prior work:
-Meta's context parallelism in its pass-KV and pass-Q forms
-\citep{yang2024contextparallelism} and vLLM's Decode Context Parallelism
-\citep{lee2026dcp} both describe it, and we cite them for the technique. Our contribution is
-the diagnosis of why the rotation dominates the decode step, and the measurement of what
-removing it is worth. The comparison against vLLM is \textbf{not precision-matched}: vLLM runs
-bf16 weights with a bf16 KV cache and greedy decoding, RASD runs FP4 weights with an NF4 KV
-cache at $T{=}0.7$ with speculation.
+\paragraph{What this paper does not claim.} The rotation-free decode kernel is prior work,
+cited for the technique and never claimed: Meta's context parallelism in its pass-KV and
+pass-Q forms \citep{yang2024contextparallelism} and vLLM's Decode Context Parallelism
+\citep{lee2026dcp}. Our contribution is the diagnosis and the measurement. The comparison
+against vLLM is \textbf{not precision-matched} (\S\ref{sec:res-vllm}).
 
 \section{Background and Related Work}
 \label{sec:related}
 
 \paragraph{Long-context attention.} Ring attention \citep{liu2023ringattention} shards the
-sequence across ranks and pipelines exact attention through a ring of exchanges, holding
-per-rank memory independent of sequence length; FlashAttention-2
-\citep{dao2023flashattention2} provides the local kernel. Its published evaluation is a
-prefill story. What a decode step costs in that arrangement, once every layer's key/value
-shard has to visit every rank, is the question \S\ref{sec:res-decode} measures.
+sequence across ranks and pipelines exact attention through a ring of exchanges, so per-rank
+memory is independent of sequence length, with FlashAttention-2
+\citep{dao2023flashattention2} as the local kernel. Its published evaluation is a prefill
+story; what a decode step costs once every layer's key/value shard must visit every rank is
+what \S\ref{sec:res-decode} measures.
 
 \paragraph{Decode-side context parallelism (prior work).} The decode-phase gap is closed in
 the literature, and we cite rather than claim it. Meta's context-parallel report
 \citep{yang2024contextparallelism} describes ring-context parallelism for million-token
-inference in pass-KV and pass-Q forms: instead of rotating every key/value block around the
-ring for each new query, a rank attends to the key/value blocks it already holds and the
-partial results are combined, with the query replicated in the pass-Q form. vLLM's Decode
-Context Parallelism \citep{lee2026dcp} is the production implementation, motivated by the KV
-memory that tensor parallelism cannot shard once the KV head count is small. We adopt the
-pass-Q form under the name \emph{split-KV}.
+inference in pass-KV and pass-Q forms: instead of rotating every key/value block for each new
+query, a rank attends to the blocks it already holds and the partials are combined, with the
+query replicated in the pass-Q form. vLLM's Decode Context Parallelism \citep{lee2026dcp} is
+the production implementation, motivated by KV memory that tensor parallelism cannot shard
+once the head count is small. We adopt the pass-Q form as \emph{split-KV}.
 
 \paragraph{Speculative decoding.} \citet{leviathan2023fast} and \citet{chen2023accelerating}
 established draft-and-verify: a small model proposes $\gamma$ tokens, the target verifies them
 in one pass, and the longest accepted prefix is kept with a residual resample for the rejected
-position. Acceptance $\alpha$ is the fraction of proposed tokens the target accepts, and the
-speedup on a single device is roughly $(1-\alpha^{\gamma+1})/(1-\alpha)$ when the draft is
-cheap next to the target. \citet{cai2024medusa} removed the separate draft model with
-multi-head prediction. All of this is evaluated at short context; the interaction with a
-distributed KV cache is the setting here.
+position. Acceptance $\alpha$ is the fraction the target accepts and the single-device speedup
+is roughly $(1-\alpha^{\gamma+1})/(1-\alpha)$; \citet{cai2024medusa} removed the separate
+draft model with multi-head prediction. All of it is evaluated at short context, and the
+interaction with a distributed KV cache is the setting here.
 
 \paragraph{KV compression and position scaling.} NF4 quantization
-\citep{dettmers2023qlora} shrinks the cache, and an attention-sink prefix
-\citep{xiao2024streamingllm} stabilises it. Rotary position embeddings
-\citep{su2024rope} can be stretched past a model's training window by YaRN
-\citep{peng2023yarn}, and that intervention is normally validated by perplexity alone.
-\S\ref{sec:res-rope} shows what that validation misses.
+\citep{dettmers2023qlora} shrinks the cache and an attention-sink prefix
+\citep{xiao2024streamingllm} stabilises it. Rotary embeddings \citep{su2024rope} are stretched
+past a model's training window by YaRN \citep{peng2023yarn}, an intervention normally
+validated by perplexity alone; \S\ref{sec:res-rope} shows what that misses.
 
 \section{System and Setup}
 \label{sec:setup}
 
-\paragraph{RASD in brief.} RASD runs on a single node of 8$\times$A100 80\,GB SXM4. Every
-rank holds the target and a 1.3B draft. The KV cache is NF4 with chunked updates and a bf16
+\paragraph{RASD in brief.} RASD runs on one node of 8$\times$A100 80\,GB SXM4, with the target
+and a 1.3B draft on every rank. The KV cache is NF4 with chunked updates and a bf16
 attention-sink prefix of the first 128 tokens on rank 0; the input is sharded across ranks;
-attention is ring attention with FlashAttention-2 inside each local block; the weights are
-\textbf{FP4} (NF4 is the KV codec, a distinction the reviewed version blurred). At 1\,M the
-system peaks at \textbf{41.2\,GiB allocated per rank} over the ranks, with 69\,GiB reserved,
-where the vanilla HuggingFace stack runs out of memory at 128\,k single-rank. Rotary scaling
-is applied at a fixed factor 8 at every context of 8\,k and above and not at all below that,
-anchored on each context's own length, because the \texttt{transformers} version in use
-ignores \texttt{original\_max\_position\_embeddings}.
+attention is ring attention with FlashAttention-2 in each local block; the weights are
+\textbf{FP4}, since NF4 is the KV codec, a distinction the reviewed version blurred. At 1\,M
+the system peaks at \textbf{41.2\,GiB allocated per rank} over the ranks with 69\,GiB
+reserved, where the vanilla HuggingFace stack runs out of memory at 128\,k single-rank.
+Rotary scaling is applied at a fixed factor 8 at 8\,k and above and not at all below that,
+anchored on each context's own length because the \texttt{transformers} version in use ignores
+\texttt{original\_max\_position\_embeddings}.
 % SRC: results/mlsys/RESULTS_OCT.md section 1; results/mlsys/LCFM_RECONCILE.md (AUDIT E7/E8/E18/E19)
 
 \paragraph{Targets.} Two appear. The long-context campaign runs
-\texttt{gradientai/Llama-3-8B-Instruct-Gradient-1048k}, trained to a 1\,M window, so no
-stretching is required. The rotary intervention of \S\ref{sec:res-rope} runs
-\texttt{meta-llama/Llama-3.1-8B}, which ships the scaling dictionary under test, and its
-draft shares the tokenizer. The ceiling test against vanilla HuggingFace FlashAttention-2 is
-on \texttt{meta-llama/Llama-2-7b-hf}, the 4\,k-window model the engine was first built on, and
-it is a capability reference rather than part of any throughput comparison here; its detail is
-in Appendix~\ref{app:evidence}.
+\texttt{gradientai/Llama-3-8B-Instruct-Gradient-1048k}, trained to a 1\,M window, so nothing is
+stretched; the rotary intervention of \S\ref{sec:res-rope} runs
+\texttt{meta-llama/Llama-3.1-8B}, which ships the scaling dictionary under test, with a
+tokenizer-sharing draft. A ceiling test on \texttt{meta-llama/Llama-2-7b-hf}, the 4\,k-window
+model the engine was first built on, is a capability reference only and no ratio here uses it;
+it is detailed in Appendix~\ref{app:evidence}.
 % SRC: results/lcfm/CAMERA_READY_KIT.md section 3e (limitation 4)
 
 \paragraph{Protocol of every reported result.} Prompts are PG-19 narrative
-\citep{rae2019pg19}, five books, windowed so that each rung's scored continuation ends at the
-same document position as the 1\,M rung, with the cross-rung alignment verified from
+\citep{rae2019pg19}, five books, windowed so each rung's scored continuation ends at the same
+document position as the 1\,M rung, with the alignment verified from
 \texttt{continuation\_sha256} and the recorded offsets rather than from a pool name. Decoding
 is $T{=}0.7$ sampling, 128 new tokens, $\gamma{=}4$ speculative steps, draft window cap 4096,
-seed 42 unless stated. Every row is checked for repetition by the detector of
-\S\ref{sec:res-degeneracy} and the verdict is recorded per row. Decode-only means
-$(t_{\text{row}} - t_{\text{ttft}})/(\text{tokens}-1)$: prefill is excluded, so a decode-path
-change is not credited with prefill it did not touch. Every row records the engine that
-produced it (\texttt{ring\_decode\_mode}, the number of patched layers, and the git commit),
-so a row that cannot prove its engine is identifiable and void.
+seed 42 unless stated, and every row carries a repetition verdict from the detector of
+\S\ref{sec:res-degeneracy}. Decode-only means $(t_{\text{row}} - t_{\text{ttft}}) /
+(\text{tokens}-1)$, so prefill is excluded and a decode-path change is not credited with
+prefill it did not touch. Every row also records the engine that produced it
+(\texttt{ring\_decode\_mode}, patched-layer count, git commit), so a row that cannot prove its
+engine is identifiable and void.
 % SRC: scripts/lcfm_figures.py; results/mlsys/RESULTS_OCT.md sections 10.2, 10.6
 
 \paragraph{The draft saw the prompt's first 4096 tokens.} In every run here whose prompt
@@ -265,7 +253,7 @@ outside the headline pools and we name it rather than average it away.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figC_degeneracy.pdf}
+\includegraphics[width=0.95\linewidth]{figC_degeneracy.pdf}
 \caption{Periodic tail share per row for the rows that ship with a per-row verdict, against
 the 0.50 ceiling. Left and middle: greedy rows from two campaigns, 9 of 10 looping in the
 first-window audit and 1 of 10 in the temperature arms. Right: every sampled row in the
@@ -303,7 +291,7 @@ and perplexity contrast, and no speedup is claimed from these arms.}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figB_rope.pdf}
+\includegraphics[width=0.95\linewidth]{figB_rope.pdf}
 \caption{Left: speculative acceptance per arm, with the five books drawn as points so the
 direction can be checked per book rather than only in the mean. Right: the paired perplexity
 ratio against the native arm. Stretching the rotary basis costs $0.05\%$ and $1.56\%$ of
@@ -368,7 +356,7 @@ skew.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.72\linewidth]{figD_ring_bench.pdf}
+\includegraphics[width=0.62\linewidth]{figD_ring_bench.pdf}
 \caption{A bare-process benchmark of the ring primitive the engine uses
 (\texttt{batch\_isend\_irecv}, 8 ranks, 256 rounds per payload, no model). The line is flat: a
 round costs a fixed ${\sim}10.3$\,ms from 4\,KB to 266\,MB, so the ring's decode cost is
@@ -396,7 +384,7 @@ ratio of decode-only times.}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figA_decode_vs_context.pdf}
+\includegraphics[width=0.92\linewidth]{figA_decode_vs_context.pdf}
 \caption{Decode time per token against context length, both engines and both arms, on the
 same matched cells. Whiskers are the range over cells and $n$ is the number of cells both
 engines measured. The gap widens with context, which is the signature of a
@@ -552,85 +540,55 @@ its decode remains $130$ to $162\times$ faster per token than ours. The rotation
 decode pathology; removing it made our decode merely slow. That is the honest systems claim,
 and it is the one this paper makes.
 
+% References come before the appendices, as the style expects, so that the
+% page check measures the main text and not the appendix.
+\bibliographystyle{plainnat}
+\bibliography{references}
+
 \appendix
 
 \section{Changes from the reviewed version}
 \label{app:changes}
 
 Every claim in the reviewed submission, with its status here. Corrections cite the audit item
-that found them (\src{results/mlsys/LCFM\_RECONCILE.md}, AUDIT E1 to E23).
+that found them (\path{results/mlsys/LCFM_RECONCILE.md}, AUDIT E1 to E23).
 
 \begin{table}[h]
 \centering\footnotesize
 \caption{Status of every claim in the reviewed version. KEPT means it stands as written;
-CORRECTED gives the old reading and the new one; REMOVED means the claim is withdrawn and
-not replaced.}
+CORRECTED gives the old reading and the new one; REMOVED means the claim is withdrawn and not
+replaced. Audit items are E1 to E23 of \texttt{results/mlsys/LCFM\_RECONCILE.md}.}
 \label{tab:changes}
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{p{0.20\linewidth} p{0.115\linewidth} p{0.60\linewidth}}
+\begin{tabular}{p{0.30\linewidth} p{0.115\linewidth} p{0.505\linewidth}}
 \toprule
 Claim in the reviewed version & Status & Reason \\
 \midrule
-Communication is at most $1.2\%$ of wall on the speculator rank (E1) & REMOVED & The bucket
-recorded 0.84 / 4.39 / 10.57\,s at 128\,k / 256\,k / 512\,k while the physical floor for the
-same bytes is 2.7 / 13.4 / 28.4\,s, so it captured 0.31 to 0.37$\times$ of the minimum and
-did not observe the transfers. Two dependent sentences go with it. \\
-Idle time at or above $50\%$ of rank 0 is waiting on collectives (E2) & REMOVED & The figure
-is time outside the region in which the collectives happen. \\
+Communication at most $1.2\%$ of wall (E1) & REMOVED & The bucket recorded 0.31 to 0.37$\times$ of the physical wire floor, so it never saw the transfers. \\
+Idle at or above $50\%$ is collective wait (E2) & REMOVED & Measured outside the region the collectives run in. \\
 The tick-gate barrier (E3) & REMOVED & Not the code that produced the reported numbers. \\
-The kernel hides the rotation behind attention; the draft pass is free (E4) & CORRECTED &
-The kernel does issue the next rotation before each step's attention; the claimed overlap of
-draft generation with ring traffic was never implemented, and the draft and verify run back to
-back. \\
-Positioning table and novelty framing (E5) & CORRECTED & Split-KV is prior work; the
-decode-overlap cell for this system was not implemented. \\
-The draft saw the prompt's last 4096 tokens (E6) & CORRECTED & It saw the \emph{first} 4096
-token ids (\src{d89cf41}), on every run whose prompt exceeded that. \\
-Rotary anchor is the model's original window (E7) & CORRECTED & Each context was anchored on
-its own length, because the \texttt{transformers} version in use ignores
-\texttt{original\_max\_position\_embeddings}. \\
-Scaling factor $\lceil N/4096 \rceil$ (E8, E9) & CORRECTED & A fixed factor 8 at every context
-of 8\,k and above, and no scaling at all below that. \\
+The rotation is hidden and the draft pass is free (E4) & CORRECTED & The rotation is issued before attention, and the claimed draft overlap was never implemented. \\
+Positioning table and novelty framing (E5) & CORRECTED & Split-KV is prior work, and the decode-overlap cell was not implemented. \\
+The draft saw the last 4096 tokens (E6) & CORRECTED & It saw the first 4096, on every run whose prompt exceeded that (\texttt{d89cf41}). \\
+Anchor is the model's original window (E7) & CORRECTED & Each context was anchored on its own length. \\
+Factor $\lceil N/4096\rceil$ (E8, E9) & CORRECTED & A fixed factor 8 at 8\,k and above, and none below. \\
 Verify-loop defects (E10) & CORRECTED & Per AUDIT E10. \\
-Three independent seed samples (E11) & CORRECTED & All three seeds ran one synthetic prompt,
-so they measure run-to-run variation on one input. \\
-$95\%$ confidence intervals at $n{=}3$ (E12) & CORRECTED & Ranges are reported, with the $n$. \\
-Nominal 1\,M context (E13) & CORRECTED & The reviewed build held 1{,}002{,}984 prompt tokens;
-the rows here hold 1{,}047{,}551. \\
-Speedup regresses to $0.94\times$ and $0.97\times$ at 512\,k and 1\,M (E14) & REMOVED &
-Decode tokens per verify round are flat from 256\,k to 1\,M, and the regression is not
-reproduced by the same-code re-run. \S\ref{sec:res-decode} replaces it. \\
-A short-context control attributes the bimodality to base-model extrapolation (E15) &
-REMOVED & The control differs from the long-context cells in at least five ways at once. \\
-A $4.4\times$ speedup at native context (E16) & REMOVED & One pair from one session, whose
-decode-only ratio exceeds what its own acceptance can deliver. \\
-The speedup formula (E17) & CORRECTED & Applied to the wrong quantity; throughput is
-\texttt{tokens\_generated / time\_sec} and decode-only is
-$(t - t_{\text{ttft}})/(\text{tokens}-1)$. \\
-Peak memory per rank (E18) & CORRECTED & The reported peak was rank 0 only; over the ranks it
-is 41.2\,GiB allocated and 69\,GiB reserved. \\
-''NF4 weights'' (E19) & CORRECTED & The weights are FP4; NF4 is the KV codec. \\
+Three independent seed samples (E11) & CORRECTED & All three seeds ran one prompt. \\
+$95\%$ intervals at $n{=}3$ (E12) & CORRECTED & Ranges are reported, with the $n$. \\
+Nominal 1\,M context (E13) & CORRECTED & 1{,}047{,}551 prompt tokens here against 1{,}002{,}984 in the reviewed build. \\
+Speedup regresses to $0.94\times$ and $0.97\times$ (E14) & REMOVED & Decode tokens per round are flat, and the same-code rerun does not reproduce it. \\
+A control explains the bimodality (E15) & REMOVED & The control differs from the long-context cells in five ways at once. \\
+$4.4\times$ at native context (E16) & REMOVED & One pair in one session, above what its own acceptance can deliver. \\
+The speedup formula (E17) & CORRECTED & Applied to the wrong quantity; throughput is tokens over time. \\
+Peak memory per rank (E18) & CORRECTED & The peak was rank 0 only; over ranks it is 41.2\,GiB allocated. \\
+``NF4 weights'' (E19) & CORRECTED & The weights are FP4; NF4 is the KV codec. \\
 NF4 KV description (E20) & CORRECTED & Per AUDIT E20. \\
-Design-point sweeps (E21) & CORRECTED & The chunk is a transmission chunk and does not bound
-memory; prefetch depth 2 runs depth 1's code, so there were two arms and not three; the
-$\gamma = 4$ ``optimum'' is not supported by flat throughput; and there is no 64\,k profile to
-support the quoted 12\%. Appendix~\ref{app:ablations} carries the corrected version. \\
-Prompts and citations (E22) & CORRECTED & The synthetic prompt is not the prior-work protocol;
-a PG-19 perplexity attributed to the Llama-2 report is not in that report, so the citation is
-withdrawn. \\
-Qualitative comparison (E23) & KEPT & Stands, with the caveat in the audit. \\
-Long-context greedy census, 9 of 15 rows looping & KEPT, MOVED HERE & This appendix is its
-only appearance. The census is real and motivated the move to sampling, but its per-row
-sidecars are \textbf{not part of this release}, so the main text quotes only released,
-reproducible numbers (\S\ref{sec:res-degeneracy}). \\
-Profiler time-breakdown table and figure & CUT & The comm bucket in that trace is below the
-physical floor for the same runs, so the trace cannot bound anything; it was the evidence for
-the first row of this table and that row is withdrawn. \\
-Llama-2 quantization and rotary perplexity table & CUT & Its rows were labelled by intent
-rather than by configuration (E7, E8, E9) and one of its two claims rested on a citation that
-does not exist (E22). The configuration is disclosed in \S\ref{sec:setup} and the long-context
-quality question is answered instead on a natively long-context target
-(\S\ref{sec:res-coherence}). \\
+Design-point sweeps (E21) & CORRECTED & Chunk size does not bound memory, depth 2 repeats depth 1, and the $\gamma$ optimum is unsupported. \\
+Prompts and citations (E22) & CORRECTED & The synthetic prompt is not the prior-work protocol, and one citation does not exist. \\
+Qualitative comparison (E23) & KEPT & Stands, with the audit's caveat. \\
+Greedy census, 9 of 15 rows looping & KEPT, MOVED HERE & Its per-row sidecars are \textbf{not released}, so the main text quotes released numbers only. \\
+Profiler time-breakdown table and figure & CUT & The comm bucket in it is below the physical floor, so it bounds nothing. \\
+Llama-2 quantization and rotary perplexity table & CUT & Labelled by intent rather than configuration, and one claim cited a number that does not exist. \\
 RULER infrastructure appendix & CUT & Infrastructure without a run grid supports no claim. \\
 \bottomrule
 \end{tabular}
@@ -648,15 +606,15 @@ text quotes.}
 \input{../../results/lcfm/tables/headline.tex}
 \end{table}
 
-\paragraph{The configuration bug.} \src{run\_experiment.py:590-612} merges a level into the
+\paragraph{The configuration bug.} \path{run_experiment.py:590-612} merges a level into the
 defaults and then sets the run's seed from the \emph{defaults'} \texttt{seeds} list, so a level
 that declares its own \texttt{seeds} has it recorded and then overwritten. Exactly two stages
 did: \texttt{SA\_SEED\_123\_1M\_SPEC} and \texttt{SA\_SEED\_456\_1M\_SPEC}, both of which ran
 seed 42 while their run ids said otherwise. Every old-engine pool containing them inherited
 the error. The corrected baseline is built from rows that were never affected, seed 42 from
 the sampling session and seeds 123 and 456 from a dedicated rerun; the exclusion list is
-printed by \src{scripts/mlsys\_seed\_baseline\_audit.py} and reproduced in
-\src{results/mlsys/SEED\_BASELINE\_AUDIT.txt}.
+printed by \path{scripts/mlsys_seed_baseline_audit.py} and reproduced in
+\path{results/mlsys/SEED_BASELINE_AUDIT.txt}.
 
 \begin{table}[h]
 \centering\footnotesize
@@ -769,37 +727,37 @@ readings of them were wrong: the chunk size is a transmission chunk and does not
 and prefetch depth 2 executes the same code path as depth 1, so that axis had two arms and not
 three. The block-size effect is specific to the ring decode path and is inert under split-KV.
 
-\input{../../tables/ablation_summary.tex}
+{\footnotesize\setlength{\tabcolsep}{4pt}\input{../../tables/ablation_summary.tex}}
 
 \section{Reproduction and evidence tree}
 \label{app:evidence}
 
 \paragraph{Where every number lives.} Nothing in this paper is transcribed by hand. The
-figures and tables are written by \src{scripts/lcfm\_figures.py}, which reads the CSVs below
-and writes \src{results/lcfm/figs/} and \src{results/lcfm/tables/}; those tables are
+figures and tables are written by \path{scripts/lcfm_figures.py}, which reads the CSVs below
+and writes \path{results/lcfm/figs/} and \path{results/lcfm/tables/}; those tables are
 \emph{included} by this document rather than copied into it.
 
 \begin{itemize}[leftmargin=*,topsep=2pt,itemsep=1pt]
-  \item \textbf{Rotary intervention} \src{results/mlsys/sampling\_session/session\_a\_ROPE\_SAMP\_*\_SPEC.csv}
-        and \src{results/mlsys/n5\_extension/session\_a\_ROPE\_EXT\_*}, with the paired
-        perplexity ratios in \src{session\_a\_rope\_fix\_gate.csv}.
-  \item \textbf{Degeneracy} the per-stage \src{repetition\_*.csv}, produced by
-        \src{scripts/mlsys\_repetition\_report.py} from the token sidecars with the ceilings
-        in \src{src/analysis/repetition.py}; where no such CSV exists the row is scored from
+  \item \textbf{Rotary intervention} \path{results/mlsys/sampling_session/session_a_ROPE_SAMP_*_SPEC.csv}
+        and \path{results/mlsys/n5_extension/session_a_ROPE_EXT_*}, with the paired
+        perplexity ratios in \path{session_a_rope_fix_gate.csv}.
+  \item \textbf{Degeneracy} the per-stage \path{repetition_*.csv}, produced by
+        \path{scripts/mlsys_repetition_report.py} from the token sidecars with the ceilings
+        in \path{src/analysis/repetition.py}; where no such CSV exists the row is scored from
         the sidecar by the same module.
-  \item \textbf{Coherence} \src{QUALITY\_FIX\_\{128K,1M\}\_*} with the alignment table
-        \src{results/mlsys/sampling\_session/alignment.csv}.
-  \item \textbf{The decode fix} the confirmatory run in \src{results/mlsys/rerun\_r1/} and
-        \src{rerun\_r2/} (31 ok rows, each recording its engine and commit), the diagnostic
-        arms in \src{results/mlsys/decode\_df/arms/df\_arms.csv}, and the top-up in
-        \src{results/mlsys/rerun\_topup/}.
-  \item \textbf{The bare ring} \src{results/mlsys/decode\_df/ring\_bench/ringbench.csv}, from
-        \src{scripts/mlsys\_ring\_microbench.py}.
-  \item \textbf{The corrected baseline} \src{scripts/mlsys\_seed\_baseline\_audit.py}, which
+  \item \textbf{Coherence} \path{QUALITY_FIX_{128K,1M}_*} with the alignment table
+        \path{results/mlsys/sampling_session/alignment.csv}.
+  \item \textbf{The decode fix} the confirmatory run in \path{results/mlsys/rerun_r1/} and
+        \path{rerun_r2/} (31 ok rows, each recording its engine and commit), the diagnostic
+        arms in \path{results/mlsys/decode_df/arms/df_arms.csv}, and the top-up in
+        \path{results/mlsys/rerun_topup/}.
+  \item \textbf{The bare ring} \path{results/mlsys/decode_df/ring_bench/ringbench.csv}, from
+        \path{scripts/mlsys_ring_microbench.py}.
+  \item \textbf{The corrected baseline} \path{scripts/mlsys_seed_baseline_audit.py}, which
         prints the exclusion list and the matched-cell table.
-  \item \textbf{vLLM reference} \src{results/mlsys/vllm\_run2/vllm\_baseline.csv} (bf16, bf16
+  \item \textbf{vLLM reference} \path{results/mlsys/vllm_run2/vllm_baseline.csv} (bf16, bf16
         KV, greedy, unit-matched on every row). The earlier run at
-        \src{results/mlsys/vllm\_run/} is retained but its first-token and decode clocks are
+        \path{results/mlsys/vllm_run/} is retained but its first-token and decode clocks are
         absolute monotonic readings and are unusable; only its end-to-end numbers agree,
         within 2.4\% at 128\,k and 0.1\% elsewhere.
 \end{itemize}
@@ -813,12 +771,9 @@ a capability reference for the standard stack and nothing more; no ratio in this
 it.
 % SRC: results/mlsys/RESULTS_OCT.md section 5.1; results/baselines/hf_ceiling.csv
 
-\paragraph{Building this paper.} \src{cd manuscript/lcfm} and compile \src{main.tex} with
-\texttt{latexmk} or \texttt{tectonic}; the bibliography is \src{references.bib}. The long
+\paragraph{Building this paper.} \texttt{cd manuscript/lcfm} and compile \texttt{main.tex} with
+\texttt{latexmk} or \texttt{tectonic}; the bibliography is \texttt{references.bib}. The long
 version of this work, including the withdrawn material and the full Ablations, lives in
-\src{manuscript/arxiv/}.
-
-\bibliographystyle{plainnat}
-\bibliography{references}
+\path{manuscript/arxiv/}.
 
 \end{document}

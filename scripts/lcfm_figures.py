@@ -100,7 +100,7 @@ BENCH = "results/mlsys/decode_df/ring_bench/ringbench.csv"
 VLLM = "results/mlsys/vllm_run2/vllm_baseline.csv"
 
 
-# --------------------------------------------------------------------------- helpers
+# =========================================================================== helpers
 def decode(r):
     tok = int(r["tokens_generated"]); t = float(r["time_sec"]); tt = float(r["ttft_ms"])
     return (t - tt / 1000.0) / (tok - 1)
@@ -227,7 +227,7 @@ def rows_scored(paths):
     return out
 
 
-# --------------------------------------------------------------------------- Fig A
+# =========================================================================== Fig A
 def fig_a(out, head):
     fig, ax = plt.subplots(figsize=(TEXTWIDTH_IN, 2.9))
     series = [("old engine, spec", C_OLD, "o", "-", "spec", "old"),
@@ -258,7 +258,7 @@ def fig_a(out, head):
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- Fig B
+# =========================================================================== Fig B
 def rope_arms():
     """Acceptance per arm from the CSV, and the gate's paired ppl ratio."""
     accs, perbook = {}, {}
@@ -302,7 +302,7 @@ def fig_b(out, arms, accs, perbook, ppl):
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- Fig C
+# =========================================================================== Fig C
 def fig_c(out):
     import csv as _csv
     greedy = rows_of_repetition(GREEDY_REP)
@@ -337,7 +337,7 @@ def fig_c(out):
             for g in groups]
 
 
-# --------------------------------------------------------------------------- Fig D
+# =========================================================================== Fig D
 def fig_d(out):
     rs = [r for r in csv.DictReader(open(BENCH)) if r.get("ms_per_round")]
     rs.sort(key=lambda r: float(r["size_mb_actual"]))
@@ -362,7 +362,7 @@ def fig_d(out):
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- vLLM
+# =========================================================================== vLLM
 def vllm_rows():
     """vLLM 0.6.3 TP=8 bf16 (the corrected run: valid ttft) against the matched RASD rung.
 
@@ -390,7 +390,7 @@ def vllm_rows():
     return out
 
 
-# --------------------------------------------------------------------------- tables
+# =========================================================================== tables
 def tables(out, head, arms, accs, ppl):
     os.makedirs(os.path.join(out, "tables"), exist_ok=True)
     lines = {}
