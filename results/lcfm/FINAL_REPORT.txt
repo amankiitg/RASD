@@ -241,6 +241,16 @@ PART 6: BRANCH ACTIONS
    main, message naming the page count and the PDF path. Pushed and verified on the
    remote (`refs/tags/lcfm-camera-ready-v1` -> c0fa9c7).
 
+   One placement note, stated because it is the kind of thing that should not be
+   discovered later. Writing this report produced documentation-only commits on
+   main AFTER the tag was created, so main's tip is one or two commits ahead of the
+   tagged commit. Those commits touch `results/lcfm/` only; the paper
+   (`manuscript/lcfm/`) is byte-identical at the tag and at the tip. I did NOT
+   re-point the tag, because force-updating a pushed tag ref is on this run's
+   do-not list. If you want the tag on the exact tip, it is one command:
+   `git tag -f -a lcfm-camera-ready-v1 <tip> -m ...` followed by a forced push of
+   that tag ref; say the word and I will do it.
+
 =====================================================================
 REMAINING TODO AMAN ITEMS
 =====================================================================
@@ -260,4 +270,5 @@ EXACT PDF TO UPLOAD
 =====================================================================
 /Users/amankesarwani/PycharmProjects/RASD/manuscript/lcfm/main.pdf
 13 pages: main text pages 1 to 8, references page 9, appendix pages 10 to 13.
-Commit c0fa9c7, tag lcfm-camera-ready-v1.
+Tag lcfm-camera-ready-v1 on commit c0fa9c7 (the merge commit that carries the paper;
+main advanced by documentation-only commits afterwards, see 6g).
