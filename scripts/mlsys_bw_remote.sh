@@ -45,6 +45,18 @@ ARMS=${BW_ARMS:-ring2048,ring32768,splitkv}
 TARGET_TOKENS=${BW_TARGET_TOKENS:-16}
 SPEC_TOKENS=${BW_SPEC_TOKENS:-32}
 ONE_M_OK=${BW_1M_OK:-0}
+# WHICH STAGES EACH ARM RUNS. On 2026-10-15 the async arm's spec path produced a device-side
+# assert (an out-of-range token index, i.e. a corrupted activation reaching the embedding), so
+# target-only and spec are SEPARATE launches and either can be requested alone: a crash in one
+# cannot then take the other's rows with it, and the crash is reproducible on its own. Each
+# stage is also individually skippable, so a follow-up can ask for one rung and nothing else.
+BENCH_OK=${BW_BENCH_OK:-1}
+TGT_OK=${BW_TARGET_OK:-1}
+SPEC_OK=${BW_SPEC_OK:-1}
+TARGET_ARMS=${BW_TARGET_ARMS:-$ARMS}
+SPEC_ARMS=${BW_SPEC_ARMS:-$ARMS}
+POOL_128K=${BW_POOL_128K:-data/processed/pg19_1m_128kwin/documents.json}
+POOL_1M=${BW_POOL_1M:-data/processed/pg19_1m/documents.json}
 # A 1x PLUMBING REHEARSAL ONLY. `install_ring_attention` is a no-op at world_size <= 1, so
 # without this the arms driver refuses to run -- correctly, because every arm would be the
 # same run and the rows would look plausible while measuring nothing. Explicit, off by
@@ -97,7 +109,7 @@ if [ -n "${SESSION_CFG:-}" ] && [ -f "${SESSION_CFG:-}" ]; then
                   | sed -E 's/ +$//')
 fi
 mlsys_expect "bw-remote" "${REMOTE_EXPECT:-}" \
-  "SESSION_OUT=${SESSION_OUT-<absent>};SESSION_CFG=${SESSION_CFG-<absent>};SESSION_SANITY_CFG=${SESSION_SANITY_CFG-<absent>};NPROC=${NPROC-<absent>};SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES-};STAGES=$STEPS_ONELINE;CODE_COMMIT=${CODE_COMMIT-<absent>};BW_OUT=${BW_OUT-<absent>};BW_BOOK=${BW_BOOK-<absent>};BW_SEED=${BW_SEED-<absent>};BW_ROUNDS=${BW_ROUNDS-<absent>};BW_CTX=${BW_CTX-<absent>};BW_CTX_1M=${BW_CTX_1M-<absent>};BW_ARMS=${BW_ARMS-<absent>};BW_TARGET_TOKENS=${BW_TARGET_TOKENS-<absent>};BW_SPEC_TOKENS=${BW_SPEC_TOKENS-<absent>};BW_1M_OK=${BW_1M_OK-<absent>};BW_ENV_ARMS=${BW_ENV_ARMS-<absent>};BW_SINGLE_RANK_OK=${BW_SINGLE_RANK_OK-<absent>}" \
+  "SESSION_OUT=${SESSION_OUT-<absent>};SESSION_CFG=${SESSION_CFG-<absent>};SESSION_SANITY_CFG=${SESSION_SANITY_CFG-<absent>};NPROC=${NPROC-<absent>};SESSION_CHECK_STAGE=${SESSION_CHECK_STAGE-};SESSION_GATE_CANDIDATES=${SESSION_GATE_CANDIDATES-};STAGES=$STEPS_ONELINE;CODE_COMMIT=${CODE_COMMIT-<absent>};BW_OUT=${BW_OUT-<absent>};BW_BOOK=${BW_BOOK-<absent>};BW_SEED=${BW_SEED-<absent>};BW_ROUNDS=${BW_ROUNDS-<absent>};BW_CTX=${BW_CTX-<absent>};BW_CTX_1M=${BW_CTX_1M-<absent>};BW_ARMS=${BW_ARMS-<absent>};BW_TARGET_TOKENS=${BW_TARGET_TOKENS-<absent>};BW_SPEC_TOKENS=${BW_SPEC_TOKENS-<absent>};BW_1M_OK=${BW_1M_OK-<absent>};BW_ENV_ARMS=${BW_ENV_ARMS-<absent>};BW_SINGLE_RANK_OK=${BW_SINGLE_RANK_OK-<absent>};BW_BENCH_OK=${BW_BENCH_OK-1};BW_TARGET_OK=${BW_TARGET_OK-1};BW_SPEC_OK=${BW_SPEC_OK-1};BW_TARGET_ARMS=${BW_TARGET_ARMS-$ARMS};BW_SPEC_ARMS=${BW_SPEC_ARMS-$ARMS};BW_POOL_1M=${BW_POOL_1M-data/processed/pg19_1m/documents.json}" \
   || exit 2
 
 if [ "${BW_OUT:-}" != "${SESSION_OUT:-}" ]; then
@@ -171,6 +183,9 @@ for ARM in $ENV_ARMS; do
   log "=============================================================="
 
   # ---- stage A: the bare ring, both timings --------------------------------
+  if [ "$BENCH_OK" != "1" ]; then
+    log "### stage A[$ARM] bench SKIPPED (BW_BENCH_OK=$BENCH_OK)"
+  else
   log "### stage A[$ARM] bench: $ROUNDS rounds, --timing both"
   # shellcheck disable=SC2086
   $ARM_ENV "$PY" -m torch.distributed.run --nproc_per_node="$NPROC" --master_port=29611 \
@@ -178,27 +193,51 @@ for ARM in $ENV_ARMS; do
     --env-arm "$ARM" --out "$OUT/bench" --tag "ringbench_$ARM" >> "$OUT/bench_$ARM.log" 2>&1
   log "### stage A[$ARM] bench rc=$?"
   grep -h "^\[ringbench\]" "$OUT/bench_$ARM.log" 2>/dev/null | tee -a "$OUT/bw.log" || true
+  fi
 
-  # ---- stage B: the engine, 128k, all arms ---------------------------------
+  # ---- stage B1: the engine, 128k, TARGET-ONLY ------------------------------
   # ring2048 is the configuration the campaign actually shipped; ring32768 is the chunk
-  # variant; splitkv is the rotation-free engine. All three under BOTH wait modes, because
-  # the arm that matters for the paper's F4 claim is ring2048 and the arm that matters for
-  # F5 is splitkv.
+  # variant; splitkv is the rotation-free engine. Target-only is its own launch so its numbers
+  # survive a crash in the spec path.
+  if [ "$TGT_OK" != "1" ]; then
+    log "### stage B1[$ARM] target-only arms SKIPPED (BW_TARGET_OK=$TGT_OK)"
+  else
   mkdir -p "$OUT/arms/$ARM"
-  log "### stage B[$ARM] arms @ $CTX: $ARMS (target-only + spec)"
-  # shellcheck disable=SC2086
+  log "### stage B1[$ARM] target-only arms @ $CTX: $TARGET_ARMS"
   # shellcheck disable=SC2086
   $ARM_ENV "$PY" -m torch.distributed.run --nproc_per_node="$NPROC" --master_port=29612 \
-    scripts/mlsys_df_arms.py --mode arms --ctx "$CTX" \
-    --arms "$ARMS" --book "$BOOK" --seed "$SEED" \
+    scripts/mlsys_df_arms.py --mode arms --ctx "$CTX" --modes target \
+    --arms "$TARGET_ARMS" --book "$BOOK" --seed "$SEED" \
     --target-tokens "$TARGET_TOKENS" --spec-tokens "$SPEC_TOKENS" \
+    --prompt-documents-json "$POOL_128K" \
     --env-arm "$ARM" $SR_FLAG --out "$OUT/arms/$ARM" >> "$OUT/arms_$ARM.log" 2>&1
-  log "### stage B[$ARM] arms rc=$?"
-  grep -h "^\[df\]" "$OUT/arms_$ARM.log" 2>/dev/null | tail -20 | tee -a "$OUT/bw.log" || true
-  # The token digests, logged HERE so the arm-to-arm comparison is visible in the session log
-  # and not only in a file that a later reader has to go looking for.
-  if [ -f "$OUT/arms/$ARM/token_digests.json" ]; then
-    log "### stage B[$ARM] token digests: $(tr -d '\n ' < "$OUT/arms/$ARM/token_digests.json")"
+  log "### stage B1[$ARM] target-only rc=$?"
+  grep -h "^\[df\]" "$OUT/arms_$ARM.log" 2>/dev/null | tail -12 | tee -a "$OUT/bw.log" || true
+  [ -f "$OUT/arms/$ARM/cuda_fault_arms.marker" ] && \
+    log "### stage B1[$ARM] CUDA FAULT marker present (target-only path)"
+  fi
+
+  # ---- stage B2: the engine, 128k, SPEC -------------------------------------
+  # Separate launch on purpose: this is where the async arm crashed on 2026-10-15, and a crash
+  # must not erase the target-only rows above.
+  if [ "$SPEC_OK" != "1" ]; then
+    log "### stage B2[$ARM] spec arms SKIPPED (BW_SPEC_OK=$SPEC_OK)"
+  else
+  mkdir -p "$OUT/spec/$ARM"
+  log "### stage B2[$ARM] spec arms @ $CTX: $SPEC_ARMS"
+  # shellcheck disable=SC2086
+  $ARM_ENV "$PY" -m torch.distributed.run --nproc_per_node="$NPROC" --master_port=29614 \
+    scripts/mlsys_df_arms.py --mode arms --ctx "$CTX" --modes spec \
+    --arms "$SPEC_ARMS" --book "$BOOK" --seed "$SEED" \
+    --target-tokens "$TARGET_TOKENS" --spec-tokens "$SPEC_TOKENS" \
+    --prompt-documents-json "$POOL_128K" \
+    --env-arm "$ARM" $SR_FLAG --out "$OUT/spec/$ARM" >> "$OUT/spec_$ARM.log" 2>&1
+  log "### stage B2[$ARM] spec rc=$?"
+  grep -h "^\[df\]" "$OUT/spec_$ARM.log" 2>/dev/null | tail -12 | tee -a "$OUT/bw.log" || true
+  [ -f "$OUT/spec/$ARM/cuda_fault_arms.marker" ] && \
+    log "### stage B2[$ARM] CUDA FAULT marker present (spec path): the crash reproduced"
+  [ -f "$OUT/spec/$ARM/token_digests.json" ] && \
+    log "### stage B2[$ARM] token digests: $(tr -d '\n ' < "$OUT/spec/$ARM/token_digests.json")"
   fi
 
   # ---- stage C: one 1M target-only row -------------------------------------
@@ -210,6 +249,7 @@ for ARM in $ENV_ARMS; do
       scripts/mlsys_df_arms.py --mode arms --ctx "$CTX_1M" \
       --arms ring2048 --book "$BOOK" --seed "$SEED" \
       --target-tokens "$TARGET_TOKENS" --spec-tokens "$SPEC_TOKENS" \
+      --prompt-documents-json "$POOL_1M" \
       --env-arm "$ARM" $SR_FLAG --out "$OUT/onem/$ARM" >> "$OUT/onem_$ARM.log" 2>&1
     log "### stage C[$ARM] 1M rc=$?"
     grep -h "^\[df\]" "$OUT/onem_$ARM.log" 2>/dev/null | tail -5 | tee -a "$OUT/bw.log" || true

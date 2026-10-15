@@ -169,6 +169,11 @@ def _sandbox(tmp_path: Path) -> tuple[Path, dict]:
         "BW_CTX_1M": "1048576",
         "BW_ENV_ARMS": "blocking async",
         "BW_SINGLE_RANK_OK": "1",
+        "BW_BENCH_OK": "1",
+        "BW_TARGET_OK": "1",
+        "BW_SPEC_OK": "1",
+        "BW_TARGET_ARMS": "ring2048",
+        "BW_SPEC_ARMS": "ring2048",
         "BW_1M_OK": "0",
         "BW_TARGET_TOKENS": "8",
         "BW_SPEC_TOKENS": "8",
@@ -177,7 +182,9 @@ def _sandbox(tmp_path: Path) -> tuple[Path, dict]:
             "SESSION_CHECK_STAGE=;SESSION_GATE_CANDIDATES=;STAGES=BW_TOP0;"
             "CODE_COMMIT=deadbeef;BW_OUT=out;BW_BOOK=pg19_train_0;BW_SEED=42;BW_ROUNDS=4;"
             "BW_CTX=8192;BW_CTX_1M=1048576;BW_ARMS=ring2048;BW_TARGET_TOKENS=8;"
-            "BW_SPEC_TOKENS=8;BW_1M_OK=0;BW_ENV_ARMS=blocking async;BW_SINGLE_RANK_OK=1"),
+            "BW_SPEC_TOKENS=8;BW_1M_OK=0;BW_ENV_ARMS=blocking async;BW_SINGLE_RANK_OK=1;"
+            "BW_BENCH_OK=1;BW_TARGET_OK=1;BW_SPEC_OK=1;BW_TARGET_ARMS=ring2048;"
+            "BW_SPEC_ARMS=ring2048;BW_POOL_1M=data/processed/pg19_1m/documents.json"),
     })
     return home, env
 
@@ -227,10 +234,14 @@ def test_both_arms_run_and_the_launches_are_separate(tmp_path):
     assert log.count("### ARM blocking") == 1 and log.count("### ARM async") == 1
     for arm in ("blocking", "async"):
         assert f"### stage A[{arm}] bench rc=" in log
-        assert f"### stage B[{arm}] arms rc=" in log
+        # Target-only and spec are separate launches (2026-10-15: the async arm's spec path
+        # crashed on a device-side assert, and a crash must not erase the target rows).
+        assert f"### stage B1[{arm}] target-only rc=" in log
+        assert f"### stage B2[{arm}] spec rc=" in log
     # and the rows are separated by arm on disk, not merged into one directory
     assert (home / "RASD" / "out" / "arms" / "blocking").is_dir()
     assert (home / "RASD" / "out" / "arms" / "async").is_dir()
+    assert (home / "RASD" / "out" / "spec" / "async").is_dir()
 
 
 def test_a_missing_manifest_stops_before_any_work(tmp_path):

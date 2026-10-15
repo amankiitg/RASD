@@ -93,6 +93,20 @@ def _args(argv=None):
     p.add_argument("--ppl-tokens", type=int, default=1024)
     p.add_argument("--env-arm", default="",
                    help="label for the wait-mode arm this launch runs (blocking|async)")
+    p.add_argument("--modes", default="target,spec",
+                   help="which generation modes to run, comma separated (target, spec, "
+                        "greedy). Default is both, which is what every campaign row used. "
+                        "It exists so a target-only launch can be kept SEPARATE from a spec "
+                        "launch: on 2026-10-15 the async wait mode produced a device-side "
+                        "assert in the spec path, and a crash must not take the target rows "
+                        "that were already measured with it.")
+    p.add_argument("--prompt-documents-json",
+                   default="data/processed/pg19_1m_128kwin/documents.json",
+                   help="the PG-19 pool to build the prompt from. The default is the "
+                        "128k-window pool every campaign stage used; the 1M rung needs "
+                        "data/processed/pg19_1m/documents.json, and passing the wrong one "
+                        "fails loudly at prompt build (which is how the first attempt at a "
+                        "1M row in this diagnostic died).")
     p.add_argument("--single-rank-ok", action="store_true",
                    help="plumbing rehearsal at world_size==1: do not refuse when the ring "
                         "patch is absent; rows record world_size so they read as void")
@@ -340,7 +354,7 @@ def main(argv=None):
     # The prompt is built ONCE per (context, book) and reused by every arm: an arm-to-arm
     # timing difference must not be a prompt difference.
     prompt_text, continuation_ids, prov = R._build_pg19_document_prompt(
-        "data/processed/pg19_1m_128kwin/documents.json", args.ctx, args.book, tok,
+        args.prompt_documents_json, args.ctx, args.book, tok,
         gen_tokens=args.ppl_tokens if args.mode == "ppl" else 1024)
     if rank == 0:
         log(f"prompt {args.book} @{args.ctx}: {len(prompt_text)} chars, "
@@ -449,8 +463,9 @@ def main(argv=None):
 
     # ------------------------------------------------------------------ modes
     if args.mode in ("smoke", "arms"):
-        modes = ["target"] if args.mode == "smoke" else ["target", "spec"]
-        if args.mode == "arms" and args.greedy_check:
+        modes = ["target"] if args.mode == "smoke" else [
+            m.strip() for m in args.modes.split(",") if m.strip()]
+        if args.mode == "arms" and args.greedy_check and "greedy" not in modes:
             modes.append("greedy")
         for arm in arm_names:
             for mode in modes:
