@@ -52,6 +52,7 @@ if [ "${BW_PHASE:-1}" = "2" ]; then
   BW_CTX_1M=1048576
   BW_1M_OK=1
   BW_BENCH_OK=0
+  BW_ARMS=ring2048,ring32768,splitkv   # the superset; per-stage lists override it below
   BW_ENV_ARMS="async blocking"
   BW_TARGET_ARMS=ring2048,ring32768,splitkv
   BW_SPEC_ARMS=ring2048

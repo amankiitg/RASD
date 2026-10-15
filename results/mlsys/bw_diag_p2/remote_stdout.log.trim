@@ -1,0 +1,58 @@
+2026-10-15T12:32:58Z ### stage0 topo
+2026-10-15T12:33:00Z ### stage0 topo written (47 lines)
+2026-10-15T12:33:00Z ### ARM async: env -u TORCH_NCCL_BLOCKING_WAIT MLSYS_NCCL_WAIT_MODE=async
+2026-10-15T12:33:00Z ### stage A[async] bench SKIPPED (BW_BENCH_OK=0)
+2026-10-15T12:33:00Z ### stage B1[async] target-only arms @ 131072: ring2048,ring32768,splitkv
+2026-10-15T12:34:47Z ### stage B1[async] target-only rc=1
+[df] commit=135f8fb87d4a39569c28b1288689acd1538237bb world=8 mode=arms ctx=131072 arms=['ring2048', 'ring32768', 'splitkv'] out=results/mlsys/bw_diag2/arms/async
+[df] engine built in 40.6 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[df] prompt pg19_train_0 @131072: 490092 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [1071, 30449, 1461, 11, 8489, 2884, 11, 1695, 323, 37513, 41564, 280, 339, 283, 34143, 1027, 37513, 927, 264, 2478, 2574, 11, 358, 690, 1304, 40344, 49080, 927, 198, 35676, 2574, 25, 3810, 34223, 1139, 279, 16267, 315, 26236, 38031, 382, 914, 25, 1187, 5112, 568, 902, 1047,
+[df] DF_ring2048_target_pg19_train_0_ctx131072_s42: status=ok tokens=16 time=37.95979876000001 ttft=9074.420102999966 decode_s/tok=1.925692 peak_res=14361.3MB
+2026-10-15T12:34:47Z ### stage B2[async] spec arms @ 131072: ring2048
+2026-10-15T12:36:11Z ### stage B2[async] spec rc=0
+[df] commit=135f8fb87d4a39569c28b1288689acd1538237bb world=8 mode=arms ctx=131072 arms=['ring2048'] out=results/mlsys/bw_diag2/spec/async
+[df] engine built in 10.5 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[df] prompt pg19_train_0 @131072: 490092 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [1071, 30449, 1461, 11, 8489, 2884, 11, 1695, 323, 37513, 41564, 280, 339, 283, 34143, 1027, 37513, 927, 264, 2478, 2574, 11, 358, 690, 1304, 40344, 49080, 927, 198, 35676, 2574, 25, 3810, 34223, 1139, 279, 16267, 315, 26236, 38031, 382, 914, 25, 1187, 5112, 568, 902, 1047,
+[df] DF_ring2048_spec_pg19_train_0_ctx131072_s42: status=ok tokens=32 time=54.60858130099996 ttft=11045.920372999944 decode_s/tok=1.405247 peak_res=16194.2MB
+[df] token digests: {'ring2048|spec': '438cfc0381057940'}
+[df] wrote results/mlsys/bw_diag2/spec/async/df_arms.csv (1 rows)
+2026-10-15T12:36:11Z ### stage B2[async] token digests: {"ring2048|spec":"438cfc0381057940"}
+2026-10-15T12:36:11Z ### stage C[async] 1M target-only @ 1048576, 16 tokens
+2026-10-15T12:52:20Z ### stage C[async] 1M rc=1
+[df] commit=135f8fb87d4a39569c28b1288689acd1538237bb world=8 mode=arms ctx=1048576 arms=['ring2048'] out=results/mlsys/bw_diag2/onem/async
+[df] engine built in 13.1 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[df] prompt pg19_train_0 @1048576: 3933457 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [67476, 791, 10846, 40214, 315, 279, 6342, 7957, 6207, 315, 279, 17377, 14963, 791, 5629, 6017, 315, 42048, 25, 220, 21839, 41888, 1432, 16, 25, 16, 763, 279, 7314, 4359, 3549, 279, 23070, 323, 279, 9578, 382, 16, 25, 17, 1628, 279, 9578, 574, 2085, 1376, 11, 323, 742, 26
+[df] DF_ring2048_target_pg19_train_0_ctx1048576_s42: status=ok tokens=16 time=574.252081037 ttft=334833.0501950001 decode_s/tok=15.961269 peak_res=55589.2MB
+2026-10-15T12:52:20Z ### ARM blocking: env TORCH_NCCL_BLOCKING_WAIT=1 MLSYS_NCCL_WAIT_MODE=blocking
+2026-10-15T12:52:20Z ### stage A[blocking] bench SKIPPED (BW_BENCH_OK=0)
+2026-10-15T12:52:20Z ### stage B1[blocking] target-only arms @ 131072: ring2048,ring32768,splitkv
+2026-10-15T12:55:15Z ### stage B1[blocking] target-only rc=0
+[df] commit=135f8fb87d4a39569c28b1288689acd1538237bb world=8 mode=arms ctx=131072 arms=['ring2048', 'ring32768', 'splitkv'] out=results/mlsys/bw_diag2/arms/blocking
+[df] engine built in 10.0 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[df] prompt pg19_train_0 @131072: 490092 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [1071, 30449, 1461, 11, 8489, 2884, 11, 1695, 323, 37513, 41564, 280, 339, 283, 34143, 1027, 37513, 927, 264, 2478, 2574, 11, 358, 690, 1304, 40344, 49080, 927, 198, 35676, 2574, 25, 3810, 34223, 1139, 279, 16267, 315, 26236, 38031, 382, 914, 25, 1187, 5112, 568, 902, 1047,
+[df] DF_ring2048_target_pg19_train_0_ctx131072_s42: status=ok tokens=16 time=69.312264057 ttft=12386.578996000026 decode_s/tok=3.795046 peak_res=10104.1MB
+[df] DF_ring32768_target_pg19_train_0_ctx131072_s42: status=ok tokens=16 time=53.27922621500011 ttft=7160.916083000075 decode_s/tok=3.074554 peak_res=10104.1MB
+[df] DF_splitkv_target_pg19_train_0_ctx131072_s42: status=ok tokens=16 time=22.158038920999843 ttft=7139.190282999834 decode_s/tok=1.001257 peak_res=10104.1MB
+[df] token digests: {'ring2048|target': '06c0b516452ad2ea', 'ring32768|target': '06c0b516452ad2ea', 'splitkv|target': 'e01a287093ff0a62'}
+[df] wrote results/mlsys/bw_diag2/arms/blocking/df_arms.csv (3 rows)
+2026-10-15T12:55:15Z ### stage B2[blocking] spec arms @ 131072: ring2048
+2026-10-15T12:57:23Z ### stage B2[blocking] spec rc=0
+[df] commit=135f8fb87d4a39569c28b1288689acd1538237bb world=8 mode=arms ctx=131072 arms=['ring2048'] out=results/mlsys/bw_diag2/spec/blocking
+[df] engine built in 10.2 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[df] prompt pg19_train_0 @131072: 490092 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [1071, 30449, 1461, 11, 8489, 2884, 11, 1695, 323, 37513, 41564, 280, 339, 283, 34143, 1027, 37513, 927, 264, 2478, 2574, 11, 358, 690, 1304, 40344, 49080, 927, 198, 35676, 2574, 25, 3810, 34223, 1139, 279, 16267, 315, 26236, 38031, 382, 914, 25, 1187, 5112, 568, 902, 1047,
+[df] DF_ring2048_spec_pg19_train_0_ctx131072_s42: status=ok tokens=32 time=99.59358509100002 ttft=11297.999664000145 decode_s/tok=2.848245 peak_res=11792.3MB
+[df] token digests: {'ring2048|spec': '19dc491d2a3033b1'}
+[df] wrote results/mlsys/bw_diag2/spec/blocking/df_arms.csv (1 rows)
+2026-10-15T12:57:23Z ### stage B2[blocking] token digests: {"ring2048|spec":"19dc491d2a3033b1"}
+2026-10-15T12:57:23Z ### stage C[blocking] 1M target-only @ 1048576, 16 tokens
+2026-10-15T13:17:32Z ### stage C[blocking] 1M rc=0
+[df] prompt pg19_train_0 @1048576: 3933457 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [67476, 791, 10846, 40214, 315, 279, 6342, 7957, 6207, 315, 279, 17377, 14963, 791, 5629, 6017, 315, 42048, 25, 220, 21839, 41888, 1432, 16, 25, 16, 763, 279, 7314, 4359, 3549, 279, 23070, 323, 279, 9578, 382, 16, 25, 17, 1628, 279, 9578, 574, 2085, 1376, 11, 323, 742, 26
+[df] DF_ring2048_target_pg19_train_0_ctx1048576_s42: status=ok tokens=16 time=584.9739210299999 ttft=338452.3431480002 decode_s/tok=16.434772 peak_res=30402.4MB
+[df] DF_ring2048_spec_pg19_train_0_ctx1048576_s42: status=ok tokens=32 time=567.0379869600001 ttft=332564.54488600005 decode_s/tok=7.563659 peak_res=33202.1MB
+[df] token digests: {'ring2048|target': '2e3bcaa241adb14e', 'ring2048|spec': '50a3a63a0ce4706a'}
+[df] wrote results/mlsys/bw_diag2/onem/blocking/df_arms.csv (2 rows)
