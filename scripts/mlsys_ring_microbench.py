@@ -25,6 +25,24 @@ Sizes (bf16, 1x32 heads x S tokens x 128 dim, K+V):
    133 MB  K with the expansion (32 heads)
    266 MB  K+V with the expansion — what the engine actually ships per round at 128k
 
+TWO TIMING MODES, AND WHY THE SECOND ONE IS NOT OPTIONAL (2026-10-14). `r.wait()` on a
+point-to-point work does NOT wait at all unless the process group was built with
+`TORCH_NCCL_BLOCKING_WAIT=1`: `ProcessGroupNCCL::WorkNCCL::synchronizeInternal` only polls
+(10 ms at a time) under that flag, and otherwise returns after enqueueing a stream
+dependency, leaving correctness to stream ordering. So:
+
+  --timing wait   times the round ending in `for r in reqs: r.wait()`. This is what a caller
+                  that waits pays, which is the operationally relevant number for the
+                  engine, but under the async mode it measures ENQUEUE cost, not transport.
+  --timing sync   times the round ending in `torch.cuda.synchronize()`, so the timed region
+                  contains the transfer itself whatever the wait mode. THIS is the number
+                  that answers "how fast is the wire".
+  --timing both   emits both sets of rows in one launch (default).
+
+Reporting `wait` alone from a non-blocking run would show a dramatic speedup that is partly
+the instrument, not the system. Both are therefore always recorded, with the wait mode each
+row was produced under.
+
 Run it with torchrun (it needs a real process group):
    torchrun --nproc_per_node=8 scripts/mlsys_ring_microbench.py --rounds 256
 and it degrades honestly at one rank: it reports that the collective path was not exercised
@@ -42,6 +60,21 @@ import sys
 import time
 
 
+def _nccl_env_report() -> str:
+    """What the environment actually says about the wait mode, spelled out including
+    `<unset>`. Imported from run_experiment when possible so the bench and the engine rows
+    use ONE implementation; a second copy here is how two artefacts come to disagree about
+    which arm produced them."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import run_experiment as _R
+        return _R._nccl_env_report()
+    except Exception:                                   # noqa: BLE001
+        keys = ("TORCH_NCCL_BLOCKING_WAIT", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+                "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", "NCCL_TIMEOUT", "MLSYS_NCCL_WAIT_MODE")
+        return ";".join(f"{k}={os.environ.get(k) or '<unset>'}" for k in keys)
+
+
 def _parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -56,6 +89,13 @@ def _parse_args(argv=None):
     p.add_argument("--tag", default="ringbench")
     p.add_argument("--points", default=None,
                    help="override the sweep as 'label:heads:seq,label:heads:seq'")
+    p.add_argument("--timing", choices=("wait", "sync", "both"), default="both",
+                   help="wait = time r.wait() (what a caller pays); sync = time "
+                        "torch.cuda.synchronize() (the transfer, whatever the wait mode); "
+                        "both = emit both sets of rows")
+    p.add_argument("--env-arm", default="",
+                   help="the label for the wait-mode arm this launch is running "
+                        "(blocking|async); recorded per row beside the real environment")
     return p.parse_args(argv)
 
 
@@ -112,6 +152,8 @@ def main(argv=None):
         log("[ringbench] WORLD_SIZE=1: the collective path CANNOT be exercised at one rank "
             "(this is the R4 lesson). Timings written below are latency of a no-op exchange.")
 
+    timings = ("wait", "sync") if args.timing == "both" else (args.timing,)
+
     rows = []
     points = _parse_points(args.points) if args.points else DEFAULT_POINTS
     for label, heads, seq_len in points:
@@ -124,7 +166,16 @@ def main(argv=None):
         nbytes = 2 * send_k.numel() * send_k.element_size()
         send_to, recv_from = (rank + 1) % world, (rank - 1) % world
 
-        def one_round():
+        def one_round(timing):
+            """One ring round, timed according to `timing`.
+
+            `wait`: the timed region ends when `r.wait()` returns. What the engine pays, but
+            under a non-blocking process group this is enqueue cost only (see the module
+            docstring).
+            `sync`: the timed region ends at `torch.cuda.synchronize()`, so it contains the
+            transfer regardless of the wait mode. `wait()` is still called afterwards, just
+            outside the timed region, because an unwaited work is a leak.
+            """
             if world == 1:
                 return
             ops = [
@@ -133,43 +184,53 @@ def main(argv=None):
                 dist.P2POp(dist.irecv, recv_k, recv_from),
                 dist.P2POp(dist.irecv, recv_v, recv_from),
             ]
-            for r in dist.batch_isend_irecv(ops):
-                r.wait()
+            reqs = dist.batch_isend_irecv(ops)
+            if timing == "sync" and torch.cuda.is_available():
+                torch.cuda.synchronize()
+                for r in reqs:          # outside the timed region; returns immediately
+                    r.wait()
+            else:
+                for r in reqs:
+                    r.wait()
 
-        for _ in range(args.warmup):
-            one_round()
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        if world > 1:
-            dist.barrier()
+        for timing in timings:
+            for _ in range(args.warmup):
+                one_round(timing)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            if world > 1:
+                dist.barrier()
 
-        per_round = []
-        t_all = time.perf_counter()
-        for _ in range(args.rounds):
-            t0 = time.perf_counter()
-            one_round()
-            per_round.append(time.perf_counter() - t0)
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-        if world > 1:
-            dist.barrier()
-        total = time.perf_counter() - t_all
+            per_round = []
+            t_all = time.perf_counter()
+            for _ in range(args.rounds):
+                t0 = time.perf_counter()
+                one_round(timing)
+                per_round.append(time.perf_counter() - t0)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            if world > 1:
+                dist.barrier()
+            total = time.perf_counter() - t_all
 
-        med = statistics.median(per_round) if per_round else float("nan")
-        p90 = (sorted(per_round)[int(0.9 * (len(per_round) - 1))] if per_round else float("nan"))
-        gbs = (nbytes / med / 1e9) if med else float("nan")
-        rows.append({
-            "label": label, "size_mb_actual": round(nbytes / 1e6, 3),
-            "seq_len": seq_len, "heads": heads, "rank": rank,
-            "rounds": args.rounds, "ms_per_round": round(med * 1e3, 4),
-            "ms_per_round_p90": round(p90 * 1e3, 4),
-            "gb_per_s": round(gbs, 2),
-            "ms_total_256_rounds": round(med * 1e3 * 256, 2),
-            "world_size": world,
-        })
+            med = statistics.median(per_round) if per_round else float("nan")
+            p90 = (sorted(per_round)[int(0.9 * (len(per_round) - 1))] if per_round else float("nan"))
+            gbs = (nbytes / med / 1e9) if med else float("nan")
+            rows.append({
+                "label": label, "size_mb_actual": round(nbytes / 1e6, 3),
+                "seq_len": seq_len, "heads": heads, "rank": rank,
+                "timing": timing,
+                "rounds": args.rounds, "ms_per_round": round(med * 1e3, 4),
+                "ms_per_round_p90": round(p90 * 1e3, 4),
+                "gb_per_s": round(gbs, 2),
+                "ms_total_256_rounds": round(med * 1e3 * 256, 2),
+                "world_size": world,
+                "env_arm": args.env_arm,
+                "nccl_env": _nccl_env_report(),
+            })
         log(f"[ringbench] {label:22s} {nbytes/1e6:8.2f} MB  seq={seq_len:6d} heads={heads}  "
-            f"median {med*1e3:8.3f} ms/round (p90 {p90*1e3:8.3f})  {gbs:8.2f} GB/s  "
-            f"-> {med*1e3*256:8.1f} ms per 256 rounds")
+            f"{timing:4s} median {med*1e3:8.3f} ms/round (p90 {p90*1e3:8.3f})  "
+            f"{gbs:8.2f} GB/s  -> {med*1e3*256:8.1f} ms per 256 rounds")
 
     # Rank skew: the profile's rank 0 vs rank 4 difference needs a cause. Gather every
     # rank's median at the largest size; a wide spread means one rank is a straggler.

@@ -122,14 +122,56 @@ def test_rasdconfig_accepts_the_ring_keys_the_runner_passes():
 
 
 def test_nccl_env_report_lists_only_what_is_set(monkeypatch):
-    for k in run_experiment._NCCL_KEYS:
+    """The GENERAL knobs are recorded only when set. The wait-mode block is the exception:
+    it is always emitted, because "unset" is a value there (it selects the async arm) and a
+    reader must be able to tell "unset" from "not looked at"."""
+    for k in run_experiment._NCCL_KEYS + run_experiment._NCCL_WAIT_KEYS:
         monkeypatch.delenv(k, raising=False)
-    assert run_experiment._nccl_env_report() == ""
+    got = run_experiment._nccl_env_report()
+    expected = "wait_mode=none;" + ";".join(
+        f"{k}=<unset>" for k in run_experiment._NCCL_WAIT_KEYS)
+    assert got == expected, got
     monkeypatch.setenv("NCCL_P2P_LEVEL", "NVL")
     monkeypatch.setenv("NCCL_DEBUG", "INFO")
     got = run_experiment._nccl_env_report()
     assert "NCCL_P2P_LEVEL=NVL" in got and "NCCL_DEBUG=INFO" in got
     assert "NCCL_SHM_DISABLE" not in got, "unset knobs must not appear"
+
+
+def test_the_wait_mode_is_always_recorded_including_when_unset(monkeypatch):
+    """Stop-condition parity with the engine provenance rule: a row that cannot say which
+    wait-mode arm produced it is void, so the mode is derived from the environment the process
+    actually has and appears in `nccl_env` on every row.
+
+    The two arms are distinguished by which of the two knobs is SET, and blocking wins if both
+    are, because that is what ProcessGroupNCCL does (it reads BLOCKING_WAIT first and then
+    disables async handling)."""
+    for k in run_experiment._NCCL_KEYS + run_experiment._NCCL_WAIT_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    assert run_experiment._nccl_wait_mode() == "none"
+    assert "TORCH_NCCL_BLOCKING_WAIT=<unset>" in run_experiment._nccl_env_report()
+
+    monkeypatch.setenv("TORCH_NCCL_BLOCKING_WAIT", "1")
+    assert run_experiment._nccl_wait_mode() == "blocking"
+    assert "wait_mode=blocking" in run_experiment._nccl_env_report()
+    assert "TORCH_NCCL_BLOCKING_WAIT=1" in run_experiment._nccl_env_report()
+
+    monkeypatch.delenv("TORCH_NCCL_BLOCKING_WAIT")
+    monkeypatch.setenv("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
+    assert run_experiment._nccl_wait_mode() == "async"
+    got = run_experiment._nccl_env_report()
+    assert "wait_mode=async" in got and "TORCH_NCCL_ASYNC_ERROR_HANDLING=1" in got
+    assert "TORCH_NCCL_BLOCKING_WAIT=<unset>" in got, "the async arm must say blocking is unset"
+
+    # Both set: ProcessGroupNCCL uses blocking and turns async handling off, so the row must
+    # say so rather than leaving a reader to assume the async arm took effect.
+    monkeypatch.setenv("TORCH_NCCL_BLOCKING_WAIT", "1")
+    assert run_experiment._nccl_wait_mode() == "blocking"
+
+    # `0` is not a mode: it means "not this arm".
+    monkeypatch.setenv("TORCH_NCCL_BLOCKING_WAIT", "0")
+    monkeypatch.setenv("TORCH_NCCL_ASYNC_ERROR_HANDLING", "0")
+    assert run_experiment._nccl_wait_mode() == "none"
 
 
 def test_code_commit_wins_over_a_pod_side_rev_parse(monkeypatch):
