@@ -106,20 +106,36 @@ if [ "${BW_OUT:-}" != "${SESSION_OUT:-}" ]; then
 fi
 
 # ---- THE ARM ENVIRONMENT, PROVEN RATHER THAN INTENDED -----------------------
-# `env_arm_env <arm>` echoes the `env ...` prefix for that arm. TWO properties matter:
-#   * `blocking` must SET the flag, and `async` must UNSET it (`env -u`), because the flag
-#     may still be present from .pod_env.sh on a pod provisioned before today;
-#   * both arms keep the 1-hour timeouts, since a 1M prefill legitimately runs for tens of
-#     minutes and they are the hang budget, not the thing under test.
+# `env_arm_env <arm>` echoes the `env ...` prefix for that arm.
+#
+# THE ARMS ARE DISTINGUISHED BY TORCH_NCCL_BLOCKING_WAIT AND NOTHING ELSE, because that is
+# the only thing that decides the poll loop (ProcessGroupNCCL::WorkNCCL::synchronizeInternal
+# enters `while (!isCompleted()) { ... sleep(10 ms) }` iff blockingWait_ is true).
+#
+# WHY THE ASYNC VARIABLE IS NOT TOUCHED (found on the 1x rehearsal, 2026-10-15). Clearing it
+# is FUTILE under torchrun: the elastic agent injects it into every worker unconditionally,
+# defaulting to 1 when the parent does not have it --
+#     "TORCH_NCCL_ASYNC_ERROR_HANDLING": os.getenv("TORCH_NCCL_ASYNC_ERROR_HANDLING", str(1))
+# (torch/distributed/elastic/agent/server/local_elastic_agent.py, identical in v2.5.1 and
+# later). The rehearsal proved it: `env -u TORCH_NCCL_ASYNC_ERROR_HANDLING TORCH_NCCL_BLOCKING_WAIT=1`
+# still reached the worker with ASYNC=1. So writing `-u` here would only create the ILLUSION
+# of one knob per arm; the honest record is that both variables are set in the blocking arm
+# and torch resolves that by using blocking wait and DISABLING async handling (it logs
+# "Only TORCH_NCCL_BLOCKING_WAIT is being used in this process").
+#
+# THAT FINDING IS ITSELF EVIDENCE, and it applies to every past campaign run: they all went
+# through torchrun, so they all had ASYNC=1 as well as BLOCKING_WAIT=1, and torch therefore
+# ran them in blocking mode with async handling off. The flag under investigation was live in
+# every one of them.
+#
+# Both arms keep the 1-hour timeouts: a 1M prefill legitimately runs for tens of minutes, so
+# those are the hang budget, not the thing under test.
 env_arm_env() {
   case "$1" in
     blocking)
-      # `env -u TORCH_NCCL_ASYNC_ERROR_HANDLING` as well: with both set torch uses blocking
-      # and silently disables async handling, so leaving it set would give the same behaviour
-      # but a row that is ambiguous at a glance. One mode knob per arm.
-      printf '%s' "env -u TORCH_NCCL_ASYNC_ERROR_HANDLING TORCH_NCCL_BLOCKING_WAIT=1 MLSYS_NCCL_WAIT_MODE=blocking" ;;
+      printf '%s' "env TORCH_NCCL_BLOCKING_WAIT=1 MLSYS_NCCL_WAIT_MODE=blocking" ;;
     async)
-      printf '%s' "env -u TORCH_NCCL_BLOCKING_WAIT TORCH_NCCL_ASYNC_ERROR_HANDLING=1 MLSYS_NCCL_WAIT_MODE=async" ;;
+      printf '%s' "env -u TORCH_NCCL_BLOCKING_WAIT MLSYS_NCCL_WAIT_MODE=async" ;;
     *)
       log "FATAL: unknown arm '$1'"; exit 2 ;;
   esac

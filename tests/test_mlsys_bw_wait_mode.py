@@ -200,12 +200,21 @@ def test_each_arm_launch_gets_its_own_environment(tmp_path):
     for f in sorted(out_dir.glob("*.log")):
         text += f.read_text()
 
-    blocking = [l for l in text.split("\n") if "block=1" in l and "async=<unset>" in l]
+    # The arms are distinguished by BLOCKING_WAIT alone. ASYNC is asserted PRESENT, not
+    # absent: torchrun's elastic agent injects it into every worker (defaulting to 1), which
+    # the 1x rehearsal proved, so the blocking arm cannot clear it and a test that demanded
+    # `async=<unset>` would be testing a fiction.
+    blocking = [l for l in text.split("\n") if "block=1" in l]
     asynchronous = [l for l in text.split("\n") if "block=<unset>" in l and "async=1" in l]
     assert blocking, f"the blocking arm never ran with its flag set:\n{text[-3000:]}"
     assert asynchronous, f"the async arm never ran with blocking unset:\n{text[-3000:]}"
     assert "mode=blocking" in blocking[0], blocking[0]
     assert "mode=async" in asynchronous[0], asynchronous[0]
+    assert "async=1" in blocking[0], (
+        "torchrun injects TORCH_NCCL_ASYNC_ERROR_HANDLING=1 into every worker; the blocking "
+        "arm is expected to show it alongside its flag, and torch resolves that by using "
+        "blocking wait. If this ever reads <unset>, the injection has changed and the "
+        "diagnostic's premise needs re-checking.")
 
 
 def test_both_arms_run_and_the_launches_are_separate(tmp_path):

@@ -78,12 +78,15 @@ export SESSION_RATE SESSION_CAP NPROC TIMER_MIN
 export REMOTE_SCRIPT=scripts/mlsys_bw_remote.sh
 export MLSYS_PULL_EVERY_S=240
 
+# EVERY forwarded name must be exported, and FORWARD_ENV below fails the launch if one is not
+# (which is the point: an unset name stops before an instance exists). The rehearsal caught
+# this on the first attempt, at $0, because the branch above assigns them as shell variables.
 export BW_OUT="$SESSION_OUT"
 export BW_BOOK=pg19_train_0
 export BW_SEED=42
 export BW_CTX_1M=1048576
-export BW_ENV_ARMS
-export BW_SINGLE_RANK_OK
+export BW_ENV_ARMS BW_SINGLE_RANK_OK BW_ARMS BW_ROUNDS BW_CTX BW_TARGET_TOKENS \
+       BW_SPEC_TOKENS BW_1M_OK
 
 # The mode the pod's env file is provisioned with. The per-arm override inside the remote
 # script is what the experiment actually uses; this is the session-level default, forwarded so

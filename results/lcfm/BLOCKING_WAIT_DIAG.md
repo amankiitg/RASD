@@ -150,6 +150,43 @@ Per-run control, and per-row proof:
 * The remote script sets the variables per stage launch with `env` and `env -u` *after*
   sourcing `.pod_env.sh`, which is what makes two arms possible inside one session.
 
+### 0.4a A finding from the 1x rehearsal: torchrun injects the async variable
+
+The plan above assumed the two arms could each set exactly one wait knob. The 1x plumbing
+rehearsal showed that is **impossible under `torchrun`**, and the reason is worth recording
+because it also tells us what every past campaign run actually did.
+
+`torch/distributed/elastic/agent/server/local_elastic_agent.py` builds each worker's
+environment with an unconditional entry (identical in v2.5.1 and in later releases):
+
+```python
+"TORCH_NCCL_ASYNC_ERROR_HANDLING": os.getenv("TORCH_NCCL_ASYNC_ERROR_HANDLING", str(1)),
+```
+
+So the elastic agent **defaults that variable to 1 in every worker**, whether or not the
+parent set it, and `env -u` before `torchrun` cannot prevent it. The rehearsal is the proof:
+the blocking arm was launched as
+`env -u TORCH_NCCL_ASYNC_ERROR_HANDLING TORCH_NCCL_BLOCKING_WAIT=1 ...` and its rows still
+recorded `TORCH_NCCL_ASYNC_ERROR_HANDLING=1`, with `wait_mode=blocking`.
+
+Two consequences, and the first is evidence rather than an inconvenience:
+
+1. **Every campaign run had both variables set.** Every stage in this project was launched
+   through `torchrun`, so every one of them had `TORCH_NCCL_BLOCKING_WAIT=1` *and*
+   `TORCH_NCCL_ASYNC_ERROR_HANDLING=1`. From 0.3, torch resolves that combination by using
+   blocking wait and **disabling** async error handling, logging
+   `Only TORCH_NCCL_BLOCKING_WAIT is being used in this process`. The poll loop was therefore
+   live in every run, which is what the artifact hypothesis requires, and the campaign never
+   had the async path at all.
+2. **The arms are distinguished by `TORCH_NCCL_BLOCKING_WAIT` alone**, so that is what the
+   remote script sets or clears: `blocking` sets it, `async` clears it with `env -u` and lets
+   the injected `ASYNC=1` supply error handling. `_nccl_wait_mode()` in `run_experiment.py`
+   applies torch's own precedence (blocking first), so a row's recorded mode is the mode the
+   process group actually used, not the intended one.
+
+The test that covers this asserts the injection is *present* in the blocking arm rather than
+absent, precisely because demanding its absence would be testing a fiction.
+
 ### 0.5 The measurement design (and the trap it avoids)
 
 | stage | instrument | arm A (`blocking`) | arm B (`async`) |
