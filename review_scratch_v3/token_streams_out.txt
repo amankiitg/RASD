@@ -1,0 +1,37 @@
+(131072, 'ring2048', 'spec') 3 streams
+   p1/arms/blocking       vs p2/spec/async          len 32/32 diverge at index 8
+   p1/arms/blocking       vs p2/spec/blocking       len 32/32 IDENTICAL
+   p2/spec/async          vs p2/spec/blocking       len 32/32 diverge at index 8
+(131072, 'ring2048', 'target') 4 streams
+   p1/arms/async          vs p1/arms/blocking       len 16/16 IDENTICAL
+   p1/arms/async          vs p2/arms/async          len 16/16 IDENTICAL
+   p1/arms/async          vs p2/arms/blocking       len 16/16 IDENTICAL
+   p1/arms/blocking       vs p2/arms/async          len 16/16 IDENTICAL
+   p1/arms/blocking       vs p2/arms/blocking       len 16/16 IDENTICAL
+   p2/arms/async          vs p2/arms/blocking       len 16/16 IDENTICAL
+(131072, 'ring32768', 'spec') 1 streams
+(131072, 'ring32768', 'target') 2 streams
+   p1/arms/blocking       vs p2/arms/blocking       len 16/16 IDENTICAL
+(131072, 'splitkv', 'spec') 1 streams
+(131072, 'splitkv', 'target') 2 streams
+   p1/arms/blocking       vs p2/arms/blocking       len 16/16 IDENTICAL
+(1048576, 'ring2048', 'spec') 1 streams
+(1048576, 'ring2048', 'target') 2 streams
+   p2/onem/async          vs p2/onem/blocking       len 16/16 IDENTICAL
+recorded temperatures of bw_diag rows:
+   ('bw_diag_p1', 'arms', 'async', 'ring2048', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p1', 'arms', 'blocking', 'ring2048', 'spec', '131072') ('0.7', 'ok')
+   ('bw_diag_p1', 'arms', 'blocking', 'ring2048', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p1', 'arms', 'blocking', 'ring32768', 'spec', '131072') ('0.7', 'ok')
+   ('bw_diag_p1', 'arms', 'blocking', 'ring32768', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p1', 'arms', 'blocking', 'splitkv', 'spec', '131072') ('0.7', 'ok')
+   ('bw_diag_p1', 'arms', 'blocking', 'splitkv', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p2', 'arms', 'async', 'ring2048', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p2', 'arms', 'blocking', 'ring2048', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p2', 'arms', 'blocking', 'ring32768', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p2', 'arms', 'blocking', 'splitkv', 'target', '131072') ('0.7', 'ok')
+   ('bw_diag_p2', 'onem', 'async', 'ring2048', 'target', '1048576') ('0.7', 'ok')
+   ('bw_diag_p2', 'onem', 'blocking', 'ring2048', 'spec', '1048576') ('0.7', 'ok')
+   ('bw_diag_p2', 'onem', 'blocking', 'ring2048', 'target', '1048576') ('0.7', 'ok')
+   ('bw_diag_p2', 'spec', 'async', 'ring2048', 'spec', '131072') ('0.7', 'ok')
+   ('bw_diag_p2', 'spec', 'blocking', 'ring2048', 'spec', '131072') ('0.7', 'ok')
