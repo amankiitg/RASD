@@ -474,3 +474,217 @@ as the record of this review. review/codex-lcfm and mlsys-experiments are kept a
 No force-push, no history rewrite, no tag deletion.
 State: 0 cloud instances, no timers or pollers, working tree clean, spend $0.
 PDF to upload: manuscript/lcfm/main.pdf (16 pages; main text 8).
+
+=================================================================
+v5 (branch camera-ready-v5, merged as 4fbb242, tag lcfm-camera-ready-v5)
+=================================================================
+
+SURPRISES FIRST
+1. The reference the reviews could not verify was right all along, and the metadata services are
+   wrong about it. arXiv's API and OpenAlex both list four authors for Compressive Transformers
+   (1911.05507), but the paper's own title page (the arXiv PDF) and the official ICLR 2020
+   papers listing both list five, including Chloe Hillier. The five-author list is kept, and for
+   the first time the entry is verified rather than "unverified" as CODEX_REVIEW and
+   CODEX_REVIEW_V3 had it.
+2. The template needed no change to be a de-anonymized workshop camera-ready: [dblblindworkshop,
+   final] already prints the author block (final clears the anonymous flag) and the workshop foot
+   line. The only real defect was cosmetic: because \workshoptitle itself began with "Workshop
+   on", the foot line read "Workshop: Workshop on Long Context ...". \workshoptitle now carries
+   the workshop name without the prefix, so the line reads "... Workshop: Long Context Foundation
+   Models (LCFM) @ NeurIPS 2026." The .sty was not touched.
+3. The 9-page gate was already met before any of Part 3: v4 had the main text ending on page 8
+   with the reference list starting on page 9. The 9th page was therefore spent entirely on
+   readability, exactly as intended.
+4. Doing 3a as literally as asked would have broken float ordering. Moving the decode-vs-context
+   figure into 4.4 next to the headline table made its first reference come after the ring
+   bench figure's, so figures would have been first cited 1, 2, 4, 3. The ring-bench figure block
+   was moved to just before the headline table, which restores first-citation order 1, 2, 3, 4
+   and keeps the decode figure immediately next to the table. The same check on tables found the
+   ring-bench caption citing the bare-ring bench table (Appendix C) from the main text, which made
+   Table 8 the first table cited; the pointer moved into the appendix paragraph, and tables are now
+   first cited 1 to 12 in order. v4 shipped with table first-citation order [4, 1, 8, 5, 2, 3, ...],
+   so this is an improvement, not a regression.
+5. Regenerating the figures is interpreter-sensitive. The committed figures were written by
+   matplotlib 3.10.8 (the repo's `rasd` conda env); the default `python3` on this machine has
+   matplotlib 3.10.5, which re-rasterises the figC legend text with different anti-aliasing and
+   makes that one figure differ by 3,415 sub-pixel grey levels. With the `rasd` interpreter all
+   four figures are pixel-identical and all tables byte-identical. Reported so the check is
+   reproducible.
+6. dblp (Anubis proof-of-work), OpenReview (challenge page) and Semantic Scholar (HTTP 429 on
+   every call, including through a proxy) were all unusable for verification. The entries were
+   verified instead from the arXiv API and the papers' own arXiv PDF title pages, the official
+   ICLR paper listings at iclr.cc, PMLR for the ICML entry, Crossref for the journal entry, and
+   the vLLM blog page itself.
+
+=================================================================
+TEMPLATE (PART 2)
+=================================================================
+Options in manuscript/lcfm/neurips_2026.sty, verbatim from the style's own
+\DeclareOption lines:
+
+  final      "declare final option, which creates camera-ready copy" -> \@neuripsfinaltrue,
+             \@anonymousfalse; \@noticestring becomes \@trackname; the lineno package in the
+             else-branch is not loaded.
+  preprint   -> \@preprinttrue, \@anonymousfalse; notice string "Preprint."
+  main       (default) -> \@trackname = "40th Conference on Neural Information Processing
+             Systems (NeurIPS 2026)."
+  position, eandd, creativeai, education -> the same conference line with the track appended.
+  sglblindworkshop    "single blind workshop": \@workshoptrue, \@anonymousfalse, and
+             \@trackname = "... Workshop: \@workshoptitle."
+  dblblindworkshop    "double blind workshop": \@workshoptrue (anonymous left true) and the same
+             \@trackname.
+  nonanonymous        -> \@anonymousfalse, no track name change.
+  nonatbib            -> do not load natbib.
+
+So the style has no separate "workshop camera-ready" option: the de-anonymized workshop copy is a
+workshop option plus [final], and both workshop options then behave identically. The workshop name
+is supported, in the first-page foot line, through the style's own \workshoptitle command (there is
+no header mechanism). That is what was checked and kept: [dblblindworkshop, final] with
+\workshoptitle carrying the workshop name. Nothing was invented and no option was added.
+
+Verified in the built PDF: author block "Aman Kesarwani / Independent Researcher /
+amankesarwani@berkeley.edu" as sole author; zero occurrences of "Submitted to", "Anonymous" or
+"Do not distribute"; lineno not loaded (0 mentions in main.log), so no line numbers; foot line
+"40th Conference on Neural Information Processing Systems (NeurIPS 2026). Workshop: Long Context
+Foundation Models (LCFM) @ NeurIPS 2026." Raj Dandekar appears nowhere but the acknowledgments; the
+paper carries no acknowledgments section, so he appears nowhere, as before v5.
+
+=================================================================
+WHAT MOVED INTO THE MAIN TEXT (PART 3)
+=================================================================
+3a. figA_decode_vs_context.pdf (label fig:decode-context) moved from Appendix C into 4.4,
+    immediately after the headline table. Float content unchanged (width 0.80 -> 0.72 only).
+3b. tab:vllm moved out of Appendix B into 4.6. Content unchanged; the "in Appendix B" pointer in
+    4.6 is now just "\ref{tab:vllm}".
+3c. tab:rope moved out of Appendix B into 4.2, directly under Figure 2. Content unchanged.
+3d. Two prose compressions relaxed, no new numbers and no new claims:
+    - 4.1 census paragraph: the four counts are now one clause each in a sentence ("the loop
+      loops in 9 of its 10 rows ... and the 128 k greedy arm loops in 1 of its 5 ... At T=1.0 none
+      of the five rows loops, and at the headline sampling temperature T=0.7 1 of 77 rows does").
+    - 4.4 mechanism paragraph: split into shorter sentences; "What it removes is two different
+      costs" -> "What the fix removes is not one cost but two, and their balance changes with
+      context"; the 1.73-vs-1.75 s prediction, the 72% pairing, the 65%/67% within-session
+      comparisons and the 4.7-of-13.9 s transfer arithmetic each get their own clause.
+Nothing else moved into the main text. Every moved float is still \ref'd from the main text, and no
+appendix pointer now points at a float that moved: the only such pointers were the two "in
+Appendix B" sentences in 4.2-4.6 (both rewritten) and the figure block itself. One appendix count
+was corrected with the move: "The two tables below" in Appendix B now reads "The tables below",
+since the two floats it counted left that appendix.
+
+Effects on the main text: 4.1, 4.2, 4.4 and 4.6 gained floats; the ring-bench figure block moved
+ahead of the headline table; a \clearpage was added before \bibliography so the reference list
+starts on a fresh page and "main text ends page 9" is unambiguous.
+
+=================================================================
+REFERENCES (PART 4)
+=================================================================
+Every entry was checked field by field (title, full author list in order, year, venue or id, URL)
+against a page that was actually fetched. 12 entries in references.bib, 12 distinct keys cited in
+main.tex, no key missing and no uncited entry.
+
+key                        | fields checked                        | source                                          | fixed?
+===========================+=======================================+=================================================+=======
+yang2024contextparallelism | title, 9 authors in order, 2024, id   | arXiv API, arxiv.org/abs/2411.01783             | no
+lee2026dcp                 | title, 4 authors, Aug 2026, URL       | vllm.ai/blog/2026-08-07-decode-context-parallelism | no
+liu2023ringattention       | title, 3 authors in order, 2023, id   | arXiv API, arxiv.org/abs/2310.01889             | no
+dao2024flashattention2     | title, 1 author, ICLR 2024            | iclr.cc/virtual/2024/papers.html (official list) + arXiv API 2307.08691 | no
+leviathan2023fast          | title, 3 authors in order, ICML 2023  | proceedings.mlr.press/v202/leviathan23a.html    | no
+chen2023accelerating       | title, 6 authors in order, 2023, id   | arXiv API, arxiv.org/abs/2302.01318             | no
+cai2024medusa              | title, 7 authors in order, 2024, id   | arXiv API, arxiv.org/abs/2401.10774             | no
+dettmers2023qlora          | title, 4 authors in order, 2023, id   | arXiv API, arxiv.org/abs/2305.14314             | no
+xiao2024streamingllm       | title, 5 authors, ICLR 2024            | iclr.cc/virtual/2024/papers.html + arXiv PDF 2309.17453 ("Published as a conference paper at ICLR 2024") | no
+su2024rope                 | title, 6 authors in order, Neurocomputing 568:127063, 2024 | api.crossref.org/works/10.1016/j.neucom.2023.127063 | no (journal title differs from arXiv only in capitalisation; arXiv form kept)
+peng2023yarn                | title, 4 authors in order, 2023, id   | arXiv API, arxiv.org/abs/2309.00071             | no
+rae2019pg19 -> rae2020pg19 | title, 5 authors in order, ICLR 2020, id | arXiv PDF 1911.05507 title page + iclr.cc/virtual_2020/papers.json + OpenAlex | key renamed; entry otherwise unchanged
+
+PG-19 (item 4b), in detail. Title and the five authors are confirmed by the paper's own title page
+(arXiv 1911.05507v1, which prints "Jack W. Rae, Anna Potapenko, Siddhant M. Jayakumar, Chloe
+Hillier, Timothy P. Lillicrap") and by the official ICLR 2020 papers listing. The entry already
+said year 2020 and ICLR; the only 2019 was in the key, which is now rae2020pg19 (the preprint was
+posted in 2019, the venue is 2020). One further field: neither the arXiv API nor OpenAlex lists
+Chloe Hillier, so the author list is taken from the paper, not from the metadata service.
+
+Each citation still supports what the text attributes to it; no sentence needed rephrasing and no
+entry had to be removed (STOP S2 was not reached).
+
+=================================================================
+GATES (PART 5)
+=================================================================
+Pages (pdftotext): total 16. Main text runs to page 9 and ends there with the conclusion;
+"References" and the reference list start on page 10; appendices run from page 10 (Appendix A
+heading) through page 16. Baseline for comparison, main at 8474bfd: total 16, main text page 8,
+References page 9. So the main text gained one page and is still inside the 9-page limit, with the
+reference list on page 10.
+
+Undefined references / citations: 0 and 0.
+Overfull boxes: 0 at any size (0 above 5pt, max 0pt). There are underfull hboxes in the appendix
+tables, which are pre-existing and were present in v4.
+
+PDF text scan (flattened pdftotext, lowercase word after . ! ?): 21 candidate hits, all inspected
+and all false positives: six are figure/table captions read into the figure's own axis text (e.g.
+"ms / round (log scale)"), six are bibliography author initials ("Rae, Jack W" + "Compressive
+transformers ..."), six are wrapped cells of the Appendix A status table ("REMOVED Measured outside
+..."), two are file paths split across lines and one is the table-column text of the top-up table.
+0 hits for TODO, XXX, FIXME, "??", "\\", "\\begin", "\\ref", "\\cite", "% SRC". 0 literal tabs.
+0 doubled spaces after a sentence end. No leaked LaTeX.
+
+Em dashes: 0 U+2014 and 0 runs of three hyphens across 21 scanned files (all of manuscript/lcfm/, all of
+results/lcfm/tables/, results/lcfm/ORGANIZER_NOTE.txt, scripts/lcfm_figures.py) and across the text
+of all four generated figure PDFs.
+
+Floats: 16 floats (4 figures, 12 tables), every one \ref'd, figures first cited in number order
+1 2 3 4, tables first cited in number order 1 to 12, none unreferenced.
+
+Float regeneration, with the repo's `rasd` interpreter (matplotlib 3.10.8, the version that wrote
+the committed files): results/lcfm/tables/*.tex byte-identical (all 9) and results/lcfm/figs/*.pdf
+pixel-identical to the committed figures at 150 dpi (0 differing pixels in all four). With the
+default `python3` (matplotlib 3.10.5) figC differs only in legend anti-aliasing; that is an
+environment artefact, see surprise 5. No table or figure content changed.
+
+review_scratch/*.py and review_scratch_v3/*.py re-run from the repo root with the `rasd`
+interpreter: census, f5_paired, recompute (stdout and recompute_out.json), bw_recompute,
+census_v3 and token_streams are all byte-identical to the committed outputs.
+
+Numbers: no measured value changed. A number-multiset diff of the v4 PDF text against the v5 PDF
+text returns only the float-reference digits that renumbered with the moves ('1' six times fewer,
+'2' six times more) plus one extra '224' from the expanded 4.4 sentence, which repeats the rounds
+figure it already stated. Full test suite on the merged tree: 1319 passed in 10:29 on the merged tree (the merged tree is byte-identical to the branch tip, which also passed 1319 in 6:43).
+
+Grep results (main.tex, references.bib, results/lcfm/tables/*.tex, ORGANIZER_NOTE.txt,
+scripts/lcfm_figures.py):
+  "whole story"          0
+  "not the ring"         0
+  "mostly the"           0
+  "unchanged"            2, both justified: the top-up table caption says the matched
+                         old-against-new cells are unchanged by the top-up (a statement about the
+                         top-up, not the retired acceptance claim), and ORGANIZER_NOTE.txt says
+                         the author block is unchanged.
+  "smoothed"             0
+  "within 3% at every"   0 for that phrase. "agree to within 3%" appears twice, both in the v4
+                         per-payload form ("within 3% at 33 MB, 133 MB and 266 MB (5.4% at
+                         66 MB)"), which is the corrected statement, not the retired "at every
+                         payload".
+  "1.92"                 0
+  "0.056"                0
+  "pod_env.sh:32"        0 (the citation is fbd41fb:scripts/mlsys_pod_env.sh:34)
+  "first 4096"           0
+  "256"                  4, all justified: two are \texttt{continuation\_sha256} (a hash name) and
+                         two are the benchmark's "256 rounds per payload", which is the only
+                         surviving 256.
+
+=================================================================
+FINISH (PART 6)
+=================================================================
+ORGANIZER_NOTE.txt: not updated, because nothing it says changed. Its statements (the withdrawn
+1.2% and parity claims, the poll explanation, the seed-bug correction, the one-passage perplexity
+side, the author block) are all still true of this version. It has no em dashes and was not sent.
+
+Branch and tags: camera-ready-v5 merged into main as 4fbb242 (merge commit, full
+4fbb242727e2a16d7c468b6aaa5231f91473f40b), tagged annotated lcfm-camera-ready-v5 on the merge
+commit, pushed. Archive tag archive/camera-ready-v5 created (annotated, on the branch tip
+1d040aa), the branch deleted after the merge. Tags v1 to v4 and every review/* branch and
+mlsys-experiments untouched.
+No force-push, no history rewrite. manuscript/arxiv/ untouched.
+
+PDF: manuscript/lcfm/main.pdf (built with `cd manuscript/lcfm && tectonic main.tex`).
+Report commit: this one, the commit that appends this section (git log: "Report: the v5 section"), pushed to main after the merge commit 4fbb242.
