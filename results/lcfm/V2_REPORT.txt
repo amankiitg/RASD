@@ -266,3 +266,53 @@ STATE
 0 cloud instances. No dead-man timers or pollers running. Working tree clean.
 Budget spend for this run: $0.
 PDF to upload: manuscript/lcfm/main.pdf (15 pages; main text 8).
+=================================================================
+v3 (branch camera-ready-v3, merged as e139981, tag lcfm-camera-ready-v3)
+=================================================================
+WHAT CHANGED
+1. F1, factor 16. The 27 to 31% loss range, computed WITH the looping row in the mean, is
+   now named in the results as the conservative figure and as the claim; 0.4890 without
+   the row stays as the second number, with the note that the exclusion makes the effect
+   larger. The abstract, introduction and conclusion already quoted the conservative
+   range and were not changed.
+2. F4, the 512k and 1M mechanism. The "lost overlap under blocking wait" explanation is
+   withdrawn from the results paragraph, the conclusion and the Appendix C table caption.
+   It was contradicted by this run's own diagnostic: at 1M, removing the flag changed
+   ring2048 decode by 3% (16.4348 to 15.9613 s/token, same book, seed and session, from
+   results/mlsys/bw_diag_p2/onem/{blocking,async}/df_arms.csv), so the poll cannot be
+   most of what split-KV removes at that context. The replacement says only what was
+   measured: the removed time scales with the shard the rotation ships; the poll is
+   essentially all of it at 128k (the microbench predicts the 2.43 s saving to 1.4%);
+   and at 1M, where removing the poll alone moves decode by 3%, most of it is the
+   rotation's own transfer and per-chunk work. No mechanism beyond the measurements.
+3. Figures in the appendices: unchanged, decision kept, marker removed.
+4. The 128k prefill ratio: still dropped rather than ranged, decision kept, marker removed.
+No other number in the paper moved.
+
+GATES (pdftotext -layout on the merged tree)
+  main text ends on page 8, References start at the top of page 9, 15 pages total
+  0 undefined references or citations
+  0 overfull boxes (the v2 table widths hold)
+  0 TODO or XXX or "??" in main.tex and in the PDF (the four % TODO AMAN markers are gone)
+  0 em dashes: no "---" and no U+2014 in manuscript/lcfm/main.tex, references.bib,
+  tables/ablation_summary.tex or results/lcfm/tables/*.tex; the PDF text has 0 em dashes
+  and 0 en dashes
+  scripts/lcfm_figures.py re-run: all four figures pixel-identical, all tables byte
+  identical to the committed versions; review_scratch/recompute.py, census.py and
+  f5_paired.py re-run: byte-identical to their committed output, so every number in the
+  revised text still agrees with both my script and the reviewer's
+
+ORGANIZER_NOTE.txt: no change needed. Every statement in it still holds, and the numbers
+it quotes (10.3 ms, 0.134 ms, 2.8 to 4.4x, 1.5 to 2.3x) are unchanged. Still 180 words,
+still no em dashes, still not sent anywhere.
+
+TESTS, TAG, BRANCHES
+Tests: 1319 passed on the merged main.
+Merge: e139981, merge commit of camera-ready-v3 into main (no fast-forward).
+Tag: lcfm-camera-ready-v3, annotated, on e139981. v1 is still c0fa9c7 and v2 is still
+e1cf8c4; neither was moved.
+Branches: camera-ready-v3 archived as archive/camera-ready-v3 at 6af7896, verified fully
+merged, then deleted locally and on origin. review/codex-lcfm and mlsys-experiments are
+kept and untouched. No force-push, no history rewrite, no tag deletion.
+State: 0 cloud instances, no timers or pollers, working tree clean, spend $0.
+PDF to upload: manuscript/lcfm/main.pdf (15 pages; main text 8).
