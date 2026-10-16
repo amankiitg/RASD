@@ -1,0 +1,10 @@
+\begin{tabular}{llrrrr}
+\toprule
+Context & Arm & old ring & split-KV & removed & removed per round \\
+ & & (s/token) & (s/token) & (s/token) & (ms, $\div$224) \\
+\midrule
+128k & target-only & 3.4925 & 1.0596 & 2.43 & 10.9 \\
+512k & target-only & 9.9900 & 2.3460 & 7.64 & 34.1 \\
+1M & target-only & 17.0902 & 3.2107 & 13.88 & 62.0 \\
+\bottomrule
+\end{tabular}

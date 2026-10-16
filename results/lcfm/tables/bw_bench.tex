@@ -1,0 +1,13 @@
+\begin{tabular}{lrrrr}
+\toprule
+Payload & size & \multicolumn{2}{c}{ms/round} & \\
+\cmidrule(lr){3-4}
+ & (MB) & blocking wait & no blocking wait & \\
+\midrule
+\texttt{tiny\_4kb} & 0.004 & 10.3347 & \textbf{0.1340} \\
+\texttt{mb33} & 33.292 & 10.3398 & \textbf{0.8135} \\
+\texttt{k8\_66mb\_expand\_after} & 66.585 & 10.3802 & \textbf{1.3633} \\
+\texttt{mb133} & 133.169 & 10.3442 & \textbf{2.5306} \\
+\texttt{mb266} & 266.338 & 10.3520 & \textbf{2.6191} \\
+\bottomrule
+\end{tabular}
