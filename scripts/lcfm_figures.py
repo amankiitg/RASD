@@ -419,7 +419,7 @@ def fig_c(out, groups, dropped):
     ax.set_ylabel("periodic tail share of row")
     ax.set_ylim(-0.03, 1.18)
     ax.grid(True, axis="y", lw=0.3, color="0.85", zorder=0)
-    ax.legend(frameon=False, loc="upper left", fontsize=4.4, handletextpad=0.4,
+    ax.legend(frameon=False, loc="upper right", fontsize=4.4, handletextpad=0.4,
               borderaxespad=0.2)
     fig.savefig(os.path.join(out, "figs", "figC_degeneracy.pdf"))
     plt.close(fig)
@@ -755,7 +755,7 @@ def tables(out, head, arms, accs, ppl, vl, f5, bwd, mem):
         t.append(f"{r['ctx']} & {r['v_pre']:.2f} & {r['rt_pre']:.2f} & {pq} & {tq} & "
                  f"{r['v_dec']:.4f} & {r['new']:.2f} \\\\")
     t += [r"\midrule",
-          r"\multicolumn{7}{l}{\footnotesize \emph{n/q}: not quoted, because this release's own 128\,k first-token time varies 7.0 to 12.4\,s for one configuration.} \\",
+          r"\multicolumn{7}{l}{\footnotesize \emph{n/q}: not quoted, because this release's own 128\,k first-token time varies 8.0 to 9.6\,s across its split-KV 128\,k rows.} \\",
           r"\bottomrule", r"\end{tabular}"]
     w("vllm.tex", t)
 
