@@ -1,8 +1,14 @@
-% Camera-ready bibliography. Every entry here was either verified against a page that was
-% actually fetched (the two prior-work items and the arXiv records) or is a standard entry
-% whose author, title, year and venue fields are all present. There are NO `% TODO VERIFY`
-% markers: an entry that could not be verified from a fetched source was removed and the
-% sentence that cited it was rephrased (see results/lcfm/FINAL_REPORT.txt, Part 3).
+% Camera-ready bibliography. Every entry here was re-verified for v5 against a page that was
+% actually fetched: the arXiv API and the paper's own title page (arXiv PDFs), the official
+% ICLR and ICML listings for the conference entries, Crossref for the journal entry, and the
+% vLLM blog post itself. Field by field results are in results/lcfm/V2_REPORT.txt, v5 section.
+% There are NO `% TODO VERIFY` markers: an entry that could not be verified from a fetched
+% source is removed and the sentence that cited it rephrased (see FINAL_REPORT.txt, Part 3).
+%
+% rae2020pg19: the arXiv API and OpenAlex both list four authors, but the paper's own title
+% page (arXiv PDF 1911.05507) and the official ICLR 2020 papers listing (iclr.cc/virtual_2020)
+% both list five, including Chloe Hillier, so the five-author list is kept and the key is named
+% for the venue year 2020, not the 2019 preprint year.
 %
 % The shared bibliography at manuscript/bib/references.bib still carries the reviewed
 % version's split-KV entries, whose author lists were invented; this file does not use them.
@@ -90,7 +96,7 @@
   year      = {2023}
 }
 
-@inproceedings{rae2019pg19,
+@inproceedings{rae2020pg19,
   title     = {Compressive Transformers for Long-Range Sequence Modelling},
   author    = {Rae, Jack W and Potapenko, Anna and Jayakumar, Siddhant M and Hillier, Chloe and Lillicrap, Timothy P},
   booktitle = {International Conference on Learning Representations (ICLR)},
