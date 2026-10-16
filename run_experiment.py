@@ -223,11 +223,38 @@ _GIT_COMMIT_CACHE = None
 _NCCL_KEYS = ("NCCL_DEBUG", "NCCL_DEBUG_SUBSYS", "NCCL_P2P_LEVEL", "NCCL_P2P_DISABLE",
               "NCCL_SHM_DISABLE", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_TOPO_FILE",
               "NCCL_ALGO", "NCCL_PROTO", "NCCL_NVLS_ENABLE", "NCCL_BUFFSIZE", "NCCL_MIN_NCHANNELS",
-              "NCCL_MAX_NCHANNELS", "NCCL_NSOCKS_PERTHREAD", "NCCL_SOCKET_NTHREADS")
+              "NCCL_MAX_NCHANNELS", "NCCL_NSOCKS_PERTHREAD", "NCCL_SOCKET_NTHREADS",
+              # The wait-mode and timeout family. These decide whether ProcessGroupNCCL
+              # enforces its timeout in the wait path (BlockingWait) or through the watchdog,
+              # so they change how long a collective APPEARS to take -- see
+              # results/lcfm/BLOCKING_WAIT_DIAG.md. A row that cannot say which mode produced
+              # it is as void as a row that cannot name its engine.
+              "TORCH_NCCL_BLOCKING_WAIT", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+              "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", "NCCL_TIMEOUT")
+
+# THE WAIT MODE IS ALWAYS RECORDED, including when it is absent. The general keys above are
+# emitted only when set, so "absent" means "unset OR not looked at"; for the wait mode that
+# ambiguity is unacceptable, because the whole point of recording it is to prove which of two
+# experimental arms produced a number. So this block always appears, with `<unset>` spelled
+# out, and it comes first so the mode is the first thing a reader of the column sees.
+_NCCL_WAIT_KEYS = ("TORCH_NCCL_BLOCKING_WAIT", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+                   "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", "NCCL_TIMEOUT", "MLSYS_NCCL_WAIT_MODE")
+
+
+def _nccl_wait_mode() -> str:
+    """The resolved wait mode: what the environment actually says, not what was intended."""
+    if os.environ.get("TORCH_NCCL_BLOCKING_WAIT") not in (None, "", "0"):
+        return "blocking"
+    if os.environ.get("TORCH_NCCL_ASYNC_ERROR_HANDLING") not in (None, "", "0"):
+        return "async"
+    return "none"
 
 
 def _nccl_env_report() -> str:
-    return ";".join(f"{k}={os.environ[k]}" for k in _NCCL_KEYS if os.environ.get(k))
+    wait = ";".join(f"{k}={os.environ.get(k) or '<unset>'}" for k in _NCCL_WAIT_KEYS)
+    rest = ";".join(f"{k}={os.environ[k]}" for k in _NCCL_KEYS
+                    if os.environ.get(k) and k not in _NCCL_WAIT_KEYS)
+    return ";".join(x for x in (f"wait_mode={_nccl_wait_mode()}", wait, rest) if x)
 
 
 def _ring_engine_report(engine) -> dict:

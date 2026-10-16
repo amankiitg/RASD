@@ -1,14 +1,14 @@
 LCFM 2026 camera-ready: summary of changes
 
 The reviewed version reported that the speedup regresses to parity at 512k and 1M, and
-that ring communication was at most 1.2 percent of wall time. Both are withdrawn. A
-bare-process benchmark of the ring primitive shows each rotation round costs a fixed
-10.3 ms regardless of payload, so the ring was paying per-round latency rather than
-bandwidth: removing the rotation is worth 2.8 to 5.3 times on decode, and speculation
-still pays 2.0 to 2.3 times on top. Two further claims are corrected: the draft was
-conditioned on the prompt's first 4096 tokens rather than on the recent window, and two
-long-context seed stages had re-run seed 42 because a level's seed list is overwritten
-during config merge, so the corrected 1M acceptance is unchanged rather than down 10
-percent. The title now names the three scientific findings. The author block is restored
-for the de-anonymized camera-ready: it lists the sole author of the reviewed submission,
-with no name added or removed, and its affiliation line reads Independent Researcher.
+that ring communication was at most 1.2 percent of wall time. Both are withdrawn. Under
+the NCCL blocking wait every run here used, each rotation round cost the same 10.3 ms at
+4 KB and at 266 MB, because that mode polls each collective with a fixed 10 ms host
+sleep; without the flag the same round costs 0.134 ms. The reported mechanism was the
+measurement condition. Removing the rotation is still worth 2.8 to 4.4 times on decode,
+and speculation still pays 1.5 to 2.3 times on top. Three further claims are corrected:
+the draft used the recent window, not the prompt's opening; two long-context seed stages
+re-ran seed 42, because a level's seed list is overwritten during config merge, so the
+corrected 1M acceptance is unchanged rather than down 10 percent; and the perplexity
+side of the rotary finding is one passage, reported as such. The author block is
+unchanged from the reviewed submission, affiliated Independent Researcher.

@@ -68,6 +68,12 @@ ROW_FIELDS = [
     "peak_reserved_mb_worst_rank",
     "target_ppl", "ppl_tokens", "git_commit", "world_size", "ring_layers_patched",
     "rng_reseeded", "status", "error",
+    # WHICH WAIT-MODE ARM, AND WHAT IT ACTUALLY GENERATED (2026-10-14). `env_arm` is the
+    # intended label; `nccl_env` is the environment the process really saw, spelled out
+    # including `<unset>`, so a row proves its own arm rather than inheriting a claim from a
+    # config file. `tokens_sha256` is the token stream, because the two arms differ only in
+    # how the host waits and must therefore emit identical tokens per engine arm.
+    "env_arm", "nccl_env", "tokens_sha256",
 ]
 
 
@@ -85,6 +91,22 @@ def _args(argv=None):
     p.add_argument("--target-tokens", type=int, default=16)
     p.add_argument("--spec-tokens", type=int, default=32)
     p.add_argument("--ppl-tokens", type=int, default=1024)
+    p.add_argument("--env-arm", default="",
+                   help="label for the wait-mode arm this launch runs (blocking|async)")
+    p.add_argument("--modes", default="target,spec",
+                   help="which generation modes to run, comma separated (target, spec, "
+                        "greedy). Default is both, which is what every campaign row used. "
+                        "It exists so a target-only launch can be kept SEPARATE from a spec "
+                        "launch: on 2026-10-15 the async wait mode produced a device-side "
+                        "assert in the spec path, and a crash must not take the target rows "
+                        "that were already measured with it.")
+    p.add_argument("--prompt-documents-json",
+                   default="data/processed/pg19_1m_128kwin/documents.json",
+                   help="the PG-19 pool to build the prompt from. The default is the "
+                        "128k-window pool every campaign stage used; the 1M rung needs "
+                        "data/processed/pg19_1m/documents.json, and passing the wrong one "
+                        "fails loudly at prompt build (which is how the first attempt at a "
+                        "1M row in this diagnostic died).")
     p.add_argument("--single-rank-ok", action="store_true",
                    help="plumbing rehearsal at world_size==1: do not refuse when the ring "
                         "patch is absent; rows record world_size so they read as void")
@@ -114,6 +136,38 @@ def _git_commit() -> str:
                                        stderr=subprocess.DEVNULL).strip() or "unknown"
     except Exception:                                     # noqa: BLE001
         return "unknown"
+
+
+def _ids_sha(ids) -> str:
+    """sha256 of the generated token ids, or "" when the arm generated nothing.
+
+    WHY IT IS A COLUMN AND NOT ONLY A SIDE FILE. The two wait-mode arms must produce the same
+    tokens: the flag changes when the HOST waits for a collective, not what the collective
+    computes, so a difference is a finding and not a rounding detail. A digest in the row makes
+    that comparison a diff of two CSVs rather than a join across sidecar directories, and it
+    keeps a row usable for the comparison even if its sidecar is lost.
+    """
+    if not ids:
+        return ""
+    import hashlib
+    return hashlib.sha256(json.dumps(list(ids)).encode()).hexdigest()
+
+
+def _nccl_env_report() -> str:
+    """One implementation, in run_experiment, so the bench, the arms and the campaign rows
+    cannot disagree about which arm produced them.
+
+    `sys.path` is set by main() before the heavy imports, so by the time a row is built the
+    module is importable; the fallback keeps the helper honest if it is ever called earlier
+    (a row with `wait_mode=<unknown>` is worse than a row with the raw variables).
+    """
+    try:
+        import run_experiment as _R
+        return _R._nccl_env_report()
+    except Exception:                                     # noqa: BLE001
+        keys = ("TORCH_NCCL_BLOCKING_WAIT", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+                "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", "NCCL_TIMEOUT", "MLSYS_NCCL_WAIT_MODE")
+        return ";".join(f"{k}={os.environ.get(k) or '<unset>'}" for k in keys)
 
 
 def _reseed(seed: int) -> None:
@@ -300,7 +354,7 @@ def main(argv=None):
     # The prompt is built ONCE per (context, book) and reused by every arm: an arm-to-arm
     # timing difference must not be a prompt difference.
     prompt_text, continuation_ids, prov = R._build_pg19_document_prompt(
-        "data/processed/pg19_1m_128kwin/documents.json", args.ctx, args.book, tok,
+        args.prompt_documents_json, args.ctx, args.book, tok,
         gen_tokens=args.ppl_tokens if args.mode == "ppl" else 1024)
     if rank == 0:
         log(f"prompt {args.book} @{args.ctx}: {len(prompt_text)} chars, "
@@ -374,6 +428,9 @@ def main(argv=None):
             "rng_reseeded": True,
             "status": "ok" if not err else "error",
             "error": err,
+            "env_arm": args.env_arm,
+            "nccl_env": _nccl_env_report(),
+            "tokens_sha256": _ids_sha(metrics.get("generated_token_ids")),
         }
         if rank == 0 and text:
             sidecar = os.path.join(args.out, "tokens", f"{run_id}.json")
@@ -406,8 +463,9 @@ def main(argv=None):
 
     # ------------------------------------------------------------------ modes
     if args.mode in ("smoke", "arms"):
-        modes = ["target"] if args.mode == "smoke" else ["target", "spec"]
-        if args.mode == "arms" and args.greedy_check:
+        modes = ["target"] if args.mode == "smoke" else [
+            m.strip() for m in args.modes.split(",") if m.strip()]
+        if args.mode == "arms" and args.greedy_check and "greedy" not in modes:
             modes.append("greedy")
         for arm in arm_names:
             for mode in modes:

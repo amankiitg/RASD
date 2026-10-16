@@ -1,0 +1,18 @@
+\begin{tabular}{llrrrr}
+\toprule
+Context & Arm & Engine & mode & decode s/token & TTFT (s) \\
+\midrule
+128\,k & blocking & \texttt{ring2048} & target & 3.7805 & 8.9 \\
+128\,k & blocking & \texttt{ring2048} & spec & 2.8811 & 7.5 \\
+128\,k & blocking & \texttt{ring32768} & target & 2.9553 & 7.1 \\
+128\,k & blocking & \texttt{ring32768} & spec & 2.2914 & 7.1 \\
+128\,k & blocking & \texttt{splitkv} & target & 1.0706 & 7.0 \\
+128\,k & blocking & \texttt{splitkv} & spec & 0.9026 & 7.2 \\
+128\,k & no blocking wait & \texttt{ring2048} & target & 2.0319 & 9.9 \\
+128\,k & blocking spec & \texttt{ring2048} & spec & 2.8482 & 11.3 \\
+128\,k & no blocking wait spec & \texttt{ring2048} & spec & 1.4052 & 11.0 \\
+1\,M & blocking & \texttt{ring2048} & target & 16.4348 & 338.5 \\
+1\,M & blocking & \texttt{ring2048} & spec & 7.5637 & 332.6 \\
+1\,M & no blocking wait & \texttt{ring2048} & target & 15.9613 & 334.8 \\
+\bottomrule
+\end{tabular}

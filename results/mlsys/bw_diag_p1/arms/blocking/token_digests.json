@@ -1,0 +1,8 @@
+{
+ "ring2048|target": "06c0b516452ad2ea",
+ "ring2048|spec": "19dc491d2a3033b1",
+ "ring32768|target": "06c0b516452ad2ea",
+ "ring32768|spec": "19dc491d2a3033b1",
+ "splitkv|target": "e01a287093ff0a62",
+ "splitkv|spec": "a4a6a314fda8cd20"
+}

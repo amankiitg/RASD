@@ -1,0 +1,120 @@
+====================================================================== 
+1. HEADLINE matched cells (decode-only)
+  128k  spec   old 1.4779 new 0.5275 speedup 2.8018 n=3 dupcells_old={} old_only=[(42, 'pg19_train_2204'), (42, 'pg19_train_2768')] new_only=[]
+        cells: [(42, 'pg19_train_0'), (42, 'pg19_train_1'), (42, 'pg19_train_915')]
+  128k  target old 3.4925 new 1.0596 speedup 3.2960 n=1 dupcells_old={} old_only=[] new_only=[]
+        cells: [(42, 'pg19_train_0')]
+  512k  spec   old 3.5344 new 0.9384 speedup 3.7666 n=3 dupcells_old={} old_only=[(42, 'pg19_train_2204'), (42, 'pg19_train_2768')] new_only=[]
+        cells: [(42, 'pg19_train_0'), (42, 'pg19_train_1'), (42, 'pg19_train_915')]
+  512k  target old 9.9900 new 2.3460 speedup 4.2583 n=1 dupcells_old={} old_only=[] new_only=[]
+        cells: [(42, 'pg19_train_0')]
+  1M    spec   old 6.0506 new 1.3830 speedup 4.3751 n=13 dupcells_old={} old_only=[] new_only=[(456, 'pg19_train_2204'), (456, 'pg19_train_2768')]
+        cells: [(42, 'pg19_train_0'), (42, 'pg19_train_1'), (42, 'pg19_train_2204'), (42, 'pg19_train_2768'), (42, 'pg19_train_915'), (123, 'pg19_train_0'), (123, 'pg19_train_1'), (123, 'pg19_train_2204'), (123, 'pg19_train_2768'), (123, 'pg19_train_915'), (456, 'pg19_train_0'), (456, 'pg19_train_1'), (456, 'pg19_train_915')]
+  1M    target old 17.0902 new 3.2107 speedup 5.3229 n=2 dupcells_old={} old_only=[] new_only=[]
+        cells: [(42, 'pg19_train_0'), (42, 'pg19_train_1')]
+  1M spec seed 42: n=5 old 5.7725 new 1.4370 speedup 4.017
+  1M spec seed 123: n=5 old 6.1598 new 1.4078 speedup 4.376
+  1M spec seed 456: n=3 old 6.3323 new 1.2517 speedup 5.059
+====================================================================== 
+2. F5 spec over target inside fixed engine (decode-only and e2e)
+  128k: spec cells 3 (seed42 books 3) target cells(with topup) 1 [without topup 1]
+     decode: spec(all) 0.5275  spec(s42) 0.5275  target 1.0596 (no-topup 1.0596)
+     ratio target/spec: all-spec 2.0089  s42-spec 2.0089  no-topup/all 2.0089
+     e2e s/tok ratio target/spec: all 1.8830  s42 1.8830
+     e2e mean-tps ratio spec/target: all 1.9522  s42 1.9522
+     target per-book: [('pg19_train_0', 1.0596)] spread max/min 1.0000
+  512k: spec cells 3 (seed42 books 3) target cells(with topup) 3 [without topup 1]
+     decode: spec(all) 0.9384  spec(s42) 0.9384  target 2.1480 (no-topup 2.3460)
+     ratio target/spec: all-spec 2.2891  s42-spec 2.2891  no-topup/all 2.5001
+     e2e s/tok ratio target/spec: all 1.7457  s42 1.7457
+     e2e mean-tps ratio spec/target: all 1.7588  s42 1.7588
+     target per-book: [('pg19_train_0', 2.346), ('pg19_train_1', 1.8474), ('pg19_train_915', 2.2505)] spread max/min 1.2699
+  1M: spec cells 15 (seed42 books 5) target cells(with topup) 5 [without topup 2]
+     decode: spec(all) 1.4264  spec(s42) 1.4370  target 3.1553 (no-topup 3.2107)
+     ratio target/spec: all-spec 2.2121  s42-spec 2.1958  no-topup/all 2.2510
+     e2e s/tok ratio target/spec: all 1.4131  s42 1.4112
+     e2e mean-tps ratio spec/target: all 1.4166  s42 1.4123
+     target per-book: [('pg19_train_0', 2.7933), ('pg19_train_1', 3.6281), ('pg19_train_2204', 3.1265), ('pg19_train_2768', 3.402), ('pg19_train_915', 2.8264)] spread max/min 1.2988
+  1M spec=4 mean time_sec 523.3  mean ttft 342.2 s (n=15)
+  1M spec=0 mean time_sec 743.1  mean ttft 335.3 s (n=2)
+  1M all rows incl topup: time 577.4 ttft 341.3 n=20
+  fixed-engine 1M spec per-seed decode means {42: 1.4369543149606299, 123: 1.4077576047244096, 456: 1.4343718787401576}  spread 1.0207
+  fixed-engine 1M spec per-book means {'pg19_train_0': 1.726024905511811, 'pg19_train_1': 1.2212773569553805, 'pg19_train_915': 1.027752524934383, 'pg19_train_2204': 1.7130112729658795, 'pg19_train_2768': 1.4437402703412074} spread 1.6794
+====================================================================== 
+3. Topup table and means
+  TP_1M_TARGET_pg19_train_915_s42          2.8264 split_kv L=32 commit=429bfada
+  TP_1M_TARGET_pg19_train_2204_s42         3.1265 split_kv L=32 commit=429bfada
+  TP_1M_TARGET_pg19_train_2768_s42         3.4020 split_kv L=32 commit=429bfada
+  TP_512K_TARGET_pg19_train_1_s42          1.8474 split_kv L=32 commit=429bfada
+  TP_512K_TARGET_pg19_train_915_s42        2.2505 split_kv L=32 commit=429bfada
+  TP_GATE_128K_TARGET_pg19_train_0_s42     1.0508 split_kv L=32 commit=429bfada
+  RR_SANITY_SPEC_pg19_train_0_s42          0.6091 split_kv L=32 commit=429bfada
+  RR_SANITY_TARGET_pg19_train_0_s42        1.1045 split_kv L=32 commit=429bfada
+  512k target mean: before 2.3460 (n=1) after 2.1480 (n=3) thin/wide 1.0922
+  1M target mean: before 3.2107 (n=2) after 3.1553 (n=5) thin/wide 1.0176
+  RR_128K_TARGET_pg19_train_0_s42          1.0596
+  RR_GATE_128K_TARGET_pg19_train_0_s42     1.2351
+====================================================================== 
+4. Seed-corrected acceptance at 1M (13 matched cells)
+  n cells 13
+  seed 42: n=5 old 0.5246 new 0.4424 change -15.66%
+  seed 123: n=5 old 0.4656 new 0.5164 change +10.90%
+  seed 456: n=3 old 0.4466 new 0.4969 change +11.26%
+  pooled: old 0.4839 new 0.4834 change -0.10%
+  old per-seed means {42: 0.5246, 123: 0.46562000000000003, 456: 0.4466}; (max-min)/mean = 16.29%
+  on common books ['pg19_train_0', 'pg19_train_1', 'pg19_train_915']: per-seed {42: 0.5621333333333334, 123: 0.496, 456: 0.4466} (max-min)/mean 23.03%
+  per-book seed range/mean: [('pg19_train_0', 26.8), ('pg19_train_1', 31.1), ('pg19_train_915', 15.1)] mean 24.33%
+  old stdev/mean over 13 cells 25.78%
+  BUGGY pooled (rows labelled by stage): old acc 0.5246 new acc 0.4698 change -10.45%; decode speedup 4.0374
+====================================================================== 
+5. Rotary (F1)
+  native: n=5 acc 0.7272 tok/s 0.9109  recorded throughput_tps mean 0.9100
+  f16: n=5 acc 0.5336 tok/s 0.7699  recorded throughput_tps mean 0.7700
+  f32: n=5 acc 0.5006 tok/s 0.7473  recorded throughput_tps mean 0.7460
+  f16 rel loss 26.61%  per-book drop holds: [('pg19_train_0', True, -0.2708), ('pg19_train_1', True, -0.1397), ('pg19_train_2204', True, -0.3105), ('pg19_train_2768', True, -0.0301), ('pg19_train_915', True, -0.2165)]
+  f32 rel loss 31.16%  per-book drop holds: [('pg19_train_0', True, -0.23), ('pg19_train_1', True, -0.3471), ('pg19_train_2204', True, -0.2661), ('pg19_train_2768', True, -0.2362), ('pg19_train_915', True, -0.0534)]
+  f16 vs f32 gap 0.0330, rel 6.60%
+  n=3 gap f16-f32 0.0012
+  gate ROFIX_F16: factor=16 ppl 1.0135 native 1.013 ratio 1.0005 recomputed 1.00049 prompt 574e34322f cont be10ff4f96 rope_scaling {"factor": 16.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0, "original_max_position_embeddings": 8192, "rope_type": "llama3"}
+  gate ROFIX_F32: factor=32 ppl 1.0288 native 1.013 ratio 1.0156 recomputed 1.01560 prompt 574e34322f cont be10ff4f96 rope_scaling {"factor": 32.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0, "original_max_position_embeddings": 8192, "rope_type": "llama3"}
+  gate ROFIX_NATIVE: factor=- ppl 1.013 native 1.013 ratio 1.0 recomputed 1.00000 prompt 574e34322f cont be10ff4f96 rope_scaling {"factor": 8.0, "low_freq_factor": 1.0, "high_freq_factor": 4.0, "original_max_position_embeddings": 8192, "rope_type": "llama3"}
+====================================================================== 
+6. Coherence (F3)
+  pg19_train_0: 128k 1.649 1M 1.805 move +9.49%  sidecar sha equal=True alignment: offset 0 overlap 100.0 same True | alignment sha 1M==sidecar True 128k==sidecar True
+  pg19_train_1: 128k 12.846 1M 12.709 move -1.07%  sidecar sha equal=False alignment: offset 92 overlap 91.0 same False | alignment sha 1M==sidecar True 128k==sidecar True
+  pg19_train_915: 128k 10.583 1M 10.628 move +0.43%  sidecar sha equal=False alignment: offset 48 overlap 95.3 same False | alignment sha 1M==sidecar True 128k==sidecar True
+====================================================================== 
+7. Ring bench
+  [('tiny_4kb', '0.004', '10.3124'), ('mb33', '33.292', '10.3437'), ('mb133', '133.169', '10.3557'), ('mb266', '266.338', '10.3462'), ('k8_66mb_expand_after', '66.585', '10.3389')]
+  min 10.3124 max 10.3557 spread 0.420%  payload range 66584x (bytes 279347200/4096 = 68200x)
+  json keys: ['tag', 'rounds', 'world_size', 'rank0_rows', 'skew']
+    rank0_rows [{"label": "tiny_4kb", "size_mb_actual": 0.004, "seq_len": 1, "heads": 8, "rank": 0, "rounds": 256, "ms_per_round": 10.3124, "ms_per_round_p90": 10.4038, "gb_per_s": 0.0, "ms_total_256_rounds": 2639.99, "world_size": 8}, {"label": "mb33", "size_mb_actual": 33.292, "seq_len": 2032, "heads": 32, "rank": 0, "rounds": 256, "ms_per_round": 10.3437, "ms_per_round_p90": 10.4154, "gb_per_s": 3.22, "ms_tot
+    skew [{"label": "tiny_4kb", "size_mb_actual": 0.004, "per_rank_ms": [10.3124, 10.3338, 10.3298, 10.3327, 10.3032, 10.31, 10.3221, 10.2937], "spread_ms": 0.0401}, {"label": "mb33", "size_mb_actual": 33.292, "per_rank_ms": [10.3437, 10.3494, 10.3633, 10.3557, 10.3458, 10.3927, 10.3763, 10.3387], "spread_ms": 0.054}, {"label": "mb133", "size_mb_actual": 133.169, "per_rank_ms": [10.3557, 10.3389, 10.3951, 
+====================================================================== 
+8. vLLM
+  128k vLLM books ['pg19_train_0'] T=['0.0'] pre 16.85 dec 0.00814 tot 17.88 | RASD pre(same books, tgt) 8.76 [all new rows 9.04] | tot/pre 2.041 | new/v 130.2x old/v 429.2x spec/v 64.8x  deficit removed 69.7%
+      vllm_run(old) e2e 18.321 vs run2 17.883: 2.45%  old ttft sample ['1791804535.0333']
+  512k vLLM books ['pg19_train_0'] T=['0.0'] pre 222.80 dec 0.01449 tot 224.64 | RASD pre(same books, tgt) 88.56 [all new rows 90.64] | tot/pre 2.537 | new/v 161.9x old/v 689.5x spec/v 64.8x  deficit removed 76.5%
+      vllm_run(old) e2e 224.615 vs run2 224.645: -0.01%  old ttft sample ['1791804820.7624']
+  1M vLLM books ['pg19_train_0', 'pg19_train_1'] T=['0.0', '0.0'] pre 859.60 dec 0.02338 tot 862.57 | RASD pre(same books, tgt) 335.34 [all new rows 341.34] | tot/pre 2.572 | new/v 137.3x old/v 731.1x spec/v 61.0x  deficit removed 81.2%
+      vllm_run(old) e2e 863.269 vs run2 862.569: 0.08%  old ttft sample ['1791805748.5904']
+====================================================================== 
+9. Diagnostic arms
+  ring2048    target decode 3.5637 recomputed 3.5637 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring2048    spec   decode 2.7910 recomputed 2.7910 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring2048    greedy decode 3.5913 recomputed 3.5913 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring32768   target decode 2.8749 recomputed 2.8749 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring32768   spec   decode 2.3074 recomputed 2.3074 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring32768   greedy decode 2.7937 recomputed 2.7937 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring32768x  target decode 2.7985 recomputed 2.7985 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring32768x  spec   decode 2.2004 recomputed 2.2004 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  ring32768x  greedy decode 2.9077 recomputed 2.9077 commit=unknown mode=ring L=32 quantize_target=True kv_quant=True
+  splitkv     target decode 1.0011 recomputed 1.0011 commit=unknown mode=split_kv L=32 quantize_target=True kv_quant=True
+  splitkv     spec   decode 0.8254 recomputed 0.8254 commit=unknown mode=split_kv L=32 quantize_target=True kv_quant=True
+  splitkv     greedy decode 1.0026 recomputed 1.0026 commit=unknown mode=split_kv L=32 quantize_target=True kv_quant=True
+  ring2048/ring32768 1.2396; ring32768/ring32768x 1.0273; ring2048/splitkv 3.5599; ring32768/splitkv 2.8718; ring2048/ring32768x 1.2734
+====================================================================== 
+10. Temperature arms
+  seeds_ablations/session_a_SA_TEMP_1_0_128K_SPEC.csv: T={'1.0'} acc 0.7369 n=5
+  seeds_ablations/session_a_SA_TEMP_0_128K_SPEC.csv: T={'0.0'} acc 0.4604 n=5
+  T=0.7 128k headline pool acc 0.4681 n=5 books ['pg19_train_0', 'pg19_train_1', 'pg19_train_2204', 'pg19_train_2768', 'pg19_train_915']

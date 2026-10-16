@@ -1,0 +1,33 @@
+### nvidia-smi topo -m
+	[4mGPU0	NIC0	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+GPU0	 X 	PHB	0-29	0		N/A
+NIC0	PHB	 X 				
+
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks
+
+NIC Legend:
+
+  NIC0: mlx5_0
+
+
+### gpus
+index, name, memory.total [MiB]
+0, NVIDIA A100-SXM4-40GB, 40960 MiB
+
+### the wait mode this session was provisioned with
+export NCCL_TIMEOUT=3600
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
+# MLSYS_NCCL_WAIT_MODE=async (provisioning-time default; a run may override per stage)
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+
+### the torch that will be imported, and the poll constant it carries
+torch 2.5.1+cu124
+blocking-wait env name: n/a

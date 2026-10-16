@@ -1,0 +1,113 @@
+============================================================================== 
+GREEDY first-window audit (natural_f1_128k_first_window.csv): 10 rows
+  NATURAL_f1_128k_pg19_train_0_s42                           T=   ? csv_flag=clean repo=False tail=0.00 in16=0.57 span= 34 | mine p= 0 tail=0.00 d8=0.58 loop=False  <== 
+  NATURAL_f1_128k_pg19_train_1_s42                           T=   ? csv_flag=LOOP repo=True  tail=0.00 in16=0.92 span=379 | mine p= 0 tail=0.00 d8=0.12 loop=False  <== a 379-token span repeats verbatim >= 128 absolute; 92% of tokens inside a repeated 16-gram > 60% absolute
+  NATURAL_f1_128k_pg19_train_115_s42                         T=   ? csv_flag=LOOP repo=True  tail=0.83 in16=0.98 span=512 | mine p=18 tail=0.83 d8=0.04 loop=True  <== a 512-token span repeats verbatim >= 128 absolute; 98% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 84% of the row (period 18) > 50% absolute
+  NATURAL_f1_128k_pg19_train_537_s42                         T=   ? csv_flag=LOOP repo=True  tail=0.03 in16=0.94 span= 20 | mine p= 0 tail=0.00 d8=0.40 loop=False  <== 94% of tokens inside a repeated 16-gram > 60% absolute
+  NATURAL_f1_128k_pg19_train_915_s42                         T=   ? csv_flag=LOOP repo=True  tail=0.98 in16=0.98 span=512 | mine p=20 tail=0.98 d8=0.04 loop=True  <== a 512-token span repeats verbatim >= 128 absolute; 98% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 98% of the row (period 20) > 50% absolute
+  NATURAL_f1_128k_pg19_train_1404_s42                        T=   ? csv_flag=LOOP repo=True  tail=0.98 in16=0.98 span=512 | mine p= 4 tail=0.98 d8=0.02 loop=True  <== a 512-token span repeats verbatim >= 128 absolute; 98% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 98% of the row (period 12) > 50% absolute
+  NATURAL_f1_128k_pg19_train_1726_s42                        T=   ? csv_flag=LOOP repo=True  tail=0.00 in16=0.88 span= 38 | mine p= 0 tail=0.00 d8=0.34 loop=False  <== 88% of tokens inside a repeated 16-gram > 60% absolute
+  NATURAL_f1_128k_pg19_train_1981_s42                        T=   ? csv_flag=LOOP repo=True  tail=0.95 in16=0.95 span=512 | mine p=13 tail=0.95 d8=0.06 loop=True  <== a 512-token span repeats verbatim >= 128 absolute; 95% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 95% of the row (period 26) > 50% absolute
+  NATURAL_f1_128k_pg19_train_2204_s42                        T=   ? csv_flag=LOOP repo=True  tail=0.92 in16=0.92 span=512 | mine p= 7 tail=0.92 d8=0.09 loop=True  <== a 512-token span repeats verbatim >= 128 absolute; 92% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 92% of the row (period 7) > 50% absolute
+  NATURAL_f1_128k_pg19_train_2768_s42                        T=   ? csv_flag=LOOP repo=True  tail=0.01 in16=1.00 span=226 | mine p=20 tail=0.11 d8=0.03 loop=False  <== a 226-token span repeats verbatim >= 128 absolute; 100% of tokens inside a repeated 16-gram > 60% absolute
+  temperatures: {'?': 10}  repo-rule loops (sidecar): 9  my-rule loops: 5
+============================================================================== 
+'GREEDY' temperature arms (repetition_SA_TEMP_{0,1_0}): 10 rows
+  SA_TEMP_0_128K_SPEC_pg19_train_0_s42                       T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  7 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SA_TEMP_0_128K_SPEC_pg19_train_1_s42                       T= 0.0 csv_flag=False repo=False tail=0.42 in16=0.42 span= 41 | mine p=13 tail=0.42 d8=0.72 loop=False  <== 
+  SA_TEMP_0_128K_SPEC_pg19_train_915_s42                     T= 0.0 csv_flag=True repo=True  tail=0.69 in16=0.69 span= 64 | mine p=15 tail=0.69 d8=0.38 loop=True  <== 69% of tokens inside a repeated 16-gram > 60% absolute; periodic tail 69% of the row (period 15) > 50% absolute
+  SA_TEMP_0_128K_SPEC_pg19_train_2204_s42                    T= 0.0 csv_flag=False repo=False tail=0.25 in16=0.00 span= 14 | mine p= 0 tail=0.00 d8=0.88 loop=False  <== 
+  SA_TEMP_0_128K_SPEC_pg19_train_2768_s42                    T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.38 span= 24 | mine p= 0 tail=0.00 d8=0.86 loop=False  <== 
+  SA_TEMP_1_0_128K_SPEC_pg19_train_0_s42                     T= 1.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SA_TEMP_1_0_128K_SPEC_pg19_train_1_s42                     T= 1.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SA_TEMP_1_0_128K_SPEC_pg19_train_915_s42                   T= 1.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SA_TEMP_1_0_128K_SPEC_pg19_train_2204_s42                  T= 1.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SA_TEMP_1_0_128K_SPEC_pg19_train_2768_s42                  T= 1.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  temperatures: {'0.0': 5, '1.0': 5}  repo-rule loops (sidecar): 1  my-rule loops: 1
+============================================================================== 
+'SAMPLED T=0.7' census as lcfm_figures.py builds it: 83 rows
+  QUALITY_FIX_128K_pg19_train_0_s42                          T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  0 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  QUALITY_FIX_128K_pg19_train_1_s42                          T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  0 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  QUALITY_FIX_128K_pg19_train_915_s42                        T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  0 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  QUALITY_FIX_1M_pg19_train_0_s42                            T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  0 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  QUALITY_FIX_1M_pg19_train_1_s42                            T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  0 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  QUALITY_FIX_1M_pg19_train_915_s42                          T= 0.0 csv_flag=False repo=False tail=0.00 in16=0.00 span=  0 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_F16_SPEC_pg19_train_0_s42                        T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_F16_SPEC_pg19_train_1_s42                        T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  7 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_F16_SPEC_pg19_train_915_s42                      T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_F32_SPEC_pg19_train_0_s42                        T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_F32_SPEC_pg19_train_1_s42                        T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_F32_SPEC_pg19_train_915_s42                      T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_NATIVE_SPEC_pg19_train_0_s42                     T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  8 | mine p= 0 tail=0.00 d8=0.99 loop=False  <== 
+  ROPE_SAMP_NATIVE_SPEC_pg19_train_1_s42                     T= 0.7 csv_flag=False repo=False tail=0.27 in16=0.00 span=  6 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_NATIVE_SPEC_pg19_train_915_s42                   T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_SAMP_NATIVE_TARGET_pg19_train_0_s42                   T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_SPEC_pg19_train_0_s42                              T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_SPEC_pg19_train_1_s42                              T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_SPEC_pg19_train_915_s42                            T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_SPEC_pg19_train_2204_s42                           T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  6 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_SPEC_pg19_train_2768_s42                           T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_TARGET_pg19_train_0_s42                            T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_1M_TARGET_pg19_train_1_s42                            T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  6 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_128K_SPEC_pg19_train_0_s42                    T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_128K_SPEC_pg19_train_1_s42                    T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_128K_SPEC_pg19_train_915_s42                  T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_128K_TARGET_pg19_train_0_s42                  T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span= 11 | mine p= 0 tail=0.00 d8=0.97 loop=False  <== 
+  SAMP_ALIGNED_512K_SPEC_pg19_train_0_s42                    T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_512K_SPEC_pg19_train_1_s42                    T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_512K_SPEC_pg19_train_915_s42                  T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_ALIGNED_512K_TARGET_pg19_train_0_s42                  T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SAMP_CHECK_1M_SPEC_pg19_train_0_s42                        T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SANITY_pg19_train_0_s42                                    T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  SANITY_targetonly_pg19_train_0_s42                         T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  ROPE_EXT_SAMP_F16_SPEC_pg19_train_2204_s42                 T= 0.7 csv_flag=False NO SIDECAR
+  ROPE_EXT_SAMP_F16_SPEC_pg19_train_2768_s42                 T= 0.7 csv_flag=True NO SIDECAR
+  ROPE_EXT_SAMP_F32_SPEC_pg19_train_2204_s42                 T= 0.7 csv_flag=False NO SIDECAR
+  ROPE_EXT_SAMP_F32_SPEC_pg19_train_2768_s42                 T= 0.7 csv_flag=False NO SIDECAR
+  ROPE_EXT_SAMP_NATIVE_SPEC_pg19_train_2204_s42              T= 0.7 csv_flag=False NO SIDECAR
+  ROPE_EXT_SAMP_NATIVE_SPEC_pg19_train_2768_s42              T= 0.7 csv_flag=False NO SIDECAR
+  SAMP_EXT_ALIGNED_128K_SPEC_pg19_train_2204_s42             T= 0.7 csv_flag=False NO SIDECAR
+  SAMP_EXT_ALIGNED_128K_SPEC_pg19_train_2768_s42             T= 0.7 csv_flag=False NO SIDECAR
+  SAMP_EXT_ALIGNED_512K_SPEC_pg19_train_2204_s42             T= 0.7 csv_flag=False NO SIDECAR
+  SAMP_EXT_ALIGNED_512K_SPEC_pg19_train_2768_s42             T= 0.7 csv_flag=False NO SIDECAR
+  FP4_SEED_1M_SPEC_pg19_train_0_s123                         T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_1_s123                         T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_915_s123                       T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_2204_s123                      T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_2768_s123                      T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_0_s456                         T= 0.7 csv_flag=False repo=False tail=0.47 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_1_s456                         T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  FP4_SEED_1M_SPEC_pg19_train_915_s456                       T= 0.7 csv_flag=False repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_128K_SPEC_pg19_train_0_s42                              T= 0.7 csv_flag=scored repo=False tail=0.07 in16=0.00 span= 11 | mine p= 0 tail=0.00 d8=0.97 loop=False  <== 
+  RR_128K_SPEC_pg19_train_1_s42                              T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  6 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_128K_SPEC_pg19_train_915_s42                            T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  8 | mine p= 0 tail=0.00 d8=0.99 loop=False  <== 
+  RR_128K_TARGET_pg19_train_0_s42                            T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_SPEC_pg19_train_0_s42                                T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_SPEC_pg19_train_1_s42                                T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_SPEC_pg19_train_915_s42                              T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_SPEC_pg19_train_2204_s42                             T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_SPEC_pg19_train_2768_s42                             T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  6 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_TARGET_pg19_train_0_s42                              T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_1M_TARGET_pg19_train_1_s42                              T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_512K_SPEC_pg19_train_0_s42                              T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_512K_SPEC_pg19_train_1_s42                              T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  6 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_512K_SPEC_pg19_train_915_s42                            T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_512K_TARGET_pg19_train_0_s42                            T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_GATE_128K_SPEC_pg19_train_0_s42                         T= 0.7 csv_flag=scored repo=False tail=0.07 in16=0.00 span= 11 | mine p= 0 tail=0.00 d8=0.97 loop=False  <== 
+  RR_GATE_128K_TARGET_pg19_train_0_s42                       T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SANITY_SPEC_pg19_train_0_s42                            T= 0.7 csv_flag=scored repo=False tail=0.07 in16=0.00 span= 11 | mine p= 0 tail=0.00 d8=0.97 loop=False  <== 
+  RR_SANITY_TARGET_pg19_train_0_s42                          T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_0_s123                         T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_1_s123                         T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_915_s123                       T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  7 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_2204_s123                      T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_2768_s123                      T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  4 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_0_s456                         T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_1_s456                         T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  3 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_915_s456                       T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_2204_s456                      T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  5 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  RR_SEEDS_1M_SPEC_pg19_train_2768_s456                      T= 0.7 csv_flag=scored repo=False tail=0.17 in16=0.00 span= 13 | mine p= 9 tail=0.17 d8=0.95 loop=False  <== 
+  RR_SANITY_SPEC_pg19_train_0_s42                            T= 0.7 csv_flag=scored repo=False tail=0.07 in16=0.00 span= 11 | mine p= 0 tail=0.00 d8=0.97 loop=False  <== 
+  RR_SANITY_TARGET_pg19_train_0_s42                          T= 0.7 csv_flag=scored repo=False tail=0.00 in16=0.00 span=  2 | mine p= 0 tail=0.00 d8=1.00 loop=False  <== 
+  temperatures: {'0.0': 6, '0.7': 77}  repo-rule loops (sidecar): 0  my-rule loops: 0
+  duplicate run_ids in census: {'RR_SANITY_SPEC_pg19_train_0_s42': 2, 'RR_SANITY_TARGET_pg19_train_0_s42': 2}

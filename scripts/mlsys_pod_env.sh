@@ -29,9 +29,39 @@ set -uo pipefail
 # NCCL / allocator settings from the validated long-run flow
 # (scripts/mlsys_pod_session.sh). Written into the env file so the stages
 # inherit them.
+#
+# THE WAIT MODE IS NAMED, NOT HARD-CODED (2026-10-14). Until today this block exported
+# `TORCH_NCCL_BLOCKING_WAIT=1` unconditionally, and the remote scripts source this file with
+# `set -a`, so the value could not be changed per run from the driver: the file always won.
+# That mattered because in blocking-wait mode `ProcessGroupNCCL`'s wait path polls with a
+# fixed 10 ms sleep (`kSynchronizeBusyWaitMillis` in torch 2.5.1), which inflates EVERY
+# synchronous collective by up to 10 ms -- 224 of them per decode token in the ring engine.
+# A bare ring round measured 10.31 ms for 4 KB and 10.35 ms for 266 MB, which is the shape a
+# fixed poll produces, not the shape NVLink produces.
+#
+# So the mode is an input now, MLSYS_NCCL_WAIT_MODE, and it resolves to exactly one of:
+#   async    TORCH_NCCL_ASYNC_ERROR_HANDLING=1, and NO blocking-wait line at all. The NCCL
+#            watchdog thread (100 ms tick) plus TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC is the hang
+#            detector, and a stuck collective tears the process group down.
+#   blocking TORCH_NCCL_BLOCKING_WAIT=1, the historical behaviour, kept so the diagnostic can
+#            run both arms in one session.
+# Both modes keep the 1-hour timeouts, because a 1M prefill legitimately takes tens of
+# minutes (this is why they were added: commit f1a448a).
+MLSYS_NCCL_WAIT_MODE="${MLSYS_NCCL_WAIT_MODE:-async}"
+case "$MLSYS_NCCL_WAIT_MODE" in
+  async)
+    NCCL_WAIT_LINES='TORCH_NCCL_ASYNC_ERROR_HANDLING=1'
+    ;;
+  blocking)
+    NCCL_WAIT_LINES='TORCH_NCCL_BLOCKING_WAIT=1'
+    ;;
+  *)
+    echo "FATAL: MLSYS_NCCL_WAIT_MODE='$MLSYS_NCCL_WAIT_MODE' is not one of async|blocking" >&2
+    exit 2
+    ;;
+esac
 NCCL_SETTINGS='NCCL_TIMEOUT=3600
 TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
-TORCH_NCCL_BLOCKING_WAIT=1
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True'
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -151,8 +181,15 @@ fi
   # no credential to sync with later.
   echo "export WANDB_MODE=disabled"
   printf '%s\n' "$NCCL_SETTINGS" | sed 's/^/export /'
+  # The mode is recorded as a COMMENT, not exported (2026-10-14). This file is sourced with
+  # `set -a` by the remote scripts, so exporting the mode here would OVERWRITE a value the
+  # driver forwarded -- the same override that made the old hard-coded flag uncontrollable.
+  # The mode that matters is the one the NCCL lines below actually select, and every row
+  # records it. A driver that forwards a mode can therefore be sure its value survives.
+  echo "# MLSYS_NCCL_WAIT_MODE=$MLSYS_NCCL_WAIT_MODE (provisioning-time default; a run may override per stage)"
+  printf '%s\n' "$NCCL_WAIT_LINES" | sed 's/^/export /'
 } > "$REPO/.pod_env.sh"
-echo "  wrote $REPO/.pod_env.sh (cache, NCCL and allocator settings)"
+echo "  wrote $REPO/.pod_env.sh (cache, NCCL, allocator settings; wait mode $MLSYS_NCCL_WAIT_MODE)"
 
 # --------------------------------------------------------------------------
 # 3. the pins the campaign was measured under.

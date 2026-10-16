@@ -1,0 +1,47 @@
+### nvidia-smi topo -m
+	[4mGPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	NIC0	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+GPU0	 X 	NV12	NV12	NV12	NV12	NV12	NV12	NV12	PHB	0-239	0-1		N/A
+GPU1	NV12	 X 	NV12	NV12	NV12	NV12	NV12	NV12	PHB	0-239	0-1		N/A
+GPU2	NV12	NV12	 X 	NV12	NV12	NV12	NV12	NV12	PHB	0-239	0-1		N/A
+GPU3	NV12	NV12	NV12	 X 	NV12	NV12	NV12	NV12	PHB	0-239	0-1		N/A
+GPU4	NV12	NV12	NV12	NV12	 X 	NV12	NV12	NV12	PHB	0-239	0-1		N/A
+GPU5	NV12	NV12	NV12	NV12	NV12	 X 	NV12	NV12	PHB	0-239	0-1		N/A
+GPU6	NV12	NV12	NV12	NV12	NV12	NV12	 X 	NV12	PHB	0-239	0-1		N/A
+GPU7	NV12	NV12	NV12	NV12	NV12	NV12	NV12	 X 	PHB	0-239	0-1		N/A
+NIC0	PHB	PHB	PHB	PHB	PHB	PHB	PHB	PHB	 X 				
+
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks
+
+NIC Legend:
+
+  NIC0: mlx5_0
+
+
+### gpus
+index, name, memory.total [MiB]
+0, NVIDIA A100-SXM4-80GB, 81920 MiB
+1, NVIDIA A100-SXM4-80GB, 81920 MiB
+2, NVIDIA A100-SXM4-80GB, 81920 MiB
+3, NVIDIA A100-SXM4-80GB, 81920 MiB
+4, NVIDIA A100-SXM4-80GB, 81920 MiB
+5, NVIDIA A100-SXM4-80GB, 81920 MiB
+6, NVIDIA A100-SXM4-80GB, 81920 MiB
+7, NVIDIA A100-SXM4-80GB, 81920 MiB
+
+### the wait mode this session was provisioned with
+export NCCL_TIMEOUT=3600
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=3600
+# MLSYS_NCCL_WAIT_MODE=async (provisioning-time default; a run may override per stage)
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+
+### the torch that will be imported, and the poll constant it carries
+torch 2.5.1+cu124
+blocking-wait env name: n/a
