@@ -110,6 +110,8 @@ BW_ONEM_OLD = "results/mlsys/bw_diag_p2/onem/blocking/df_arms.csv"
 BW_ONEM_NEW = "results/mlsys/bw_diag_p2/onem/async/df_arms.csv"
 BW_SPEC_OLD = "results/mlsys/bw_diag_p2/spec/blocking/df_arms.csv"
 BW_SPEC_NEW = "results/mlsys/bw_diag_p2/spec/async/df_arms.csv"
+BW_BENCH_JSON = {"blocking": "results/mlsys/bw_diag_p1/bench/ringbench_blocking.json",
+                 "no blocking wait": "results/mlsys/bw_diag_p1/bench/ringbench_async.json"}
 
 # The top-up target-only rows that widen the 512k and 1M denominators (RESULTS_OCT 10.7).
 TOPUP = {524288: "results/mlsys/rerun_topup/session_a_TP_512K_TARGET.csv",
@@ -365,7 +367,7 @@ def fig_b(out, arms, accs, perbook, ppl):
         ax.annotate(f"{v:.4f}", (i, v), textcoords="offset points", xytext=(0, 2),
                     ha="center", fontsize=5)
     ax.set_xticks(range(len(arms))); ax.set_xticklabels(arms)
-    ax.set_ylabel("paired ppl ratio vs native\n(n=1 passage, different prompt)")
+    ax.set_ylabel("paired ppl ratio\nvs native (n=1)")
     ax.set_ylim(0.99, 1.03)
     ax.grid(True, axis="y", lw=0.3, color="0.85", zorder=0)
     fig.savefig(os.path.join(out, "figs", "figB_rope.pdf"))
@@ -415,9 +417,10 @@ def fig_c(out, groups, dropped):
     ax.set_xticklabels([g[0] for g in groups])
     ax.set_xlim(-0.45, len(groups) - 0.55)
     ax.set_ylabel("periodic tail share of row")
-    ax.set_ylim(-0.03, 1.05)
+    ax.set_ylim(-0.03, 1.18)
     ax.grid(True, axis="y", lw=0.3, color="0.85", zorder=0)
-    ax.legend(frameon=False, loc="center right", fontsize=4.8)
+    ax.legend(frameon=False, loc="upper left", fontsize=4.4, handletextpad=0.4,
+              borderaxespad=0.2)
     fig.savefig(os.path.join(out, "figs", "figC_degeneracy.pdf"))
     plt.close(fig)
     return ([(g[0].replace("\n", " "), sum(1 for x in g[1] if x[2]), len(g[1]))
@@ -426,20 +429,32 @@ def fig_c(out, groups, dropped):
 
 # =========================================================================== Fig D
 def bench_two_modes():
-    """ms/round per payload, both NCCL wait modes, from the diagnostic's own CSVs."""
+    """ms/round per payload, both NCCL wait modes, from the diagnostic's own CSVs.
+
+    The JSON beside each CSV carries the per-rank spread. Its entries are ordered
+    (wait, sync) per payload, and the wait rows are the blocking arm's host timing while
+    the sync rows are the transfer, so the spread column of the table pairs them the same
+    way the plotted columns do.
+    """
     out = {}
     for mode, path in BW_BENCH.items():
         rs = [r for r in csv.DictReader(open(path)) if r.get("ms_per_round")]
         rs.sort(key=lambda r: (r["timing"], float(r["size_mb_actual"])))
         w = [r for r in rs if r["timing"] == "wait"]
-        s = [r for r in rs if r["timing"] == "sync"]
-        assert [r["label"] for r in w] == [r["label"] for r in s], path
+        sy = [r for r in rs if r["timing"] == "sync"]
+        assert [r["label"] for r in w] == [r["label"] for r in sy], path
+        skew = _bench_json(mode)["skew"]
+        per_label = {skew[2 * i]["label"]: (skew[2 * i]["spread_ms"], skew[2 * i + 1]["spread_ms"])
+                     for i in range(len(skew) // 2)}
+        assert set(per_label) == {r["label"] for r in w}, mode
         out[mode] = dict(
-            x=[max(float(r["size_mb_actual"]), 0.003) for r in s],
+            x=[max(float(r["size_mb_actual"]), 0.003) for r in sy],
             wait=[float(r["ms_per_round"]) for r in w],
-            sync=[float(r["ms_per_round"]) for r in s],
-            gbs=[float(r["gb_per_s"]) for r in s],
-            labels=[r["label"] for r in s],
+            sync=[float(r["ms_per_round"]) for r in sy],
+            gbs=[float(r["gb_per_s"]) for r in sy],
+            skew_wait=[per_label[r["label"]][0] for r in w],
+            skew_sync=[per_label[r["label"]][1] for r in sy],
+            labels=[r["label"] for r in sy],
             env=rs[0].get("env_arm"))
     return out
 
@@ -567,16 +582,121 @@ def removed_time(head):
 
 
 def memory_peak():
-    """The campaign's 1M peak, worst rank, from the CSVs (not the reviewed build's trace)."""
+    """1M peak memory, and where it comes from.
+
+    Only the ring2048 diagnostic rows (bw_diag_p2) record a worst-rank column. The split-KV
+    campaign's own 1M rows record rank 0 only, so the worst-rank figure the paper quotes is
+    labelled as the diagnostic's, and the campaign's rank-0 maximum is reported beside it.
+    """
     out = []
     for mode, path in (("blocking", BW_ONEM_OLD), ("no blocking wait", BW_ONEM_NEW)):
         for r in csv.DictReader(open(path)):
             if r.get("status") != "ok":
                 continue
+            if not r.get("peak_alloc_mb_worst_rank"):
+                continue
             out.append(dict(mode=mode, arm=r["arm"], mode_col=r["mode"],
                             alloc=float(r["peak_alloc_mb_worst_rank"]) / 1024.0,
-                            reserved=float(r["peak_reserved_mb_worst_rank"]) / 1024.0))
+                            reserved=float(r["peak_reserved_mb_worst_rank"]) / 1024.0,
+                            ranks="worst of 8"))
+    rank0 = []
+    for path in ("results/mlsys/rerun_r1/session_a_*.csv", "results/mlsys/rerun_r2/session_a_*.csv",
+                 "results/mlsys/rerun_topup/session_a_*.csv"):
+        for f in sorted(glob.glob(path)):
+            for r in csv.DictReader(open(f)):
+                if r.get("status") != "ok" or not r.get("gpu_peak_mem_mb"):
+                    continue
+                if int(r.get("context_length") or 0) != 1048576:
+                    continue
+                rank0.append(float(r["gpu_peak_mem_mb"]) / 1024.0)
+    if rank0:
+        out.append(dict(mode="split-KV campaign", arm="1M rows", mode_col=f"n={len(rank0)}",
+                        alloc=max(rank0), reserved=float("nan"), ranks="rank 0 only"))
     return out
+
+
+def bw_numbers():
+    """Every blocking-wait number the paper quotes, computed from the diagnostic CSVs.
+
+    The F4 framing needs four quantities no other pool provides: the ring's flag-removal
+    saving per session, the poll's share of what split-KV removes, the flag effect at 1M,
+    and how much of the 1M removal the measured transfer explains. Computing them here
+    keeps every SRC comment pointing at a script rather than at a hand-written document.
+    """
+    def dec(r):
+        return ((float(r["time_sec"]) - float(r["ttft_ms"]) / 1000.0)
+                / (int(r["tokens_generated"]) - 1))
+
+    def pick(path, arm=None, mode="target", ctx=131072):
+        out = []
+        for r in csv.DictReader(open(path)):
+            if r.get("status") != "ok" or r.get("mode") != mode:
+                continue
+            try:
+                if int(r["context_length"]) != ctx:
+                    continue
+            except Exception:
+                continue
+            if arm is not None and r.get("arm") != arm:
+                continue
+            out.append(r)
+        return out
+
+    out = {}
+    bench = bench_two_modes()
+    b, a = bench["blocking"], bench["no blocking wait"]
+    out["bench_blocking_min"] = min(b["wait"])
+    out["bench_blocking_max"] = max(b["wait"])
+    out["bench_async_4kb_ms"] = a["sync"][0]
+    out["bench_async_max_ms"] = max(a["sync"])
+    out["bench_async_max_gbs"] = max(a["gbs"])
+    out["bench_postsync_diff"] = [
+        (b["labels"][i], 100.0 * (b["sync"][i] / a["sync"][i] - 1.0))
+        for i in range(len(b["labels"]))]
+    out["bench_skew_ms"] = dict(blocking=max(x["spread_ms"] for x in _bench_json("blocking")["skew"]),
+                                no_flag=max(x["spread_ms"] for x in _bench_json("no blocking wait")["skew"]))
+
+    arms = {"p1": (BW_ARMS_OLD, "results/mlsys/bw_diag_p1/arms/async/df_arms.csv"),
+            "p2": ("results/mlsys/bw_diag_p2/arms/blocking/df_arms.csv",
+                   "results/mlsys/bw_diag_p2/arms/async/df_arms.csv")}
+    out["sessions"] = {}
+    for tag, (bpath, apath) in arms.items():
+        bl, al, sp = pick(bpath, "ring2048"), pick(apath, "ring2048"), pick(bpath, "splitkv")
+        if not (bl and al and sp):
+            continue
+        rb, ra, rs = dec(bl[0]), dec(al[0]), dec(sp[0])
+        out["sessions"][tag] = dict(
+            ring_blocking=rb, ring_async=ra, saving=rb - ra, splitkv=rs,
+            ring_minus_splitkv=rb - rs, poll_share=100.0 * (rb - ra) / (rb - rs))
+
+    om = {}
+    for mode, path in (("blocking", BW_ONEM_OLD),
+                       ("no blocking wait", "results/mlsys/bw_diag_p2/onem/async/df_arms.csv")):
+        rs = pick(path, ctx=1048576)
+        if rs:
+            om[mode] = dec(rs[0])
+    if len(om) == 2:
+        out["onem"] = dict(blocking=om["blocking"], flag_free=om["no blocking wait"],
+                           change_pct=100.0 * (om["no blocking wait"] / om["blocking"] - 1.0))
+    return out
+
+
+def bw_transfer_check(removed_1m, payload_gb=2.15):
+    """How much of the 1M removal the measured transfer can account for.
+
+    The bench's 266 MB payload is the key/value shard of a 128k window, so a 1M window ships
+    2.15 GB per round over 224 rounds; 101.69 GB/s is that bench's measured post-sync rate.
+    """
+    gbs = 101.69
+    transfer_s = ROUNDS_PER_TOKEN * payload_gb / gbs
+    return dict(rounds=ROUNDS_PER_TOKEN, payload_gb=payload_gb, gbs=gbs,
+                transfer_s=transfer_s, removed=removed_1m,
+                share_pct=100.0 * transfer_s / removed_1m)
+
+
+def _bench_json(mode):
+    """The JSON beside a bench CSV, keyed the same way as BW_BENCH."""
+    return json.load(open(BW_BENCH_JSON[mode]))
 
 
 def seed_spread():
@@ -624,16 +744,19 @@ def tables(out, head, arms, accs, ppl, vl, f5, bwd, mem):
     w("rope.tex", t)
 
     t = [r"\begin{tabular}{lrrrrrr}", r"\toprule",
-         r" & \multicolumn{2}{c}{Prefill (s)} & \multicolumn{2}{c}{vLLM run /} & "
+         r" & \multicolumn{2}{c}{Prefill (s)} & \multicolumn{2}{c}{Ratios vs RASD prefill} & "
          r"\multicolumn{2}{c}{Decode (s/token)} \\",
          r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}",
-         r"Context & vLLM & RASD & RASD prefill & RASD prefill & vLLM & RASD split-KV \\",
-         r" & & & \multicolumn{2}{c}{(same quantity)} & & \\", r"\midrule"]
+         r"Context & vLLM & RASD & vLLM prefill & vLLM whole run & vLLM & RASD split-KV \\",
+         r" & & & $\div$ RASD prefill & $\div$ RASD prefill & & \\", r"\midrule"]
     for r in vl:
-        t.append(f"{r['ctx']} & {r['v_pre']:.2f} & {r['rt_pre']:.2f} & "
-                 f"{r['pre_pre']:.2f}$\\times$ & {r['tot_pre']:.2f}$\\times$ & "
+        pq = f"{r['pre_pre']:.2f}$\\times$" if r["ctx"] != "128k" else "n/q"
+        tq = f"{r['tot_pre']:.2f}$\\times$" if r["ctx"] != "128k" else "n/q"
+        t.append(f"{r['ctx']} & {r['v_pre']:.2f} & {r['rt_pre']:.2f} & {pq} & {tq} & "
                  f"{r['v_dec']:.4f} & {r['new']:.2f} \\\\")
-    t += [r"\bottomrule", r"\end{tabular}"]
+    t += [r"\midrule",
+          r"\multicolumn{7}{l}{\footnotesize \emph{n/q}: not quoted, because this release's own 128\,k first-token time varies 7.0 to 12.4\,s for one configuration.} \\",
+          r"\bottomrule", r"\end{tabular}"]
     w("vllm.tex", t)
 
     t = [r"\begin{tabular}{llrrrr}", r"\toprule",
@@ -655,14 +778,15 @@ def tables(out, head, arms, accs, ppl, vl, f5, bwd, mem):
     w("f5_matched.tex", t)
 
     bench, bw_arms, bw_onem = bwd
-    t = [r"\begin{tabular}{lrrrr}", r"\toprule",
-         r"Payload & size & \multicolumn{2}{c}{ms/round} & \\",
-         r"\cmidrule(lr){3-4}",
-         r" & (MB) & blocking wait & no blocking wait & \\", r"\midrule"]
+    t = [r"\begin{tabular}{lrrrrrr}", r"\toprule",
+         r"Payload & size & \multicolumn{2}{c}{ms/round} & \multicolumn{2}{c}{rank spread} \\",
+         r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}",
+         r" & (MB) & blocking wait & no flag & blocking & no flag \\", r"\midrule"]
     b, a = bench["blocking"], bench["no blocking wait"]
     for i, lab in enumerate(b["labels"]):
         t.append(f"\\texttt{{{lab.replace('_', chr(92) + '_')}}} & {b['x'][i]:.3f} & "
-                 f"{b['wait'][i]:.4f} & \\textbf{{{a['sync'][i]:.4f}}} \\\\")
+                 f"{b['wait'][i]:.4f} & \\textbf{{{a['sync'][i]:.4f}}} & "
+                 f"{b['skew_wait'][i]:.4f} & {a['skew_sync'][i]:.4f} \\\\")
     t += [r"\bottomrule", r"\end{tabular}"]
     w("bw_bench.tex", t)
 
@@ -680,11 +804,12 @@ def tables(out, head, arms, accs, ppl, vl, f5, bwd, mem):
     t += [r"\bottomrule", r"\end{tabular}"]
     w("bw_arms.tex", t)
 
-    t = [r"\begin{tabular}{llrr}", r"\toprule",
-         r"1M rows, worst rank & allocated (GiB) & reserved (GiB) & \\", r"\midrule"]
+    t = [r"\begin{tabular}{llrrl}", r"\toprule",
+         r"1M rows & allocated (GiB) & reserved (GiB) & over \\", r"\midrule"]
     for r in mem:
-        t.append(f"{r['mode']}, {r['arm']} {r['mode_col']} & {r['alloc']:.1f} & "
-                 f"{r['reserved']:.1f} & \\\\")
+        res = "--" if r["reserved"] != r["reserved"] else f"{r['reserved']:.1f}"
+        t.append(f"{r['mode']}, \\texttt{{{r['arm']}}} {r['mode_col']} & {r['alloc']:.1f} & "
+                 f"{res} & {r['ranks']} \\\\")
     t += [r"\bottomrule", r"\end{tabular}"]
     w("memory.tex", t)
 
@@ -762,10 +887,34 @@ def main(argv=None):
           f" spread max/min {spread:.4f}")
     print(f"fixed-engine 1M spec acceptance per seed "
           f"{ {k: round(v, 4) for k, v in ameans.items()} }")
+    bn = bw_numbers()
+    print("blocking-wait diagnostic (bw_numbers()):")
+    print(f"  bench blocking wait {bn['bench_blocking_min']:.4f} to {bn['bench_blocking_max']:.4f} ms; "
+          f"no flag {bn['bench_async_4kb_ms']:.4f} ms at 4 KB to {bn['bench_async_max_ms']:.4f} ms "
+          f"at 266 MB ({bn['bench_async_max_gbs']:.2f} GB/s)")
+    print("  post-sync agreement (blocking vs no flag):",
+          [f"{l} {d:+.1f}%" for l, d in bn["bench_postsync_diff"]])
+    print("  worst rank spread:", {k: round(v, 4) for k, v in bn["bench_skew_ms"].items()}, "ms")
+    for tag, v in sorted(bn["sessions"].items()):
+        print(f"  {tag} 128k ring2048 target-only: blocking {v['ring_blocking']:.4f} -> "
+              f"{v['ring_async']:.4f} s/token (saving {v['saving']:.4f}); splitkv "
+              f"{v['splitkv']:.4f}; ring minus splitkv {v['ring_minus_splitkv']:.4f} s; "
+              f"poll share {v['poll_share']:.1f}%")
+    if "onem" in bn:
+        o = bn["onem"]
+        print(f"  1M ring2048 target-only: {o['blocking']:.4f} -> {o['flag_free']:.4f} s/token "
+              f"({o['change_pct']:+.2f}%)")
+        tc = bw_transfer_check(removed_time(head)[-1]["removed"])
+        print(f"  1M transfer check: {tc['rounds']} rounds x {tc['payload_gb']} GB at "
+              f"{tc['gbs']} GB/s = {tc['transfer_s']:.2f} s of {tc['removed']:.2f} s removed "
+              f"({tc['share_pct']:.0f}%)")
+    for r in removed_time(head):
+        print(f"  removed at {r['ctx']}: {r['removed']:.4f} s/token, {r['per_round_ms']:.1f} ms/round")
     print("1M peak memory, worst rank (this campaign):")
     for r in mem:
-        print(f"  {r['mode']:16s} {r['arm']:10s} {r['mode_col']:7s} allocated "
-              f"{r['alloc']:.1f} GiB  reserved {r['reserved']:.1f} GiB")
+        res = "n/a" if r["reserved"] != r["reserved"] else f"{r['reserved']:.1f} GiB"
+        print(f"  {r['mode']:20s} {r['arm']:10s} {r['mode_col']:7s} allocated "
+              f"{r['alloc']:.1f} GiB  reserved {res}  ({r['ranks']})")
     print("wrote figures and tables under", a.out)
     return 0
 

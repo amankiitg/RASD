@@ -1,14 +1,14 @@
 LCFM 2026 camera-ready: summary of changes
 
 The reviewed version reported that the speedup regresses to parity at 512k and 1M, and
-that ring communication was at most 1.2 percent of wall time. Both are withdrawn. Under
-the NCCL blocking wait every run here used, each rotation round cost the same 10.3 ms at
-4 KB and at 266 MB, because that mode polls each collective with a fixed 10 ms host
-sleep; without the flag the same round costs 0.134 ms. The reported mechanism was the
-measurement condition. Removing the rotation is still worth 2.8 to 4.4 times on decode,
-and speculation still pays 1.5 to 2.3 times on top. Three further claims are corrected:
-the draft used the recent window, not the prompt's opening; two long-context seed stages
-re-ran seed 42, because a level's seed list is overwritten during config merge, so the
-corrected 1M acceptance is unchanged rather than down 10 percent; and the perplexity
-side of the rotary finding is one passage, reported as such. The author block is
-unchanged from the reviewed submission, affiliated Independent Researcher.
+that ring communication was at most 1.2 percent of wall time. Both are withdrawn. Every
+campaign run used the NCCL blocking wait, which polls each collective wait with a fixed
+10 ms host sleep; that is why a rotation round cost the same 10.3 ms at 4 KB and 266 MB,
+against 0.134 ms without the flag. What the rotation-free decode removes is two different
+costs: at 128k the poll is about 70 percent of it, while at 1M the poll is about 3 percent
+and the remainder is not attributed here. Removing the rotation is still worth 2.8 to 4.4
+times on decode, with speculation paying 1.5 to 2.3 times on top. Two further corrections:
+two long-context seed stages re-ran seed 42 (a level's seed list is overwritten during
+config merge), so the corrected 1M acceptance shows no detectable change rather than a 10
+percent drop; and the rotary finding's perplexity side is one passage. The author block is
+unchanged, affiliated Independent Researcher.

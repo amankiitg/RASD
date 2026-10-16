@@ -1,13 +1,13 @@
-\begin{tabular}{lrrrr}
+\begin{tabular}{lrrrrrr}
 \toprule
-Payload & size & \multicolumn{2}{c}{ms/round} & \\
-\cmidrule(lr){3-4}
- & (MB) & blocking wait & no blocking wait & \\
+Payload & size & \multicolumn{2}{c}{ms/round} & \multicolumn{2}{c}{rank spread} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+ & (MB) & blocking wait & no flag & blocking & no flag \\
 \midrule
-\texttt{tiny\_4kb} & 0.004 & 10.3347 & \textbf{0.1340} \\
-\texttt{mb33} & 33.292 & 10.3398 & \textbf{0.8135} \\
-\texttt{k8\_66mb\_expand\_after} & 66.585 & 10.3802 & \textbf{1.3633} \\
-\texttt{mb133} & 133.169 & 10.3442 & \textbf{2.5306} \\
-\texttt{mb266} & 266.338 & 10.3520 & \textbf{2.6191} \\
+\texttt{tiny\_4kb} & 0.004 & 10.3347 & \textbf{0.1340} & 0.0737 & 0.0034 \\
+\texttt{mb33} & 33.292 & 10.3398 & \textbf{0.8135} & 0.0906 & 0.0286 \\
+\texttt{k8\_66mb\_expand\_after} & 66.585 & 10.3802 & \textbf{1.3633} & 0.0500 & 0.0135 \\
+\texttt{mb133} & 133.169 & 10.3442 & \textbf{2.5306} & 0.0730 & 0.0088 \\
+\texttt{mb266} & 266.338 & 10.3520 & \textbf{2.6191} & 0.0802 & 0.0051 \\
 \bottomrule
 \end{tabular}
