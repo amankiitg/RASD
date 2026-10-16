@@ -1,0 +1,16 @@
+== 128k first-token time by configuration (bw_diag arms + split-KV campaign target rows)
+   ('ring2048', '2048', 'async', 'spec') [(11.05, 'bw_diag_p2')]
+   ('ring2048', '2048', 'async', 'target') [(9.07, 'bw_diag_p2'), (9.88, 'bw_diag_p1')]
+   ('ring2048', '2048', 'blocking', 'spec') [(7.54, 'bw_diag_p1'), (11.3, 'bw_diag_p2')]
+   ('ring2048', '2048', 'blocking', 'target') [(8.92, 'bw_diag_p1'), (12.39, 'bw_diag_p2')]
+   ('ring32768', '32768', 'blocking', 'spec') [(7.09, 'bw_diag_p1')]
+   ('ring32768', '32768', 'blocking', 'target') [(7.09, 'bw_diag_p1'), (7.16, 'bw_diag_p2')]
+   ('splitkv', '32768', 'blocking', 'spec') [(7.16, 'bw_diag_p1')]
+   ('splitkv', '32768', 'blocking', 'target') [(7.01, 'bw_diag_p1'), (7.14, 'bw_diag_p2')]
+   ('splitkv-campaign', '32768', 'blocking', 'spec') [(8.27, 'rerun_r1'), (8.52, 'rerun_r1'), (8.71, 'rerun_r1'), (9.15, 'rerun_topup'), (9.2, 'rerun_r1'), (9.39, 'rerun_r2'), (9.49, 'rerun_r1')]
+   ('splitkv-campaign', '32768', 'blocking', 'target') [(8.02, 'rerun_r1'), (8.18, 'rerun_r2'), (8.27, 'rerun_topup'), (8.76, 'rerun_r1'), (9.13, 'rerun_topup'), (9.57, 'rerun_r1')]
+== memory
+  split-KV 1M rows n=20 rank-0 max 26.21 GiB
+== bench rank spread: JSON skew entries are (wait, sync) per label
+  blocking: wait-timing spread max 0.0906  post-sync spread max 0.0285
+  async: wait-timing spread max 0.1096  post-sync spread max 0.0286
