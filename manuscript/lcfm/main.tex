@@ -1,4 +1,4 @@
-% LCFM @ NeurIPS 2026 camera-ready. Long paper: main text <= 8 pages.
+% LCFM @ NeurIPS 2026 camera-ready. Long paper: main text <= 9 pages.
 %
 % Build: cd manuscript/lcfm && tectonic main.tex
 %
@@ -6,6 +6,15 @@
 % submission's own directory, with the same option set it used plus [final]: the [final]
 % option is what makes this a camera-ready copy, and the style then prints the author block
 % and drops the anonymization. No proxy: the style file is the submission's own.
+%
+% WORKSHOP CAMERA-READY. The style's workshop options are `sglblindworkshop` (single blind:
+% sets \@workshoptrue and \@anonymousfalse) and `dblblindworkshop` (double blind: sets
+% \@workshoptrue only). Both set the same foot line, `... Workshop: \@workshoptitle.', from
+% \workshoptitle, and both are identical once [final] clears the anonymous flag, so the
+% de-anonymized workshop camera-ready needs a workshop option plus [final]. That is what
+% [dblblindworkshop, final] below is, and \workshoptitle carries the workshop name. Under
+% [final] the style prints \@trackname instead of "Submitted to ...", which also disables the
+% lineno package, so the copy has no line numbers. The style file is not edited.
 %
 % Author block: restored from the reviewed submission's own camera-ready block
 % (commit 44038b2). See results/lcfm/FINAL_REPORT.txt for the one discrepancy with the
@@ -25,7 +34,7 @@
 \documentclass{article}
 
 \usepackage[dblblindworkshop, final]{neurips_2026}
-\workshoptitle{Workshop on Long Context Foundation Models (LCFM) @ NeurIPS 2026}
+\workshoptitle{Long Context Foundation Models (LCFM) @ NeurIPS 2026}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -221,7 +230,7 @@ scaling dictionary under test. A ceiling test on \texttt{meta-llama/Llama-2-7b-h
 capability reference only and no ratio here uses it (Appendix~\ref{app:evidence}).
 % SRC: results/lcfm/CAMERA_READY_KIT.md section 3e (limitation 4)
 
-\paragraph{Protocol.} Prompts are PG-19 narrative \citep{rae2019pg19}, five books, windowed
+\paragraph{Protocol.} Prompts are PG-19 narrative \citep{rae2020pg19}, five books, windowed
 so each rung's scored continuation ends at the same document position as the 1\,M rung, with
 the alignment verified from \texttt{continuation\_sha256} and the recorded offsets rather than
 from a pool name. Decoding is $T{=}0.7$ sampling, 128 new tokens, $\gamma{=}4$ speculative
@@ -261,9 +270,10 @@ repeated 16-gram, or a periodic tail covering $50\%$ of the row.
 
 Figure~\ref{fig:degeneracy} is the census over the rows that ship with a per-row verdict,
 grouped by the temperature each row \emph{records} rather than by its stage name: the 128\,k
-temperature campaign's two stages are at $T{=}0$ and $T{=}1.0$. Under greedy,
-\textbf{9 of 10} rows in the long-context first-window audit loop and \textbf{1 of 5} in the
-128\,k greedy arm does; at $T{=}1.0$ none of five does; at $T{=}0.7$ \textbf{1 of 77} does. That row is \texttt{ROPE\_EXT\_SAMP\_F16\_SPEC\_pg19\_train\_2768\_s42},
+temperature campaign's two stages are at $T{=}0$ and $T{=}1.0$. Under greedy decoding, the
+long-context first-window audit loop loops in \textbf{9 of its 10} rows and the 128\,k greedy
+arm loops in \textbf{1 of its 5}. At $T{=}1.0$ none of the five rows loops, and at the headline
+sampling temperature $T{=}0.7$ \textbf{1 of 77} rows does. That single row is \texttt{ROPE\_EXT\_SAMP\_F16\_SPEC\_pg19\_train\_2768\_s42},
 a rotary arm on book 2768 with 77\% of its tokens inside a repeated 16-gram and a zero
 periodic tail, which is why the figure marks it with the detector's verdict instead of the
 share. Six greedy rows with eight generated tokens each are excluded, too short to judge. The
@@ -313,6 +323,19 @@ $0.05\%$ and $1.56\%$ of perplexity on that passage and $27\%$ and $31\%$ of acc
 five books.}
 \label{fig:rope}
 \end{figure}
+
+\begin{table}[t]
+\centering
+\caption{The rotary intervention at 128\,k on \texttt{meta-llama/Llama-3.1-8B}: five books
+per arm, seed 42, FP4 weights with an NF4 KV cache. Acceptance is the mean over five books.
+The perplexity ratio is one 1024-token continuation of \emph{one} passage, on a prompt none
+of the acceptance rows use, whose native perplexity is 1.013; it is a paired measurement
+against the native arm on that passage and nothing wider. The \texttt{tok/s} column is
+\textbf{old-engine} throughput, reported for completeness only: the finding is the acceptance
+contrast, and no speedup is claimed from these arms.}
+\label{tab:rope}
+\input{../../results/lcfm/tables/rope.tex}
+\end{table}
 
 Figure~\ref{fig:rope} is the measurement, and Table~\ref{tab:rope} the table. Acceptance falls from
 \textbf{0.7272} (native) to \textbf{0.5336} (factor 16) and \textbf{0.5006} (factor 32), a \textbf{27} to \textbf{31\%} relative loss, while the paired
@@ -385,6 +408,21 @@ each rank computes attention for the replicated query against only its own prefi
 the partials are merged by one MAX and one SUM all-reduce. Our contribution is the diagnosis
 and the measurement, not the technique.
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.55\linewidth]{figD_ring_bench.pdf}
+\caption{A bare-process benchmark of the ring primitive the engine uses
+(\texttt{batch\_isend\_irecv}, 8 ranks, 256 rounds per payload, no model), in both NCCL wait
+modes, same session and same box. Squares: the campaign's configuration, where the host
+\texttt{wait()} on each round returns after a fixed 10\,ms poll, so the round costs the same
+at 4\,KB and at 266\,MB. Triangles: the same rounds with the wait flag removed and the timing
+taken after a device sync, where the round costs what the transfer costs and reaches
+101.7\,GB/s at 266\,MB. The two modes' post-sync times agree to within 3\% at 33\,MB, 133\,MB
+and 266\,MB and to within 11\% at 4\,KB. NCCL selected \texttt{P2P/CUMEM/read} on
+a full NV12 mesh.}
+\label{fig:ringbench}
+\end{figure}
+
 \begin{table}[t]
 \centering\footnotesize
 \caption{Decode time per token, old ring engine against split-KV, on \emph{matched}
@@ -396,38 +434,39 @@ ratio of decode-only times. \textbf{Both columns were measured under NCCL blocki
 \input{../../results/lcfm/tables/headline.tex}
 \end{table}
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.72\linewidth]{figA_decode_vs_context.pdf}
+\caption{The cells of Table~\ref{tab:headline} plotted against context: decode time per token,
+both engines and both arms, all under blocking wait. Whiskers are the range over cells and $n$
+is the number of cells both engines measured. Both engines are dominated by the same rotation
+path, which split-KV shortens, and the gap between them widens as the shard a round ships
+grows.}
+\label{fig:decode-context}
+\end{figure}
+
 Table~\ref{tab:headline} is the headline, with the same cells plotted in
-Figure~\ref{fig:decode-context} in Appendix~\ref{app:diagnosis}. Decode-only, the fix is worth
+Figure~\ref{fig:decode-context}. Decode-only, the fix is worth
 \textbf{2.80$\times$ / 3.77$\times$ / 4.38$\times$} with speculation and
 \textbf{3.30$\times$ / 4.26$\times$ / 5.32$\times$} without it at 128\,k / 512\,k / 1\,M.
-What it removes is two different costs. At 128\,k, split-KV removes \textbf{2.43\,s per
-token} on these cells and removing the flag from the ring saves \textbf{1.75\,s} of that in the
+What the fix removes is not one cost but two, and their balance changes with context.
+At 128\,k, split-KV removes \textbf{2.43\,s per
+token} on these cells. Removing the flag from the ring, with nothing else changed, saves
+\textbf{1.75\,s} of that in the
 diagnostic's first session (\texttt{ring2048} target-only), so the poll is \textbf{about 70\%}
-of the removal there and the rotation's own work is the rest; 224 $\times$ (10.3347 $-$ 2.6191)
-\,ms predicts 1.73\,s against the measured 1.75\,s. That pairing gives 72\%, and entirely
-within one session 65\% and 67\% (Appendix~\ref{app:diagnosis}). At 1\,M it is the opposite: split-KV removes
-\textbf{13.88\,s per token} and removing the flag changes ring decode by \textbf{3\%} (16.43
-to 15.96\,s/token, one row per mode), so almost none of that is the poll. Moving each round's
+of the removal there and the rotation's own work is the rest. The arithmetic agrees from both
+sides: 224 rounds of the difference between the two wait modes,
+224 $\times$ (10.3347 $-$ 2.6191)\,
+ms, predicts 1.73\,s against the measured 1.75\,s, and that pairing gives a 72\% share, while the
+two comparisons made
+entirely within one session give 65\% and 67\% (Appendix~\ref{app:diagnosis}). At 1\,M the balance is the opposite: split-KV removes
+\textbf{13.88\,s per token}, and removing the flag changes ring decode by \textbf{3\%} (16.43
+to 15.96\,s/token, one row per mode), so almost none of the removal is the poll. Moving each round's
 shard at the measured 101.7\,GB/s accounts for \textbf{4.7\,s of the 13.9\,s} (224 rounds
 $\times$ 2.15\,GB) and the rest is \textbf{not attributed in this work}. The removed cost grows
 with context because the shard the rotation ships grows, 4$\times$ at 512\,k and 8$\times$ at
 1\,M.
 % SRC: scripts/lcfm_figures.py bw_numbers(), bw_transfer_check(), bench_two_modes(), removed_time(), headline_rows(); results/mlsys/bw_diag_p1/{bench,arms}, results/mlsys/bw_diag_p2/{arms,onem}
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.55\linewidth]{figD_ring_bench.pdf}
-\caption{A bare-process benchmark of the ring primitive the engine uses
-(\texttt{batch\_isend\_irecv}, 8 ranks, 256 rounds per payload, no model), in both NCCL wait
-modes, same session and same box. Squares: the campaign's configuration, where the host
-\texttt{wait()} on each round returns after a fixed 10\,ms poll, so the round costs the same
-at 4\,KB and at 266\,MB. Triangles: the same rounds with the wait flag removed and the timing
-taken after a device sync, where the round costs what the transfer costs and reaches
-101.7\,GB/s at 266\,MB. The two modes' post-sync times agree to within 3\% at 33\,MB, 133\,MB
-and 266\,MB and to within 11\% at 4\,KB (Table~\ref{tab:bench}). NCCL selected \texttt{P2P/CUMEM/read} on
-a full NV12 mesh.}
-\label{fig:ringbench}
-\end{figure}
 
 
 
@@ -500,7 +539,18 @@ the split-KV engine measured \textbf{under NCCL blocking wait}. vLLM ran at its 
 chunked-prefill and batch-token settings, untuned. Every ratio below carries all three
 caveats.
 
-Table~\ref{tab:vllm} in Appendix~\ref{app:baseline} carries the numbers; two readings point in
+\begin{table}[t]
+\centering
+\caption{vLLM (bf16, bf16 KV, greedy, default kernel settings) against the split-KV ring engine
+(FP4 weights, NF4 KV, $T{=}0.7$ sampled, NCCL blocking wait) on the same prompts. Prefill is
+the first-token time; the two ratio columns are vLLM's prefill and vLLM's \emph{entire run}
+(prefill plus 128 decode steps) each divided by RASD's prefill; decode is per token.
+\textbf{Not a precision-matched comparison}.}
+\label{tab:vllm}
+\input{../../results/lcfm/tables/vllm.tex}
+\end{table}
+
+Table~\ref{tab:vllm} carries the numbers; two readings point in
 opposite directions.
 \textbf{vLLM's entire run takes 2.54$\times$ to 2.57$\times$ our prefill}, its prefill and
 its 128 decode steps against our first-token time; prefill against prefill the ratio is
@@ -578,7 +628,9 @@ $130$ to $162\times$ faster per token.
 % figures, all generated by scripts/lcfm_figures.py.
 
 % References come before the appendices, as the style expects, so that the
-% page check measures the main text and not the appendix.
+% page check measures the main text and not the appendix. The clearpage puts the
+% reference list on a fresh page so the main text ends at page 9 unambiguously.
+\clearpage
 \bibliographystyle{plainnat}
 \bibliography{references}
 
@@ -634,8 +686,7 @@ RULER infrastructure appendix & CUT & Infrastructure without a run grid supports
 \label{app:baseline}
 
 The matched-cell table the main text quotes is Table~\ref{tab:headline}
-(\S\ref{sec:res-decode}); it is not duplicated here. The two tables below carry the corrected
-old-engine seed baseline and the top-up rows that widen the two thin denominators.
+(\S\ref{sec:res-decode}); it is not duplicated here. The tables below carry the corrected old-engine seed baseline and the top-up rows that widen the two thin denominators.
 
 \paragraph{The configuration bug.} \path{run_experiment.py:693} takes the seed list from
 \texttt{defaults}, line 713 merges a level over those defaults, and line 714 then sets
@@ -666,32 +717,6 @@ pooled over 13 cells & 0.4839 & 0.4834 & $-0.1\%$ \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-\begin{table}[h]
-\centering
-\caption{The rotary intervention at 128\,k on \texttt{meta-llama/Llama-3.1-8B}: five books
-per arm, seed 42, FP4 weights with an NF4 KV cache. Acceptance is the mean over five books.
-The perplexity ratio is one 1024-token continuation of \emph{one} passage, on a prompt none
-of the acceptance rows use, whose native perplexity is 1.013; it is a paired measurement
-against the native arm on that passage and nothing wider. The \texttt{tok/s} column is
-\textbf{old-engine} throughput, reported for completeness only: the finding is the acceptance
-contrast, and no speedup is claimed from these arms.}
-\label{tab:rope}
-\input{../../results/lcfm/tables/rope.tex}
-\end{table}
-
-
-\begin{table}[h]
-\centering
-\caption{vLLM (bf16, bf16 KV, greedy, default kernel settings) against the split-KV ring engine
-(FP4 weights, NF4 KV, $T{=}0.7$ sampled, NCCL blocking wait) on the same prompts. Prefill is
-the first-token time; the two ratio columns are vLLM's prefill and vLLM's \emph{entire run}
-(prefill plus 128 decode steps) each divided by RASD's prefill; decode is per token.
-\textbf{Not a precision-matched comparison}.}
-\label{tab:vllm}
-\input{../../results/lcfm/tables/vllm.tex}
-\end{table}
-
 
 \begin{table}[h]
 \centering\footnotesize
@@ -751,7 +776,7 @@ device sync so that a transfer that has been set up but not completed is still c
 \input{../../results/lcfm/tables/bw_bench.tex}
 \end{table}
 
-The five payloads span a factor of 66{,}584 in bytes and 0.4\% in time under blocking wait,
+Table~\ref{tab:bench} lists the five payloads. They span a factor of 66{,}584 in bytes and 0.4\% in time under blocking wait,
 against 0.134\,ms rising to 2.619\,ms (101.7\,GB/s) without it, so the campaign's flat line
 was the poll rather than the wire. What the wire costs is what the no-flag column shows, and
 that is the part of the ring's cost that removing the rotation eliminates.
@@ -778,17 +803,6 @@ on the worst rank. The flag was therefore masking an ordering hazard in the ring
 reuse, and it is not a free performance switch; this work reports it and does not fix it.
 % SRC: results/lcfm/BLOCKING_WAIT_DIAG.md; results/mlsys/bw_diag_p1,p2; results/mlsys/bw_diag_token_streams.json
 
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.80\linewidth]{figA_decode_vs_context.pdf}
-\caption{The cells of Table~\ref{tab:headline} plotted against context: decode time per token,
-both engines and both arms, all under blocking wait. Whiskers are the range over cells and $n$
-is the number of cells both engines measured. Both engines are dominated by the same rotation
-path, which split-KV shortens, and the gap between them widens as the shard a round ships
-grows.}
-\label{fig:decode-context}
-\end{figure}
 
 \begin{table}[h]
 \centering\footnotesize
