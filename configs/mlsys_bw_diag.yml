@@ -1,0 +1,111 @@
+# TORCH_NCCL_BLOCKING_WAIT DIAGNOSTIC — the session's parameter block.
+#
+# THIS FILE IS NOT RUN BY run_experiment.py, exactly like configs/mlsys_df_followup.yml and
+# for the same reason: the measurement is two processes launched under two different wait
+# modes, and the mode is read once at ProcessGroupNCCL construction, so it cannot be a stage
+# of a runner that builds one process group per invocation.
+#
+# The driver still needs a config for one thing: scripts/mlsys_stage_list.py derives the
+# INTENDED STAGE LIST from this file's key order and the pod asserts that list against what it
+# is about to run (R9). The keys below are the stages scripts/mlsys_bw_remote.sh runs, in its
+# order: topo, the bare ring bench under each wait mode, the engine arms at 128k under each
+# wait mode, and the optional 1M row per wait mode.
+defaults:
+  target_model_name: gradientai/Llama-3-8B-Instruct-Gradient-1048k
+  target_revision: cd3069b65a8eb13da639d332a5f61b0fbb29fa73
+  draft_model_name: meta-llama/Llama-3.2-1B
+  draft_revision: 4e20de362430cd3b72f300e6b0f18e50e7166e08
+  dtype: bfloat16
+  rope_type: "none"
+  quantize_target: true
+  quantize_draft: true
+  kv_quant: true
+  draft_window_cap: 4096
+  ignore_eos: true
+  top_p: 1.0
+  temperature: 0.7
+  spec_steps: 4
+  kv_block_size: 2048
+  prefetch_depth: 1
+  seeds: [42]
+  max_new_tokens: 32
+  prompt_gen_tokens: 1024
+  prompt_source: pg19_document
+  prompt_documents_json: data/processed/pg19_1m_128kwin/documents.json
+  log_per_token: true
+  save_generated_tokens: true
+  measure_target_ppl: false
+  ring_decode_mode: "ring"
+  ring_expand_after_rotation: false
+
+BW_TOP0:
+  name: bw_topo
+  factor: context_length
+  levels:
+  - id: BW_TOP0
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'shell stage: topo, the provisioned wait mode, and the torch version'
+
+BW_BENCH_BLOCKING:
+  name: bw_bench_blocking
+  factor: context_length
+  levels:
+  - id: BW_BENCH_BLOCKING
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'bare ring, TORCH_NCCL_BLOCKING_WAIT=1, --timing both (wait and sync)'
+
+BW_BENCH_ASYNC:
+  name: bw_bench_async
+  factor: context_length
+  levels:
+  - id: BW_BENCH_ASYNC
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'bare ring, async error handling, no blocking wait, --timing both'
+
+BW_ARMS_128K_BLOCKING:
+  name: bw_arms_blocking
+  factor: context_length
+  levels:
+  - id: BW_ARMS_128K_BLOCKING
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'engine arms ring2048/ring32768/splitkv, target-only + spec, blocking wait'
+
+BW_ARMS_128K_ASYNC:
+  name: bw_arms_async
+  factor: context_length
+  levels:
+  - id: BW_ARMS_128K_ASYNC
+    context_length: 131072
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    notes: 'engine arms ring2048/ring32768/splitkv, target-only + spec, async handling'
+
+BW_1M_TARGET_BLOCKING:
+  name: bw_1m_blocking
+  factor: context_length
+  levels:
+  - id: BW_1M_TARGET_BLOCKING
+    context_length: 1048576
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    spec_steps: 0
+    notes: 'one 1M target-only row, blocking wait: TTFT and decode at full context'
+
+BW_1M_TARGET_ASYNC:
+  name: bw_1m_async
+  factor: context_length
+  levels:
+  - id: BW_1M_TARGET_ASYNC
+    context_length: 1048576
+    documents: [pg19_train_0]
+    checkpoint_every: 0
+    spec_steps: 0
+    notes: 'one 1M target-only row, async handling: TTFT and decode at full context'

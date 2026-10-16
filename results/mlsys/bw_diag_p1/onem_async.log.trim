@@ -1,0 +1,22 @@
+[df] commit=31724c973fea6139e6ced7e55833181c41c1be1b world=8 mode=arms ctx=1048576 arms=['ring2048'] out=results/mlsys/bw_diag/onem/async
+[rank5]:     raise RuntimeError(
+[rank5]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[rank7]:     raise RuntimeError(
+[rank7]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[rank2]:     raise RuntimeError(
+[rank2]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[df] engine built in 10.9 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[rank0]:     raise RuntimeError(
+[rank0]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[rank4]:     raise RuntimeError(
+[rank4]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[rank1]:     raise RuntimeError(
+[rank1]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[rank6]:     raise RuntimeError(
+[rank6]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+[rank3]:     raise RuntimeError(
+[rank3]: RuntimeError: pg19_train_0: 133120 tokens, need 1048576 for context 1048576 (prompt 1047551 + continuation 1024)
+Traceback (most recent call last):
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 

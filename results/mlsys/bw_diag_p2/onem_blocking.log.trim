@@ -1,0 +1,8 @@
+[df] commit=135f8fb87d4a39569c28b1288689acd1538237bb world=8 mode=arms ctx=1048576 arms=['ring2048'] out=results/mlsys/bw_diag2/onem/blocking
+[df] engine built in 12.3 s; world_size seen by engine = 8
+[df] ring-patched attention layers: 32 (world=8)
+[df] prompt pg19_train_0 @1048576: 3933457 chars, continuation 1024 tokens, prov={'doc_id': 'pg19_train_0', 'prompt_token_ids': [67476, 791, 10846, 40214, 315, 279, 6342, 7957, 6207, 315, 279, 17377, 14963, 791, 5629, 6017, 315, 42048, 25, 220, 21839, 41888, 1432, 16, 25, 16, 763, 279, 7314, 4359, 3549, 279, 23070, 323, 279, 9578, 382, 16, 25, 17, 1628, 279, 9578, 574, 2085, 1376, 11, 323, 742, 26
+[df] DF_ring2048_target_pg19_train_0_ctx1048576_s42: status=ok tokens=16 time=584.9739210299999 ttft=338452.3431480002 decode_s/tok=16.434772 peak_res=30402.4MB
+[df] DF_ring2048_spec_pg19_train_0_ctx1048576_s42: status=ok tokens=32 time=567.0379869600001 ttft=332564.54488600005 decode_s/tok=7.563659 peak_res=33202.1MB
+[df] token digests: {'ring2048|target': '2e3bcaa241adb14e', 'ring2048|spec': '50a3a63a0ce4706a'}
+[df] wrote results/mlsys/bw_diag2/onem/blocking/df_arms.csv (2 rows)
