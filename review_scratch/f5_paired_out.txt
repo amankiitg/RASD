@@ -1,0 +1,4 @@
+131072 matched books ['pg19_train_0'] per-book target/spec {'pg19_train_0': 1.545} ratio of means 1.5445
+524288 matched books ['pg19_train_0', 'pg19_train_1', 'pg19_train_915'] per-book target/spec {'pg19_train_0': 1.955, 'pg19_train_1': 2.396, 'pg19_train_915': 2.666} ratio of means 2.2891
+1048576 matched books ['pg19_train_0', 'pg19_train_1', 'pg19_train_2204', 'pg19_train_2768', 'pg19_train_915'] per-book target/spec {'pg19_train_0': 1.512, 'pg19_train_1': 2.616, 'pg19_train_2204': 1.95, 'pg19_train_2768': 2.583, 'pg19_train_915': 2.744} ratio of means 2.1958
+1M acceptance paired over 13 cells: mean diff -0.0005 sd 0.1006 se 0.0279 ~95% t-interval [-0.0612, +0.0603] (old mean 0.4839); per-cell relative change range -31.0% .. +30.2%
