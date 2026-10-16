@@ -688,3 +688,203 @@ No force-push, no history rewrite. manuscript/arxiv/ untouched.
 
 PDF: manuscript/lcfm/main.pdf (built with `cd manuscript/lcfm && tectonic main.tex`).
 Report commit: this one, the commit that appends this section (git log: "Report: the v5 section"), pushed to main after the merge commit 4fbb242.
+
+=================================================================
+v6 (branch camera-ready-v6, merged as 66276cc, tag lcfm-camera-ready-v6)
+=================================================================
+
+Text and captions only. No GPU, no instances, spend $0.
+
+SURPRISES FIRST
+1. The overfull-box check was being measured from the wrong place. Tectonic reports Overfull
+   and Underfull boxes on stderr only; main.log does not carry them, so the pagemetrics helper
+   used in v4 and v5 read a file with no such lines and could only ever print zero. The v5
+   number happened to be right (rebuilt from the tag, v5 has 0 overfull), but the check was
+   vacuous. v6 measures it from the captured stderr, and that is how the one overfull this
+   round introduced was caught and fixed (see 3 below).
+2. The v5 review's suggested replacement footnote would have overfull the vLLM table by 139 pt.
+   Stating both 128 k first-token ranges in the generated footnote made the multicolumn note
+   139.03 pt wider than the table; the split-KV range stays in the footnote (which now fits like
+   v5's did) and the ring2048 range moved into the 4.6 sentence, so both ranges are still in the
+   paper and the box count stays 0.
+3. The review's own suggested text for F-1 ("0 of 5 rows degenerate at T=1.0 and at T=0.7") is
+   also false: the pooled T=0.7 rows are 1 of 77, not 0. Both counts are now stated separately.
+4. The one Fig. 2 nit could not be fixed without breaking the regeneration gate: the brief allows
+   only Fig. 1 to change, and Fig. 2's y-label is inside the figure. Left as is.
+
+=================================================================
+ITEM TABLE (every CODEX_REVIEW_V5 item)
+=================================================================
+F-1  false "0 of 5 rows degenerate in all three arms"   FIXED   4.1 now reads "0 of 5 rows
+                                                               degenerate at T=1.0 and 1 of 77
+                                                               at T=0.7"; 4.2's "both arms" is
+                                                               now "all three arms". Counts
+                                                               re-verified from the CSVs:
+                                                               SA_TEMP_0 1/5 (book 915),
+                                                               SA_TEMP_1_0 0/5, pooled T=0.7
+                                                               1/77, first window 9/10.
+F-2  dangling "that same unstable number"              FIXED   4.6 now states the instability in
+                                                               the same sentence: "varies 8.0 to
+                                                               9.6 s across this release's
+                                                               split-KV 128 k rows and 8.9 to
+                                                               12.4 s for the ring2048
+                                                               target-only rows".
+F-3  F2 stated generally (intro and conclusion)        FIXED   intro: "A greedy acceptance
+                                                               number from this first-window
+                                                               audit therefore measures...";
+                                                               conclusion: "the first-window
+                                                               audit's acceptance numbers are
+                                                               measured on degenerate text".
+F-4  Appendix B "line 725"                             FIXED   now 722, matching 4.5 and
+                                                               run_experiment.py:722 (the
+                                                               documents-based run id).
+F-5  Fig. 4 caption "which split-KV shortens"          FIXED   "The old engine is dominated by
+                                                               the rotation, which split-KV
+                                                               removes, and the gap between the
+                                                               two widens...".
+F-6a Appendix C "what the wire costs ... eliminates"   FIXED   "What removing the rotation
+                                                               eliminates is not the wire alone:
+                                                               §4.4 breaks it down per rung, with
+                                                               the poll carrying most of the
+                                                               removal at 128 k, the measured
+                                                               transfer explaining part of it at
+                                                               1 M, and the remainder not
+                                                               attributed in this work." A
+                                                               section reference rather than a
+                                                               table reference on purpose: a
+                                                               \ref{tab:rotationcost} in that
+                                                               paragraph would make Table 10 the
+                                                               first table cited, breaking the
+                                                               in-order gate.
+F-6b Table 9 caption spread 0.110 ms                   FIXED   recomputed from the bench JSONs:
+                                                               the table's blocking column is
+                                                               the wait timing (max 0.0906 ->
+                                                               0.091) and its no-flag column is
+                                                               the post-sync timing (max 0.0286
+                                                               -> 0.029). The caption now says
+                                                               "0.091 ms under the blocking wait
+                                                               and 0.029 ms in the no-flag
+                                                               column's post-sync timings (that
+                                                               mode's unmatched wait-timing
+                                                               spread, which the column does not
+                                                               show, reaches 0.110 ms)", so the
+                                                               mode the 0.110 belongs to is named.
+F-7  128 k TTFT footnote mixed configurations          FIXED   footnote (generated): "varies
+                                                               8.0 to 9.6 s across its split-KV
+                                                               128 k rows"; 4.6 text carries both
+                                                               within-configuration ranges. No
+                                                               other place quotes the old range.
+F-8  Appendix A E18 provenance                         FIXED   now "This release's 1 M
+                                                               ring2048 diagnostic rows record
+                                                               29.6 GiB allocated and 32.8 GiB
+                                                               reserved on the worst rank, and
+                                                               the split-KV campaign's 1 M rows
+                                                               record rank 0 only (26.2 GiB)".
+F-9  "audit loop loops"                                FIXED   "the long-context first-window
+                                                               audit loops in 9 of its 10 rows".
+Nit  "Every timing" (intro, Limitations)               FIXED   intro: "Every RASD timing in this
+                                                               paper except the diagnostic's
+                                                               no-flag arm..."; Limitations: same
+                                                               scoping; conclusion: "the NCCL
+                                                               blocking wait that every campaign
+                                                               run here used".
+Nit  "our diagnosis was the measurement condition"     FIXED   conclusion: "largely the
+                                                               measurement condition at 128 k".
+Nit  "Table 12 is the four-arm comparison all of that  FIXED   "Table 11 is the original
+     rests on" (unclear antecedent)                            four-arm comparison the diagnosis
+                                                               rests on".
+Nit  Fig. 1 legend covers data                         FIXED   scripts/lcfm_figures.py fig_c:
+                                                               loc "upper left" -> "upper right".
+                                                               Regenerated; the legend now sits
+                                                               clear of every point (the
+                                                               first-window diamonds at 0.81 to
+                                                               0.97 are fully visible). The
+                                                               pixel diff against the committed
+                                                               figure is confined to the legend
+                                                               band (y 6 to 57 px of 270); the
+                                                               data area is unchanged.
+Nit  Fig. 2 right y-label crowds the left panel        NOT FIXED   fixing it changes Fig. 2's
+                                                               pixels, and the gate allows only
+                                                               Fig. 1 to change this round.
+Nit  bw_arms caption "two flagged stages marked n/a"   FIXED   sentence removed; the table has
+                                                               no n/a rows, and the assertion is
+                                                               described in the paragraph below
+                                                               the table.
+Nit  references.bib header pointer                     FIXED   now points at the v5 and v6
+                                                               sections of V2_REPORT.txt (at the
+                                                               v5 tag it pointed at a section
+                                                               that landed in the follow-up
+                                                               commit 2763090).
+Nit  bw_numbers() to print the post-sync spread and    NOT FIXED   text and captions only this
+     the 1.73 s / 72% pairing share                            round; no paper claim reads the
+                                                               helper's stdout, and the values it
+                                                               would print are already in the
+                                                               text and in the caption fix.
+Nit  RoFormer fifth author "Bo Wen" vs "Wen Bo"        NOT FIXED   both forms are in use (arXiv
+                                                               prints Bo Wen, Crossref's family
+                                                               field is Bo); the arXiv form is
+                                                               kept and this needs no data.
+Item 11  cite the ablations appendix                    FIXED   Appendix A row E21 now ends
+                                                               "(Appendix D)"; no appendix is
+                                                               left uncited.
+
+=================================================================
+NUMBERS CHANGED
+=================================================================
+A number-multiset diff of the v5 tag PDF against the v6 PDF, ignoring page numbers, returns
+exactly the intended set and nothing else:
+  gone:  7.0 (the wrong TTFT range), 725 (the wrong line citation)
+  added: 8.0, 9.6 (split-KV 128 k TTFT range, footnote and text), 8.9 (ring2048 range), 722
+         (line citation), 0.029 (Table 9 no-flag spread), 26.2 (E18 provenance, a value that
+         was already in the paper, now also in the Appendix A row), 2048 and 4.4 (the two new
+         provenance and cross-reference mentions), 0, 1, 1.0, 0.7, 77 (the F-1 counts)
+  unchanged in count: every headline number, including 2.80 / 3.77 / 4.38, 3.30 / 4.26 / 5.32,
+         27 to 31%, 1.54 / 2.29 / 2.20, 2.43 and 13.88 s, 1.75 s, 10.3347 / 2.6191 ms, 101.7 GB/s,
+         0.5336 / 0.4890, 0.7272 / 0.5006, 1.805 / 1.649, 9.5%, 29.6 / 32.8 / 35.6 / 57.0 GiB,
+         2.54 / 2.57, 130 to 162, 224, 0.091, 0.110, 4.7 of 13.9, 0.4681, 0.7369.
+
+=================================================================
+GATES
+=================================================================
+Pages (pdftotext): total 16. Main text ends on page 9; References start on page 10; appendices
+from page 10 to 16. Same as v5.
+
+Overfull boxes, measured from tectonic's stderr this time: 0 above 5 pt and 0 at any size
+(v5 rebuilt from its tag: also 0). 100 underfull hboxes remain, all in the appendix tables and
+all pre-existing.
+
+0 undefined references, 0 undefined citations.
+0 TODO, XXX, FIXME, "??", leaked LaTeX, literal tabs or doubled spaces in the PDF text. The
+fragment scan (flattened text, lowercase word after . ! ?) returns 20 candidates, all inspected
+and all caption, table-cell, bibliography or path text, same classes as v5 with one new
+footnote-to-table adjacency; no sentence fragment.
+0 em dashes across manuscript/lcfm (all files), references.bib, the 9 generated tables, the 4
+generated figures' text and ORGANIZER_NOTE.txt (17 files scanned).
+Floats: 4 figures and 12 tables, all referenced, figures first cited 1 2 3 4 and tables 1 to 12
+in order; every appendix section is now cited (Appendix D via the E21 row).
+
+Regeneration with ~/miniconda3/envs/rasd/bin/python: tables byte-identical except the vLLM
+table, whose footnote is the F-7 fix (and the regenerated file is what is committed); figures
+pixel-identical at 150 dpi for figA, figB and figD, and figC differs only in the legend band,
+which is the intended Fig. 1 change.
+
+review_scratch/*.py, review_scratch_v3/*.py and review_scratch_v5/*.py re-run from the repo
+root: all seven outputs byte-identical to the committed ones, recompute_out.json included.
+
+Full test suite on the merged tree: 1319 passed in 9:29 on the merged tree (the merged tree is byte-identical to the branch tip, which passed 1319 in 11:47).
+
+=================================================================
+FINISH
+=================================================================
+ORGANIZER_NOTE.txt: unchanged, because nothing it says changed (checked; still no em dashes).
+Branch and tags: camera-ready-v6 merged into main as 66276cc (merge commit, full
+66276cca238c1ce9d43f2d4646aff175e24ee37a), annotated tag lcfm-camera-ready-v6 on the merge commit, pushed. Archive tag
+archive/camera-ready-v6 on the branch tip b0d45a6, branch deleted after the merge. Tags v1 to v5 and
+every review/* branch and mlsys-experiments untouched. No force-push, no history rewrite.
+manuscript/arxiv/ untouched.
+PDF to upload: manuscript/lcfm/main.pdf (16 pages; main text 9).
+
+Reviewer artifacts: results/lcfm/CODEX_REVIEW_V5.md and review_scratch_v5/v5_checks.py (+_out.txt)
+come from branch review/codex-v5 and are committed on main with this section's merge.
+Report commit: this one, the commit that appends this section (git log: "Report: the v6
+section"), pushed after the merge commit 66276cc.
