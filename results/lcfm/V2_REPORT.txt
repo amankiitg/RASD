@@ -243,11 +243,12 @@ Tests: 1319 passed on camera-ready-v2 before the merge, 1319 passed on the merge
 Merge: e1cf8c4, merge commit of camera-ready-v2 into main (no fast-forward).
 Tag: lcfm-camera-ready-v2, annotated, on e1cf8c4. lcfm-camera-ready-v1 is untouched at
 c0fa9c7.
-Branches: diag/blocking-wait and camera-ready-v2 archived (archive/diag-blocking-wait,
-archive/camera-ready-v2), verified fully merged, then deleted locally and on origin.
-review/codex-lcfm is NOT merged: archived as archive/review-codex-lcfm and kept, local only,
-as the record of the review. mlsys-experiments is kept and untouched. No force-push, no
-history rewrite, no tag deletion.
+Branches: diag/blocking-wait and camera-ready-v2 archived (archive/diag-blocking-wait at
+52d7a2a, archive/camera-ready-v2 at aaec6c5), verified fully merged into main, then deleted.
+diag/blocking-wait existed on origin and was deleted there too; camera-ready-v2 was local
+only. review/codex-lcfm is NOT merged into main: archived as archive/review-codex-lcfm at
+4e77424 and kept, as the record of the review. mlsys-experiments is kept and untouched. No
+force-push, no history rewrite, no tag deletion.
 
 =================================================================
 JUDGMENT CALLS (marked % TODO AMAN in main.tex)
