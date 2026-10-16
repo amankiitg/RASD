@@ -316,3 +316,161 @@ merged, then deleted locally and on origin. review/codex-lcfm and mlsys-experime
 kept and untouched. No force-push, no history rewrite, no tag deletion.
 State: 0 cloud instances, no timers or pollers, working tree clean, spend $0.
 PDF to upload: manuscript/lcfm/main.pdf (15 pages; main text 8).
+=================================================================
+v4 (branch camera-ready-v4, merged as e21b579, tag lcfm-camera-ready-v4)
+=================================================================
+WHAT CHANGED
+1. NB1, the rendered fragment. A % comment had swallowed half a sentence in 4.4, so the
+   PDF printed "(Appendix C). cell at 512 k and two at 1 M ...". The comment is gone, the
+   sentence is whole, and "Two caveats" now reads "One caveat" because the matched-cell
+   caveat it used to carry is stated in Limitations instead. A full-PDF scan (flattened
+   text, lowercase word after . ! ?) finds no remaining fragment, no doubled space and no
+   leaked LaTeX.
+2. NB2, the F4 framing, in the abstract, the intro title and paragraph, the 4.4 heading and
+   text, the Fig 4 caption, Appendix C, the conclusion and ORGANIZER_NOTE.txt. Removed
+   everywhere: "the bottleneck was not the ring but a host-side poll", "the poll is the
+   whole story at 128k", "mostly the rotation's own transfer". The new text says the poll is
+   about 70% of what split-KV removes at 128k (72% on the 2.43-vs-1.75 pairing, 65% and 67%
+   measured inside one session), about 3% at 1M, that the measured transfer explains 4.7 s
+   of the 13.9 s removed at 1M, and that the remainder is not attributed in this work.
+3. NB3, the bench agreement. "within 3% at every payload" is replaced by the per-payload
+   values: within 3% at 33, 133 and 266 MB, 5.4% at 66 MB, 11% at the 4 KB ping.
+
+CODEX V3 ITEM TABLE
+  NB1 fragment                     FIXED   4.4 rewritten; "One caveat"; scan clean
+  NB2 poll overstated              FIXED   abstract, intro, 4.4, Fig 4, App. C, conclusion, note
+  NB3 false 3%-at-every-payload    FIXED   per-payload agreement printed
+  S-P prediction arithmetic        FIXED   224 x (10.3347 - 2.6191) ms = 1.73 s vs 1.75 s measured
+  S-Mix sessions mixed             FIXED   main text uses p1 throughout; App. C gives both
+  S-1M "mostly transfer"           FIXED   transfer 4.7 s of 13.9 s; rest "not attributed"
+  S-BW "bandwidth-bound"           FIXED   clause deleted; the measured rise is stated instead
+  S-V1 vLLM 128k consistency       FIXED   128k ratios dropped from text and table; columns
+                                           relabelled prefill-over-prefill vs whole-run-over-
+                                           prefill; the 1.92x is gone and "n/q" is footnoted
+  S-M memory provenance            FIXED   29.6/32.8/35.6 labelled as ring2048 diagnostic rows;
+                                           split-KV rank-0 max 26.2 GiB stated; table gains a
+                                           "over" column
+  S-F1 "never smoothed into a mean" FIXED  now "reported with and without it"
+  S-U "unchanged"                  FIXED   "no detectable net change" in all five places, +-13%
+  S-Spec greedy label              FIXED   "a seeded T=0.7 row"
+  S-Bench 0.056 ms spread          FIXED   table now carries both modes' spreads (0.091, 0.110)
+  S-Env pod_env.sh:32              FIXED   cited at fbd41fb:scripts/mlsys_pod_env.sh:34, past tense
+  S-Fig missing figA               FIXED   Fig. 4 (decode vs context) is back in Appendix C
+  S-Refs unreferenced tables       FIXED   all six now referenced; Table 3 no longer cites itself
+  S-Every "every timing"           FIXED   "every RASD timing except the diagnostic's no-flag arm"
+  S-SRC hand-transcribed numbers   FIXED   bw_numbers()/bw_transfer_check() added to
+                                           lcfm_figures.py; SRC comments cite the generator; the
+                                           header claim is now precise
+  S7 unused factor-8 branch        FIXED   deleted; the scaling arms' explicit factor stated
+  Nit "NCLL"                       FIXED   NCCL
+  Nit missing period               FIXED   rope table caption
+  Nit duplicated tabcolsep         FIXED   one \setlength
+  Nit line 725 -> 722              FIXED
+  Nit 4.03 -> 4.04                 FIXED
+  Nit 8-token exclusion rationale  FIXED   "too short to judge"
+  Nit unsupported YaRN clause      FIXED   "whose published validation includes a perplexity curve"
+  Nit E6 "lower bounds"            FIXED   clause deleted
+  Nit "both arms" -> three arms    FIXED
+  Nit Fig 1 legend overlap         FIXED   legend moved, y-limit raised
+  Nit Fig 2 y-label crowding       FIXED   right-panel label shortened
+  Nit 128k TTFT "8.7 to 12.4 s"    FIXED   "7.0 to 12 s", and the range is no longer quoted
+  Nit stale conclusion SRC         FIXED   names the headline and F5 tables and the figures
+  5a.2 F2 generality (not an item) FIXED   abstract scoped to the audit, and 4.1 now states that
+                                           in the controlled 128k arm greedy acceptance (0.460)
+                                           is not above T=0.7 (0.468)
+  5a.3 F3 framing                  NOT FIXED (deliberate). F3 is still worded as coherence at
+                                           1M; the review itself calls the memorisation caveat
+                                           adequate for a workshop, and rewording it would cost
+                                           lines the page limit does not have.
+  PG-19 author list unverified     NOT FIXED (external): the ICLR author list could not be
+                                           fetched from OpenReview, dblp or Semantic Scholar.
+                                           The entry is unchanged from v3.
+
+NUMBERS THAT CHANGED (old -> new, source)
+  vLLM run over prefill        2.04 to 2.57x -> 2.54 to 2.57x (128k dropped; S-V1)
+  vLLM 128k prefill ratio      1.92x printed -> not printed ("n/q", footnoted)
+  bench post-sync agreement    "within 3% at every payload" -> within 3% at 33/133/266 MB,
+                               5.4% at 66 MB, 11% at 4 KB (bw_numbers())
+  rank-to-rank spread          0.056 ms (old bench) -> 0.091 ms blocking, 0.110 ms no flag
+  prediction                   1.72 s / 1.4% -> 1.73 s / 1.2% on the formula as printed
+  poll share at 128k           "the whole story" -> about 70% (72% on the pairing, 65/67%
+                               within sessions)
+  1M removal                   "mostly the rotation's own transfer and per-chunk work" ->
+                               4.7 s of 13.9 s explained by transfer, rest unattributed
+  128k ring flag removal       1.93 vs 3.79 s/token (p2) -> 2.03 vs 3.78 s/token (p1) in the
+                               main text, both sessions in Appendix C
+  memory provenance            "this campaign's rows" -> ring2048 diagnostic rows, worst rank;
+                               split-KV rank-0 maximum 26.2 GiB
+  acceptance                   "unchanged" -> "no detectable net change", +-13%
+  seed-bug line                725 -> 722
+  buggy 1M speedup             4.03 -> 4.04
+  all other numbers unchanged
+
+NEW F4 PARAGRAPH (main text, quoted in full)
+"At 128 k, each decode token requires 7 rotations over the 32 patched layers
+(src/models/ring_attention_kernel.py:402 loops over the ranks and line 426 issues a rotation
+only while step < world_size - 1), so 224 rounds of a batch_isend_irecv ring per token,
+measured under the NCCL blocking wait of Section 3, in which PyTorch's WorkNCCL::wait polls
+with a fixed 10 ms host sleep (kSynchronizeBusyWaitMillis, ProcessGroupNCCL.cpp:426 in the
+pinned torch 2.5.1). Figure 4 measures that primitive with no model attached, over five
+payloads from 4 KB to 266 MB, in both wait modes in one session on one box.
+
+Under the blocking wait every payload costs the same ~10.3 ms (10.3347 ms at 4 KB, 10.3520 ms
+at 266 MB); that flat line is the poll, not the wire. Without the flag the same round takes
+0.134 ms at 4 KB and 2.619 ms at 266 MB, which is 101.7 GB/s, and the two modes' post-sync
+times agree to within 3% at 33 MB, 133 MB and 266 MB (5.4% at 66 MB) and to within 11% at the
+4 KB ping, so the wire did not change.
+
+Removing the rotation is prior work (Section 2), adopted here as split-KV: each rank computes
+attention for the replicated query against only its own prefill shard, and the partials are
+merged by one MAX and one SUM all-reduce. Our contribution is the diagnosis and the
+measurement, not the technique.
+
+[Table 2: the headline]
+
+Table 2 is the headline, with the same cells plotted in Figure 4 in Appendix C. Decode-only,
+the fix is worth 2.80x / 3.77x / 4.38x with speculation and 3.30x / 4.26x / 5.32x without it
+at 128 k / 512 k / 1 M. What it removes is two different costs. At 128 k, split-KV removes
+2.43 s per token on these cells and removing the flag from the ring saves 1.75 s of that in
+the diagnostic's first session (ring2048 target-only), so the poll is about 70% of the
+removal there and the rotation's own work is the rest; 224 x (10.3347 - 2.6191) ms predicts
+1.73 s against the measured 1.75 s. That pairing gives 72%, and entirely within one session
+65% and 67% (Appendix C). At 1 M it is the opposite: split-KV removes 13.88 s per token and
+removing the flag changes ring decode by 3% (16.43 to 15.96 s/token, one row per mode), so
+almost none of that is the poll. Moving each round's shard at the measured 101.7 GB/s accounts
+for 4.7 s of the 13.9 s (224 rounds x 2.15 GB) and the rest is not attributed in this work.
+The removed cost grows with context because the shard the rotation ships grows, 4x at 512 k
+and 8x at 1 M."
+
+GATES (pdftotext -layout, merged tree)
+  main text ends on page 8; References start at the top of page 9; 16 pages total
+  0 undefined references or citations; 0 overfull boxes; 0 TODO / XXX / "??" in main.tex
+  and in the PDF
+  0 em dashes in manuscript/lcfm/, results/lcfm/tables/*.tex, tables/ablation_summary.tex,
+  the figure text and ORGANIZER_NOTE.txt (1 legitimate en dash remains, in a numeric range)
+  full-PDF fragment scan: 0 comment-induced fragments, 0 doubled spaces, 0 leaked LaTeX
+  scripts/lcfm_figures.py re-run reproduces every table byte-identically and every figure
+  pixel-identically, and now also prints the diagnostic numbers (bw_numbers(),
+  bw_transfer_check()); review_scratch/*.py and review_scratch_v3/*.py all reproduce their
+  committed output byte for byte, so every number still agrees with both reviews' code
+  ORGANIZER_NOTE.txt updated to the new framing, 185 words, no em dashes, not sent
+
+GREP RESULTS (as the brief asks)
+  "whole story" 0 | "not the ring" 0 | "mostly the" 0 | "smoothed" 0 |
+  "within 3% at every" 0 | "1.92" 0 | "0.056" 0 | "pod_env.sh:32" 0 |
+  "n/q" 1 (the table's footnote) | "unchanged" 1 (the top-up caption's "unchanged by it",
+  which means unchanged by the top-up and is correct) | "greedy" 12, all of them about the
+  first-window audit, the greedy temperature arm, or the greedy-vs-sampled protocol, with
+  the diverging diagnostic row now labelled T=0.7
+
+TESTS, TAG, BRANCHES
+Tests: 1319 passed on the merged main.
+Merge: e21b579, merge commit of camera-ready-v4 into main (no fast-forward).
+Tag: lcfm-camera-ready-v4 on e21b579. v1 is still c0fa9c7, v2 still e1cf8c4, v3 still
+e139981; none was moved.
+Branches: camera-ready-v4 archived as archive/camera-ready-v4, verified fully merged, then
+deleted locally and on origin. review/codex-v3 archived as archive/review-codex-v3 and kept,
+as the record of this review. review/codex-lcfm and mlsys-experiments are kept and untouched.
+No force-push, no history rewrite, no tag deletion.
+State: 0 cloud instances, no timers or pollers, working tree clean, spend $0.
+PDF to upload: manuscript/lcfm/main.pdf (16 pages; main text 8).
