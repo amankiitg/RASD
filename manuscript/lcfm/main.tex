@@ -318,11 +318,10 @@ the drop is a \textbf{rotary effect across three arms}. One row needs naming: th
 mean of $0.5336$ contains \texttt{ROPE\_EXT\_SAMP\_F16\_SPEC\_pg19\_train\_2768\_s42}, the
 looping row of \S\ref{sec:res-degeneracy}, whose acceptance of $0.7121$ is the highest in its
 arm. Excluding it the factor-16 mean is \textbf{$0.4890$} over the remaining four books, a
-$32.8\%$ loss, so the exclusion makes the effect larger, not smaller, and the claim uses the
-five-book mean and reports both.
-% TODO AMAN: the factor-16 mean is reported WITH the looping row (0.5336) and the
-% exclusion is given as a second number (0.4890). Which one should the abstract quote,
-% or is reporting both the right call? The two stretched factors land far closer to each other
+$32.8\%$ loss, so the exclusion makes the effect larger rather than smaller. The
+\textbf{27 to 31\%} range quoted here is therefore the \emph{conservative} one, computed
+with the looping row in the mean, and it is the claim; $0.4890$ is reported as the second
+number. The two stretched factors land far closer to each other
 (6.6\% apart) than either lands to native, which is what a saturating intervention looks like;
 at $n{=}3$ books their difference was 0.0012 and was read as exact saturation, and at $n{=}5$
 it is 0.033, so that specific reading is withdrawn and the weaker claim stands.
@@ -416,25 +415,22 @@ the ratio. Dividing the removed time by the 224 rounds: at 128\,k it is 2.43\,s 
 10.9\,ms per round, which is the poll period itself, and the microbench predicted
 224 $\times$ (10.3347 $-$ 2.6191)\,ms $=$ 1.72\,s against a measured 1.75\,s, within 1.4\%.
 At 512\,k and 1\,M the removed time is far larger, 7.64 and 13.88\,s per token, because the
-key/value shard a round ships grows by 4$\times$ and 8$\times$: the transfer no longer fits
-inside one poll period, and under blocking wait the host cannot enqueue round $i+1$ until
-round $i$ completes, so the next transfer cannot overlap the current compute. The rotation's
-cost scales with the data it ships, and the flat ${\sim}10$\,ms per round is a
-128\,k-payload measurement.
-% TODO AMAN: the poll alone predicts a saving that SHRINKS with context (the transfer
-% outgrows the 10 ms sleep), so the growth at 512k and 1M is attributed to lost overlap
-% under blocking wait. That is an inference from the two arms, not a direct measurement
-% of overlap. Agree with stating it this way?
-% SRC: scripts/lcfm_figures.py removed_time(), headline_rows(); results/mlsys/bw_diag_p1/bench/
+key/value shard a round ships grows by 4$\times$ and 8$\times$, and the poll is not what is
+being removed there: at 1\,M, removing it changed this engine's ring decode by 3\% (16.43 to
+15.96\,s per token, same book, seed and session), so most of what split-KV removes at that
+context is the rotation's own transfer and per-chunk work. What the measurements show is a cost
+that scales with the shard the rotation ships, of which the poll is the whole story at
+128\,k (predicted to 1.4\%) and a small share at 1\,M.
+% SRC: scripts/lcfm_figures.py removed_time(), headline_rows(); results/mlsys/bw_diag_p1/bench/; results/mlsys/bw_diag_p2/onem/blocking/df_arms.csv,onem/async/df_arms.csv
 
 
 Two caveats we state rather than bury. Every number here is a blocking-wait number, so it
 describes the engine as it ran rather than the hardware: the same ring decode step at 128\,k is
 1.93\,s per token with the flag removed against 3.79\,s with it, and split-KV was not measured
 in that mode (Appendix~\ref{app:diagnosis}).
-% TODO AMAN: the corrected prefill ratio at 128k is dropped rather than ranged, because
-% this release's own 128k first-token time varies 8.7 to 12.4 s for one configuration.
-% Keep it dropped, or quote it as 1.4x to 1.9x? And the matched old-against-new comparison is one
+% The 128k prefill ratio stays dropped rather than ranged: this release's own 128k
+% first-token time varies 8.7 to 12.4 s for one configuration, which is the size of the
+% ratio itself. And the matched old-against-new comparison is one
 cell at 512\,k and two at 1\,M, because that is how many books the old engine measured there,
 while the fixed engine's own target-only arms were widened to three and five books by a later
 top-up run.
@@ -531,10 +527,7 @@ $65\times$, $65\times$ and $59\times$ vLLM's).
         win, because removing it makes the engine emit a different token stream in one
         speculation cell and fail a device-side assertion in three of five diagnostic stages.
         This work reports that hazard and does not fix it (Appendix~\ref{app:diagnosis}).
-  % TODO AMAN: Fig 4 (decode against context) and the RoPE and vLLM tables moved to the
-% appendices to hold the main text at 8 pages, as Part 3 asked. Say if you want any of
-% them back in the main text and I will cut prose instead.
-\item \textbf{One node, one fabric, one precision.} Everything is 8$\times$A100 80\,GB SXM4
+  \item \textbf{One node, one fabric, one precision.} Everything is 8$\times$A100 80\,GB SXM4
         over NVLink, there is no bf16 row, and the per-round quantity \S\ref{sec:res-decode}
         measures is a host-side poll at this configuration, so it is not extrapolated to a
         multi-node fabric.
@@ -561,12 +554,12 @@ $65\times$, $65\times$ and $59\times$ vLLM's).
 
 We asked what limits speculative decoding at a million tokens, and the answer arrived in
 three parts, none of them about speculation itself. Under greedy decoding the acceptance
-numbers this kind of campaign reports are measured on degenerate text: 9 of 10 long-context
-rows in the released first-window audit loop, and 1 of 5 rows in the 128\,k greedy arm, against
-1 of 77 sampled rows. Once sampled at $T{=}0.7$, stretching a model's rotary basis costs 27 to
-31\% of the acceptance over five books for $0.05$ to $1.56\%$ of perplexity on one passage,
-so the perplexity check did not reveal the loss. A natively 1M-trained target stays coherent at
-1\,M, within $9.5\%$ of its own 128\,k perplexity on the exactly aligned book.
+numbers are measured on degenerate text: 9 of 10 long-context rows in the released first-window
+audit loop and 1 of 5 rows in the 128\,k greedy arm loop, against 1 of 77 sampled rows. Once
+sampled at $T{=}0.7$, stretching a model's rotary basis costs 27 to 31\% of the acceptance over
+five books for $0.05$ to $1.56\%$ of perplexity on one passage, so the perplexity check did not
+reveal the loss. A natively 1M-trained target stays coherent at 1\,M, within $9.5\%$ of its
+own 128\,k perplexity on the exactly aligned book.
 
 What was hostile was our engine, and the first thing we learned about it is that our diagnosis
 was the measurement condition. Rotating each layer's key/value shard around eight ranks costs
@@ -575,13 +568,12 @@ blocking wait every run here used, polls with a fixed 10\,ms sleep: the same
 ${\sim}10.3$\,ms per round at 4\,KB and at 266\,MB, and 0.134\,ms rising to 2.619\,ms once
 the flag is removed. Adopting decode-side context parallelism, which is prior work, is worth
 $2.80$ to $4.38\times$ decode-only with speculation and $3.30$ to $5.32\times$ without it,
-and the time it removes is the poll period at 128\,k and the serialised transfer at 512\,k
-and 1\,M, growing from 2.4 to 13.9\,s per token because the shard a round ships grows with
-the context. Speculation still pays $1.54$ to $2.29\times$ on top on matched books, the
+and the time it removes grows from 2.4 to 13.9\,s per token with the shard a round ships: the
+poll is essentially all of it at 128\,k, while at 1\,M removing the poll alone moved decode by
+3\%. Speculation still pays $1.54$ to $2.29\times$ on top on matched books, the
 matched 1\,M acceptance is unchanged at $-0.1\%$, and against vLLM at bf16 and greedy
 decoding, not a precision-matched comparison, vLLM's entire run takes $2.04$ to $2.57\times$
-our prefill while its decode stays $130$ to $162\times$ faster per token: the rotation was the
-decode pathology, and the flag that made it look flat is a configuration detail we can name.
+our prefill while its decode stays $130$ to $162\times$ faster per token.
 % SRC: every number in this conclusion restates Tables 2 and 5 and Figures 1 to 4, all
 % generated by scripts/lcfm_figures.py.
 
@@ -791,7 +783,8 @@ reuse, and it is not a free performance switch; this work reports it and does no
 \caption{What the rotation costs per rung, target-only arms on matched cells, measured under
 blocking wait (Table~\ref{tab:headline}). The last column divides the removed time by the 224
 rounds per decode token. The 128\,k figure is the poll period; the larger figures at 512\,k
-and 1\,M are the transfer that blocking wait serialises, which grows with the shard.}
+and 1\,M are the rotation's own transfer and per-chunk work, which grow with the shard; at
+1\,M the poll itself is worth only 3\% of decode.}
 \label{tab:rotationcost}
 \input{../../results/lcfm/tables/rotation_cost.tex}
 \end{table}
