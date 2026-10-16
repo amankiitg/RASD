@@ -1,0 +1,10 @@
+SA_TEMP       T=0.0  rows=  5 unique_ids=  5 plumbing/repeat= 0 tokens=[128] loops(csv verdict)=1 -> ['SA_TEMP_0_128K_SPEC_pg19_train_915_s42']
+                     rescored from sidecar: 5 rows, repo-rule loops 1, my periodic loops 1; rows without sidecar: 0
+SA_TEMP       T=1.0  rows=  5 unique_ids=  5 plumbing/repeat= 0 tokens=[128] loops(csv verdict)=0 -> []
+                     rescored from sidecar: 5 rows, repo-rule loops 0, my periodic loops 0; rows without sidecar: 0
+first-window  T=0.0  rows= 10 unique_ids= 10 plumbing/repeat= 0 tokens=[1024] loops(csv verdict)=9 -> ['NATURAL_f1_128k_pg19_train_1_s42', 'NATURAL_f1_128k_pg19_train_115_s42', 'NATURAL_f1_128k_pg19_train_537_s42', 'NATURAL_f1_128k_pg19_train_915_s42', 'NATURAL_f1_128k_pg19_train_1404_s42', 'NATURAL_f1_128k_pg19_train_1726_s42', 'NATURAL_f1_128k_pg19_train_1981_s42', 'NATURAL_f1_128k_pg19_train_2204_s42', 'NATURAL_f1_128k_pg19_train_2768_s42']
+                     rescored from sidecar: 0 rows, repo-rule loops 0, my periodic loops 0; rows without sidecar: 10
+pooled        T=0.0  rows=  6 unique_ids=  6 plumbing/repeat= 0 tokens=[8] loops(csv verdict)=0 -> []
+                     rescored from sidecar: 6 rows, repo-rule loops 0, my periodic loops 0; rows without sidecar: 0
+pooled        T=0.7  rows= 77 unique_ids= 75 plumbing/repeat= 9 tokens=[64, 128] loops(csv verdict)=1 -> ['ROPE_EXT_SAMP_F16_SPEC_pg19_train_2768_s42']
+                     rescored from sidecar: 67 rows, repo-rule loops 0, my periodic loops 0; rows without sidecar: 10

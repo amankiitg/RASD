@@ -1,9 +1,10 @@
-\begin{tabular}{llrr}
+\begin{tabular}{llrrl}
 \toprule
-1M rows, worst rank & allocated (GiB) & reserved (GiB) & \\
+1M rows & allocated (GiB) & reserved (GiB) & over \\
 \midrule
-blocking, ring2048 target & 29.6 & 32.8 & \\
-blocking, ring2048 spec & 29.6 & 35.6 & \\
-no blocking wait, ring2048 target & 29.6 & 57.0 & \\
+blocking, \texttt{ring2048} target & 29.6 & 32.8 & worst of 8 \\
+blocking, \texttt{ring2048} spec & 29.6 & 35.6 & worst of 8 \\
+no blocking wait, \texttt{ring2048} target & 29.6 & 57.0 & worst of 8 \\
+split-KV campaign, \texttt{1M rows} n=20 & 26.2 & -- & rank 0 only \\
 \bottomrule
 \end{tabular}

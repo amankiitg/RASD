@@ -17,7 +17,10 @@
 % numeric ranges.
 %
 % NUMBERS. Every number in the main text carries a % SRC: comment naming the artifact it
-% comes from, and all of them are generated from the CSVs by scripts/lcfm_figures.py.
+% comes from. The figures and the tables are written by scripts/lcfm_figures.py from the CSVs,
+% and so are the blocking-wait numbers (bw_numbers(), bw_transfer_check()), which would
+% otherwise have to be transcribed from the diagnostic's write-up. Where a number rests on a
+% profiled quantity that no released CSV can reproduce, the SRC says so.
 
 \documentclass{article}
 
@@ -64,22 +67,23 @@ scientific findings and two systems measurements on 8$\times$A100 80\,GB SXM4 wi
 and an NF4 KV cache. \emph{First}, the acceptance such campaigns report is measured on
 degenerate text: under greedy decoding 9 of 10 rows in the released long-context first-window
 audit loop, and 1 of 5 rows in the 128\,k greedy arm does, against 1 of 77 sampled rows at
-$T{=}0.7$. A greedy draft accepts a loop trivially, so a greedy acceptance number measures the
-text. \emph{Second}, stretching the rotary basis of a model that ships the scaling dictionary
+$T{=}0.7$. A greedy draft accepts a loop trivially, so the acceptance such an audit reports is
+measured on the text. \emph{Second}, stretching the rotary basis of a model that ships the scaling dictionary
 costs \textbf{27 to 31\%} of speculative acceptance over five books while a paired perplexity
 check on one passage, whose native perplexity is 1.013, moves by $+0.05\%$ and $+1.56\%$.
 Acceptance and perplexity dissociate, and on this model the perplexity check did not reveal
 the acceptance loss. \emph{Third}, a natively 1M-trained target stays coherent at 1\,M, within
 $9.5\%$ of its own 128\,k perplexity on the exactly aligned book. \emph{Fourth}, our ring's
-decode bottleneck was not the ring but a host-side poll: 224 rounds of a
-\texttt{batch\_isend\_irecv} ring per token, each of which cost the same ${\sim}10.3$\,ms under
-the blocking NCCL wait every run in this paper used, whatever the payload. Removing the
-rotation with decode-side context parallelism, which is prior work, is worth $2.80$ to
-$4.38\times$ decode-only with speculation and $3.30$ to $5.32\times$ without. \emph{Fifth},
-speculation still pays $1.54$ to $2.29\times$ on top, and the matched 1\,M acceptance is
-unchanged ($-0.1\%$). Against vLLM at bf16 with greedy decoding, which is not a
-precision-matched comparison, vLLM's entire run takes $2.04$ to $2.57\times$ our prefill while
-its decode stays $130$ to $162\times$ faster per token than ours.
+decode step was dominated by the per-token key/value rotation, and at 128\,k also by a
+host-side poll: 224 rounds of a \texttt{batch\_isend\_irecv} ring per token, each of which
+cost the same ${\sim}10.3$\,ms under the blocking NCCL wait every campaign run used, whatever
+the payload. Removing the rotation with decode-side context parallelism, which is prior work,
+is worth $2.80$ to $4.38\times$ decode-only with speculation and $3.30$ to $5.32\times$
+without, and the poll is about 70\% of that saving at 128\,k but about 3\% of it at 1\,M. \emph{Fifth}, speculation still pays $1.54$ to $2.29\times$ on top, and the matched
+1\,M acceptance shows no detectable net change ($-0.1\%$). Against vLLM at bf16 with greedy
+decoding, which is not a precision-matched comparison, vLLM's entire run takes $2.54$ to
+$2.57\times$ our prefill while its decode stays $130$ to $162\times$ faster per token than
+ours.
 \end{abstract}
 
 \section{Introduction}
@@ -121,32 +125,30 @@ tokens it is within $1.1\%$. Long context is not intrinsically hostile to specul
 is what made the two systems findings below worth chasing.
 % SRC: scripts/lcfm_figures.py; results/mlsys/sampling_session/QUALITY_FIX_{128K,1M}_*.csv; alignment.csv
 
-\paragraph{F4. Our ring's decode step was a host-side poll, not the ring.}
-At 128\,k each decode token needs 7 rotations over the 32 patched layers, so 224 rounds of a
-\texttt{batch\_isend\_irecv} ring
-(\path{src/models/ring_attention_kernel.py:402} issues a rotation per
-\texttt{step < world\_size - 1}). Every run in this paper measured that ring with PyTorch's
-NCCL blocking wait (\texttt{TORCH\_NCCL\_BLOCKING\_WAIT=1}), in which each \texttt{wait()}
-polls its collective with a fixed 10\,ms host sleep. A bare-process benchmark of the primitive,
-with no model attached, costs the same ${\sim}10.3$\,ms per round at 4\,KB and at 266\,MB under
-that flag, and 0.134\,ms rising to 2.619\,ms (101.7\,GB/s) without it: the flat line was the
-poll, and the wire is bandwidth-bound above a few hundred kilobytes. Removing the rotation with
-decode-side context parallelism, which is prior work \citep{yang2024contextparallelism}, is
-worth \textbf{2.80$\times$ / 3.77$\times$ / 4.38$\times$} decode-only with speculation and
+\paragraph{F4. The ring's rotation was the decode step, and a host-side poll inflated it.}
+At 128\,k each decode token needs 7 rotations over the 32 patched layers
+(\path{src/models/ring_attention_kernel.py:402}), so 224 rounds of a
+\texttt{batch\_isend\_irecv} ring. Every campaign run measured that ring with PyTorch's NCCL
+blocking wait, in which each \texttt{wait()} polls its collective with a fixed 10\,ms host
+sleep: the primitive costs the same ${\sim}10.3$\,ms per round at 4\,KB and at 266\,MB under
+that flag, against 0.134\,ms rising to 2.619\,ms without it. Removing the rotation with decode-side
+context parallelism, which is prior work \citep{yang2024contextparallelism}, is worth
+\textbf{2.80$\times$ / 3.77$\times$ / 4.38$\times$} decode-only with speculation and
 \textbf{3.30$\times$ / 4.26$\times$ / 5.32$\times$} without it at 128\,k / 512\,k / 1\,M on
-matched cells, and the time it removes grows with context, 2.43 to 13.88\,s per token, because
-the shard a round ships grows by 8$\times$ over that range. The flag could not simply be
-dropped: without it the engine emits a different token stream in the one speculation cell
-measured in both modes and fails an assertion in three of five stages, so split-KV without the
-flag was not measured.
-% SRC: scripts/lcfm_figures.py bench_two_modes(), removed_time(), headline_rows(); results/mlsys/bw_diag_p1/bench/, results/mlsys/bw_diag_p2/
+matched cells. What the fix removes is two different costs: at 128\,k the poll is about 70\% of
+it and the rotation's own work is the rest, while at 1\,M the poll is about 3\% of it. The
+removed cost grows with context, 2.43 to 13.88\,s per token, because the shard a round ships
+grows by 8$\times$ over that range. The flag could not simply be dropped: without it the engine
+emits a different token stream in the one speculation cell measured in both modes and fails an
+assertion in three of five stages, so split-KV without the flag was not measured.
+% SRC: scripts/lcfm_figures.py bw_numbers(), bench_two_modes(), removed_time(), headline_rows(); results/mlsys/bw_diag_p1, bw_diag_p2
 
-\paragraph{F5. Speculation still pays, and the 1\,M acceptance is unchanged.}
+\paragraph{F5. Speculation still pays, and the 1\,M acceptance shows no detectable change.}
 With the rotation gone, speculation is worth $1.54\times$ / $2.29\times$ / $2.20\times$
 decode-only over the same engine's target-only path at 128\,k / 512\,k / 1\,M, measured on
 matched books only: one book at 128\,k, three at 512\,k, five at 1\,M. Acceptance at 1\,M
 under the fixed engine shows no detectable net change against the corrected old-engine
-baseline, $-0.1\%$ over 13 matched cells with a 95\% interval of about $\pm12\%$ relative
+baseline, $-0.1\%$ over 13 matched cells with a 95\% interval of about $\pm13\%$ relative
 (per-cell changes run from $-31\%$ to $+30\%$), and the fixed kernel's target-only stream is bit-identical to the ring's for twelve
 tokens before diverging where the baseline's own top-2 margin is 0.0000.
 % SRC: scripts/lcfm_figures.py f5_rows(); results/mlsys/rerun_r1,r2,rerun_topup
@@ -192,9 +194,9 @@ KV cache is the setting here.
 \paragraph{KV compression and position scaling.} NF4 quantization
 \citep{dettmers2023qlora} shrinks the cache and an attention-sink prefix
 \citep{xiao2024streamingllm} stabilises it. Rotary embeddings \citep{su2024rope} are stretched
-past a model's training window by YaRN \citep{peng2023yarn}, an intervention that is
-evaluated by perplexity among other measures, and usually validated by a perplexity curve
-alone in practice; \S\ref{sec:res-rope} shows what that misses. The intervention here is not
+past a model's training window by YaRN \citep{peng2023yarn}, an intervention whose published
+validation includes a perplexity curve; \S\ref{sec:res-rope} shows what a perplexity check of
+the kind a practitioner runs can miss. The intervention here is not
 YaRN: it changes the shipped \texttt{llama3} scaling factor of a model that already has one.
 
 \section{System and Setup}
@@ -204,20 +206,19 @@ YaRN: it changes the shipped \texttt{llama3} scaling factor of a model that alre
 target and a 1B draft (\texttt{meta-llama/Llama-3.2-1B}) on every rank. Its KV cache is NF4
 with chunked updates and a bf16 attention-sink prefix of the first 128 tokens; attention is
 ring attention with FlashAttention-2 in each local block; the weights are \textbf{FP4}, since
-NF4 is the KV codec. At 1\,M this campaign's rows record \textbf{29.6\,GiB allocated and
-32.8\,GiB reserved on the worst rank} (35.6\,GiB reserved on the spec row), while the vanilla
-HuggingFace stack runs out of memory at 128\,k single-rank. The long-context target needs no rotary
-scaling at all (\texttt{rope\_type: none}); where an arm does need it, the engine applies a
-fixed factor 8 at 8\,k and above, anchored on each context's own length, because the
-\texttt{transformers} version in use ignores \texttt{original\_max\_position\_embeddings}.
-% SRC: scripts/lcfm_figures.py memory_peak(); results/mlsys/bw_diag_p2/onem/blocking/df_arms.csv; results/mlsys/LCFM_RECONCILE.md (AUDIT E7/E8/E19)
+NF4 is the KV codec. The worst-rank 1\,M peak in this release is in the \texttt{ring2048}
+diagnostic rows, \textbf{29.6\,GiB allocated and 32.8\,GiB reserved on the worst of eight
+ranks}; the split-KV campaign's 1\,M rows record rank 0 only (26.2\,GiB). The vanilla
+HuggingFace stack runs out of memory at 128\,k single-rank. The long-context target needs no
+rotary scaling (\texttt{rope\_type: none}); the scaling arms set an explicit factor 16 or 32
+with anchor 8192.
+% SRC: scripts/lcfm_figures.py memory_peak() (both provenances); results/mlsys/bw_diag_p2/onem/*/df_arms.csv; results/mlsys/rerun_r1,r2,rerun_topup
 
-\paragraph{Targets.} The long-context campaign runs the Gradient-1048k build of
-\texttt{meta-llama}'s Llama-3-8B (\texttt{gradientai}, "Gradient-1048k"), trained to a
-1\,M window, so nothing is stretched; the rotary intervention of \S\ref{sec:res-rope} runs
-\texttt{meta-llama/Llama-3.1-8B}, which ships the scaling dictionary under test. A ceiling test
-on \texttt{meta-llama/Llama-2-7b-hf} is a capability reference only and no ratio here uses it
-(Appendix~\ref{app:evidence}).
+\paragraph{Targets.} The long-context campaign runs the Gradient-1048k build of Llama-3-8B
+(\texttt{gradientai}), trained to a 1\,M window, so nothing is stretched; the rotary
+intervention of \S\ref{sec:res-rope} runs \texttt{meta-llama/Llama-3.1-8B}, which ships the
+scaling dictionary under test. A ceiling test on \texttt{meta-llama/Llama-2-7b-hf} is a
+capability reference only and no ratio here uses it (Appendix~\ref{app:evidence}).
 % SRC: results/lcfm/CAMERA_READY_KIT.md section 3e (limitation 4)
 
 \paragraph{Protocol.} Prompts are PG-19 narrative \citep{rae2019pg19}, five books, windowed
@@ -231,14 +232,14 @@ engine that produced it (\texttt{ring\_decode\_mode}, patched-layer count, git c
 row that cannot prove its engine is void.
 % SRC: scripts/lcfm_figures.py; results/mlsys/rerun_r1,r2 (provenance columns)
 
-\paragraph{Every timing here was taken under NCCL blocking wait.} The pod env sets
-\texttt{TORCH\_NCCL\_BLOCKING\_WAIT=1} (\path{scripts/mlsys_pod_env.sh:32}) and the
-campaign's remote scripts source it, so every \texttt{wait()} on a collective polls with a
-fixed 10\,ms host sleep and a ring whose every round ends in a wait pays one poll period per
-round, which \S\ref{sec:res-decode} measures. Removing the variable is not a drop-in,
-because it exposes an ordering hazard in the ring's buffer reuse
-(\S\ref{app:diagnosis}); the numbers here describe the engine as it ran.
-% SRC: results/lcfm/BLOCKING_WAIT_DIAG.md; results/mlsys/bw_diag_p1,p2; scripts/mlsys_pod_env.sh
+\paragraph{Measurements were taken under NCCL blocking wait.} Every RASD timing here except the
+diagnostic's no-flag arm (\S\ref{app:diagnosis}) comes from rows whose environment exported
+\texttt{TORCH\_NCCL\_BLOCKING\_WAIT=1} (\path{fbd41fb:scripts/mlsys_pod_env.sh:34}, the file
+at the commit every campaign row records). In that mode each \texttt{wait()} on a collective
+polls with a fixed 10\,ms host sleep, so a ring whose every round ends in a wait pays one poll
+period per round, which \S\ref{sec:res-decode} quantifies. Removing the variable is not a
+drop-in: it exposes an ordering hazard in the ring's buffer reuse (\S\ref{app:diagnosis}).
+% SRC: fbd41fb:scripts/mlsys_pod_env.sh:34; results/mlsys/incident_20261009T001856Z/pod_results/pod_home/manifest.log; results/mlsys/bw_diag_p1,p2 (nccl_env per row)
 
 \paragraph{Draft conditioning.} The draft sees the leading BOS plus the most recent 4095
 tokens (\path{src/models/rasd_inference.py:878}, applied and logged at every draft prefill in
@@ -260,13 +261,13 @@ repeated 16-gram, or a periodic tail covering $50\%$ of the row.
 
 Figure~\ref{fig:degeneracy} is the census over the rows that ship with a per-row verdict,
 grouped by the temperature each row \emph{records} rather than by its stage name: the 128\,k
-temperature campaign ships two stages, one at $T{=}0$ and one at $T{=}1.0$. Under greedy,
+temperature campaign's two stages are at $T{=}0$ and $T{=}1.0$. Under greedy,
 \textbf{9 of 10} rows in the long-context first-window audit loop and \textbf{1 of 5} in the
 128\,k greedy arm does; at $T{=}1.0$ none of five does; at $T{=}0.7$ \textbf{1 of 77} does. That row is \texttt{ROPE\_EXT\_SAMP\_F16\_SPEC\_pg19\_train\_2768\_s42},
 a rotary arm on book 2768 with 77\% of its tokens inside a repeated 16-gram and a zero
 periodic tail, which is why the figure marks it with the detector's verdict instead of the
-share. Six greedy rows with eight generated tokens each are excluded: too short for a detector
-whose shortest repeat span is 128 tokens. The looping row is inside the factor-16 mean of
+share. Six greedy rows with eight generated tokens each are excluded, too short to judge. The
+looping row is inside the factor-16 mean of
 \S\ref{sec:res-rope}, which we therefore report with and without it.
 % SRC: scripts/lcfm_figures.py census(); results/mlsys/natural_f1_128k_first_window.csv; repetition_SA_TEMP_{0,1_0}_128K_SPEC.csv; n5_extension/repetition_ROPE_EXT_SAMP_F16_SPEC.csv
 
@@ -284,11 +285,14 @@ there and not used here.}
 \label{fig:degeneracy}
 \end{figure}
 
-Three consequences are applied here rather than merely noted. The headline protocol is
-sampled at $T{=}0.7$, with the earlier greedy numbers reported separately. A looping row is
-named wherever one appears, never smoothed into a mean. And the temperature ablation points
+In the controlled 128\,k temperature arm greedy acceptance is not above $T{=}0.7$ (0.460
+against 0.468), so the inflation we report belongs to the first-window protocol rather than to
+greedy decoding in general. Three consequences are applied here rather than merely noted. The
+headline protocol is sampled at $T{=}0.7$, with the earlier greedy numbers reported separately. A looping row is
+named wherever one appears, and where one sits inside a mean, that mean is reported with and
+without it (\S\ref{sec:res-rope}). And the temperature ablation points
 \emph{up}: at 128\,k, $T{=}1.0$ reaches acceptance 0.7369 against 0.4681 at the headline
-$T{=}0.7$, with 0 of 5 rows degenerate in both arms.
+$T{=}0.7$, with 0 of 5 rows degenerate in all three arms.
 % SRC: scripts/lcfm_figures.py census(); results/mlsys/seeds_ablations/session_a_SA_TEMP_{0,1_0}_128K_SPEC.csv
 
 \subsection{Rotary stretching: acceptance and perplexity dissociate}
@@ -349,15 +353,15 @@ the question is only whether the model is still a model. The rungs are matched b
 
 On the \textbf{one exactly aligned book} the target's perplexity is \textbf{1.805 at 1\,M}
 against \textbf{1.649 at 128\,k}, a \textbf{$+9.5\%$} move. That book is
-\texttt{pg19\_train\_0}, the King James Bible in the PG-19 pool, and its perplexity of 1.65
-means the text is close to deterministic for this model, so it is the strongest and also the
+\texttt{pg19\_train\_0}, the King James Bible in the PG-19 pool, whose perplexity of 1.65
+means the text is close to deterministic for this model, so it is both the strongest and the
 most memorised of the three. On the two books that share 91 to 95\% of their scored tokens the
 difference is within \textbf{1.1\%} at perplexities of 10.6 and 12.8. A natively long-context target therefore stays coherent across an eightfold context increase,
 which is the property the campaign depends on, though the strongest form of that claim rests on
 one near-deterministic book. The measurement is prefill-only, so the decode fix cannot move it.
 % SRC: scripts/lcfm_figures.py; results/mlsys/sampling_session/session_a_QUALITY_FIX_{128K,1M}.csv; alignment.csv
 
-\subsection{The ring's key/value rotation was the decode step}
+\subsection{The rotation was the decode step, and a host-side poll inflated it}
 \label{sec:res-decode}
 
 At 128\,k, each decode token requires 7 rotations over the 32 patched layers
@@ -369,37 +373,22 @@ sleep (\texttt{kSynchronizeBusyWaitMillis}, \texttt{ProcessGroupNCCL.cpp:426} in
 torch 2.5.1). Figure~\ref{fig:ringbench} measures that primitive with no model attached, over
 five payloads from 4\,KB to 266\,MB, in both wait modes in one session on one box.
 
-Under the blocking wait every payload costs the same ${\sim}10.3$\,ms: 10.3347\,ms for
-4\,KB against 10.3520\,ms for 266\,MB, an \textbf{0.4\% spread} across a
-66{,}584$\times$ payload range. That flat line is the poll, not the wire. Without the flag the
-same primitive takes \textbf{0.134\,ms} at 4\,KB and rises with payload to
-\textbf{2.619\,ms} at 266\,MB, which is \textbf{101.7\,GB/s}, and the two modes' post-sync
-times agree to within 3\% at every payload, so the wire never changed.
-% SRC: scripts/lcfm_figures.py bench_two_modes(), removed_time(); results/mlsys/bw_diag_p1/bench/ringbench_{blocking,async}.csv; results/mlsys/decode_df/ring_bench/ringbench.csv
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.62\linewidth]{figD_ring_bench.pdf}
-\caption{A bare-process benchmark of the ring primitive the engine uses
-(\texttt{batch\_isend\_irecv}, 8 ranks, 256 rounds per payload, no model), in both NCCL wait
-modes, same session and same box. Squares: the campaign's configuration, where the host
-\texttt{wait()} on each round returns after a fixed 10\,ms poll, so the round costs the same
-at 4\,KB and at 266\,MB. Triangles: the same rounds with the wait flag removed and the timing
-taken after a device sync, where the round costs what the transfer costs and reaches
-101.7\,GB/s at 266\,MB. NCCL selected \texttt{P2P/CUMEM/read} on a full NV12 mesh.}
-\label{fig:ringbench}
-\end{figure}
+Under the blocking wait every payload costs the same ${\sim}10.3$\,ms (10.3347\,ms at
+4\,KB, 10.3520\,ms at 266\,MB); that flat line is the poll, not the wire. Without the flag the
+same round takes \textbf{0.134\,ms} at 4\,KB and \textbf{2.619\,ms} at 266\,MB, which is
+\textbf{101.7\,GB/s}, and the two modes' post-sync times agree to within 3\% at 33\,MB,
+133\,MB and 266\,MB (5.4\% at 66\,MB) and to within 11\% at the 4\,KB ping, so the wire did
+not change.
 
 Removing the rotation is prior work (\S\ref{sec:related}), adopted here as \textbf{split-KV}:
-each rank computes attention for the replicated query against only its own prefill shard and
+each rank computes attention for the replicated query against only its own prefill shard, and
 the partials are merged by one MAX and one SUM all-reduce. Our contribution is the diagnosis
-and the measurement, not the technique. Split-KV's own times are blocking-wait times too, since
-its per-layer merges are synchronous collectives and pay their own share of the same poll.
+and the measurement, not the technique.
 
 \begin{table}[t]
-\centering
+\centering\footnotesize
 \caption{Decode time per token, old ring engine against split-KV, on \emph{matched}
-(seed, book) cells: one value per cell on both sides, plumbing repeats dropped, and the two
+(seed, book) cells, one value per cell on both sides, plumbing repeats dropped and the two
 seed stages hit by the configuration bug of \S\ref{sec:res-seeds} excluded. Speedup is the
 ratio of decode-only times. \textbf{Both columns were measured under NCCL blocking wait}
 (\S\ref{sec:setup}).}
@@ -408,33 +397,45 @@ ratio of decode-only times. \textbf{Both columns were measured under NCCL blocki
 \end{table}
 
 Table~\ref{tab:headline} is the headline, with the same cells plotted in
-Appendix~\ref{app:diagnosis}. Decode-only, the fix is worth \textbf{2.80$\times$ / 3.77$\times$
-/ 4.38$\times$} with speculation and \textbf{3.30$\times$ / 4.26$\times$ / 5.32$\times$}
-without it at 128\,k / 512\,k / 1\,M, and the mechanism is in what it removes rather than in
-the ratio. Dividing the removed time by the 224 rounds: at 128\,k it is 2.43\,s per token, or
-10.9\,ms per round, which is the poll period itself, and the microbench predicted
-224 $\times$ (10.3347 $-$ 2.6191)\,ms $=$ 1.72\,s against a measured 1.75\,s, within 1.4\%.
-At 512\,k and 1\,M the removed time is far larger, 7.64 and 13.88\,s per token, because the
-key/value shard a round ships grows by 4$\times$ and 8$\times$, and the poll is not what is
-being removed there: at 1\,M, removing it changed this engine's ring decode by 3\% (16.43 to
-15.96\,s per token, same book, seed and session), so most of what split-KV removes at that
-context is the rotation's own transfer and per-chunk work. What the measurements show is a cost
-that scales with the shard the rotation ships, of which the poll is the whole story at
-128\,k (predicted to 1.4\%) and a small share at 1\,M.
-% SRC: scripts/lcfm_figures.py removed_time(), headline_rows(); results/mlsys/bw_diag_p1/bench/; results/mlsys/bw_diag_p2/onem/blocking/df_arms.csv,onem/async/df_arms.csv
+Figure~\ref{fig:decode-context} in Appendix~\ref{app:diagnosis}. Decode-only, the fix is worth
+\textbf{2.80$\times$ / 3.77$\times$ / 4.38$\times$} with speculation and
+\textbf{3.30$\times$ / 4.26$\times$ / 5.32$\times$} without it at 128\,k / 512\,k / 1\,M.
+What it removes is two different costs. At 128\,k, split-KV removes \textbf{2.43\,s per
+token} on these cells and removing the flag from the ring saves \textbf{1.75\,s} of that in the
+diagnostic's first session (\texttt{ring2048} target-only), so the poll is \textbf{about 70\%}
+of the removal there and the rotation's own work is the rest; 224 $\times$ (10.3347 $-$ 2.6191)
+\,ms predicts 1.73\,s against the measured 1.75\,s. That pairing gives 72\%, and entirely
+within one session 65\% and 67\% (Appendix~\ref{app:diagnosis}). At 1\,M it is the opposite: split-KV removes
+\textbf{13.88\,s per token} and removing the flag changes ring decode by \textbf{3\%} (16.43
+to 15.96\,s/token, one row per mode), so almost none of that is the poll. Moving each round's
+shard at the measured 101.7\,GB/s accounts for \textbf{4.7\,s of the 13.9\,s} (224 rounds
+$\times$ 2.15\,GB) and the rest is \textbf{not attributed in this work}. The removed cost grows
+with context because the shard the rotation ships grows, 4$\times$ at 512\,k and 8$\times$ at
+1\,M.
+% SRC: scripts/lcfm_figures.py bw_numbers(), bw_transfer_check(), bench_two_modes(), removed_time(), headline_rows(); results/mlsys/bw_diag_p1/{bench,arms}, results/mlsys/bw_diag_p2/{arms,onem}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.55\linewidth]{figD_ring_bench.pdf}
+\caption{A bare-process benchmark of the ring primitive the engine uses
+(\texttt{batch\_isend\_irecv}, 8 ranks, 256 rounds per payload, no model), in both NCCL wait
+modes, same session and same box. Squares: the campaign's configuration, where the host
+\texttt{wait()} on each round returns after a fixed 10\,ms poll, so the round costs the same
+at 4\,KB and at 266\,MB. Triangles: the same rounds with the wait flag removed and the timing
+taken after a device sync, where the round costs what the transfer costs and reaches
+101.7\,GB/s at 266\,MB. The two modes' post-sync times agree to within 3\% at 33\,MB, 133\,MB
+and 266\,MB and to within 11\% at 4\,KB (Table~\ref{tab:bench}). NCCL selected \texttt{P2P/CUMEM/read} on
+a full NV12 mesh.}
+\label{fig:ringbench}
+\end{figure}
 
 
-Two caveats we state rather than bury. Every number here is a blocking-wait number, so it
-describes the engine as it ran rather than the hardware: the same ring decode step at 128\,k is
-1.93\,s per token with the flag removed against 3.79\,s with it, and split-KV was not measured
+
+One caveat we state rather than bury: every RASD number here is a blocking-wait number, so it
+describes the engine as it ran rather than the hardware. The same ring decode step at 128\,k is
+2.03\,s per token with the flag removed against 3.78\,s with it, and split-KV was not measured
 in that mode (Appendix~\ref{app:diagnosis}).
-% The 128k prefill ratio stays dropped rather than ranged: this release's own 128k
-% first-token time varies 8.7 to 12.4 s for one configuration, which is the size of the
-% ratio itself. And the matched old-against-new comparison is one
-cell at 512\,k and two at 1\,M, because that is how many books the old engine measured there,
-while the fixed engine's own target-only arms were widened to three and five books by a later
-top-up run.
-% SRC: scripts/lcfm_figures.py headline_rows(); results/mlsys/rerun_topup/; results/mlsys/decode_df/arms/df_arms.csv
+% SRC: scripts/lcfm_figures.py bw_numbers(), headline_rows()
 
 \subsection{Speculation still pays, and the baseline is corrected}
 \label{sec:res-spec}
@@ -447,37 +448,37 @@ book:
 \textbf{1.54$\times$ / 2.29$\times$ / 2.20$\times$} decode-only at 128\,k / 512\,k / 1\,M over
 the same engine's own target-only path, over 1, 3 and 5 matched books. The 128\,k figure is
 the one that changed: the older 2.01$\times$ divided a three-book spec mean by a one-book
-target mean, and on the one book both sides measured it is 1.54$\times$. The per-book values are in Appendix~\ref{app:baseline}. End-to-end, where prefill is included, the same comparison reads
-$1.50\times$ / $1.76\times$ / $1.41\times$, because at 1\,M a row is 520 to 740\,s depending
-on the arm, of which about 340\,s is prefill: with the decode step fixed, prefill is the long
-pole and any statement about 1\,M throughput has to say which of the two it means.
+target mean, and on the one book both sides measured it is 1.54$\times$ (per-book values in
+Appendix~\ref{app:baseline}). End-to-end, where prefill is included, the same comparison reads
+$1.50\times$ / $1.76\times$ / $1.41\times$: with the decode step fixed, prefill is the 1\,M
+long pole, so a throughput statement has to say which of the two it means.
 % SRC: scripts/lcfm_figures.py f5_rows(); results/mlsys/rerun_r1,r2 + rerun_topup (matched books)
 
 
-Two of those denominators used to be one and two books. We topped them up after the
-confirmatory run, because a ratio whose denominator is one row is a ratio of one row to
-another. The 512\,k target-only mean is $2.148$\,s/token over three books against the $2.346$
-single-book value it replaces, and the 1\,M mean is $3.155$ over five against $3.211$ over
-two. Both moves are downward, so the quoted ratios are lower than the thin ones: the thin
-denominator was flattering, by $8\%$ at 512\,k. The book-to-book spread inside the fixed
-engine is 1.27$\times$ at 512\,k and 1.30$\times$ at 1\,M, wider than the 1.02$\times$ spread
-across seeds, so books and seeds are not interchangeable units.
+Two of those denominators used to be one and two books, and we topped them up before the
+ratios above were computed. The 512\,k target-only mean is $2.148$\,s/token over three books
+against the $2.346$ single-book value it replaces, and the 1\,M mean is $3.155$ over five
+against $3.211$ over two. Both moves are downward, so the thin denominator was flattering, by
+$8\%$ at 512\,k. The book-to-book spread inside the fixed
+engine is 1.27$\times$ at 512\,k and 1.30$\times$ at 1\,M, wider than its 1.02$\times$ spread
+across seeds.
 % SRC: scripts/lcfm_figures.py seed_spread(); results/mlsys/rerun_topup/session_a_TP_*.csv
 
-\paragraph{The corrected old-engine baseline.} Two stages of the seed ablation, the ones meant
-to run seeds 123 and 456 at 1\,M, ran seed 42 instead, because the config builder takes the
-seed list from the defaults and then overwrites whatever a level declared:
+\paragraph{The corrected old-engine baseline.} Two stages of the seed ablation, meant to run
+seeds 123 and 456 at 1\,M, ran seed 42 instead, because the config builder takes the seed list
+from the defaults and then overwrites whatever a level declared:
 \path{run_experiment.py:693} pops \texttt{seeds} from \texttt{defaults}, line 713 merges the
 level over those defaults, and line 714 then sets \texttt{run["seed"]} from the default list,
-so the run ids those stages produced end in \texttt{\_s42} (line 725) while their stage names
+so the run ids those stages produced end in \texttt{\_s42} (line 722) while their stage names
 claimed 123 and 456. Rebuilt from rows that were never affected, on 13 matched (seed, book)
-cells, the 1\,M speedup is \textbf{4.38$\times$} rather than $4.03\times$ and the 1\,M
-acceptance difference is \textbf{$-0.1\%$} rather than $-10.4\%$: the fixed engine's
-acceptance is \emph{unchanged}, and the previously reported drop was the bug. The old engine's
+cells, the 1\,M speedup is \textbf{4.38$\times$} rather than $4.04\times$ and the 1\,M
+acceptance difference is \textbf{$-0.1\%$} rather than $-10.4\%$, with a 95\% interval of
+about $\pm13\%$ relative: the fixed engine's acceptance shows no detectable net change, and
+the previously reported drop was the bug. The old engine's
 own seed spread is 23.0\% of the mean on the matched books, so per-seed movement of
 $-15.7\%$, $+10.9\%$ and $+11.3\%$ sits inside the old engine's own seed-to-seed variation, in
 both directions.
-% SRC: scripts/mlsys_seed_baseline_audit.py; scripts/lcfm_figures.py headline_rows(); run_experiment.py:693,713,714,725
+% SRC: scripts/mlsys_seed_baseline_audit.py; scripts/lcfm_figures.py headline_rows(); run_experiment.py:693,713,714,722
 
 \paragraph{The speedups are not bought with a different model.} An exactly equivalent kernel
 can still move an acceptance number, because the accept/reject decision compares the target's
@@ -495,22 +496,21 @@ We benchmark vLLM 0.6.3 at tensor-parallel 8 on the same prompts, fed the same t
 our own sidecars, so the units match. The comparison is \textbf{not precision-matched}: vLLM
 runs \textbf{bf16 weights with a bf16 KV cache and greedy decoding}, while RASD runs
 \textbf{FP4 weights with an NF4 KV cache} at $T{=}0.7$ with speculation, and RASD's times are
-the split-KV engine measured \textbf{under NCLL blocking wait}. vLLM ran at its default
+the split-KV engine measured \textbf{under NCCL blocking wait}. vLLM ran at its default
 chunked-prefill and batch-token settings, untuned. Every ratio below carries all three
 caveats.
 
 Table~\ref{tab:vllm} in Appendix~\ref{app:baseline} carries the numbers; two readings point in
 opposite directions.
-\textbf{vLLM's entire run takes 2.04$\times$ to 2.57$\times$ our prefill}, meaning its
-prefill plus its 128 decode steps against our first-token time; prefill against prefill the
-ratio is 2.52$\times$ at 512\,k and 2.56$\times$ at 1\,M. We do not quote a 128\,k prefill
-ratio, because our own 128\,k first-token time varied by about 40\% between sessions with an
-identical configuration (8.7 to 12.4\,s), as large as the ratio itself; that prefill advantage
+\textbf{vLLM's entire run takes 2.54$\times$ to 2.57$\times$ our prefill}, its prefill and
+its 128 decode steps against our first-token time; prefill against prefill the ratio is
+2.52$\times$ and 2.56$\times$ at 512\,k and 1\,M. We quote neither 128\,k ratio,
+because both divide by that same unstable number; that prefill advantage
 is a property of the ring prefill and is untouched by the decode fix. And \textbf{vLLM's
 decode is 130 to 162$\times$ faster per token than ours even after the fix}, against 429 to
-731$\times$ before it: the fix removed 70 to 81\% of the decode deficit and left our decode
-far behind a production engine, and speculation does not close the gap (our spec decode is
-$65\times$, $65\times$ and $59\times$ vLLM's).
+731$\times$ before it: the fix removed 70 to 81\% of the deficit and left our decode far
+behind a production engine, and our spec decode is still $65\times$, $65\times$ and
+$59\times$ vLLM's.
 % SRC: scripts/lcfm_figures.py vllm_rows(); results/mlsys/vllm_run2/vllm_baseline.csv
 
 \section{Limitations}
@@ -528,21 +528,21 @@ $65\times$, $65\times$ and $59\times$ vLLM's).
         speculation cell and fail a device-side assertion in three of five diagnostic stages.
         This work reports that hazard and does not fix it (Appendix~\ref{app:diagnosis}).
   \item \textbf{One node, one fabric, one precision.} Everything is 8$\times$A100 80\,GB SXM4
-        over NVLink, there is no bf16 row, and the per-round quantity \S\ref{sec:res-decode}
-        measures is a host-side poll at this configuration, so it is not extrapolated to a
-        multi-node fabric.
-  \item \textbf{Acceptance under split-KV is explained, not tested.} The 1\,M acceptance is
-        unchanged over 13 matched cells while per seed it moves both ways inside a 23.0\%
-        old-engine spread; the mechanism we offer, one flipped near-tie changing the emitted
+        over NVLink and there is no bf16 row. The per-round quantity \S\ref{sec:res-decode}
+        measures is a host-side poll at this configuration, and the 1\,M removal is largely
+        unattributed, so neither is extrapolated to a multi-node fabric.
+  \item \textbf{Acceptance under split-KV is explained, not tested.} The 1\,M acceptance
+        shows no detectable net change over 13 matched cells while per seed it moves both ways
+        inside a 23.0\% old-engine spread; the mechanism we offer, one flipped near-tie changing the emitted
         prefix, was not tested directly.
   \item \textbf{Prefill is now the 1\,M pole} and the perplexity side of F1 is one passage. A
         1\,M row is 520 to 740\,s depending on the arm, about 340\,s of it prefill, so the
         end-to-end 1\,M speedup is $1.41\times$ against $2.20\times$ decode-only; and the
         perplexity ratio was scored on a different prompt from the acceptance rows at a native
         perplexity of 1.013, so the F1 claim rests on the acceptance contrast over five books.
-  \item \textbf{An unattributed elementwise term.} In the profiled 128\,k decode window,
-        19.3\% of device time was elementwise kernels never attributed to an operation; with
-        the rotation gone that is a larger share of what remains.
+  \item \textbf{An unattributed elementwise term}: 19.3\% of device time in the profiled
+        128\,k decode window was elementwise kernels never attributed to an operation, a larger
+        share of what remains now the rotation is gone.
   \item \textbf{Two withdrawn claims are recorded rather than deleted} (Appendix
         \ref{app:changes}): the ``communication is at most $1.2\%$ of wall time'' claim, whose
         bucket recorded 0.31 to 0.37$\times$ of the physical floor, and the $4.4\times$
@@ -552,30 +552,30 @@ $65\times$, $65\times$ and $59\times$ vLLM's).
 \section{Conclusion}
 \label{sec:conclusion}
 
-We asked what limits speculative decoding at a million tokens, and the answer arrived in
-three parts, none of them about speculation itself. Under greedy decoding the acceptance
-numbers are measured on degenerate text: 9 of 10 long-context rows in the released first-window
-audit loop and 1 of 5 rows in the 128\,k greedy arm loop, against 1 of 77 sampled rows. Once
-sampled at $T{=}0.7$, stretching a model's rotary basis costs 27 to 31\% of the acceptance over
-five books for $0.05$ to $1.56\%$ of perplexity on one passage, so the perplexity check did not
-reveal the loss. A natively 1M-trained target stays coherent at 1\,M, within $9.5\%$ of its
-own 128\,k perplexity on the exactly aligned book.
+We asked what limits speculative decoding at a million tokens, and the answer arrived in three
+parts, none of them about speculation itself. Under greedy decoding the acceptance numbers are
+measured on degenerate text: 9 of 10 long-context rows in the released first-window audit loop
+and 1 of 5 rows in the 128\,k greedy arm loop, against 1 of 77 sampled rows. Once sampled at
+$T{=}0.7$, stretching a model's rotary basis costs 27 to 31\% of the acceptance over five books
+for $0.05$ to $1.56\%$ of perplexity on one passage, so the perplexity check did not reveal the
+loss. A natively 1M-trained target stays coherent at 1\,M, within $9.5\%$ of its own 128\,k
+perplexity on the exactly aligned book.
 
 What was hostile was our engine, and the first thing we learned about it is that our diagnosis
 was the measurement condition. Rotating each layer's key/value shard around eight ranks costs
-224 rounds per decode token, and each round ended in a host-side wait that, under the NCCL
+224 rounds per decode token, each of which ended in a host-side wait that, under the NCCL
 blocking wait every run here used, polls with a fixed 10\,ms sleep: the same
 ${\sim}10.3$\,ms per round at 4\,KB and at 266\,MB, and 0.134\,ms rising to 2.619\,ms once
 the flag is removed. Adopting decode-side context parallelism, which is prior work, is worth
-$2.80$ to $4.38\times$ decode-only with speculation and $3.30$ to $5.32\times$ without it,
-and the time it removes grows from 2.4 to 13.9\,s per token with the shard a round ships: the
-poll is essentially all of it at 128\,k, while at 1\,M removing the poll alone moved decode by
-3\%. Speculation still pays $1.54$ to $2.29\times$ on top on matched books, the
-matched 1\,M acceptance is unchanged at $-0.1\%$, and against vLLM at bf16 and greedy
-decoding, not a precision-matched comparison, vLLM's entire run takes $2.04$ to $2.57\times$
-our prefill while its decode stays $130$ to $162\times$ faster per token.
-% SRC: every number in this conclusion restates Tables 2 and 5 and Figures 1 to 4, all
-% generated by scripts/lcfm_figures.py.
+$2.80$ to $4.38\times$ decode-only with speculation and $3.30$ to $5.32\times$ without it, and
+the time it removes grows from 2.4 to 13.9\,s per token with the shard a round ships: at
+128\,k the poll is about 70\% of it, at 1\,M about 3\%. Speculation still pays $1.54$ to
+$2.29\times$ on top on matched books, the matched 1\,M acceptance shows no detectable net
+change at $-0.1\%$, and against vLLM at bf16 and greedy decoding, not a precision-matched
+comparison, vLLM's entire run takes $2.54$ to $2.57\times$ our prefill while its decode stays
+$130$ to $162\times$ faster per token.
+% SRC: every number in this conclusion restates the headline table, the F5 table and the
+% figures, all generated by scripts/lcfm_figures.py.
 
 % References come before the appendices, as the style expects, so that the
 % page check measures the main text and not the appendix.
@@ -596,7 +596,7 @@ that found them (\path{results/mlsys/LCFM_RECONCILE.md}, AUDIT E1 to E23).
 CORRECTED gives the old reading and the new one; REMOVED means the claim is withdrawn and not
 replaced. Audit items are E1 to E23 of \texttt{results/mlsys/LCFM\_RECONCILE.md}.}
 \label{tab:changes}
-\setlength{\tabcolsep}{3pt}\setlength{\tabcolsep}{2pt}\begin{tabular}{p{0.20\linewidth} p{0.155\linewidth} p{0.47\linewidth}}
+\setlength{\tabcolsep}{2pt}\begin{tabular}{p{0.20\linewidth} p{0.155\linewidth} p{0.47\linewidth}}
 \toprule
 Claim in the reviewed version & Status & Reason \\
 \midrule
@@ -605,7 +605,7 @@ Idle at or above $50\%$ is collective wait (E2) & REMOVED & Measured outside the
 The tick-gate barrier (E3) & REMOVED & Not the code that produced the reported numbers. \\
 The rotation is hidden and the draft pass is free (E4) & CORRECTED & The rotation is issued before attention, and the claimed draft overlap was never implemented. \\
 Positioning table and novelty framing (E5) & CORRECTED & Split-KV is prior work, and the decode-overlap cell was not implemented. \\
-The draft saw the last 4096 tokens (E6) & CORRECTED & Reviewed build only: the draft saw the prompt's \emph{first} 4096 tokens, so its acceptance levels are lower bounds. Fixed in \texttt{d89cf41}; every row here uses the fix. \\
+The draft saw the last 4096 tokens (E6) & CORRECTED & Reviewed build only: the draft saw the prompt's \emph{first} 4096 tokens. Fixed in \texttt{d89cf41}; every row here uses the fix. \\
 Anchor is the model's original window (E7) & CORRECTED & Each context was anchored on its own length. \\
 Factor $\lceil N/4096\rceil$ (E8, E9) & CORRECTED & A fixed factor 8 at 8\,k and above, and none below. \\
 Verify-loop defects (E10) & CORRECTED & Per AUDIT E10. \\
@@ -670,8 +670,7 @@ pooled over 13 cells & 0.4839 & 0.4834 & $-0.1\%$ \\
 \begin{table}[h]
 \centering
 \caption{The rotary intervention at 128\,k on \texttt{meta-llama/Llama-3.1-8B}: five books
-per arm, seed 42, FP4 weights with an NF4 KV cache Acceptance is the mean over five books; the per-arm
-table is Table~\ref{tab:rope} in Appendix~\ref{app:baseline}.
+per arm, seed 42, FP4 weights with an NF4 KV cache. Acceptance is the mean over five books.
 The perplexity ratio is one 1024-token continuation of \emph{one} passage, on a prompt none
 of the acceptance rows use, whose native perplexity is 1.013; it is a paired measurement
 against the native arm on that passage and nothing wider. The \texttt{tok/s} column is
@@ -724,8 +723,8 @@ stage & book & context & decode s/token & provenance \\
 \end{tabular}
 \end{table}
 
-\paragraph{Effect.} The 512\,k target-only mean moves from 2.3460 over one book to 2.1480 over
-three, and the 1\,M mean from 3.2107 over two books to 3.1553 over five. The spec-over-target
+\paragraph{Effect.} Table~\ref{tab:topup} lists the rows. The 512\,k target-only mean moves
+from 2.3460 over one book to 2.1480 over three, and the 1\,M mean from 3.2107 over two books to 3.1553 over five. The spec-over-target
 ratios in \S\ref{sec:res-spec} are computed on these wider arms; the matched speedups in
 Table~\ref{tab:headline} are not affected, because the new books have no old-engine
 counterpart. Both movements are downward, so widening the denominator lowered the reported
@@ -742,57 +741,72 @@ diagnostic that changed the F4 mechanism.
 \centering\footnotesize
 \caption{Bare-process ring benchmark: the \texttt{batch\_isend\_irecv} ring primitive the
 engine uses, 8 ranks, 256 rounds per payload, no model attached, both NCCL wait modes in one
-session on one box. Reported for rank 0; the worst rank-to-rank spread over all eight ranks is
-0.056\,ms. The blocking column is the campaign's configuration: the timing is the host
-\texttt{wait()} call, which under \texttt{TORCH\_NCCL\_BLOCKING\_WAIT=1} polls with a fixed
-10\,ms sleep. The last column is the same round with the flag removed, timed after a device
-sync so that a transfer that has been set up but not completed is still counted.}
+session on one box. The times are rank 0's; the last two columns are the worst rank-to-rank
+spread over all eight ranks in each mode, and the largest are 0.091\,ms under the blocking wait
+and 0.110\,ms without it. The blocking column is the campaign's configuration: the timing is
+the host \texttt{wait()} call, which under \texttt{TORCH\_NCCL\_BLOCKING\_WAIT=1} polls with
+a fixed 10\,ms sleep. The no-flag column is the same round with the wait removed, timed after a
+device sync so that a transfer that has been set up but not completed is still counted.}
 \label{tab:bench}
 \input{../../results/lcfm/tables/bw_bench.tex}
 \end{table}
 
 The five payloads span a factor of 66{,}584 in bytes and 0.4\% in time under blocking wait,
-against 0.134\,ms rising to 2.619\,ms (101.7\,GB/s) without it. The campaign's flat line was
-therefore the poll, and the fix is to remove the rounds rather than to move more data per
-round.
+against 0.134\,ms rising to 2.619\,ms (101.7\,GB/s) without it, so the campaign's flat line
+was the poll rather than the wire. What the wire costs is what the no-flag column shows, and
+that is the part of the ring's cost that removing the rotation eliminates.
 
 \begin{table}[h]
 \centering\footnotesize
 \caption{The blocking-wait and no-flag engine arms, 128\,k and 1\,M, 16-token target-only
-rows and 32-token spec rows, one session per mode on one box, \texttt{ring2048} unless noted.
+rows and 32-token spec rows at $T{=}0.7$, one session per mode on one box, \texttt{ring2048}
+unless noted.
 Every row records its wait mode in an \texttt{nccl\_env} column and its arm in
 \texttt{env\_arm}. The two flagged stages marked n/a died on a device-side assertion.}
 \label{tab:bwarms}
 \input{../../results/lcfm/tables/bw_arms.tex}
 \end{table}
 
-Two findings from that session belong to the honest version of F4. The token streams are
-\textbf{bit-identical across wait modes} in every target-only cell measured in both
-(128\,k \texttt{ring2048} and \texttt{ring32768}, and 1\,M \texttt{ring2048}), and the same
-digest reproduces across two sessions and two boxes; the one \textbf{speculation} cell
-measured in both modes diverges at token index 8, on a greedy seeded row against the same
-prompt. Removing the flag also produced a \texttt{indexSelectLargeIndex} device-side assertion
+Two findings from that session belong to the honest version of F4 (Table~\ref{tab:bwarms}).
+The token streams are \textbf{bit-identical across wait modes} in every target-only cell
+measured in both (128\,k \texttt{ring2048} and \texttt{ring32768}, and 1\,M
+\texttt{ring2048}), and the same digest reproduces across two sessions and two boxes; the one
+\textbf{speculation} cell measured in both modes diverges at token index 8, on a seeded
+$T{=}0.7$ row against the same prompt. Removing the flag also produced a \texttt{indexSelectLargeIndex} device-side assertion
 in three of five stages, and raised peak reserved memory at 1\,M from 32.8\,GiB to 57.0\,GiB
 on the worst rank. The flag was therefore masking an ordering hazard in the ring's buffer
 reuse, and it is not a free performance switch; this work reports it and does not fix it.
 % SRC: results/lcfm/BLOCKING_WAIT_DIAG.md; results/mlsys/bw_diag_p1,p2; results/mlsys/bw_diag_token_streams.json
 
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.80\linewidth]{figA_decode_vs_context.pdf}
+\caption{The cells of Table~\ref{tab:headline} plotted against context: decode time per token,
+both engines and both arms, all under blocking wait. Whiskers are the range over cells and $n$
+is the number of cells both engines measured. Both engines are dominated by the same rotation
+path, which split-KV shortens, and the gap between them widens as the shard a round ships
+grows.}
+\label{fig:decode-context}
+\end{figure}
+
 \begin{table}[h]
 \centering\footnotesize
 \caption{What the rotation costs per rung, target-only arms on matched cells, measured under
 blocking wait (Table~\ref{tab:headline}). The last column divides the removed time by the 224
-rounds per decode token. The 128\,k figure is the poll period; the larger figures at 512\,k
-and 1\,M are the rotation's own transfer and per-chunk work, which grow with the shard; at
-1\,M the poll itself is worth only 3\% of decode.}
+rounds per decode token. The removed time grows with the shard the rotation ships, 4$\times$
+at 512\,k and 8$\times$ at 1\,M. Removing the flag accounts for about 70\% of the 128\,k
+figure and only about 3\% of the 1\,M figure; the rest is the rotation's own work, part of
+which the measured transfer explains and part of which is not attributed here.}
 \label{tab:rotationcost}
 \input{../../results/lcfm/tables/rotation_cost.tex}
 \end{table}
 
 \begin{table}[h]
 \centering\footnotesize
-\caption{The engine arms from the original diagnosis: one model load, four configurations,
-128\,k target-only at 16 tokens each, all under blocking wait.}
+\caption{The engine arms from the original diagnosis (Table~\ref{tab:rotationcost} uses the
+matched cells): one model load, four configurations, 128\,k target-only at 16 tokens each, all
+under blocking wait.}
 \label{tab:arms}
 \begin{tabular}{lrrrr}
 \toprule
@@ -806,6 +820,8 @@ configuration & target-only s/token & vs \texttt{ring2048} & vs \texttt{ring3276
 \end{tabular}
 \end{table}
 
+Table~\ref{tab:arms} is the four-arm comparison all of that rests on, and
+\S\ref{sec:res-decode} uses the matched cells of Table~\ref{tab:headline}.
 \paragraph{Correctness.} The target-only stream under split-KV is bit-identical to the ring
 baseline for twelve consecutive tokens and then diverges at a step where the baseline's own
 top-2 logit margin is \textbf{0.0000}, against a row median of 2.9375 and a minimum of 0.0000:
@@ -816,14 +832,16 @@ perplexity gate is in any case blind to a decode-path change, because it scores 
 forward with \texttt{use\_cache=False}.
 % SRC: results/mlsys/DECODE_DIAGNOSIS.md sections F.4/F.5; results/mlsys/decode_df/arms/df_arms.csv
 
-\paragraph{Peak memory, worst rank.} The main text's memory figure is this campaign's, not the
-reviewed build's trace:
+\paragraph{Peak memory, worst rank.} Table~\ref{tab:memory} gives the main text's memory
+figure and its provenance; it is this campaign's, not the reviewed build's trace:
 
 \begin{table}[h]
 \centering\footnotesize
-\caption{1\,M rows, peak memory on the worst of the eight ranks, from the CSVs.
-\texttt{ring2048}, 16-token target-only rows and one 32-token spec row. The reserved figure is
-what the allocator held; allocated is what the tensors used.}
+\caption{1\,M peak memory from the CSVs. The \texttt{ring2048} diagnostic rows
+(\texttt{bw\_diag\_p2}) are 16-token target-only rows and one 32-token spec row, and they are
+the only rows in this release that record a worst-rank column; the split-KV campaign's own 1\,M
+rows record rank 0 only. The reserved figure is what the allocator held; allocated is what the
+tensors used.}
 \label{tab:memory}
 \input{../../results/lcfm/tables/memory.tex}
 \end{table}

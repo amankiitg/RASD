@@ -1,0 +1,31 @@
+== bench (bw_diag_p1)
+  tiny_4kb                  0.004 MB  blocking-wait 10.3347  blocking-postsync 0.1487  async-postsync 0.1340  postsync diff +11.0%  async GB/s 0.03
+  mb33                     33.292 MB  blocking-wait 10.3398  blocking-postsync 0.8373  async-postsync 0.8135  postsync diff +2.9%  async GB/s 40.92
+  k8_66mb_expand_after     66.585 MB  blocking-wait 10.3802  blocking-postsync 1.4371  async-postsync 1.3633  postsync diff +5.4%  async GB/s 48.84
+  mb133                   133.169 MB  blocking-wait 10.3442  blocking-postsync 2.5420  async-postsync 2.5306  postsync diff +0.5%  async GB/s 52.62
+  mb266                   266.338 MB  blocking-wait 10.3520  blocking-postsync 2.6404  async-postsync 2.6191  postsync diff +0.8%  async GB/s 101.69
+  blocking range 10.3347-10.3802, spread 0.44%; payload range 66584x
+  prediction 224*(blocking 4KB - async 266MB) = 1.7283 s; same-payload 224*(10.3520-2.6191) = 1.7322 s
+== engine arms
+  bw_diag_p1 128k ring2048 target: blocking 3.7805 async 2.0319 saving 1.7485 s; vs prediction 1.7283: +1.2% ; split-KV (same session, blocking) 1.0706 -> ring-minus-splitKV 2.7098 s; poll share 65%
+  bw_diag_p2 128k ring2048 target: blocking 3.7950 async 1.9257 saving 1.8694 s; vs prediction 1.7283: +7.5% ; split-KV (same session, blocking) 1.0013 -> ring-minus-splitKV 2.7938 s; poll share 67%
+  headline removed at 128k 2.4329 s; p1 poll saving / that = 72%
+  1M ring2048 target: blocking 16.4348 async 15.9613 change -2.88% ; saving 0.474 s = 3.4% of the headline 1M removed time
+  1M transfer at the bench's 101.7 GB/s: 224 rounds x 2.15 GB = 4.73 s of the 13.88 s removed
+== memory (worst rank)
+  ('bw_diag_p2', 'onem', 'async', 'ring2048', 'target', 1048576): alloc 29.60 GiB reserved 57.04 GiB mode=ring commit=135f8fb8
+  ('bw_diag_p2', 'onem', 'blocking', 'ring2048', 'spec', 1048576): alloc 29.60 GiB reserved 35.56 GiB mode=ring commit=135f8fb8
+  ('bw_diag_p2', 'onem', 'blocking', 'ring2048', 'target', 1048576): alloc 29.60 GiB reserved 32.83 GiB mode=ring commit=135f8fb8
+  split-KV campaign 1M rows: n=17 rank-0 gpu_peak_mem_mb max 26.21 GiB (worst-rank columns present: False)
+== 128k first-token times (s), every ok 128k row with prompt 130047/130048
+  n=92 min 8.02 (rerun_r1/session_a_sanity.csv) max 38.14 (profile/profile_a_nproc1.csv)
+  RR_128K_TARGET: [8.76]
+== F5 end-to-end, matched book at 128k (train_0)
+  128k: spec 1 target 1  e2e tps ratio 1.4956
+== 64-token rows in the T=0.7 census
+   sampling_session SANITY_pg19_train_0_s42 0.7
+   sampling_session SANITY_targetonly_pg19_train_0_s42 0.7
+   n5_extension SANITY_pg19_train_0_s42 0.7
+   n5_extension SANITY_targetonly_pg19_train_0_s42 0.7
+   fp4_seeds SANITY_pg19_train_0_s42 0.7
+   fp4_seeds SANITY_targetonly_pg19_train_0_s42 0.7
