@@ -1,0 +1,267 @@
+LCFM camera-ready v2: report
+Branch camera-ready-v2, merged to main as e1cf8c4, tagged lcfm-camera-ready-v2.
+Text, figures and tables only. No GPU, no instances, budget spend $0.
+
+=================================================================
+SURPRISES FIRST
+=================================================================
+1. The F2 census was wrong in both directions, not just one. Besides the 6 greedy rows
+   hidden in the "sampled T=0.7" pool, 5 rows at T=1.0 were counted as greedy: the
+   census grouped by stage name. Regrouped by each row's recorded temperature, the counts
+   are 9/10 (first-window audit), 1/5 (128k greedy arm), 0/5 (T=1.0) and 1/77 (sampled).
+2. Two of the three numbers that had to shrink are in the same table. The 128k
+   spec-over-target ratio falls 2.01 to 1.54 on the matched book, and F1's factor-16
+   acceptance gain from excluding the looping row goes the other way (0.4890 without it),
+   so the honest exclusion makes F1 stronger.
+3. The corrected vLLM ratios are two different quantities that the old text merged: vLLM's
+   prefill over ours is 2.52x and 2.56x at 512k and 1M, while vLLM's whole run over our
+   prefill is 2.04x to 2.57x. The old sentence quoted the second as the first.
+4. The main text was 10 pages after the corrections even though nothing was added to the
+   argument, because a new appendix-worth of blocking-wait evidence plus three disclosures
+   had to go somewhere. It took moving two tables and one figure to the appendices and a
+   prose pass to get back to 8.
+
+=================================================================
+BLOCKER BY BLOCKER
+=================================================================
+B1  F4's backwards "costless per round, so the ratio grows" sentence.
+    FIXED. The main text now reports what the fix removes at each rung (2.43 / 7.64 /
+    13.88 s per token, or 10.9 / 34.1 / 62.0 ms per round) and attributes the growth to
+    the shard a round ships, 1x / 4x / 8x. New table results/lcfm/tables/rotation_cost.tex,
+    Appendix C.
+B2  The flat ~10.3 ms is a TORCH_NCCL_BLOCKING_WAIT polling artefact.
+    FIXED, confirmed. Section 3 states the measurement condition; Fig 4 is the two-mode
+    bench (10.3347 to 10.3520 ms flat under the flag against 0.1340 to 2.6191 ms, 101.7
+    GB/s, without it); F4's mechanism, the abstract, the introduction and the conclusion
+    all say the poll. The multi-node extrapolation is dropped and added to Limitations as
+    a non-extrapolation.
+B3  224 rounds, not 256.
+    FIXED. Verified in src/models/ring_attention_kernel.py:402,426,455 (a rotation per
+    step < world_size - 1, 7 per layer, over 32 patched layers) and stated with the
+    citation. The only surviving "256" is the benchmark's 256 rounds per payload.
+B4  The vLLM "beats its entire run" ratio.
+    FIXED. Table 3 now has separate columns for prefill-over-prefill and run-over-prefill,
+    the caption says which is which, and the sentence quotes the run-over-prefill range
+    2.04 to 2.57 with the prefill pair 2.52 / 2.56 named separately.
+B5  "1 of 83 sampled rows" included 6 greedy rows.
+    FIXED. 1 of 77, with the 6 excluded rows named as T=0.0, 8 generated tokens, too short
+    for a detector whose shortest span is 128 tokens. Fig C is regenerated from the
+    temperature column.
+B6  "1 of 10" in the temperature arms counted 5 rows at T=1.0.
+    FIXED. 1 of 5 in the 128k greedy arm, and 0 of 5 at T=1.0, now a separate group in
+    Fig C. The limitation that a greedy acceptance number is not uniformly inflated is
+    carried by those two counts.
+B7  The looping row is inside the factor-16 mean.
+    FIXED. Both values are given, 0.5336 over five books and 0.4890 excluding the looping
+    row (32.8% loss), the row is named, and the text says the claim uses the five-book mean.
+B8  The draft-window disclosure is wrong for this paper's runs.
+    FIXED. The Section 3 paragraph and the lower-bound limitation are gone. Section 3 now
+    states the window the rows actually used (BOS plus the most recent 4095 tokens,
+    src/models/rasd_inference.py:878, logged per row). The reviewed build's defect survives
+    only as the E6 row of Appendix A, with d89cf41 as the fix.
+B9  4.375 printed three ways.
+    FIXED. 4.38 everywhere, and every other ratio was checked for the same drift (none).
+B10 F5's 128k ratio compares 3 books with 1.
+    FIXED. 1.54x on the one matched book; the range is now 1.54 to 2.29x, all three
+    contexts are on matched books, and the n is stated at each. New table
+    results/lcfm/tables/f5_matched.tex, Appendix B.
+B11 Meta's pass-Q misdescribed.
+    FIXED. Section 2 and the "does not claim" paragraph now say pass-Q still circulates
+    data around the ring each step, and that the rotation-free log-sum-exp merge is what
+    vLLM ships as Decode Context Parallelism.
+B12 41.2 GiB is from the reviewed build.
+    FIXED. Replaced with this campaign's worst-rank 1M peak from the CSVs, 29.6 GiB
+    allocated and 32.8 GiB reserved (35.6 GiB reserved on the spec row), with the quantity
+    named. New table results/lcfm/tables/memory.tex, Appendix C. The reviewed figure stays
+    in Appendix A, labelled as the reviewed build's.
+B13 The F1 perplexity side is n=1, on another prompt, near its floor.
+    FIXED. The caption and text say one 1024-token continuation of one passage, a prompt
+    none of the acceptance rows use, native perplexity 1.013. "Acceptance is not a proxy
+    for perplexity" is replaced by the weaker, supported statement, and the text says the
+    claim rests on the five-book acceptance contrast.
+
+Should-fix
+S1  FIXED, "-0.1% with a 95% interval of about +-12% relative, per-cell -31% to +30%".
+S2  FIXED, 1.02x (fixed-engine 1M per-seed decode means 1.4370 / 1.4078 / 1.4344).
+S3  FIXED by replacement: the main text no longer quotes the old bench's range; the new
+    bench's range is 10.3347 to 10.3520 ms in both places it appears.
+S4  FIXED. The "the bare primitive accounts for the whole cost" paragraph is gone, and
+    with it the 9.3 ms per round figure.
+S5  FIXED. run_experiment.py:693, 713, 714 and 725, and the text says the run ids read
+    _s42 while the stage names said otherwise.
+S6  FIXED. The draft is named as meta-llama/Llama-3.2-1B (1B), not a 1.3B.
+S7  FIXED. The rotary-scaling sentence now says the long-context target runs rope_type
+    none and that a factor 8 applies only where an arm needs scaling.
+S8  FIXED, "every fixed-engine row records the engine", with the old-engine pools named.
+S9  FIXED. Fig C marks the detector's verdict with a filled diamond and the caption
+    explains that a row can trip the 16-gram rule below the share ceiling.
+S10 FIXED. Tables 1 and 3 and Fig 4 moved to the appendices, all of them are \ref'd there,
+    the duplicate \input of the headline table is gone (Appendix B refers to Table 2), and
+    the Appendix A tables are referenced.
+S11 FIXED, "27 to 31%" in the abstract, results and conclusion.
+S12 FIXED, spec is 3 / 3 / 13 matched cells and target-only 1 / 1 / 2.
+S13 FIXED, "70 to 81%".
+S14 FIXED. The aligned book is named (pg19_train_0, the King James Bible in the PG-19
+    pool), with the memorisation caveat and the other two books' perplexities.
+S15 FIXED. The intervention is not called YaRN, and YaRN is no longer said to be
+    validated by perplexity alone.
+S16 FIXED. The formula is described as expected tokens the target verifies per forward
+    pass, not as a wall-clock speedup.
+S17 FIXED. The dangling "Section Error Analysis" reference now points at the appendix that
+    holds the exclusion rule, and Appendix D says those 64k runs predate the draft-window
+    fix.
+S18 FIXED. The vLLM table caption and the surrounding sentence say default kernel settings.
+S19 FIXED, "520 to 740 s depending on the arm, about 340 s of it prefill".
+S20 FIXED. The TP_GATE plumbing row is out of the top-up table.
+S21 FIXED. The truncated SRC comment in the F1 section is gone, and every SRC comment now
+    names a CSV, a script or a source file.
+
+Nits
+- Abstract grammar (subject-verb) FIXED in the abstract, the F2 paragraph and the conclusion.
+- "a rotary effect at n=3 arms" FIXED to "across three arms".
+- Fig 2: the right panel's y-label now says it is one passage and n=1, so the panel cannot
+  be read as five books.
+- Ring Attention framing FIXED: its evaluation is described as training and long-context
+  capability, and FlashAttention-2 as this implementation's local kernel.
+- Overfull boxes FIXED: the Appendix A changes table is now 0.20/0.155/0.47 linewidth with
+  2pt column separation. The build reports zero overfull hboxes (it reported 15 at 1.85pt).
+- Bibliography FIXED: StreamingLLM is @inproceedings, the FlashAttention-2 key is
+  dao2024flashattention2, RoFormer now carries the venue author order (Su, Ahmed, Lu, Pan,
+  Bo, Liu), volume 568 and article 127063, both verified against Crossref, and the vLLM
+  blog URL is updated to the redirect target that returns 200.
+
+=================================================================
+NUMBERS THAT CHANGED (old -> new, source)
+=================================================================
+F4 rounds per decode token          256 -> 224 (7 rotations x 32 layers, kernel cited)
+F4 round cost, flat-ness            "a round is latency, not bandwidth" -> the flat line is
+                                    the poll: 10.3347/10.3520 ms under the flag against
+                                    0.1340/2.6191 ms without it (bw_diag bench CSVs)
+F4 removed cost                     not stated -> 2.43 / 7.64 / 13.88 s per token,
+                                    10.9 / 34.1 / 62.0 ms per round (headline table)
+F4 speedup range, spec              "2.80 to 4.37" -> "2.80 to 4.38" (4.3751 rounds to 4.38)
+F2 greedy temperature arm           1 of 10 -> 1 of 5, plus 0 of 5 at T=1.0 (temperature column)
+F2 sampled census                   1 of 83 -> 1 of 77 (6 T=0.0 rows excluded, named)
+F1 factor-16 acceptance             0.5336 -> 0.5336 with the looping row and 0.4890 without
+F1 perplexity provenance            "paired ... same continuation" -> one passage, prompt
+                                    sha 574e..., native perplexity 1.013, n=1
+F5 128k spec over target            2.01 -> 1.54 (matched book only; 2.2891 and 2.1958 at
+                                    512k and 1M are unchanged on matched books)
+F5 end-to-end 128k                  1.95 -> 1.50 (matched book; 512k and 1M unchanged)
+F5 "acceptance unchanged"           claim -> -0.1% with a 95% interval of about +-12%
+Seed spread                         1.04x -> 1.02x (per-seed decode means)
+vLLM prefill-over-prefill 128k      1.92x -> not quoted (drop, with the 39% reason stated)
+vLLM run-over-prefill               1.92/2.52/2.56 mislabelled -> 2.04/2.54/2.57 as such
+vLLM prefill-over-prefill 512k/1M   2.52/2.56, kept, now named as prefill-over-prefill
+vLLM decode deficit removed         "roughly 70%" -> 70 to 81%
+1M peak memory                      41.2 GiB (Llama-2 trace) -> 29.6 GiB allocated / 32.8
+                                    GiB reserved worst rank, this campaign's 1M rows
+1M row wall                         "570 s of which about 340 s prefill" -> 520 to 740 s
+                                    depending on the arm, about 340 s prefill
+Seed-bug citation                   run_experiment.py:590-612 -> :693,713,714,725
+Draft window                        "first 4096, lower bound" -> BOS + most recent 4095,
+                                    stated as what the rows did
+Rotary scaling                      "factor 8 at 8k and above" (as if used) -> rope_type
+                                    none for the long-context target; factor 8 only where
+                                    an arm needs it
+
+=================================================================
+NEW F4 (main text, quoted in full)
+=================================================================
+"At 128 k, each decode token requires 7 rotations over the 32 patched layers
+(src/models/ring_attention_kernel.py:402 loops over the ranks and line 426 issues a rotation
+only while step < world_size - 1), so 224 rounds of a batch_isend_irecv ring per token,
+measured under the NCCL blocking wait of Section 3, in which PyTorch's WorkNCCL::wait polls
+with a fixed 10 ms host sleep (kSynchronizeBusyWaitMillis, ProcessGroupNCCL.cpp:426 in the
+pinned torch 2.5.1). Figure 4 measures that primitive with no model attached, over five
+payloads from 4 KB to 266 MB, in both wait modes in one session on one box.
+
+Under the blocking wait every payload costs the same ~10.3 ms: 10.3347 ms for 4 KB against
+10.3520 ms for 266 MB, an 0.4% spread across a 66,584x payload range. That flat line is the
+poll, not the wire. Without the flag the same primitive takes 0.134 ms at 4 KB and rises
+with payload to 2.619 ms at 266 MB, which is 101.7 GB/s, and the two modes' post-sync times
+agree to within 3% at every payload, so the wire never changed.
+
+... Table 2 is the headline, with the same cells plotted in Appendix C. Decode-only, the fix
+is worth 2.80x / 3.77x / 4.38x with speculation and 3.30x / 4.26x / 5.32x without it at
+128 k / 512 k / 1 M, and the mechanism is in what it removes rather than in the ratio.
+Dividing the removed time by the 224 rounds: at 128 k it is 2.43 s per token, or 10.9 ms per
+round, which is the poll period itself, and the microbench predicted 224 x (10.3347 - 2.6191)
+ms = 1.72 s against a measured 1.75 s, within 1.4%. At 512 k and 1 M the removed time is far
+larger, 7.64 and 13.88 s per token, because the key/value shard a round ships grows by 4x and
+8x: the transfer no longer fits inside one poll period, and under blocking wait the host
+cannot enqueue round i+1 until round i completes, so the next transfer cannot overlap the
+current compute. The rotation's cost scales with the data it ships, and the flat ~10 ms per
+round is a 128 k-payload measurement."
+
+=================================================================
+FIGURES AND TABLES
+=================================================================
+Regenerated by scripts/lcfm_figures.py (committed):
+  figA_decode_vs_context.pdf  moved to Appendix C, unchanged content, 0.80 linewidth
+  figB_rope.pdf               ppl panel labelled as one passage, n=1
+  figC_degeneracy.pdf         four groups by recorded temperature, verdict markers
+  figD_ring_bench.pdf         REPLACED: two wait modes, log-log, the flat line and the curve
+  headline.tex                unchanged values, caption notes the blocking wait
+  rotation_cost.tex           NEW, Appendix C
+  f5_matched.tex              NEW, Appendix B
+  bw_bench.tex, bw_arms.tex   NEW, Appendix C (the diagnostic)
+  memory.tex                  NEW, Appendix C
+  rope.tex, vllm.tex          rope moved to Appendix B; vllm gains the two ratio columns
+  claim_source.tex            adds the diagnostic artifact
+
+Page measurement (pdftotext -layout): main text ends on page 8 (last line "configuration
+detail we can name."), References start at the top of page 9, total 15 pages including five
+appendices. Zero undefined references or citations, zero overfull hboxes, no TODO, XXX or
+"??" in the PDF.
+
+=================================================================
+GREPS (Part 4c and 4e)
+=================================================================
+"256"                    2 hits, both the benchmark's 256 rounds per payload (allowed)
+"latency, not bandwidth" 0 hits
+"first 4096"             0 hits in the rendered text; the reviewed build's defect survives
+                         as the Appendix A E6 row only
+"41.2"                   1 hit, the Appendix A row about the reviewed build
+"4.37" / "4.375"         0 hits (4.38 everywhere)
+"1 of 83" / "1 of 10"    0 hits (1 of 77 / 1 of 5)
+"2.01"                   1 hit, naming the withdrawn 3-vs-1 figure explicitly
+em dashes                0 as a run of three hyphens and 0 as U+2014 in manuscript/lcfm, the tables,
+                         the generated table files and the figure script; the PDF contains
+                         0 em dashes and 0 en dashes
+
+Part 4b, Codex's own scripts re-run against the revised paper: recompute.py, census.py and
+f5_paired.py all reproduce their committed output byte for byte, and their numbers agree
+with the revised text (128k matched 1.5445, 512k 2.2891, 1M 2.1958, census 9/10 + 1/5 + 0/5
++ 1/77, seed spread 1.0207, 1M acceptance -0.1% with a +-0.061 interval). No disagreement to
+resolve.
+
+=================================================================
+TESTS, TAG, BRANCHES
+=================================================================
+Tests: 1319 passed on camera-ready-v2 before the merge, 1319 passed on the merged main.
+Merge: e1cf8c4, merge commit of camera-ready-v2 into main (no fast-forward).
+Tag: lcfm-camera-ready-v2, annotated, on e1cf8c4. lcfm-camera-ready-v1 is untouched at
+c0fa9c7.
+Branches: diag/blocking-wait and camera-ready-v2 archived (archive/diag-blocking-wait,
+archive/camera-ready-v2), verified fully merged, then deleted locally and on origin.
+review/codex-lcfm is NOT merged: archived as archive/review-codex-lcfm and kept, local only,
+as the record of the review. mlsys-experiments is kept and untouched. No force-push, no
+history rewrite, no tag deletion.
+
+=================================================================
+JUDGMENT CALLS (marked % TODO AMAN in main.tex)
+=================================================================
+1. Factor 16 is reported with the looping row as the claim and without it as a second
+   number. Is that the right call, or should the abstract quote the exclusion?
+2. The 512k and 1M growth is attributed to lost overlap under blocking wait. That is an
+   inference from the two arms, not a direct measurement of overlap.
+3. Fig 4 and the RoPE and vLLM tables moved to the appendices to hold 8 pages.
+4. The 128k prefill ratio is dropped rather than ranged as 1.4x to 1.9x.
+
+=================================================================
+STATE
+=================================================================
+0 cloud instances. No dead-man timers or pollers running. Working tree clean.
+Budget spend for this run: $0.
+PDF to upload: manuscript/lcfm/main.pdf (15 pages; main text 8).
