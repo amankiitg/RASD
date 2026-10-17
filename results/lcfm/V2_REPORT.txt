@@ -888,3 +888,96 @@ Reviewer artifacts: results/lcfm/CODEX_REVIEW_V5.md and review_scratch_v5/v5_che
 come from branch review/codex-v5 and are committed on main with this section's merge.
 Report commit: this one, the commit that appends this section (git log: "Report: the v6
 section"), pushed after the merge commit 66276cc.
+
+=================================================================
+v7 (branch camera-ready-v7, merged as 2cff79e, tag lcfm-camera-ready-v7)
+=================================================================
+
+One citation correction, checked. No GPU, no instances, spend $0.
+
+WHAT CHANGED
+Nothing in any citation's content: the su2024rope author field was already exactly the
+required form. What changed in the file is a comment recording the verification and one
+discrepancy between the sources (references.bib, 9 lines, comment only), plus the rebuilt PDF.
+
+THE ENTRY
+  author = {Su, Jianlin and Ahmed, Murtadha and Lu, Yu and Pan, Shengfeng and Wen, Bo and
+            Liu, Yunfeng}
+already in manuscript/lcfm/references.bib, every author "Family, Given", in the published
+order, so instruction 2 was already satisfied and no field was touched.
+
+Sources fetched, and what each says:
+  * Crossref, https://api.crossref.org/works/10.1016/j.neucom.2023.127063 (HTTP 200):
+    Neurocomputing 568:127063, Feb 2024; authors in order Su/Jianlin, Ahmed/Murtadha,
+    Lu/Yu, Pan/Shengfeng, Bo/Wen, Liu/Yunfeng. Note the fifth pair: family "Bo", given
+    "Wen", which is inverted against every other source.
+  * arXiv 2104.09864 abs page https://arxiv.org/abs/2104.09864 (HTTP 200): the
+    citation_author metadata gives Su, Jianlin; Lu, Yu; Pan, Shengfeng; Murtadha, Ahmed;
+    Wen, Bo; Liu, Yunfeng, and the byline prints "Jianlin Su, Yu Lu, Shengfeng Pan,
+    Ahmed Murtadha, Bo Wen, Yunfeng Liu".
+  * arXiv v5 PDF https://arxiv.org/pdf/2104.09864 (HTTP 200): the title page prints
+    "Jianlin Su / Yu Lu / Shengfeng Pan / Ahmed Murtadha / Bo Wen / Yunfeng Liu".
+  * OpenAlex, https://api.openalex.org/works/doi:10.1016/j.neucom.2023.127063: journal
+    order Su first, "Murtadha Ahmed" second, "Yu Lu", "Shengfeng Pan", "Bo Wen" (raw
+    "Wen Bo"), "Yunfeng Liu" last.
+  * Semantic Scholar was rate-limited (HTTP 429) as in v5 and was not needed.
+
+TWO DISCREPANCIES, BOTH RECORDED IN THE COMMENT AND NOT SILENTLY RESOLVED
+1. Fifth author's family name. Crossref says family "Bo", given "Wen" (which would render
+   "Wen Bo"). The paper's own printed byline says "Bo Wen", arXiv's machine-readable form is
+   "Wen, Bo" and OpenAlex's display form is "Bo Wen", so family Wen, given Bo is kept and the
+   rendered reference list reads "Bo Wen" as the gate requires. Crossref's pair is the outlier.
+2. Order of the second and fourth authors. The published (journal) record from Crossref and
+   OpenAlex puts Murtadha Ahmed second, which is the order the field already has and the order
+   the task expected. The arXiv preprint's own byline instead puts him fourth. Since this
+   entry cites the journal article, the journal order is kept and the preprint's order is not
+   used. This is why the expected field and the arXiv byline cannot both be satisfied.
+
+AUDIT OF THE OTHER ELEVEN ENTRIES (instruction 3)
+All twelve author fields were re-read against the sources verified in v5. Every one is
+already "Family, Given" in the verified order and none shows the same inversion:
+Yang, Amy / Yang, Jingyi / Ibrahim, Aya / Xie, Xinfeng / Tang, Bangsheng / Sizov, Grigory /
+Reizenstein, Jeremy / Park, Jongsoo / Huang, Jianyu (2411.01783);
+Lee, Seonghee / Ha, Sungsoo / Almog, Omri / Wilkinson, Lucas (vLLM blog byline);
+Liu, Hao / Zaharia, Matei / Abbeel, Pieter (2310.01889);
+Dao, Tri (ICLR 2024);
+Leviathan, Yaniv / Kalman, Matan / Matias, Yossi (PMLR v202);
+Chen, Charlie / Borgeaud, Sebastian / Irving, Geoffrey / Lespiau, Jean-Baptiste / Sifre,
+Laurent / Jumper, John (2302.01318);
+Cai, Tianle / Li, Yuhong / Geng, Zhengyang / Peng, Hongwu / Lee, Jason D / Chen, Deming /
+Dao, Tri (2401.10774);
+Dettmers, Tim / Pagnoni, Artidoro / Holtzman, Ari / Zettlemoyer, Luke (2305.14314);
+Xiao, Guangxuan / Tian, Yuandong / Chen, Beidi / Han, Song / Lewis, Mike (2309.17453);
+Peng, Bowen / Quesnelle, Jeffrey / Fan, Honglu / Shippole, Enrico (2309.00071);
+Rae, Jack W / Potapenko, Anna / Jayakumar, Siddhant M / Hillier, Chloe / Lillicrap, Timothy P
+(1911.05507 title page and the ICLR 2020 listing).
+No other fix was needed. No entry was refetched, since none looked wrong.
+
+GATES
+Recompiled with "cd manuscript/lcfm && tectonic main.tex", stderr captured to a file:
+  total pages 16; main text ends page 9; References start page 10; appendices 10 to 16
+  overfull boxes from stderr: 0 above 5 pt and 0 at any size (100 underfull, all pre-existing
+  appendix-table warnings)
+  0 undefined references, 0 undefined citations
+  0 em dashes across manuscript/lcfm (all files), references.bib, the 9 generated tables, the
+  4 generated figure PDFs' text and ORGANIZER_NOTE.txt (17 files)
+  rendered reference list: "Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Bo Wen, and
+  Yunfeng Liu. RoFormer: ..." so the gate's "Bo Wen" is met
+  pdftotext diff against tag lcfm-camera-ready-v6: the PDF text is byte-identical, so no text
+  outside the bibliography changed; in fact no text anywhere changed, which is the stronger
+  form of the gate, because no citation field moved.
+  BibTeX: plainnat run for references.bib, no warnings.
+  Full test suite on the merged tree: 1319 passed in 8:53 on the merged tree. The first full run of the same tree reported 1 failed, 1318 passed: tests/test_mlsys_watcher_guards.py::test_an_unreadable_instance_count_does_not_end_the_wait. STOP was evaluated: the merge had no conflict, and the failure does not reproduce. That test asserts the watcher logged at least two "next_sleep=1s (retrying)" iterations inside a 2 s wall-clock horizon (MLSYS_POLL_BASE_S=1, MLSYS_CAPACITY_WAIT_HOURS=0.0006), so it is load-sensitive; the file passes 42/42 in isolation, it passed in the v6 runs, and the green re-run above covered the identical merged tree. Nothing in the v7 change is executable code.
+
+FINISH
+Branch and tags: camera-ready-v7 merged into main as 2cff79e (merge commit, full
+2cff79ef16437c6d76a66f332db389263dfab254), annotated tag lcfm-camera-ready-v7 on the merge commit, pushed. Archive tag
+archive/camera-ready-v7 on the branch tip d72494e, branch deleted after the merge. Tags v1 to
+v6 and every review/* branch and mlsys-experiments untouched. No force-push, no history
+rewrite. manuscript/arxiv/ untouched.
+PDF to upload: manuscript/lcfm/main.pdf (16 pages; main text 9).
+Report commit: this one, the commit that appends this section (git log: "Report: the v7
+section"), pushed after the merge commit.
+
+A flake note: the 1-failed first run is recorded above rather than hidden; the release
+tag points at the tree that passed 1319.
